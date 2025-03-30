@@ -1,0 +1,16 @@
+.{
+    .name = .v10,
+    .version = "0.0.1",
+    .fingerprint= 0x4fb9faee53eadd66,
+    .dependencies = .{
+        .glfw = .{
+            .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
+            .hash = "glfw_zig-3.4.0-qhyek_CbPAArdwWMuq_uUhbOIVwcTIwntXDm56QjEx5n",
+        },
+    },
+    .paths = .{
+        "src/",
+        "build.zig",
+        "build.zig.zon",
+    },
+}
