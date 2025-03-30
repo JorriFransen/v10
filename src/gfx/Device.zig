@@ -10,10 +10,10 @@ const alloc = @import("../alloc.zig");
 const gfx = @import("gfx.zig");
 const vk = gfx.vk;
 
-const Window = @import("../Window.zig");
+const Window = @import("../window.zig");
 
 const enable_validation_layers: bool = builtin.mode == .Debug;
-const validation_layers = [_][:0]const u8{"VK_LAYER_KHRONOS_validation"};
+const validation_layers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 
 system: *gfx.System,
 window: *const Window,
@@ -58,20 +58,20 @@ fn createInstance(this: *@This()) !void {
     const extensions = try this.getRequiredExtensions(alloc.gpa);
     defer alloc.gpa.free(extensions);
 
-    var debug_create_info: vk.DebugUtilsMessengerCreateInfoEXT = if (enable_validation_layers) .{
-        .message_severity = .{ .warning_bit_ext = true, .error_bit_ext = true },
-        .message_type = .{ .general_bit_ext = true, .validation_bit_ext = true, .performance_bit_ext = true },
-        .pfn_user_callback = debugCallback,
-        .p_user_data = null,
-    } else undefined;
+    // var debug_create_info: vk.DebugUtilsMessengerCreateInfoEXT = if (enable_validation_layers) .{
+    //     .message_severity = .{ .warning_bit_ext = true, .error_bit_ext = true },
+    //     .message_type = .{ .general_bit_ext = true, .validation_bit_ext = true, .performance_bit_ext = true },
+    //     .pfn_user_callback = debugCallback,
+    //     .p_user_data = null,
+    // } else undefined;
 
     const create_info = vk.InstanceCreateInfo{
         .p_application_info = &app_info,
         .enabled_extension_count = @intCast(extensions.len),
         .pp_enabled_extension_names = extensions.ptr,
-        .enabled_layer_count = if (enable_validation_layers) validation_layers.len else 0,
-        .pp_enabled_layer_names = if (enable_validation_layers) @ptrCast(@alignCast(validation_layers[0])) else null,
-        .p_next = if (enable_validation_layers) &debug_create_info else null,
+        // .enabled_layer_count = if (enable_validation_layers) validation_layers.len else 0,
+        // .pp_enabled_layer_names = if (enable_validation_layers) @ptrCast(@alignCast(validation_layers[0])) else null,
+        // .p_next = if (enable_validation_layers) &debug_create_info else null,
     };
 
     this.instance = try vkb.createInstance(&create_info, null);
@@ -112,9 +112,10 @@ fn checkValidationLayerSupport(this: *@This()) !bool {
         return error.vkEnumerateInstanceLayerPropertiesFailed;
     }
 
-    for (validation_layers) |required_name| {
-        var layer_found = false;
+    for (validation_layers) |_required_name| {
+        const required_name = std.mem.span(@as([*:0]const u8, _required_name));
 
+        var layer_found = false;
         for (available_layers) |layer_properties| {
             const available_name = std.mem.span(@as([*:0]const u8, @ptrCast(&layer_properties.layer_name)));
             if (std.mem.eql(u8, required_name, available_name)) {
@@ -127,6 +128,8 @@ fn checkValidationLayerSupport(this: *@This()) !bool {
             return false;
         }
     }
+
+    vklog.debug("all requested layers available!", .{});
 
     return true;
 }

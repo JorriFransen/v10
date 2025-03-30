@@ -6,7 +6,7 @@
         .glfw = .{
             // .path = "../glfw-zig-build",
             .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
-            .hash = "glfw_zig-3.4.0-qhyek56cPAA9_IGkwQuD0nhqK8PpBG1apO3NwSK4AMPE",
+            .hash = "glfw_zig-3.4.0-qhyek7-dPAB498gIvNmScctgH2lBeIhRNIHolWKQ3lR9",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
