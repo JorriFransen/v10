@@ -1,4 +1,5 @@
 const glfw = @import("glfw");
+const vk = @import("vulkan");
 
 width: i32,
 height: i32,
@@ -28,4 +29,10 @@ pub fn destroy(this: *@This()) void {
 
 pub fn shouldClose(this: *const @This()) bool {
     return glfw.windowShouldClose(this.window) == glfw.TRUE;
+}
+
+pub fn createWindowSurface(this: *@This(), instance: vk.Instance, surface: *vk.SurfaceKHR) !void {
+    if (glfw.createWindowSurface(instance, this.window, null, surface) != .success) {
+        return error.glfwCreateWindowSurfaceFailed;
+    }
 }

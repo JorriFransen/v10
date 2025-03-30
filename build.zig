@@ -66,7 +66,6 @@ fn addShaderStep(b: *std.Build) !*std.Build.Step {
         .install_subdir = "",
     });
 
-    // b.getInstallStep().dependOn(&shader_install_dir.step);
     shaders_step.dependOn(&shader_install_dir.step);
 
     return shaders_step;
