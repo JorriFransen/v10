@@ -21,6 +21,25 @@ pub fn build(b: *std.Build) void {
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan_mod);
 
+    const shaders = [_][]const u8{
+        "shaders/simple.vert",
+        "shaders/simple.frag",
+    };
+
+    const shaders_step = b.step("shaders", "Compile shaders");
+    exe.step.dependOn(shaders_step);
+    for (shaders) |path| {
+        const compile_step = b.addSystemCommand(&.{"glslc"});
+        compile_step.addFileArg(b.path(path));
+        compile_step.addArgs(&.{ "-o", b.fmt("{s}.spv", .{path}) });
+        shaders_step.dependOn(&compile_step.step);
+    }
+
+    // const glslc_step = b.addSystemCommand(&.{"glslc"});
+    // glslc_step.addFileArg(b.path("shaders/simple.vert"));
+    // glslc_step.addArgs(&.{ "-o", "shaders/simple.vert.spv" });
+    // exe.step.dependOn(&glslc_step.step);
+
     const run_exe = b.addRunArtifact(exe);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
