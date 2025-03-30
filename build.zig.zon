@@ -4,8 +4,17 @@
     .fingerprint= 0x4fb9faee53eadd66,
     .dependencies = .{
         .glfw = .{
+            // .path = "../glfw-zig-build",
             .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
-            .hash = "glfw_zig-3.4.0-qhyek_CbPAArdwWMuq_uUhbOIVwcTIwntXDm56QjEx5n",
+            .hash = "glfw_zig-3.4.0-qhyek56cPAA9_IGkwQuD0nhqK8PpBG1apO3NwSK4AMPE",
+        },
+        .vulkan_headers = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
+            .hash = "N-V-__8AAAkkoQGn5z1yoNVrwqZfnYmZp8AZ5CJgoHRMQI0c",
+        },
+        .vulkan_zig = .{
+            .url = "https://github.com/Snektron/vulkan-zig/archive/40ad90a912eafb81581a121e585688fbbd7d8ddf.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx1JTAwC3R0cfA3SxaWPGJa6p3EUw3OTXTgSPr_hF",
         },
     },
     .paths = .{

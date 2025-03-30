@@ -15,6 +15,12 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("glfw", glfw_mod);
     exe.linkLibrary(glfw_lib);
 
+    const vulkan_mod = b.dependency("vulkan_zig", .{
+        .target = b.graph.host,
+        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+    }).module("vulkan-zig");
+    exe.root_module.addImport("vulkan", vulkan_mod);
+
     const run_exe = b.addRunArtifact(exe);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
