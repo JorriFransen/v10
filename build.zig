@@ -1,6 +1,5 @@
 const std = @import("std");
-const dlog = std.log.debug;
-
+const log = std.log.scoped(.v10_build);
 const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) !void {

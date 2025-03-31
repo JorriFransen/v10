@@ -19,5 +19,6 @@ pub fn main() !void {
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
+        glfw.swapBuffers(window.window.?);
     }
 }

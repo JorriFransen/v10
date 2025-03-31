@@ -15,9 +15,18 @@ const Window = @import("../window.zig");
 const enable_validation_layers: bool = builtin.mode == .Debug;
 const validation_layers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 
+const debug_messenger_create_info = vk.DebugUtilsMessengerCreateInfoEXT{
+    .message_severity = .{ .warning_bit_ext = true, .error_bit_ext = true },
+    .message_type = .{ .general_bit_ext = true, .validation_bit_ext = true, .performance_bit_ext = true },
+    .pfn_user_callback = debugCallback,
+    .p_user_data = null,
+};
+
 system: *gfx.System,
 window: *const Window,
 instance: vk.Instance,
+debug_messenger: vk.DebugUtilsMessengerEXT = .null_handle,
+surface: vk.SurfaceKHR = .null_handle,
 
 pub fn create(system: *gfx.System, window: *const Window) !@This() {
     var this = @This(){
@@ -27,11 +36,11 @@ pub fn create(system: *gfx.System, window: *const Window) !@This() {
     };
 
     try this.createInstance();
-    // this.setupDebugMessenger();
-    // this.createSurface();
-    // this.pickPhysicalDevice();
-    // this.createLogicalDevice();
-    // this.createCommandPool();
+    try this.setupDebugMessenger();
+    try this.createSurface();
+    try this.pickPhysicalDevice(alloc.gpa);
+    // try this.createLogicalDevice();
+    // try this.createCommandPool();
 
     return this;
 }
@@ -63,12 +72,11 @@ fn createInstance(this: *@This()) !void {
         vklog.debug("required_extensions[{}]: {s}", .{ i, r_ext });
     }
 
-    var debug_create_info: vk.DebugUtilsMessengerCreateInfoEXT = if (enable_validation_layers) .{
-        .message_severity = .{ .warning_bit_ext = true, .error_bit_ext = true },
-        .message_type = .{ .general_bit_ext = true, .validation_bit_ext = true, .performance_bit_ext = true },
-        .pfn_user_callback = debugCallback,
-        .p_user_data = null,
-    } else undefined;
+    if (!try this.hasGlfwRequiredInstanceExtensions(extensions, alloc.gpa)) {
+        return error.requirdExtensionUnavailable;
+    }
+
+    var debug_create_info: vk.DebugUtilsMessengerCreateInfoEXT = if (enable_validation_layers) debug_messenger_create_info else undefined;
 
     const create_info = vk.InstanceCreateInfo{
         .p_application_info = &app_info,
@@ -80,19 +88,49 @@ fn createInstance(this: *@This()) !void {
     };
 
     this.instance = try vkb.createInstance(&create_info, null);
+    this.system.vki = vk.InstanceWrapper.load(this.instance, glfw.getInstanceProcAddress);
     vklog.debug("Instance created", .{});
 }
 
 fn setupDebugMessenger(this: *@This()) !void {
-    _ = this;
+    if (!enable_validation_layers) return;
+
+    const vki = this.system.vki;
+
+    const create_info = debug_messenger_create_info;
+    this.debug_messenger = try vki.createDebugUtilsMessengerEXT(this.instance, &create_info, null);
 }
 
 fn createSurface(this: *@This()) !void {
-    _ = this;
+    try this.window.createWindowSurface(this.instance, &this.surface);
+    vklog.debug("Surface created", .{});
 }
 
-fn pickPhysicalDevice(this: *@This()) !void {
-    _ = this;
+fn pickPhysicalDevice(this: *@This(), allocator: std.mem.Allocator) !void {
+    const vki = this.system.vki;
+
+    var device_count: u32 = undefined;
+    if (try vki.enumeratePhysicalDevices(this.instance, &device_count, null) != .success) {
+        return error.vkEnumeratePhysicalDevicesFailed;
+    }
+
+    if (device_count == 0) {
+        return error.noGPUWithVulkanSupportFound;
+    }
+
+    vklog.debug("{} physical devices found", .{device_count});
+
+    const devices = try allocator.alloc(vk.PhysicalDevice, device_count);
+    defer allocator.free(devices);
+
+    if (try vki.enumeratePhysicalDevices(this.instance, &device_count, devices.ptr) != .success) {
+        return error.vkEnumeratePhysicalDevicesFailed;
+    }
+
+    for (devices, 0..) |pdev, i| {
+        const properties = vki.getPhysicalDeviceProperties(pdev);
+        vklog.debug("devices[{}]: {s}", .{ i, properties.device_name });
+    }
 }
 
 fn createLogicalDevice(this: *@This()) !void {
@@ -163,6 +201,40 @@ pub fn getRequiredExtensions(this: *const @This(), allocator: std.mem.Allocator)
     }
 
     return required_extensions;
+}
+
+pub fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0]const u8, allocator: std.mem.Allocator) !bool {
+    const vkb = this.system.vkb;
+
+    var extension_count: u32 = undefined;
+    if (try vkb.enumerateInstanceExtensionProperties(null, &extension_count, null) != .success) {
+        return error.vkEnumerateInstanceExtensionPropertiesFailed;
+    }
+    vklog.debug("available_extensions: {}", .{extension_count});
+
+    const available_extensions = try allocator.alloc(vk.ExtensionProperties, extension_count);
+    defer allocator.free(available_extensions);
+
+    if (try vkb.enumerateInstanceExtensionProperties(null, &extension_count, available_extensions.ptr) != .success) {
+        return error.vkEnumerateInstanceExtensionPropertiesFailed;
+    }
+
+    for (required_exts) |required| {
+        var found: bool = false;
+        for (available_extensions) |properties| {
+            const available = std.mem.span(@as([*:0]const u8, @ptrCast(&properties.extension_name)));
+            if (std.mem.eql(u8, available, std.mem.span(required))) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            vklog.err("Required extension '{s}' unavailable", .{required});
+            return false;
+        }
+    }
+    return true;
 }
 
 pub fn debugCallback(message_severity: vk.DebugUtilsMessageSeverityFlagsEXT, message_type: vk.DebugUtilsMessageTypeFlagsEXT, p_callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT, p_user_data: ?*anyopaque) callconv(vk.vulkan_call_conv) vk.Bool32 {
