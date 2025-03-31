@@ -9,11 +9,13 @@ pub var system: System = undefined;
 pub const System = struct {
     vkb: vk.BaseWrapper,
     vki: vk.InstanceWrapper,
+    vkd: vk.DeviceWrapper,
 
     pub fn init() !void {
         system = .{
             .vkb = vk.BaseWrapper.load(glfw.getInstanceProcAddress),
             .vki = undefined,
+            .vkd = undefined,
         };
     }
 };

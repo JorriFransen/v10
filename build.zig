@@ -3,10 +3,14 @@ const log = std.log.scoped(.v10_build);
 const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
     const exe = b.addExecutable(.{
         .name = "v10game",
         .root_source_file = b.path("src/main.zig"),
-        .target = b.graph.host,
+        .target = target,
+        .optimize = optimize,
     });
 
     b.installArtifact(exe);
