@@ -58,23 +58,29 @@ fn createInstance(this: *@This()) !void {
     const extensions = try this.getRequiredExtensions(alloc.gpa);
     defer alloc.gpa.free(extensions);
 
-    // var debug_create_info: vk.DebugUtilsMessengerCreateInfoEXT = if (enable_validation_layers) .{
-    //     .message_severity = .{ .warning_bit_ext = true, .error_bit_ext = true },
-    //     .message_type = .{ .general_bit_ext = true, .validation_bit_ext = true, .performance_bit_ext = true },
-    //     .pfn_user_callback = debugCallback,
-    //     .p_user_data = null,
-    // } else undefined;
+    vklog.debug("required_extensions: {}", .{extensions.len});
+    for (extensions, 0..) |r_ext, i| {
+        vklog.debug("required_extensions[{}]: {s}", .{ i, r_ext });
+    }
+
+    var debug_create_info: vk.DebugUtilsMessengerCreateInfoEXT = if (enable_validation_layers) .{
+        .message_severity = .{ .warning_bit_ext = true, .error_bit_ext = true },
+        .message_type = .{ .general_bit_ext = true, .validation_bit_ext = true, .performance_bit_ext = true },
+        .pfn_user_callback = debugCallback,
+        .p_user_data = null,
+    } else undefined;
 
     const create_info = vk.InstanceCreateInfo{
         .p_application_info = &app_info,
         .enabled_extension_count = @intCast(extensions.len),
         .pp_enabled_extension_names = extensions.ptr,
-        // .enabled_layer_count = if (enable_validation_layers) validation_layers.len else 0,
-        // .pp_enabled_layer_names = if (enable_validation_layers) @ptrCast(@alignCast(validation_layers[0])) else null,
-        // .p_next = if (enable_validation_layers) &debug_create_info else null,
+        .enabled_layer_count = if (enable_validation_layers) validation_layers.len else 0,
+        .pp_enabled_layer_names = if (enable_validation_layers) @ptrCast(@alignCast(&validation_layers)) else null,
+        .p_next = if (enable_validation_layers) &debug_create_info else null,
     };
 
     this.instance = try vkb.createInstance(&create_info, null);
+    vklog.debug("Instance created", .{});
 }
 
 fn setupDebugMessenger(this: *@This()) !void {
@@ -154,11 +160,6 @@ pub fn getRequiredExtensions(this: *const @This(), allocator: std.mem.Allocator)
 
     if (enable_validation_layers) {
         required_extensions[glfw_extension_count] = vk.extensions.ext_debug_utils.name;
-    }
-
-    vklog.debug("required_extensions: {}", .{required_extension_count});
-    for (required_extensions, 0..) |r_ext, i| {
-        vklog.debug("required_extensions[{}]: {s}", .{ i, r_ext });
     }
 
     return required_extensions;
