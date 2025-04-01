@@ -13,9 +13,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    b.installArtifact(exe);
+    const exe_install_artifact = b.addInstallArtifact(exe, .{});
+    b.getInstallStep().dependOn(&exe_install_artifact.step);
 
     const run_exe = b.addRunArtifact(exe);
+    run_exe.cwd = b.path("zig-out/bin");
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
     run_step.dependOn(b.getInstallStep());

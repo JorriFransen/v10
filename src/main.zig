@@ -14,8 +14,8 @@ pub fn main() !void {
     var device = try gfx.Device.create(&gfx.system, &window);
     defer device.destroy();
 
-    // const pipeline = gfx.Pipeline.create(.{ .device = &device });
-    // defer pipeline.destroy();
+    const pipeline = try gfx.Pipeline.create(.{ .device = &device });
+    defer pipeline.destroy();
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
