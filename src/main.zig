@@ -6,7 +6,10 @@ const glfw = @import("glfw");
 const gfx = @import("gfx/gfx.zig");
 
 pub fn main() !void {
-    var window = try Window.create(800, 600, "v10");
+    const width = 800;
+    const height = 600;
+
+    var window = try Window.create(width, height, "v10");
     defer window.destroy();
 
     try gfx.System.init();
@@ -14,7 +17,12 @@ pub fn main() !void {
     var device = try gfx.Device.create(&gfx.system, &window);
     defer device.destroy();
 
-    const pipeline = try gfx.Pipeline.create(.{ .device = &device });
+    const pipeline = try gfx.Pipeline.create(
+        &device,
+        "shaders/simple.vert.spv",
+        "shaders/simple.frag.spv",
+        gfx.Pipeline.ConfigInfo.default(width, height),
+    );
     defer pipeline.destroy();
 
     while (!window.shouldClose()) {

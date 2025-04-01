@@ -493,9 +493,23 @@ pub fn querySwapchainSupport(this: *@This(), device: vk.PhysicalDevice, allocato
 }
 
 pub fn debugCallback(message_severity: vk.DebugUtilsMessageSeverityFlagsEXT, message_type: vk.DebugUtilsMessageTypeFlagsEXT, p_callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT, p_user_data: ?*anyopaque) callconv(vk.vulkan_call_conv) vk.Bool32 {
-    _ = message_severity;
     _ = message_type;
     _ = p_user_data;
-    vklog.debug("validation layer: {s}", .{p_callback_data.?.p_message.?});
+
+    const fmt = "validation layer: {s}";
+    const args = .{p_callback_data.?.p_message.?};
+
+    if (message_severity.error_bit_ext) {
+        vklog.err(fmt, args);
+    } else if (message_severity.warning_bit_ext) {
+        vklog.warn(fmt, args);
+    } else if (message_severity.verbose_bit_ext) {
+        vklog.debug(fmt, args);
+    } else if (message_severity.info_bit_ext) {
+        vklog.info(fmt, args);
+    } else {
+        vklog.err(fmt, args);
+    }
+
     return vk.FALSE;
 }
