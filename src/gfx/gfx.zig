@@ -4,6 +4,7 @@ pub const vk = @import("vulkan");
 
 pub const Device = @import("device.zig");
 pub const Pipeline = @import("pipeline.zig");
+pub const Swapchain = @import("swapchain.zig");
 
 pub var system: System = undefined;
 pub const System = struct {

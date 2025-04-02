@@ -15,7 +15,6 @@ frag_shader_module: vk.ShaderModule,
 pub const ConfigInfo = struct {
     viewport: vk.Viewport,
     scissor: vk.Rect2D,
-    viewport_info: vk.PipelineViewportStateCreateInfo,
     input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo,
     rasterization_info: vk.PipelineRasterizationStateCreateInfo,
     multisample_info: vk.PipelineMultisampleStateCreateInfo,
@@ -39,13 +38,6 @@ pub const ConfigInfo = struct {
         const scissor = vk.Rect2D{
             .offset = .{ .x = 0, .y = 0 },
             .extent = .{ .width = width, .height = height },
-        };
-
-        const viewport_info = vk.PipelineViewportStateCreateInfo{
-            .viewport_count = 1,
-            .p_viewports = @ptrCast(&viewport),
-            .scissor_count = 1,
-            .p_scissors = @ptrCast(&scissor),
         };
 
         const input_assembly_info = vk.PipelineInputAssemblyStateCreateInfo{
@@ -109,7 +101,6 @@ pub const ConfigInfo = struct {
         return .{
             .viewport = viewport,
             .scissor = scissor,
-            .viewport_info = viewport_info,
             .input_assembly_info = input_assembly_info,
             .rasterization_info = rasterization_info,
             .multisample_info = multisample_info,
@@ -181,12 +172,19 @@ pub fn create(device: *gfx.Device, vert_path: []const u8, frag_path: []const u8,
         .p_vertex_binding_descriptions = null,
     };
 
+    const viewport_info = vk.PipelineViewportStateCreateInfo{
+        .viewport_count = 1,
+        .p_viewports = @ptrCast(&config.viewport),
+        .scissor_count = 1,
+        .p_scissors = @ptrCast(&config.scissor),
+    };
+
     const pipeline_info = vk.GraphicsPipelineCreateInfo{
         .stage_count = shader_stage_infos.len,
         .p_stages = @ptrCast(&shader_stage_infos),
         .p_vertex_input_state = &vertex_input_info,
         .p_input_assembly_state = &config.input_assembly_info,
-        .p_viewport_state = &config.viewport_info,
+        .p_viewport_state = &viewport_info,
         .p_rasterization_state = &config.rasterization_info,
         .p_multisample_state = &config.multisample_info,
         .p_color_blend_state = &config.color_blend_info,

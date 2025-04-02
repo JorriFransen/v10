@@ -37,9 +37,11 @@ present_queue: vk.QueueProxy = undefined,
 command_pool: vk.CommandPool = undefined,
 
 pub const DeviceInfo = struct {
+    name: []const u8,
     physical_device: vk.PhysicalDevice,
     properties: vk.PhysicalDeviceProperties,
     queue_family_indices: QueueFamilyIndices,
+    swapchain_support: SwapchainSupportDetails,
 };
 
 pub const QueueFamilyIndices = struct {
@@ -204,27 +206,35 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
     var device_index: i64 = -1;
     for (devices, 0..) |pdev, i| {
         const properties = this.vki.getPhysicalDeviceProperties(pdev);
-        vklog.debug("devices[{}]: {s}", .{ i, properties.device_name });
+        const name = std.mem.span(@as([*:0]const u8, @ptrCast(&properties.device_name)));
+
+        vklog.debug("devices[{}]: '{s}'", .{ i, name });
 
         const dev_info = DeviceInfo{
+            .name = name,
             .physical_device = pdev,
             .properties = properties,
             .queue_family_indices = try this.findQueueFamilies(pdev, allocator),
+            .swapchain_support = try this.querySwapchainSupport(pdev, allocator),
         };
 
         if (try this.isDeviceSuitable(dev_info, allocator)) {
             if (device_index < 0) {
                 device_index = @intCast(i);
                 this.device_info = dev_info;
+
+                const name_copy = try allocator.alloc(u8, dev_info.name.len);
+                @memcpy(name_copy, dev_info.name);
+                this.device_info.name = name_copy;
             }
-        }
+        } else {}
     }
 
     if (device_index < 0) {
         return error.NoSuitableGPUFound;
     }
 
-    vklog.debug("using physical device {}", .{device_index});
+    vklog.debug("Using physical device {} ('{s}')", .{ device_index, this.device_info.name });
 }
 
 fn createLogicalDevice(this: *@This(), allocator: Allocator) !void {
@@ -464,6 +474,7 @@ pub fn querySwapchainSupport(this: *@This(), device: vk.PhysicalDevice, allocato
 
     if (format_count != 0) {
         formats = try allocator.alloc(vk.SurfaceFormatKHR, format_count);
+        errdefer allocator.free(formats);
 
         if (try this.vki.getPhysicalDeviceSurfaceFormatsKHR(device, this.surface, &format_count, formats.ptr) != .success) {
             return error.vkGetPhysicalDeviceSurfaceFormatsKHRFailed;
@@ -479,6 +490,7 @@ pub fn querySwapchainSupport(this: *@This(), device: vk.PhysicalDevice, allocato
 
     if (present_mode_count != 0) {
         present_modes = try allocator.alloc(vk.PresentModeKHR, present_mode_count);
+        errdefer allocator.free(present_modes);
 
         if (try this.vki.getPhysicalDeviceSurfacePresentModesKHR(device, this.surface, &present_mode_count, present_modes.ptr) != .success) {
             return error.vkGetPhysicalDeviceSurfacePresentModesKHRFailed;
@@ -512,4 +524,44 @@ pub fn debugCallback(message_severity: vk.DebugUtilsMessageSeverityFlagsEXT, mes
     }
 
     return vk.FALSE;
+}
+
+pub fn findSupportedFormat(this: *@This(), candidates: []const vk.Format, tiling: vk.ImageTiling, features: vk.FormatFeatureFlags) !vk.Format {
+    for (candidates) |format| {
+        const props = this.vki.getPhysicalDeviceFormatProperties(this.device_info.physical_device, format);
+
+        if (tiling == .linear and (props.linear_tiling_features.contains(features))) {
+            return format;
+        } else if (tiling == .optimal and (props.optimal_tiling_features.contains(features))) {
+            return format;
+        }
+    }
+
+    return error.findSupportedFormatFailed;
+}
+
+pub fn createImageWithInfo(this: *@This(), image_info: *const vk.ImageCreateInfo, properties: vk.MemoryPropertyFlags, memory: *vk.DeviceMemory) !vk.Image {
+    const result = try this.device.createImage(image_info, null);
+    const mem_req = this.device.getImageMemoryRequirements(result);
+
+    const alloc_info = vk.MemoryAllocateInfo{
+        .allocation_size = mem_req.size,
+        .memory_type_index = try this.findMemoryType(mem_req.memory_type_bits, properties),
+    };
+
+    memory.* = try this.device.allocateMemory(&alloc_info, null);
+    try this.device.bindImageMemory(result, memory.*, 0);
+
+    return result;
+}
+
+pub fn findMemoryType(this: *@This(), type_filter: u32, properties: vk.MemoryPropertyFlags) !u32 {
+    const props = this.vki.getPhysicalDeviceMemoryProperties(this.device_info.physical_device);
+    for (0..props.memory_type_count) |i| {
+        if ((type_filter & (@as(@TypeOf(i), 1) << @intCast(i)) != 0) and props.memory_types[i].property_flags.contains(properties)) {
+            return @intCast(i);
+        }
+    }
+
+    return error.NoSuitableMemoryTypeFound;
 }
