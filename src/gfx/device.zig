@@ -42,6 +42,11 @@ pub const DeviceInfo = struct {
     properties: vk.PhysicalDeviceProperties,
     queue_family_indices: QueueFamilyIndices,
     swapchain_support: SwapchainSupportDetails,
+
+    pub fn destroy(this: *@This(), allocator: Allocator) void {
+        allocator.free(this.name);
+        this.swapchain_support.destroy(allocator);
+    }
 };
 
 pub const QueueFamilyIndices = struct {
@@ -90,7 +95,7 @@ pub const SwapchainSupportDetails = struct {
     formats: []vk.SurfaceFormatKHR,
     present_modes: []vk.PresentModeKHR,
 
-    pub fn free(this: @This(), allocator: Allocator) void {
+    pub fn destroy(this: @This(), allocator: Allocator) void {
         if (this.formats.len > 0) allocator.free(this.formats);
         if (this.present_modes.len > 0) allocator.free(this.present_modes);
     }
@@ -112,7 +117,7 @@ pub fn create(system: *gfx.System, window: *const Window) !@This() {
     return this;
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn destroy(this: *@This(), allocator: Allocator) void {
     const device = this.device;
     const vki = this.vki;
 
@@ -125,6 +130,8 @@ pub fn destroy(this: *@This()) void {
 
     vki.destroySurfaceKHR(this.surface, null);
     vki.destroyInstance(null);
+
+    this.device_info.destroy(allocator);
 }
 
 fn createInstance(this: *@This()) !void {
@@ -210,7 +217,7 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
 
         vklog.debug("devices[{}]: '{s}'", .{ i, name });
 
-        const dev_info = DeviceInfo{
+        var dev_info = DeviceInfo{
             .name = name,
             .physical_device = pdev,
             .properties = properties,
@@ -218,6 +225,7 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
             .swapchain_support = try this.querySwapchainSupport(pdev, allocator),
         };
 
+        var chosen = false;
         if (try this.isDeviceSuitable(dev_info, allocator)) {
             if (device_index < 0) {
                 device_index = @intCast(i);
@@ -226,8 +234,13 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
                 const name_copy = try allocator.alloc(u8, dev_info.name.len);
                 @memcpy(name_copy, dev_info.name);
                 this.device_info.name = name_copy;
+                chosen = true;
             }
-        } else {}
+        }
+
+        if (!chosen) {
+            dev_info.swapchain_support.destroy(allocator);
+        }
     }
 
     if (device_index < 0) {
@@ -390,10 +403,8 @@ fn isDeviceSuitable(this: *@This(), dev_info: DeviceInfo, allocator: Allocator) 
 
     if (!try this.checkDeviceExtensionSupport(dev_info.physical_device, allocator)) return false;
 
-    const swapchain_support = try this.querySwapchainSupport(dev_info.physical_device, allocator);
-    defer swapchain_support.free(allocator);
-    if (swapchain_support.formats.len == 0 or
-        swapchain_support.present_modes.len == 0) return false;
+    if (dev_info.swapchain_support.formats.len == 0 or
+        dev_info.swapchain_support.present_modes.len == 0) return false;
 
     const supported_features = this.vki.getPhysicalDeviceFeatures(dev_info.physical_device);
     if (supported_features.sampler_anisotropy == 0) return false;

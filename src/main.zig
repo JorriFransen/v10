@@ -21,12 +21,14 @@ fn run() !void {
     try gfx.System.init();
 
     var device = try gfx.Device.create(&gfx.system, &window);
-    defer device.destroy();
+    defer device.destroy(alloc.gpa);
 
     var swapchain = try gfx.Swapchain.create(&device, window.getExtent(), alloc.gpa);
     defer swapchain.destroy();
 
     const layout = try createPipelineLayout(&device);
+    defer device.device.destroyPipelineLayout(layout, null);
+
     const pipeline = try createPipeline(&device, &swapchain, layout);
     defer pipeline.destroy();
 

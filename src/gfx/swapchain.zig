@@ -47,8 +47,35 @@ pub fn create(device: *Device, extent: vk.Extent2D, allocator: Allocator) !@This
 }
 
 pub fn destroy(this: *@This()) void {
-    _ = this;
-    std.debug.assert(false);
+    const vkd = this.device.device;
+    const a = this.allocator;
+
+    for (this.image_available_semaphores) |ias| vkd.destroySemaphore(ias, null);
+    for (this.render_finished_semaphores) |rfs| vkd.destroySemaphore(rfs, null);
+    for (this.in_flight_fences) |iff| vkd.destroyFence(iff, null);
+    a.free(this.image_available_semaphores);
+    a.free(this.render_finished_semaphores);
+    a.free(this.in_flight_fences);
+    a.free(this.images_in_flight);
+
+    for (this.framebuffers) |fb| vkd.destroyFramebuffer(fb, null);
+    a.free(this.framebuffers);
+
+    for (this.depth_image_views) |div| vkd.destroyImageView(div, null);
+    for (this.depth_image_memories) |dim| vkd.freeMemory(dim, null);
+    for (this.depth_images) |di| vkd.destroyImage(di, null);
+    a.free(this.depth_image_views);
+    a.free(this.depth_image_memories);
+    a.free(this.depth_images);
+
+    vkd.destroyRenderPass(this.render_pass, null);
+
+    for (this.image_views) |iv| vkd.destroyImageView(iv, null);
+    a.free(this.image_views);
+
+    a.free(this.images);
+
+    vkd.destroySwapchainKHR(this.swapchain, null);
 }
 
 fn createSwapchain(this: *@This()) !void {
@@ -264,12 +291,25 @@ fn createFramebuffers(this: *@This()) !void {
 }
 
 fn createSyncObjects(this: *@This()) !void {
+    const vkd = this.device.device;
     this.image_available_semaphores = try this.allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
     this.render_finished_semaphores = try this.allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
     this.in_flight_fences = try this.allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
 
     this.images_in_flight = try this.allocator.alloc(vk.Fence, this.images.len);
     @memset(this.images_in_flight, .null_handle);
+
+    const semaphore_info = vk.SemaphoreCreateInfo{};
+
+    const fence_info = vk.FenceCreateInfo{
+        .flags = .{ .signaled_bit = true },
+    };
+
+    for (this.image_available_semaphores, this.render_finished_semaphores, this.in_flight_fences) |*ias, *rfs, *iff| {
+        ias.* = try vkd.createSemaphore(&semaphore_info, null);
+        rfs.* = try vkd.createSemaphore(&semaphore_info, null);
+        iff.* = try vkd.createFence(&fence_info, null);
+    }
 }
 
 fn chooseSwapSurfaceFormat(this: *@This(), formats: []vk.SurfaceFormatKHR) vk.SurfaceFormatKHR {
