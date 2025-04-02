@@ -28,6 +28,7 @@ image_available_semaphores: []vk.Semaphore = &.{},
 render_finished_semaphores: []vk.Semaphore = &.{},
 in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
+current_frame: usize = 0,
 
 pub fn create(device: *Device, extent: vk.Extent2D, allocator: Allocator) !@This() {
     var this = @This(){
@@ -76,6 +77,19 @@ pub fn destroy(this: *@This()) void {
     a.free(this.images);
 
     vkd.destroySwapchainKHR(this.swapchain, null);
+}
+
+pub fn acquireNextImage(this: *@This(), image_index: *u32) !vk.Result {
+    const vkd = this.device.device;
+
+    if (try vkd.waitForFences(1, &this.in_flight_fences[this.current_frame], vk.TRUE, std.math.maxInt(u64)) != .success) {
+        return error.vkWaitForFencesFailed;
+    }
+
+    const result = try vkd.acquireNextImageKHR(this.swapchain, std.math.maxInt(u64), this.image_available_semaphores[this.current_frame], .null_handle);
+
+    image_index.* = result.image_index;
+    return result.result;
 }
 
 fn createSwapchain(this: *@This()) !void {
