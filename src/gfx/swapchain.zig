@@ -419,7 +419,8 @@ fn findDepthFormat(this: *@This()) !vk.Format {
     );
 }
 
-pub fn createCommandBuffers(this: *@This(), pipeline: *Pipeline) ![]vk.CommandBuffer {
+// TODO: Seperate create/allocate and recording. Create/allocate should happen here, recording should happen on the user side.
+pub fn createCommandBuffers(this: *@This()) ![]vk.CommandBuffer {
     const vkd = this.device.device;
     const handles = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, this.images.len);
 
@@ -431,32 +432,32 @@ pub fn createCommandBuffers(this: *@This(), pipeline: *Pipeline) ![]vk.CommandBu
 
     try vkd.allocateCommandBuffers(&alloc_info, handles.ptr);
 
-    for (handles, 0..) |handle, i| {
-        var cb = vk.CommandBufferProxy.init(handle, this.device.device.wrapper);
-
-        const begin_info = vk.CommandBufferBeginInfo{};
-        try cb.beginCommandBuffer(&begin_info);
-
-        const clear_values = [_]vk.ClearValue{
-            .{ .color = .{ .float_32 = .{ 0.1, 0.1, 0.1, 1 } } },
-            .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
-        };
-
-        const render_pass_info = vk.RenderPassBeginInfo{
-            .render_pass = this.render_pass,
-            .framebuffer = this.framebuffers[i],
-            .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = this.swapchain_extent },
-            .clear_value_count = clear_values.len,
-            .p_clear_values = @ptrCast(&clear_values),
-        };
-
-        cb.beginRenderPass(&render_pass_info, .@"inline");
-        cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
-        cb.draw(3, 1, 0, 0);
-
-        cb.endRenderPass();
-        try cb.endCommandBuffer();
-    }
+    // for (handles, 0..) |handle, i| {
+    //     var cb = vk.CommandBufferProxy.init(handle, this.device.device.wrapper);
+    //
+    //     const begin_info = vk.CommandBufferBeginInfo{};
+    //     try cb.beginCommandBuffer(&begin_info);
+    //
+    //     const clear_values = [_]vk.ClearValue{
+    //         .{ .color = .{ .float_32 = .{ 0.1, 0.1, 0.1, 1 } } },
+    //         .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
+    //     };
+    //
+    //     const render_pass_info = vk.RenderPassBeginInfo{
+    //         .render_pass = this.render_pass,
+    //         .framebuffer = this.framebuffers[i],
+    //         .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = this.swapchain_extent },
+    //         .clear_value_count = clear_values.len,
+    //         .p_clear_values = @ptrCast(&clear_values),
+    //     };
+    //
+    //     cb.beginRenderPass(&render_pass_info, .@"inline");
+    //     cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
+    //     cb.draw(3, 1, 0, 0);
+    //
+    //     cb.endRenderPass();
+    //     try cb.endCommandBuffer();
+    // }
 
     return handles;
 }

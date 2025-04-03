@@ -574,7 +574,7 @@ pub fn createImageWithInfo(this: *@This(), image_info: *const vk.ImageCreateInfo
 
     const alloc_info = vk.MemoryAllocateInfo{
         .allocation_size = mem_req.size,
-        .memory_type_index = try this.findMemoryType(mem_req.memory_type_bits, properties),
+        .memory_type_index = this.findMemoryType(mem_req.memory_type_bits, properties),
     };
 
     memory.* = try this.device.allocateMemory(&alloc_info, null);
@@ -583,7 +583,7 @@ pub fn createImageWithInfo(this: *@This(), image_info: *const vk.ImageCreateInfo
     return result;
 }
 
-pub fn findMemoryType(this: *@This(), type_filter: u32, properties: vk.MemoryPropertyFlags) !u32 {
+pub fn findMemoryType(this: *@This(), type_filter: u32, properties: vk.MemoryPropertyFlags) u32 {
     const props = this.vki.getPhysicalDeviceMemoryProperties(this.device_info.physical_device);
     for (0..props.memory_type_count) |i| {
         if ((type_filter & (@as(@TypeOf(i), 1) << @intCast(i)) != 0) and props.memory_types[i].property_flags.contains(properties)) {
@@ -591,5 +591,26 @@ pub fn findMemoryType(this: *@This(), type_filter: u32, properties: vk.MemoryPro
         }
     }
 
-    return error.NoSuitableMemoryTypeFound;
+    @panic("No suitable memory type found");
+}
+
+pub fn createBuffer(this: *@This(), size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags, memory: *vk.DeviceMemory) !vk.Buffer {
+    const buffer_info = vk.BufferCreateInfo{
+        .size = size,
+        .usage = usage,
+        .sharing_mode = .exclusive,
+    };
+
+    const buffer = try this.device.createBuffer(&buffer_info, null);
+    const mem_req = this.device.getBufferMemoryRequirements(buffer);
+
+    const alloc_info = vk.MemoryAllocateInfo{
+        .allocation_size = mem_req.size,
+        .memory_type_index = this.findMemoryType(mem_req.memory_type_bits, properties),
+    };
+
+    memory.* = try this.device.allocateMemory(&alloc_info, null);
+    try this.device.bindBufferMemory(buffer, memory.*, 0);
+
+    return buffer;
 }

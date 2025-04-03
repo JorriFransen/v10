@@ -1,12 +1,13 @@
 const std = @import("std");
-const vklog = std.log.scoped(.vulkan);
-
 const gfx = @import("gfx.zig");
 const vk = @import("vulkan");
-
 const alloc = @import("../alloc.zig");
+const vklog = std.log.scoped(.vulkan);
 
-device: *gfx.Device,
+const Device = gfx.Device;
+const Model = gfx.Model;
+
+device: *Device,
 config: ConfigInfo,
 graphics_pipeline: vk.Pipeline,
 vert_shader_module: vk.ShaderModule,
@@ -111,7 +112,7 @@ pub const ConfigInfo = struct {
     }
 };
 
-pub fn create(device: *gfx.Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !@This() {
+pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !@This() {
     std.debug.assert(config.pipeline_layout != .null_handle);
     std.debug.assert(config.render_pass != .null_handle);
 
@@ -167,11 +168,14 @@ pub fn create(device: *gfx.Device, vert_path: []const u8, frag_path: []const u8,
         },
     };
 
+    const binding_descriptions = Model.Vertex.binding_description;
+    const attribute_descriptions = Model.Vertex.attribute_descriptions;
+
     const vertex_input_info = vk.PipelineVertexInputStateCreateInfo{
-        .vertex_attribute_description_count = 0,
-        .vertex_binding_description_count = 0,
-        .p_vertex_attribute_descriptions = null,
-        .p_vertex_binding_descriptions = null,
+        .vertex_binding_description_count = 1,
+        .p_vertex_binding_descriptions = @ptrCast(&binding_descriptions),
+        .vertex_attribute_description_count = attribute_descriptions.len,
+        .p_vertex_attribute_descriptions = @ptrCast(&attribute_descriptions),
     };
 
     const viewport_info = vk.PipelineViewportStateCreateInfo{

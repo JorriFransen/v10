@@ -7,6 +7,7 @@ const vklog = std.log.scoped(.vulkan);
 
 const Allocator = std.mem.Allocator;
 const Window = @import("window.zig");
+const Vertex = gfx.Model.Vertex;
 
 pub fn main() !void {
     try run();
@@ -34,7 +35,15 @@ fn run() !void {
     var pipeline = try createPipeline(&device, &swapchain, layout);
     defer pipeline.destroy();
 
-    const command_buffers = try swapchain.createCommandBuffers(&pipeline);
+    const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
+    var sierpinski = try Sierpinski.init(initial_triangle, 1);
+
+    const vertices = try sierpinski.vertices(alloc.gpa);
+    var model = try gfx.Model.create(&device, vertices);
+    defer model.destroy();
+
+    const command_buffers = try swapchain.createCommandBuffers();
+    try recordCommandBuffers(&swapchain, &pipeline, command_buffers, model);
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -47,6 +56,51 @@ fn run() !void {
 
     try device.device.deviceWaitIdle();
 }
+
+const Triangle = struct {
+    pos: gfx.Vec2,
+    size: f32,
+
+    pub fn vertices(this: @This()) [3]Vertex {
+        const half = this.size / 2;
+        return .{
+            .{ .position = .{ .x = 0, .y = -half } },
+            .{ .position = .{ .x = half, .y = half } },
+            .{ .position = .{ .x = -half, .y = half } },
+        };
+    }
+};
+
+const Sierpinski = struct {
+    triangles: std.ArrayList(Triangle),
+
+    pub fn init(initial_triangle: Triangle, iterations: usize) !@This() {
+        var result = @This(){
+            .triangles = try std.ArrayList(Triangle).initCapacity(alloc.gpa, std.math.pow(usize, 3, iterations)),
+        };
+
+        try result.triangles.append(initial_triangle);
+        std.debug.assert(result.triangles.items.len == 1);
+
+        return result;
+    }
+
+    pub fn vertices(this: *@This(), allocator: Allocator) ![]Vertex {
+        const result = try allocator.alloc(Vertex, this.triangles.items.len * 3);
+
+        var vi: usize = 0;
+        for (this.triangles.items) |triangle| {
+            const tvertices = triangle.vertices();
+            result[vi + 0] = tvertices[0];
+            result[vi + 1] = tvertices[1];
+            result[vi + 2] = tvertices[2];
+
+            vi += 3;
+        }
+
+        return result;
+    }
+};
 
 fn createPipelineLayout(device: *const gfx.Device) !vk.PipelineLayout {
     const pipeline_layout_info = vk.PipelineLayoutCreateInfo{
@@ -79,5 +133,35 @@ fn drawFrame(swapchain: *gfx.Swapchain, command_buffers: []vk.CommandBuffer) !vo
     if (result != .success and result != .suboptimal_khr) {
         vklog.err("result: {}", .{result});
         return error.submitCommandBuffersFailed;
+    }
+}
+
+fn recordCommandBuffers(swapchain: *gfx.Swapchain, pipeline: *gfx.Pipeline, buffers: []vk.CommandBuffer, model: gfx.Model) !void {
+    for (buffers, 0..) |handle, i| {
+        var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
+        const begin_info = vk.CommandBufferBeginInfo{};
+        try cb.beginCommandBuffer(&begin_info);
+
+        const clear_values = [_]vk.ClearValue{
+            .{ .color = .{ .float_32 = .{ 0.1, 0.1, 0.1, 1 } } },
+            .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
+        };
+
+        const render_pass_info = vk.RenderPassBeginInfo{
+            .render_pass = swapchain.render_pass,
+            .framebuffer = swapchain.framebuffers[i],
+            .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = swapchain.swapchain_extent },
+            .clear_value_count = clear_values.len,
+            .p_clear_values = @ptrCast(&clear_values),
+        };
+
+        cb.beginRenderPass(&render_pass_info, .@"inline");
+        cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
+
+        model.bind(handle);
+        model.draw(handle);
+
+        cb.endRenderPass();
+        try cb.endCommandBuffer();
     }
 }

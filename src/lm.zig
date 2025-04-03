@@ -61,35 +61,35 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
             return @bitCast(this);
         }
         pub inline fn add(a: Base, b: Base) Base {
-            return vector(a.vector() + b.vector());
+            return vector(a.toVector() + b.toVector());
         }
         pub inline fn sub(a: Base, b: Base) Base {
-            return vector(a.vector() - b.vector());
+            return vector(a.toVector() - b.toVector());
         }
         pub inline fn mul(a: Base, b: Base) Base {
-            return vector(a.vector() * b.vector());
+            return vector(a.toVector() * b.toVector());
         }
         pub inline fn div(a: Base, b: Base) Base {
-            return vector(a.vector() / b.vector());
+            return vector(a.toVector() / b.toVector());
         }
         pub inline fn div_scalar(v: Base, s: T) Base {
-            return vector(v.vector() / @as(V, @splat(s)));
+            return vector(v.toVector() / @as(V, @splat(s)));
         }
         pub inline fn length(v: Base) T {
-            const p = v.vector() * v.vector();
+            const p = v.toVector() * v.toVector();
             return std.math.sqrt(@reduce(.Add, p));
         }
         pub inline fn normalized(v: Base) Base {
             return v.div_scalar(v.length());
         }
         pub inline fn dot(a: Base, b: Base) T {
-            return @reduce(.Add, a.mul(b).vector());
+            return @reduce(.Add, a.mul(b).toVector());
         }
         pub inline fn cross(a: Base, b: Base) Base {
             comptime if (N == 2) @compileError("Cannot apply cross product to Vector2");
 
-            const av = a.vector();
-            const bv = b.vector();
+            const av = a.toVector();
+            const bv = b.toVector();
 
             const M = @Vector(N, i32);
             const m1 = if (N == 3) M{ 1, 2, 0 } else M{ 1, 2, 0, 3 };

@@ -2,7 +2,7 @@ const std = @import("std");
 const heap = std.heap;
 
 var gpa_data = heap.GeneralPurposeAllocator(.{}).init;
-const gpa = gpa_data.allocator();
+pub const gpa = gpa_data.allocator();
 
 pub var gfx_arena_data = heap.ArenaAllocator.init(heap.page_allocator);
 
