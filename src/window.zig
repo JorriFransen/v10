@@ -8,8 +8,6 @@ name: []const u8,
 window: glfw.Window,
 
 pub fn create(w: i32, h: i32, name: [:0]const u8) !@This() {
-    if (builtin.os.tag == .linux) glfw.initHint(glfw.PLATFORM, @intFromEnum(glfw.Platform.X11));
-
     if (glfw.init() != glfw.TRUE) return error.glfwInitFailed;
 
     glfw.windowHint(glfw.CLIENT_API, glfw.NO_API);

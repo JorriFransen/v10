@@ -117,22 +117,22 @@ pub fn create(device: *gfx.Device, vert_path: []const u8, frag_path: []const u8,
 
     const vkd = device.device;
 
+    const allocator = alloc.temp_arena_data.allocator();
+
     var vert_code: [:0]align(4) const u8 = undefined;
     {
         const file = try std.fs.cwd().openFile(vert_path, .{});
         defer file.close();
-        vert_code = try file.readToEndAllocOptions(alloc.gpa, try file.getEndPos(), null, 4, 0);
+        vert_code = try file.readToEndAllocOptions(allocator, try file.getEndPos(), null, 4, 0);
     }
-    defer alloc.gpa.free(vert_code);
     vklog.debug("vert_code.len: {}", .{vert_code.len});
 
     var frag_code: [:0]align(4) const u8 = undefined;
     {
         const file = try std.fs.cwd().openFile(frag_path, .{});
         defer file.close();
-        frag_code = try file.readToEndAllocOptions(alloc.gpa, try file.getEndPos() + 8, null, 4, 0);
+        frag_code = try file.readToEndAllocOptions(allocator, try file.getEndPos() + 8, null, 4, 0);
     }
-    defer alloc.gpa.free(frag_code);
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
     var this = @This(){
@@ -145,6 +145,8 @@ pub fn create(device: *gfx.Device, vert_path: []const u8, frag_path: []const u8,
 
     this.vert_shader_module = try this.createShaderModule(vert_code);
     this.frag_shader_module = try this.createShaderModule(frag_code);
+
+    _ = alloc.temp_arena_data.reset(.retain_capacity);
 
     const shader_stage_infos = [2]vk.PipelineShaderStageCreateInfo{
         .{

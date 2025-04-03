@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const alloc = @import("../alloc.zig");
 const vklog = std.log.scoped(.vulkan);
 
 const Allocator = std.mem.Allocator;
@@ -7,7 +8,7 @@ const Device = @import("device.zig");
 
 const MAX_FRAMES_IN_FLIGHT = 2;
 
-allocator: Allocator,
+// allocator: Allocator,
 device: *Device,
 window_extent: vk.Extent2D,
 
@@ -30,51 +31,40 @@ in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
 current_frame: usize = 0,
 
-pub fn create(device: *Device, extent: vk.Extent2D, allocator: Allocator) !@This() {
+pub fn create(device: *Device, extent: vk.Extent2D) !@This() {
     var this = @This(){
-        .allocator = allocator,
         .device = device,
         .window_extent = extent,
     };
 
-    try this.createSwapchain();
-    try this.createImageViews();
+    const allocator = alloc.gfx_arena_data.allocator();
+
+    try this.createSwapchain(allocator);
+    try this.createImageViews(allocator);
     try this.createRenderPass();
-    try this.createDepthResources();
-    try this.createFramebuffers();
-    try this.createSyncObjects();
+    try this.createDepthResources(allocator);
+    try this.createFramebuffers(allocator);
+    try this.createSyncObjects(allocator);
 
     return this;
 }
 
 pub fn destroy(this: *@This()) void {
     const vkd = this.device.device;
-    const a = this.allocator;
 
     for (this.image_available_semaphores) |ias| vkd.destroySemaphore(ias, null);
     for (this.render_finished_semaphores) |rfs| vkd.destroySemaphore(rfs, null);
     for (this.in_flight_fences) |iff| vkd.destroyFence(iff, null);
-    a.free(this.image_available_semaphores);
-    a.free(this.render_finished_semaphores);
-    a.free(this.in_flight_fences);
-    a.free(this.images_in_flight);
 
     for (this.framebuffers) |fb| vkd.destroyFramebuffer(fb, null);
-    a.free(this.framebuffers);
 
     for (this.depth_image_views) |div| vkd.destroyImageView(div, null);
     for (this.depth_image_memories) |dim| vkd.freeMemory(dim, null);
     for (this.depth_images) |di| vkd.destroyImage(di, null);
-    a.free(this.depth_image_views);
-    a.free(this.depth_image_memories);
-    a.free(this.depth_images);
 
     vkd.destroyRenderPass(this.render_pass, null);
 
     for (this.image_views) |iv| vkd.destroyImageView(iv, null);
-    a.free(this.image_views);
-
-    a.free(this.images);
 
     vkd.destroySwapchainKHR(this.swapchain, null);
 }
@@ -137,7 +127,7 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
     return result;
 }
 
-fn createSwapchain(this: *@This()) !void {
+fn createSwapchain(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
     const swapchain_support = this.device.device_info.swapchain_support;
@@ -182,7 +172,7 @@ fn createSwapchain(this: *@This()) !void {
         return error.vkGetSwapchainImagesKHRFailed;
     }
     std.debug.assert(this.images.len == 0);
-    this.images = try this.allocator.alloc(vk.Image, image_count);
+    this.images = try allocator.alloc(vk.Image, image_count);
     if (try vkd.getSwapchainImagesKHR(this.swapchain, &image_count, this.images.ptr) != .success) {
         return error.vkGetSwapchainImagesKHRFailed;
     }
@@ -191,12 +181,12 @@ fn createSwapchain(this: *@This()) !void {
     this.swapchain_extent = extent;
 }
 
-fn createImageViews(this: *@This()) !void {
+fn createImageViews(this: *@This(), allocator: Allocator) !void {
     std.debug.assert(this.images.len > 0);
 
     const vkd = this.device.device;
 
-    this.image_views = try this.allocator.alloc(vk.ImageView, this.images.len);
+    this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
 
     for (this.images, this.image_views) |image, *view| {
         const view_info = vk.ImageViewCreateInfo{
@@ -284,12 +274,12 @@ fn createRenderPass(this: *@This()) !void {
     this.render_pass = try vkd.createRenderPass(&render_pass_info, null);
 }
 
-fn createDepthResources(this: *@This()) !void {
+fn createDepthResources(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
-    this.depth_images = try this.allocator.alloc(vk.Image, this.images.len);
-    this.depth_image_memories = try this.allocator.alloc(vk.DeviceMemory, this.images.len);
-    this.depth_image_views = try this.allocator.alloc(vk.ImageView, this.images.len);
+    this.depth_images = try allocator.alloc(vk.Image, this.images.len);
+    this.depth_image_memories = try allocator.alloc(vk.DeviceMemory, this.images.len);
+    this.depth_image_views = try allocator.alloc(vk.ImageView, this.images.len);
 
     for (
         this.depth_images,
@@ -328,10 +318,10 @@ fn createDepthResources(this: *@This()) !void {
     }
 }
 
-fn createFramebuffers(this: *@This()) !void {
+fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
-    this.framebuffers = try this.allocator.alloc(vk.Framebuffer, this.images.len);
+    this.framebuffers = try allocator.alloc(vk.Framebuffer, this.images.len);
 
     for (this.framebuffers, 0..) |*fb, i| {
         const attachments = .{ this.image_views[i], this.depth_image_views[i] };
@@ -349,13 +339,13 @@ fn createFramebuffers(this: *@This()) !void {
     }
 }
 
-fn createSyncObjects(this: *@This()) !void {
+fn createSyncObjects(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
-    this.image_available_semaphores = try this.allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
-    this.render_finished_semaphores = try this.allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
-    this.in_flight_fences = try this.allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
+    this.image_available_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+    this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+    this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
 
-    this.images_in_flight = try this.allocator.alloc(vk.Fence, this.images.len);
+    this.images_in_flight = try allocator.alloc(vk.Fence, this.images.len);
     @memset(this.images_in_flight, .null_handle);
 
     const semaphore_info = vk.SemaphoreCreateInfo{};

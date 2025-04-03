@@ -10,7 +10,7 @@ const Window = @import("window.zig");
 
 pub fn main() !void {
     try run();
-    try alloc.reportLeaks();
+    try alloc.deinit();
 }
 
 fn run() !void {
@@ -23,9 +23,9 @@ fn run() !void {
     try gfx.System.init();
 
     var device = try gfx.Device.create(&gfx.system, &window);
-    defer device.destroy(alloc.gpa);
+    defer device.destroy();
 
-    var swapchain = try gfx.Swapchain.create(&device, window.getExtent(), alloc.gpa);
+    var swapchain = try gfx.Swapchain.create(&device, window.getExtent());
     defer swapchain.destroy();
 
     const layout = try createPipelineLayout(&device);
@@ -34,11 +34,9 @@ fn run() !void {
     var pipeline = try createPipeline(&device, &swapchain, layout);
     defer pipeline.destroy();
 
-    const command_buffers = try createCommandBuffers(&swapchain, &pipeline, alloc.gpa);
-    defer {
-        device.device.freeCommandBuffers(device.command_pool, @intCast(command_buffers.len), @ptrCast(command_buffers.ptr));
-        alloc.gpa.free(command_buffers);
-    }
+    const ga = alloc.gfx_arena_data.allocator();
+
+    const command_buffers = try createCommandBuffers(&swapchain, &pipeline, ga);
 
     while (!window.shouldClose()) {
         glfw.pollEvents();

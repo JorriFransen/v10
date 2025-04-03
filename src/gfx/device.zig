@@ -43,7 +43,19 @@ pub const DeviceInfo = struct {
     queue_family_indices: QueueFamilyIndices,
     swapchain_support: SwapchainSupportDetails,
 
+    pub fn copy(this: *const @This(), allocator: Allocator) !@This() {
+        var result: @This() = undefined;
+        result.name = try allocator.alloc(u8, this.name.len);
+        @memcpy(@constCast(result.name), this.name);
+        result.physical_device = this.physical_device;
+        result.properties = this.properties;
+        result.queue_family_indices = this.queue_family_indices;
+        result.swapchain_support = try this.swapchain_support.copy(allocator);
+        return result;
+    }
+
     pub fn destroy(this: *@This(), allocator: Allocator) void {
+        allocator.destroy(this);
         allocator.free(this.name);
         this.swapchain_support.destroy(allocator);
     }
@@ -95,6 +107,16 @@ pub const SwapchainSupportDetails = struct {
     formats: []vk.SurfaceFormatKHR,
     present_modes: []vk.PresentModeKHR,
 
+    pub fn copy(this: *const @This(), allocator: Allocator) !@This() {
+        var result: @This() = undefined;
+        result.capabilities = this.capabilities;
+        result.formats = try allocator.alloc(vk.SurfaceFormatKHR, this.formats.len);
+        @memcpy(result.formats, this.formats);
+        result.present_modes = try allocator.alloc(vk.PresentModeKHR, this.present_modes.len);
+        @memcpy(result.present_modes, this.present_modes);
+        return result;
+    }
+
     pub fn destroy(this: @This(), allocator: Allocator) void {
         if (this.formats.len > 0) allocator.free(this.formats);
         if (this.present_modes.len > 0) allocator.free(this.present_modes);
@@ -110,14 +132,14 @@ pub fn create(system: *gfx.System, window: *const Window) !@This() {
     try this.createInstance();
     try this.setupDebugMessenger();
     try this.createSurface();
-    try this.pickPhysicalDevice(alloc.gpa);
-    try this.createLogicalDevice(alloc.gpa);
+    try this.pickPhysicalDevice();
+    try this.createLogicalDevice();
     try this.createCommandPool();
 
     return this;
 }
 
-pub fn destroy(this: *@This(), allocator: Allocator) void {
+pub fn destroy(this: *@This()) void {
     const device = this.device;
     const vki = this.vki;
 
@@ -130,14 +152,15 @@ pub fn destroy(this: *@This(), allocator: Allocator) void {
 
     vki.destroySurfaceKHR(this.surface, null);
     vki.destroyInstance(null);
-
-    this.device_info.destroy(allocator);
 }
 
 fn createInstance(this: *@This()) !void {
     const vkb = this.system.vkb;
 
-    if (enable_validation_layers and !try this.checkValidationLayerSupport()) {
+    const ta = alloc.temp_arena_data.allocator();
+    defer _ = alloc.temp_arena_data.reset(.retain_capacity);
+
+    if (enable_validation_layers and !try this.checkValidationLayerSupport(ta)) {
         return error.vulkanValidationLayersUnavailable;
     }
 
@@ -149,15 +172,14 @@ fn createInstance(this: *@This()) !void {
         .api_version = @bitCast(vk.features.version_1_0.version),
     };
 
-    const extensions = try this.getRequiredExtensions(alloc.gpa);
-    defer alloc.gpa.free(extensions);
+    const extensions = try this.getRequiredExtensions(ta);
 
     vklog.debug("required_extensions: {}", .{extensions.len});
     for (extensions, 0..) |r_ext, i| {
         vklog.debug("required_extensions[{}]: {s}", .{ i, r_ext });
     }
 
-    if (!try this.hasGlfwRequiredInstanceExtensions(extensions, alloc.gpa)) {
+    if (!try this.hasGlfwRequiredInstanceExtensions(extensions, ta)) {
         return error.requirdExtensionUnavailable;
     }
 
@@ -191,7 +213,7 @@ fn createSurface(this: *@This()) !void {
     vklog.debug("Surface created", .{});
 }
 
-fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
+fn pickPhysicalDevice(this: *@This()) !void {
     var device_count: u32 = undefined;
     if (try this.vki.enumeratePhysicalDevices(&device_count, null) != .success) {
         return error.vkEnumeratePhysicalDevicesFailed;
@@ -203,8 +225,12 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
 
     vklog.debug("{} physical devices found", .{device_count});
 
-    const devices = try allocator.alloc(vk.PhysicalDevice, device_count);
-    defer allocator.free(devices);
+    const ta = alloc.temp_arena_data.allocator();
+    defer _ = alloc.temp_arena_data.reset(.retain_capacity);
+
+    const ga = alloc.gfx_arena_data.allocator();
+
+    const devices = try ta.alloc(vk.PhysicalDevice, device_count);
 
     if (try this.vki.enumeratePhysicalDevices(&device_count, devices.ptr) != .success) {
         return error.vkEnumeratePhysicalDevicesFailed;
@@ -217,29 +243,21 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
 
         vklog.debug("devices[{}]: '{s}'", .{ i, name });
 
-        var dev_info = DeviceInfo{
+        const dev_info = DeviceInfo{
             .name = name,
             .physical_device = pdev,
             .properties = properties,
-            .queue_family_indices = try this.findQueueFamilies(pdev, allocator),
-            .swapchain_support = try this.querySwapchainSupport(pdev, allocator),
+            .queue_family_indices = try this.findQueueFamilies(pdev, ta),
+            .swapchain_support = try this.querySwapchainSupport(pdev, ta),
         };
 
         var chosen = false;
-        if (try this.isDeviceSuitable(dev_info, allocator)) {
+        if (try this.isDeviceSuitable(dev_info, ta)) {
             if (device_index < 0) {
                 device_index = @intCast(i);
-                this.device_info = dev_info;
-
-                const name_copy = try allocator.alloc(u8, dev_info.name.len);
-                @memcpy(name_copy, dev_info.name);
-                this.device_info.name = name_copy;
+                this.device_info = try dev_info.copy(ga);
                 chosen = true;
             }
-        }
-
-        if (!chosen) {
-            dev_info.swapchain_support.destroy(allocator);
         }
     }
 
@@ -250,14 +268,14 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
     vklog.info("Using physical device {} ('{s}')", .{ device_index, this.device_info.name });
 }
 
-fn createLogicalDevice(this: *@This(), allocator: Allocator) !void {
+fn createLogicalDevice(this: *@This()) !void {
     const indices = &this.device_info.queue_family_indices;
 
-    const unique_families = try indices.uniqueFamilies(allocator);
-    defer allocator.free(unique_families);
+    const ta = alloc.temp_arena_data.allocator();
+    defer _ = alloc.temp_arena_data.reset(.retain_capacity);
 
-    const queue_create_infos = try allocator.alloc(vk.DeviceQueueCreateInfo, unique_families.len);
-    defer allocator.free(queue_create_infos);
+    const unique_families = try indices.uniqueFamilies(ta);
+    const queue_create_infos = try ta.alloc(vk.DeviceQueueCreateInfo, unique_families.len);
 
     const prio = &[_]f32{1};
     for (unique_families, queue_create_infos) |family_index, *qci| {
@@ -302,7 +320,7 @@ fn createCommandPool(this: *@This()) !void {
     this.command_pool = try this.device.createCommandPool(&pool_create_info, null);
 }
 
-fn checkValidationLayerSupport(this: *@This()) !bool {
+fn checkValidationLayerSupport(this: *@This(), allocator: Allocator) !bool {
     const vkb = this.system.vkb;
 
     var layer_count: u32 = undefined;
@@ -310,8 +328,8 @@ fn checkValidationLayerSupport(this: *@This()) !bool {
         return error.vkEnumerateInstanceLayerPropertiesFailed;
     }
 
-    const available_layers = try alloc.gpa.alloc(vk.LayerProperties, layer_count);
-    defer alloc.gpa.free(available_layers);
+    const available_layers = try allocator.alloc(vk.LayerProperties, layer_count);
+    defer allocator.free(available_layers);
 
     if (try vkb.enumerateInstanceLayerProperties(&layer_count, available_layers.ptr) != .success) {
         return error.vkEnumerateInstanceLayerPropertiesFailed;
@@ -421,6 +439,7 @@ fn findQueueFamilies(this: *@This(), device: vk.PhysicalDevice, allocator: Alloc
 
     const family_properties = try allocator.alloc(vk.QueueFamilyProperties, family_count);
     defer allocator.free(family_properties);
+
     this.vki.getPhysicalDeviceQueueFamilyProperties(device, &family_count, family_properties.ptr);
 
     for (family_properties, 0..) |fprops, i| {
@@ -485,7 +504,6 @@ pub fn querySwapchainSupport(this: *@This(), device: vk.PhysicalDevice, allocato
 
     if (format_count != 0) {
         formats = try allocator.alloc(vk.SurfaceFormatKHR, format_count);
-        errdefer allocator.free(formats);
 
         if (try this.vki.getPhysicalDeviceSurfaceFormatsKHR(device, this.surface, &format_count, formats.ptr) != .success) {
             return error.vkGetPhysicalDeviceSurfaceFormatsKHRFailed;
@@ -501,7 +519,6 @@ pub fn querySwapchainSupport(this: *@This(), device: vk.PhysicalDevice, allocato
 
     if (present_mode_count != 0) {
         present_modes = try allocator.alloc(vk.PresentModeKHR, present_mode_count);
-        errdefer allocator.free(present_modes);
 
         if (try this.vki.getPhysicalDeviceSurfacePresentModesKHR(device, this.surface, &present_mode_count, present_modes.ptr) != .success) {
             return error.vkGetPhysicalDeviceSurfacePresentModesKHRFailed;
