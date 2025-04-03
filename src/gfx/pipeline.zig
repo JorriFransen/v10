@@ -204,7 +204,7 @@ pub fn create(device: *gfx.Device, vert_path: []const u8, frag_path: []const u8,
     return this;
 }
 
-pub fn destroy(this: @This()) void {
+pub fn destroy(this: *@This()) void {
     const vkd = this.device.device;
 
     vkd.destroyShaderModule(this.vert_shader_module, null);

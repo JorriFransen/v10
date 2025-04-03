@@ -14,7 +14,7 @@ window_extent: vk.Extent2D,
 swapchain: vk.SwapchainKHR = undefined,
 image_format: vk.Format = undefined,
 depth_format: vk.Format = undefined,
-extent: vk.Extent2D = undefined,
+swapchain_extent: vk.Extent2D = undefined,
 
 images: []vk.Image = &.{},
 image_views: []vk.ImageView = &.{},
@@ -82,7 +82,7 @@ pub fn destroy(this: *@This()) void {
 pub fn acquireNextImage(this: *@This(), image_index: *u32) !vk.Result {
     const vkd = this.device.device;
 
-    if (try vkd.waitForFences(1, &this.in_flight_fences[this.current_frame], vk.TRUE, std.math.maxInt(u64)) != .success) {
+    if (try vkd.waitForFences(1, @ptrCast(&this.in_flight_fences[this.current_frame]), vk.TRUE, std.math.maxInt(u64)) != .success) {
         return error.vkWaitForFencesFailed;
     }
 
@@ -92,6 +92,51 @@ pub fn acquireNextImage(this: *@This(), image_index: *u32) !vk.Result {
     return result.result;
 }
 
+pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_index: *u32) !vk.Result {
+    const vkd = this.device.device;
+
+    if (this.images_in_flight[image_index.*] != .null_handle) {
+        if (try vkd.waitForFences(1, @ptrCast(&this.images_in_flight[image_index.*]), vk.TRUE, std.math.maxInt(u64)) != .success) {
+            return error.vkWaitForFencesFailed;
+        }
+    }
+
+    this.images_in_flight[image_index.*] = this.in_flight_fences[this.current_frame];
+
+    const wait_semaphore = this.image_available_semaphores[this.current_frame];
+    const wait_stage = vk.PipelineStageFlags{ .color_attachment_output_bit = true };
+    const signal_semaphore = this.render_finished_semaphores[this.current_frame];
+
+    const buffers = .{buffer};
+    const submit_info = vk.SubmitInfo{
+        .wait_semaphore_count = 1,
+        .p_wait_semaphores = @ptrCast(&wait_semaphore),
+        .p_wait_dst_stage_mask = @ptrCast(&wait_stage),
+        .command_buffer_count = @intCast(buffers.len),
+        .p_command_buffers = @ptrCast(&buffers),
+        .signal_semaphore_count = 1,
+        .p_signal_semaphores = @ptrCast(&signal_semaphore),
+    };
+
+    try vkd.resetFences(1, @ptrCast(&this.in_flight_fences[this.current_frame]));
+
+    try this.device.graphics_queue.submit(1, @ptrCast(&submit_info), this.in_flight_fences[this.current_frame]);
+
+    const present_info = vk.PresentInfoKHR{
+        .wait_semaphore_count = 1,
+        .p_wait_semaphores = @ptrCast(&signal_semaphore),
+        .swapchain_count = 1,
+        .p_swapchains = @ptrCast(&this.swapchain),
+        .p_image_indices = @ptrCast(image_index),
+    };
+
+    const result = this.device.present_queue.presentKHR(&present_info);
+
+    this.current_frame = (this.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+    return result;
+}
+
 fn createSwapchain(this: *@This()) !void {
     const vkd = this.device.device;
 
@@ -99,7 +144,7 @@ fn createSwapchain(this: *@This()) !void {
 
     const surface_format = this.chooseSwapSurfaceFormat(swapchain_support.formats);
     const present_mode = this.chooseSwapPresentMode(swapchain_support.present_modes);
-    vklog.debug("Using present mode: {s}", .{@tagName(present_mode)});
+    vklog.info("Using present mode: {s}", .{@tagName(present_mode)});
     const extent = this.chooseSwapExtent(swapchain_support.capabilities);
 
     var image_count = swapchain_support.capabilities.min_image_count + 1;
@@ -143,7 +188,7 @@ fn createSwapchain(this: *@This()) !void {
     }
 
     this.image_format = surface_format.format;
-    this.extent = extent;
+    this.swapchain_extent = extent;
 }
 
 fn createImageViews(this: *@This()) !void {
@@ -253,7 +298,7 @@ fn createDepthResources(this: *@This()) !void {
     ) |*depth_image, *image_memory, *image_view| {
         const image_info = vk.ImageCreateInfo{
             .image_type = .@"2d",
-            .extent = .{ .width = this.extent.width, .height = this.extent.height, .depth = 1 },
+            .extent = .{ .width = this.swapchain_extent.width, .height = this.swapchain_extent.height, .depth = 1 },
             .mip_levels = 1,
             .array_layers = 1,
             .format = this.depth_format,
@@ -295,8 +340,8 @@ fn createFramebuffers(this: *@This()) !void {
             .render_pass = this.render_pass,
             .attachment_count = attachments.len,
             .p_attachments = @ptrCast(&attachments),
-            .width = this.extent.width,
-            .height = this.extent.height,
+            .width = this.swapchain_extent.width,
+            .height = this.swapchain_extent.height,
             .layers = 1,
         };
 

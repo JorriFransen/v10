@@ -247,7 +247,7 @@ fn pickPhysicalDevice(this: *@This(), allocator: Allocator) !void {
         return error.NoSuitableGPUFound;
     }
 
-    vklog.debug("Using physical device {} ('{s}')", .{ device_index, this.device_info.name });
+    vklog.info("Using physical device {} ('{s}')", .{ device_index, this.device_info.name });
 }
 
 fn createLogicalDevice(this: *@This(), allocator: Allocator) !void {
