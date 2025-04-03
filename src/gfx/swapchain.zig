@@ -2,9 +2,11 @@ const std = @import("std");
 const vk = @import("vulkan");
 const alloc = @import("../alloc.zig");
 const vklog = std.log.scoped(.vulkan);
+const gfx = @import("gfx.zig");
 
 const Allocator = std.mem.Allocator;
-const Device = @import("device.zig");
+const Device = gfx.Device;
+const Pipeline = gfx.Pipeline;
 
 const MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -415,4 +417,46 @@ fn findDepthFormat(this: *@This()) !vk.Format {
         .optimal,
         .{ .depth_stencil_attachment_bit = true },
     );
+}
+
+pub fn createCommandBuffers(this: *@This(), pipeline: *Pipeline) ![]vk.CommandBuffer {
+    const vkd = this.device.device;
+    const handles = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, this.images.len);
+
+    const alloc_info = vk.CommandBufferAllocateInfo{
+        .level = .primary,
+        .command_pool = this.device.command_pool,
+        .command_buffer_count = @intCast(handles.len),
+    };
+
+    try vkd.allocateCommandBuffers(&alloc_info, handles.ptr);
+
+    for (handles, 0..) |handle, i| {
+        var cb = vk.CommandBufferProxy.init(handle, this.device.device.wrapper);
+
+        const begin_info = vk.CommandBufferBeginInfo{};
+        try cb.beginCommandBuffer(&begin_info);
+
+        const clear_values = [_]vk.ClearValue{
+            .{ .color = .{ .float_32 = .{ 0.1, 0.1, 0.1, 1 } } },
+            .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
+        };
+
+        const render_pass_info = vk.RenderPassBeginInfo{
+            .render_pass = this.render_pass,
+            .framebuffer = this.framebuffers[i],
+            .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = this.swapchain_extent },
+            .clear_value_count = clear_values.len,
+            .p_clear_values = @ptrCast(&clear_values),
+        };
+
+        cb.beginRenderPass(&render_pass_info, .@"inline");
+        cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
+        cb.draw(3, 1, 0, 0);
+
+        cb.endRenderPass();
+        try cb.endCommandBuffer();
+    }
+
+    return handles;
 }

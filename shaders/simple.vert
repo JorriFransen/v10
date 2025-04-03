@@ -1,11 +1,20 @@
 #version 450
 
-vec2 positions[3] = vec2[](
-    vec2(0.0, -0.5),
-    vec2(0.5, 0.5),
-    vec2(-0.5, 0.5)
+struct Vertex {
+    vec2 pos;
+    vec3 color;
+};
+
+Vertex vertices[3]=Vertex[](
+        Vertex(vec2(0.0, -0.5), vec3(1, 0, 0)),
+        Vertex(vec2(0.5, 0.5), vec3(1, 1, 0)),
+        Vertex(vec2(-0.5, 0.5), vec3(1, 0, 1))
 );
 
+layout (location = 1) out vec4 vert_color;
+
 void main () {
-    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    Vertex vertex = vertices[gl_VertexIndex];
+    gl_Position = vec4(vertex.pos, 0.0, 1.0);
+    vert_color = vec4(vertex.color, 1);
 }

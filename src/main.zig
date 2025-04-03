@@ -34,9 +34,7 @@ fn run() !void {
     var pipeline = try createPipeline(&device, &swapchain, layout);
     defer pipeline.destroy();
 
-    const ga = alloc.gfx_arena_data.allocator();
-
-    const command_buffers = try createCommandBuffers(&swapchain, &pipeline, ga);
+    const command_buffers = try swapchain.createCommandBuffers(&pipeline);
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -67,48 +65,6 @@ fn createPipeline(device: *gfx.Device, swapchain: *const gfx.Swapchain, layout: 
     pipeline_config.pipeline_layout = layout;
 
     return try gfx.Pipeline.create(device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
-}
-
-fn createCommandBuffers(swapchain: *gfx.Swapchain, pipeline: *gfx.Pipeline, allocator: Allocator) ![]vk.CommandBuffer {
-    const vkd = swapchain.device.device;
-    const handles = try allocator.alloc(vk.CommandBuffer, swapchain.images.len);
-
-    const alloc_info = vk.CommandBufferAllocateInfo{
-        .level = .primary,
-        .command_pool = swapchain.device.command_pool,
-        .command_buffer_count = @intCast(handles.len),
-    };
-
-    try vkd.allocateCommandBuffers(&alloc_info, handles.ptr);
-
-    for (handles, 0..) |handle, i| {
-        var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
-
-        const begin_info = vk.CommandBufferBeginInfo{};
-        try cb.beginCommandBuffer(&begin_info);
-
-        const clear_values = [_]vk.ClearValue{
-            .{ .color = .{ .float_32 = .{ 0.1, 0.1, 0.1, 1 } } },
-            .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
-        };
-
-        const render_pass_info = vk.RenderPassBeginInfo{
-            .render_pass = swapchain.render_pass,
-            .framebuffer = swapchain.framebuffers[i],
-            .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = swapchain.swapchain_extent },
-            .clear_value_count = clear_values.len,
-            .p_clear_values = @ptrCast(&clear_values),
-        };
-
-        cb.beginRenderPass(&render_pass_info, .@"inline");
-        cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
-        cb.draw(3, 1, 0, 0);
-
-        cb.endRenderPass();
-        try cb.endCommandBuffer();
-    }
-
-    return handles;
 }
 
 fn drawFrame(swapchain: *gfx.Swapchain, command_buffers: []vk.CommandBuffer) !void {
