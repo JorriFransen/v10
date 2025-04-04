@@ -48,16 +48,24 @@ fn run() !void {
     const command_buffers = try swapchain.createCommandBuffers();
     try recordCommandBuffers(&swapchain, &pipeline, command_buffers, model);
 
+    _ = glfw.setKeyCallback(window.window, keyCallback);
+
     while (!window.shouldClose()) {
         glfw.pollEvents();
 
-        drawFrame(&swapchain, command_buffers) catch |err| {
-            std.log.err("drawframe err: {}", .{err});
-            break;
-        };
+        try drawFrame(&swapchain, command_buffers);
     }
 
     try device.device.deviceWaitIdle();
+}
+
+fn keyCallback(window: glfw.Window, key: c_int, scancode: c_int, action: glfw.Action, mods: c_int) callconv(.C) void {
+    _ = scancode;
+    _ = mods;
+
+    if (key == glfw.c.GLFW_KEY_ESCAPE and action == .press) {
+        glfw.setWindowShouldClose(window, glfw.TRUE);
+    }
 }
 
 const Triangle = struct {
