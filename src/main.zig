@@ -36,9 +36,12 @@ fn run() !void {
     defer pipeline.destroy();
 
     const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
-    var sierpinski = try Sierpinski.init(initial_triangle, 1);
+    var sierpinski = try Sierpinski.init(initial_triangle, 7);
+    defer sierpinski.deinit();
 
-    const vertices = try sierpinski.vertices(alloc.gpa);
+    const vertices = try sierpinski.vertices();
+    defer alloc.gpa.free(vertices);
+
     var model = try gfx.Model.create(&device, vertices);
     defer model.destroy();
 
@@ -64,9 +67,9 @@ const Triangle = struct {
     pub fn vertices(this: @This()) [3]Vertex {
         const half = this.size / 2;
         return .{
-            .{ .position = .{ .x = 0, .y = -half } },
-            .{ .position = .{ .x = half, .y = half } },
-            .{ .position = .{ .x = -half, .y = half } },
+            .{ .position = this.pos.add(.{ .x = 0, .y = -half }) },
+            .{ .position = this.pos.add(.{ .x = half, .y = half }) },
+            .{ .position = this.pos.add(.{ .x = -half, .y = half }) },
         };
     }
 };
@@ -75,18 +78,46 @@ const Sierpinski = struct {
     triangles: std.ArrayList(Triangle),
 
     pub fn init(initial_triangle: Triangle, iterations: usize) !@This() {
+        const tri_count = std.math.pow(usize, 3, iterations);
         var result = @This(){
-            .triangles = try std.ArrayList(Triangle).initCapacity(alloc.gpa, std.math.pow(usize, 3, iterations)),
+            .triangles = try std.ArrayList(Triangle).initCapacity(alloc.gpa, tri_count),
         };
 
         try result.triangles.append(initial_triangle);
         std.debug.assert(result.triangles.items.len == 1);
 
+        try result.sierpinski(iterations);
+
         return result;
     }
 
-    pub fn vertices(this: *@This(), allocator: Allocator) ![]Vertex {
-        const result = try allocator.alloc(Vertex, this.triangles.items.len * 3);
+    fn sierpinski(this: *@This(), iterations: usize) !void {
+        for (0..iterations) |_| {
+            const tri_count = this.triangles.items.len;
+
+            for (0..tri_count) |i| {
+                const idx = tri_count - 1 - i;
+                const triangle = this.triangles.swapRemove(idx);
+
+                const pos = triangle.pos;
+                const size = triangle.size / 2;
+                const offset = size / 2;
+
+                try this.triangles.appendSlice(&.{
+                    Triangle{ .size = size, .pos = pos.add(.{ .x = 0, .y = -offset }) },
+                    Triangle{ .size = size, .pos = pos.add(.{ .x = offset, .y = offset }) },
+                    Triangle{ .size = size, .pos = pos.add(.{ .x = -offset, .y = offset }) },
+                });
+            }
+        }
+    }
+
+    pub fn deinit(this: *@This()) void {
+        this.triangles.deinit();
+    }
+
+    pub fn vertices(this: *@This()) ![]Vertex {
+        const result = try alloc.gpa.alloc(Vertex, this.triangles.items.len * 3);
 
         var vi: usize = 0;
         for (this.triangles.items) |triangle| {
