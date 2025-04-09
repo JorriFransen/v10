@@ -25,8 +25,8 @@ pub const Vertex = struct {
             const field_info = @typeInfo(@This()).@"struct".fields[i];
 
             desc.* = .{
-                .binding = 0,
                 .location = i,
+                .binding = 0,
                 .format = switch (field_info.type) {
                     else => @compileError(std.fmt.comptimePrint("Unhandled Vertex member type '{}'", .{field_info.type})),
                     Vec2 => .r32g32_sfloat,

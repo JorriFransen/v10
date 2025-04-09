@@ -37,19 +37,19 @@ fn run() !void {
     var pipeline = try createPipeline(&device, &swapchain, layout);
     defer pipeline.destroy();
 
-    // const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
-    // var sierpinski = try Sierpinski.init(initial_triangle, 8);
-    // defer sierpinski.deinit();
-    //
-    // const vertices = try sierpinski.vertices();
-    // defer alloc.gpa.free(vertices);
+    const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
+    var sierpinski = try Sierpinski.init(initial_triangle, 5);
+    defer sierpinski.deinit();
 
-    // var model = try gfx.Model.create(&device, vertices);
-    var model = try gfx.Model.create(&device, &.{
-        .{ .position = Vec2.new(0, -0.9), .color = Vec3.new(1, 0, 0) },
-        .{ .position = Vec2.new(0.9, 0.9), .color = Vec3.new(1, 1, 0) },
-        .{ .position = Vec2.new(-0.9, 0.9), .color = Vec3.new(0, 0, 1) },
-    });
+    const vertices = try sierpinski.vertices();
+    defer alloc.gpa.free(vertices);
+
+    var model = try gfx.Model.create(&device, vertices);
+    // var model = try gfx.Model.create(&device, &.{
+    //     .{ .position = Vec2.new(0, -0.9), .color = Vec3.new(1, 0, 0) },
+    //     .{ .position = Vec2.new(0.9, 0.9), .color = Vec3.new(1, 1, 0) },
+    //     .{ .position = Vec2.new(-0.9, 0.9), .color = Vec3.new(0, 0, 1) },
+    // });
     defer model.destroy();
 
     const command_buffers = try swapchain.createCommandBuffers();
@@ -82,9 +82,9 @@ const Triangle = struct {
     pub fn vertices(this: @This()) [3]Vertex {
         const half = this.size / 2;
         return .{
-            .{ .position = this.pos.add(.{ .x = 0, .y = -half }) },
-            .{ .position = this.pos.add(.{ .x = half, .y = half }) },
-            .{ .position = this.pos.add(.{ .x = -half, .y = half }) },
+            .{ .position = this.pos.add(.{ .x = 0, .y = -half }), .color = Vec3.new(1, 0, 0) },
+            .{ .position = this.pos.add(.{ .x = half, .y = half }), .color = Vec3.new(0, 1, 0) },
+            .{ .position = this.pos.add(.{ .x = -half, .y = half }), .color = Vec3.new(0, 0, 1) },
         };
     }
 };
