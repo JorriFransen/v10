@@ -5,6 +5,7 @@ const vk = @import("vulkan");
 const Device = gfx.Device;
 const Vec2 = gfx.Vec2;
 const Vec3 = gfx.Vec3;
+const Vec4 = gfx.Vec4;
 
 device: *Device,
 vertex_buffer: vk.Buffer = .null_handle,
@@ -13,6 +14,7 @@ vertex_count: u32,
 
 pub const Vertex = struct {
     position: Vec2,
+    color: Vec3,
 
     const field_count = @typeInfo(@This()).@"struct".fields.len;
     pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(@This()), .input_rate = .vertex };
@@ -29,6 +31,7 @@ pub const Vertex = struct {
                     else => @compileError(std.fmt.comptimePrint("Unhandled Vertex member type '{}'", .{field_info.type})),
                     Vec2 => .r32g32_sfloat,
                     Vec3 => .r32g32b32_sfloat,
+                    Vec4 => .r32g32b32a32_sfloat,
                 },
                 .offset = @offsetOf(@This(), field_info.name),
             };

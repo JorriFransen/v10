@@ -8,6 +8,8 @@ const vklog = std.log.scoped(.vulkan);
 const Allocator = std.mem.Allocator;
 const Window = @import("window.zig");
 const Vertex = gfx.Model.Vertex;
+const Vec2 = gfx.Vec2;
+const Vec3 = gfx.Vec3;
 
 pub fn main() !void {
     try run();
@@ -15,8 +17,8 @@ pub fn main() !void {
 }
 
 fn run() !void {
-    const width = 800;
-    const height = 600;
+    const width = 1920;
+    const height = 1080;
 
     var window = try Window.create(width, height, "v10game");
     defer window.destroy();
@@ -35,14 +37,19 @@ fn run() !void {
     var pipeline = try createPipeline(&device, &swapchain, layout);
     defer pipeline.destroy();
 
-    const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
-    var sierpinski = try Sierpinski.init(initial_triangle, 7);
-    defer sierpinski.deinit();
+    // const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
+    // var sierpinski = try Sierpinski.init(initial_triangle, 8);
+    // defer sierpinski.deinit();
+    //
+    // const vertices = try sierpinski.vertices();
+    // defer alloc.gpa.free(vertices);
 
-    const vertices = try sierpinski.vertices();
-    defer alloc.gpa.free(vertices);
-
-    var model = try gfx.Model.create(&device, vertices);
+    // var model = try gfx.Model.create(&device, vertices);
+    var model = try gfx.Model.create(&device, &.{
+        .{ .position = Vec2.new(0, -0.9), .color = Vec3.new(1, 0, 0) },
+        .{ .position = Vec2.new(0.9, 0.9), .color = Vec3.new(1, 1, 0) },
+        .{ .position = Vec2.new(-0.9, 0.9), .color = Vec3.new(0, 0, 1) },
+    });
     defer model.destroy();
 
     const command_buffers = try swapchain.createCommandBuffers();

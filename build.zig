@@ -22,20 +22,37 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_exe.step);
     run_step.dependOn(b.getInstallStep());
 
-    const glfw_dep = b.dependency("glfw", .{ .target = b.graph.host, .x11 = true, .wayland = true });
+    const glfw_dep = b.dependency("glfw", .{
+        .target = target,
+        .optimize = optimize,
+        .x11 = true,
+        .wayland = true,
+    });
     const glfw_lib = glfw_dep.artifact("glfw");
     const glfw_mod = glfw_dep.module("glfw");
     exe.root_module.addImport("glfw", glfw_mod);
     exe.linkLibrary(glfw_lib);
 
-    const vulkan_mod = b.dependency("vulkan_zig", .{
-        .target = b.graph.host,
-        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
-    }).module("vulkan-zig");
+    const vulkan_mod = b.dependency(
+        "vulkan_zig",
+        .{
+            .target = target,
+            .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+        },
+    ).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan_mod);
 
     const shader_step = try addShaderStep(b);
     exe.step.dependOn(shader_step);
+
+    const test_exe = b.addTest(.{
+        .root_source_file = b.path("src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_tests = b.addRunArtifact(test_exe);
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_tests.step);
 
     const clean_step = b.step("clean", "Clean shaders and zig-out directory");
     clean_step.dependOn(&b.addRemoveDirTree(std.Build.LazyPath{ .cwd_relative = b.install_path }).step);
