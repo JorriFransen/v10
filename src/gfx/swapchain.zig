@@ -10,7 +10,6 @@ const Pipeline = gfx.Pipeline;
 
 const MAX_FRAMES_IN_FLIGHT = 2;
 
-// allocator: Allocator,
 device: *Device,
 window_extent: vk.Extent2D,
 
@@ -33,11 +32,9 @@ in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
 current_frame: usize = 0,
 
-pub fn create(device: *Device, extent: vk.Extent2D) !@This() {
-    var this = @This(){
-        .device = device,
-        .window_extent = extent,
-    };
+pub fn init(this: *@This(), device: *Device, extent: vk.Extent2D) !void {
+    this.device = device;
+    this.window_extent = extent;
 
     const allocator = alloc.gfx_arena_data.allocator();
 
@@ -47,16 +44,16 @@ pub fn create(device: *Device, extent: vk.Extent2D) !@This() {
     try this.createDepthResources(allocator);
     try this.createFramebuffers(allocator);
     try this.createSyncObjects(allocator);
-
-    return this;
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn destroy(this: *@This(), destroy_sync_objects: bool) void {
     const vkd = this.device.device;
 
-    for (this.image_available_semaphores) |ias| vkd.destroySemaphore(ias, null);
-    for (this.render_finished_semaphores) |rfs| vkd.destroySemaphore(rfs, null);
-    for (this.in_flight_fences) |iff| vkd.destroyFence(iff, null);
+    if (destroy_sync_objects) {
+        for (this.image_available_semaphores) |ias| vkd.destroySemaphore(ias, null);
+        for (this.render_finished_semaphores) |rfs| vkd.destroySemaphore(rfs, null);
+        for (this.in_flight_fences) |iff| vkd.destroyFence(iff, null);
+    }
 
     for (this.framebuffers) |fb| vkd.destroyFramebuffer(fb, null);
 
@@ -126,7 +123,10 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
         .p_image_indices = @ptrCast(image_index),
     };
 
-    const result = try this.device.present_queue.presentKHR(&present_info);
+    const result = this.device.present_queue.presentKHR(&present_info) catch |err| switch (err) {
+        error.OutOfDateKHR => vk.Result.error_out_of_date_khr,
+        else => return err,
+    };
 
     this.current_frame = (this.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
@@ -139,9 +139,11 @@ fn createSwapchain(this: *@This(), allocator: Allocator) !void {
     const swapchain_support = this.device.device_info.swapchain_support;
 
     const surface_format = this.chooseSwapSurfaceFormat(swapchain_support.formats);
+    vklog.info("Using surface format: {}", .{surface_format});
     const present_mode = this.chooseSwapPresentMode(swapchain_support.present_modes);
     vklog.info("Using present mode: {s}", .{@tagName(present_mode)});
     const extent = this.chooseSwapExtent(swapchain_support.capabilities);
+    vklog.info("Swapchain extent: {}", .{extent});
 
     var image_count = swapchain_support.capabilities.min_image_count + 1;
     if (swapchain_support.capabilities.max_image_count > 0 and
@@ -149,6 +151,8 @@ fn createSwapchain(this: *@This(), allocator: Allocator) !void {
     {
         image_count = swapchain_support.capabilities.max_image_count;
     }
+
+    vklog.info("Swapchain image count: {}", .{image_count});
 
     const indices = this.device.device_info.queue_family_indices;
     const queue_indices = .{ indices.graphics_family.?, indices.present_family.? };
@@ -177,8 +181,13 @@ fn createSwapchain(this: *@This(), allocator: Allocator) !void {
     if (try vkd.getSwapchainImagesKHR(this.swapchain, &image_count, null) != .success) {
         return error.vkGetSwapchainImagesKHRFailed;
     }
-    std.debug.assert(this.images.len == 0);
-    this.images = try allocator.alloc(vk.Image, image_count);
+
+    if (this.images.len != 0) {
+        std.debug.assert(this.images.len == image_count);
+    } else {
+        this.images = try allocator.alloc(vk.Image, image_count);
+    }
+
     if (try vkd.getSwapchainImagesKHR(this.swapchain, &image_count, this.images.ptr) != .success) {
         return error.vkGetSwapchainImagesKHRFailed;
     }
@@ -347,23 +356,32 @@ fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
 
 fn createSyncObjects(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
-    this.image_available_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
-    this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
-    this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
-
-    this.images_in_flight = try allocator.alloc(vk.Fence, this.images.len);
-    @memset(this.images_in_flight, .null_handle);
 
     const semaphore_info = vk.SemaphoreCreateInfo{};
-
     const fence_info = vk.FenceCreateInfo{
         .flags = .{ .signaled_bit = true },
     };
 
-    for (this.image_available_semaphores, this.render_finished_semaphores, this.in_flight_fences) |*ias, *rfs, *iff| {
-        ias.* = try vkd.createSemaphore(&semaphore_info, null);
-        rfs.* = try vkd.createSemaphore(&semaphore_info, null);
-        iff.* = try vkd.createFence(&fence_info, null);
+    if (this.image_available_semaphores.len == 0) {
+        this.image_available_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+        for (this.image_available_semaphores) |*ias| {
+            ias.* = try vkd.createSemaphore(&semaphore_info, null);
+        }
+    }
+
+    if (this.render_finished_semaphores.len == 0) {
+        this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+        for (this.render_finished_semaphores) |*rfs| rfs.* = try vkd.createSemaphore(&semaphore_info, null);
+    }
+
+    if (this.in_flight_fences.len == 0) {
+        this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
+        for (this.in_flight_fences) |*iff| iff.* = try vkd.createFence(&fence_info, null);
+    }
+
+    if (this.images_in_flight.len == 0) {
+        this.images_in_flight = try allocator.alloc(vk.Fence, this.images.len);
+        @memset(this.images_in_flight, .null_handle);
     }
 }
 

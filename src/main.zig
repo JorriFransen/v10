@@ -23,9 +23,9 @@ pub fn main() !void {
 // TODO: Seperate arena for swapchain/pipeline (resizing).
 var window: Window = undefined;
 var device: Device = undefined;
-var swapchain: ?Swapchain = null;
+var swapchain: Swapchain = undefined;
 var layout: vk.PipelineLayout = .null_handle;
-var pipeline: ?Pipeline = undefined;
+var pipeline: Pipeline = undefined;
 var command_buffers: []vk.CommandBuffer = undefined;
 
 fn run() !void {
@@ -43,9 +43,10 @@ fn run() !void {
     layout = try createPipelineLayout();
     defer device.device.destroyPipelineLayout(layout, null);
 
-    try recreateSwapchain();
-    defer pipeline.?.destroy();
-    defer swapchain.?.destroy();
+    try Swapchain.init(&swapchain, &device, .{ .width = width, .height = height });
+    pipeline = try createPipeline();
+    defer swapchain.destroy(true);
+    defer pipeline.destroy();
 
     // const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
     // var sierpinski = try Sierpinski.init(initial_triangle, 5);
@@ -62,7 +63,7 @@ fn run() !void {
     });
     defer model.destroy();
 
-    command_buffers = try swapchain.?.createCommandBuffers();
+    command_buffers = try swapchain.createCommandBuffers();
 
     _ = glfw.setKeyCallback(window.window, keyCallback);
 
@@ -168,21 +169,16 @@ fn createPipelineLayout() !vk.PipelineLayout {
 }
 
 fn createPipeline() !Pipeline {
-    if (swapchain) |sc| {
-        var pipeline_config = Pipeline.ConfigInfo.default(sc.swapchain_extent.width, sc.swapchain_extent.height);
-        pipeline_config.render_pass = sc.render_pass;
-        pipeline_config.pipeline_layout = layout;
+    var pipeline_config = Pipeline.ConfigInfo.default(swapchain.swapchain_extent.width, swapchain.swapchain_extent.height);
+    pipeline_config.render_pass = swapchain.render_pass;
+    pipeline_config.pipeline_layout = layout;
 
-        return try Pipeline.create(&device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
-    } else {
-        return error.createPipelineInvalidSwapchain;
-    }
+    return try Pipeline.create(&device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
 }
 
 fn drawFrame(model: *const Model) !void {
     var image_index: u32 = undefined;
-    var sc = swapchain.?;
-    var result = try sc.acquireNextImage(&image_index);
+    var result = try swapchain.acquireNextImage(&image_index);
 
     if (result == .error_out_of_date_khr) {
         std.log.debug("Resize framebuffer after acquireNextImage", .{});
@@ -196,7 +192,7 @@ fn drawFrame(model: *const Model) !void {
 
     try recordCommandBuffer(image_index, model);
 
-    result = try sc.submitCommandBuffers(command_buffers[image_index], &image_index);
+    result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or window.framebuffer_resized) {
         std.log.debug("Resize framebuffer after submitcommandbuffers: {}, window_resized: {}", .{ result, window.framebuffer_resized });
         window.framebuffer_resized = false;
@@ -217,9 +213,16 @@ fn recreateSwapchain() !void {
     }
 
     try vkd.deviceWaitIdle();
-    if (swapchain) |*sc| sc.destroy();
-    if (pipeline) |*pl| pl.destroy();
-    swapchain = try Swapchain.create(&device, extent);
+
+    const ga = alloc.gfx_arena_data.allocator();
+
+    // TODO: Allocator cleanup
+    device.device_info.swapchain_support.destroy(ga);
+    device.device_info.swapchain_support = try device.querySwapchainSupport(device.device_info.physical_device, ga);
+
+    pipeline.destroy();
+    swapchain.destroy(false);
+    try Swapchain.init(&swapchain, &device, extent);
     pipeline = try createPipeline();
 }
 
@@ -227,9 +230,7 @@ fn recordCommandBuffer(image_index: usize, model: *const Model) !void {
     std.debug.assert(image_index < command_buffers.len);
     const handle = command_buffers[image_index];
 
-    const sc = swapchain.?;
-
-    var cb = vk.CommandBufferProxy.init(handle, sc.device.device.wrapper);
+    var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
     const begin_info = vk.CommandBufferBeginInfo{};
     try cb.beginCommandBuffer(&begin_info);
 
@@ -239,15 +240,15 @@ fn recordCommandBuffer(image_index: usize, model: *const Model) !void {
     };
 
     const render_pass_info = vk.RenderPassBeginInfo{
-        .render_pass = sc.render_pass,
-        .framebuffer = sc.framebuffers[image_index],
-        .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = sc.swapchain_extent },
+        .render_pass = swapchain.render_pass,
+        .framebuffer = swapchain.framebuffers[image_index],
+        .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = swapchain.swapchain_extent },
         .clear_value_count = clear_values.len,
         .p_clear_values = @ptrCast(&clear_values),
     };
 
     cb.beginRenderPass(&render_pass_info, .@"inline");
-    cb.bindPipeline(.graphics, pipeline.?.graphics_pipeline);
+    cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
 
     model.bind(handle);
     model.draw(handle);
