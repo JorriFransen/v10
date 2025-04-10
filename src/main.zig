@@ -10,7 +10,8 @@ const Window = @import("window.zig");
 const Device = gfx.Device;
 const Swapchain = gfx.Swapchain;
 const Pipeline = gfx.Pipeline;
-const Vertex = gfx.Model.Vertex;
+const Model = gfx.Model;
+const Vertex = Model.Vertex;
 const Vec2 = gfx.Vec2;
 const Vec3 = gfx.Vec3;
 
@@ -22,9 +23,9 @@ pub fn main() !void {
 // TODO: Seperate arena for swapchain/pipeline (resizing).
 var window: Window = undefined;
 var device: Device = undefined;
-var swapchain: Swapchain = undefined;
+var swapchain: ?Swapchain = null;
 var layout: vk.PipelineLayout = .null_handle;
-var pipeline: Pipeline = undefined;
+var pipeline: ?Pipeline = undefined;
 var command_buffers: []vk.CommandBuffer = undefined;
 
 fn run() !void {
@@ -43,8 +44,8 @@ fn run() !void {
     defer device.device.destroyPipelineLayout(layout, null);
 
     try recreateSwapchain();
-    defer pipeline.destroy();
-    defer swapchain.destroy();
+    defer pipeline.?.destroy();
+    defer swapchain.?.destroy();
 
     // const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
     // var sierpinski = try Sierpinski.init(initial_triangle, 5);
@@ -53,22 +54,21 @@ fn run() !void {
     // const vertices = try sierpinski.vertices();
     // defer alloc.gpa.free(vertices);
     //
-    // var model = try gfx.Model.create(&device, vertices);
-    var model = try gfx.Model.create(&device, &.{
+    // var model = try Model.create(&device, vertices);
+    var model = try Model.create(&device, &.{
         .{ .position = Vec2.new(0, -0.9), .color = Vec3.new(1, 0, 0) },
         .{ .position = Vec2.new(0.9, 0.9), .color = Vec3.new(0, 1, 0) },
         .{ .position = Vec2.new(-0.9, 0.9), .color = Vec3.new(0, 0, 1) },
     });
     defer model.destroy();
 
-    command_buffers = try swapchain.createCommandBuffers();
-    for (0..command_buffers.len) |i| try recordCommandBuffer(i, model);
+    command_buffers = try swapchain.?.createCommandBuffers();
 
     _ = glfw.setKeyCallback(window.window, keyCallback);
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
-        drawFrame() catch unreachable;
+        drawFrame(&model) catch unreachable;
     }
 
     try device.device.deviceWaitIdle();
@@ -168,23 +168,41 @@ fn createPipelineLayout() !vk.PipelineLayout {
 }
 
 fn createPipeline() !Pipeline {
-    var pipeline_config = Pipeline.ConfigInfo.default(swapchain.swapchain_extent.width, swapchain.swapchain_extent.height);
-    pipeline_config.render_pass = swapchain.render_pass;
-    pipeline_config.pipeline_layout = layout;
+    if (swapchain) |sc| {
+        var pipeline_config = Pipeline.ConfigInfo.default(sc.swapchain_extent.width, sc.swapchain_extent.height);
+        pipeline_config.render_pass = sc.render_pass;
+        pipeline_config.pipeline_layout = layout;
 
-    return try Pipeline.create(&device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
+        return try Pipeline.create(&device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
+    } else {
+        return error.createPipelineInvalidSwapchain;
+    }
 }
 
-fn drawFrame() !void {
+fn drawFrame(model: *const Model) !void {
     var image_index: u32 = undefined;
-    var result = try swapchain.acquireNextImage(&image_index);
+    var sc = swapchain.?;
+    var result = try sc.acquireNextImage(&image_index);
+
+    if (result == .error_out_of_date_khr) {
+        std.log.debug("Resize framebuffer after acquireNextImage", .{});
+        try recreateSwapchain();
+        return;
+    }
+
     if (result != .success and result != .suboptimal_khr) {
         return error.swapchainAcquireNextImageFailed;
     }
 
-    result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
-    const valid = result == .success or (window.platform == .X11 and result == .suboptimal_khr);
-    if (!valid) {
+    try recordCommandBuffer(image_index, model);
+
+    result = try sc.submitCommandBuffers(command_buffers[image_index], &image_index);
+    if (result == .error_out_of_date_khr or result == .suboptimal_khr or window.framebuffer_resized) {
+        std.log.debug("Resize framebuffer after submitcommandbuffers: {}, window_resized: {}", .{ result, window.framebuffer_resized });
+        window.framebuffer_resized = false;
+        try recreateSwapchain();
+    } else if (result != .success) {
+        std.log.err("submitCommandBuffers result: {}", .{result});
         return error.swapchainSubmitCommandBuffersFailed;
     }
 }
@@ -199,17 +217,19 @@ fn recreateSwapchain() !void {
     }
 
     try vkd.deviceWaitIdle();
-
-    // swapchain.destroy();
+    if (swapchain) |*sc| sc.destroy();
+    if (pipeline) |*pl| pl.destroy();
     swapchain = try Swapchain.create(&device, extent);
     pipeline = try createPipeline();
 }
 
-fn recordCommandBuffer(image_index: usize, model: gfx.Model) !void {
+fn recordCommandBuffer(image_index: usize, model: *const Model) !void {
     std.debug.assert(image_index < command_buffers.len);
     const handle = command_buffers[image_index];
 
-    var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
+    const sc = swapchain.?;
+
+    var cb = vk.CommandBufferProxy.init(handle, sc.device.device.wrapper);
     const begin_info = vk.CommandBufferBeginInfo{};
     try cb.beginCommandBuffer(&begin_info);
 
@@ -219,15 +239,15 @@ fn recordCommandBuffer(image_index: usize, model: gfx.Model) !void {
     };
 
     const render_pass_info = vk.RenderPassBeginInfo{
-        .render_pass = swapchain.render_pass,
-        .framebuffer = swapchain.framebuffers[image_index],
-        .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = swapchain.swapchain_extent },
+        .render_pass = sc.render_pass,
+        .framebuffer = sc.framebuffers[image_index],
+        .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = sc.swapchain_extent },
         .clear_value_count = clear_values.len,
         .p_clear_values = @ptrCast(&clear_values),
     };
 
     cb.beginRenderPass(&render_pass_info, .@"inline");
-    cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
+    cb.bindPipeline(.graphics, pipeline.?.graphics_pipeline);
 
     model.bind(handle);
     model.draw(handle);

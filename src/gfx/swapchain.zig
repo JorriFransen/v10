@@ -126,7 +126,7 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
         .p_image_indices = @ptrCast(image_index),
     };
 
-    const result = this.device.present_queue.presentKHR(&present_info);
+    const result = try this.device.present_queue.presentKHR(&present_info);
 
     this.current_frame = (this.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
