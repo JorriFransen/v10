@@ -78,7 +78,11 @@ pub fn acquireNextImage(this: *@This(), image_index: *u32) !vk.Result {
         return error.vkWaitForFencesFailed;
     }
 
-    const result = try vkd.acquireNextImageKHR(this.swapchain, std.math.maxInt(u64), this.image_available_semaphores[this.current_frame], .null_handle);
+    const R = vk.DeviceWrapper.AcquireNextImageKHRResult;
+    const result = vkd.acquireNextImageKHR(this.swapchain, std.math.maxInt(u64), this.image_available_semaphores[this.current_frame], .null_handle) catch |err| switch (err) {
+        error.OutOfDateKHR => R{ .result = .error_out_of_date_khr, .image_index = image_index.* },
+        else => return err,
+    };
 
     image_index.* = result.image_index;
     return result.result;
@@ -368,7 +372,7 @@ fn chooseSwapSurfaceFormat(this: *@This(), formats: []vk.SurfaceFormatKHR) vk.Su
     std.debug.assert(formats.len > 0);
 
     for (formats) |format| {
-        if (format.format == .b8g8r8a8_unorm and format.color_space == .srgb_nonlinear_khr)
+        if (format.format == .b8g8r8a8_srgb and format.color_space == .srgb_nonlinear_khr)
             return format;
     }
 
@@ -419,7 +423,6 @@ fn findDepthFormat(this: *@This()) !vk.Format {
     );
 }
 
-// TODO: Seperate create/allocate and recording. Create/allocate should happen here, recording should happen on the user side.
 pub fn createCommandBuffers(this: *@This()) ![]vk.CommandBuffer {
     const vkd = this.device.device;
     const handles = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, this.images.len);
@@ -431,33 +434,6 @@ pub fn createCommandBuffers(this: *@This()) ![]vk.CommandBuffer {
     };
 
     try vkd.allocateCommandBuffers(&alloc_info, handles.ptr);
-
-    // for (handles, 0..) |handle, i| {
-    //     var cb = vk.CommandBufferProxy.init(handle, this.device.device.wrapper);
-    //
-    //     const begin_info = vk.CommandBufferBeginInfo{};
-    //     try cb.beginCommandBuffer(&begin_info);
-    //
-    //     const clear_values = [_]vk.ClearValue{
-    //         .{ .color = .{ .float_32 = .{ 0.1, 0.1, 0.1, 1 } } },
-    //         .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
-    //     };
-    //
-    //     const render_pass_info = vk.RenderPassBeginInfo{
-    //         .render_pass = this.render_pass,
-    //         .framebuffer = this.framebuffers[i],
-    //         .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = this.swapchain_extent },
-    //         .clear_value_count = clear_values.len,
-    //         .p_clear_values = @ptrCast(&clear_values),
-    //     };
-    //
-    //     cb.beginRenderPass(&render_pass_info, .@"inline");
-    //     cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
-    //     cb.draw(3, 1, 0, 0);
-    //
-    //     cb.endRenderPass();
-    //     try cb.endCommandBuffer();
-    // }
 
     return handles;
 }
