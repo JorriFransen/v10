@@ -18,6 +18,8 @@ const Vec3 = gfx.Vec3;
 pub fn main() !void {
     try run();
     try alloc.deinit();
+
+    std.log.debug("Clean exit", .{});
 }
 
 // TODO: Seperate arena for swapchain/pipeline (resizing).
@@ -216,14 +218,9 @@ fn recreateSwapchain() !void {
 
     try vkd.deviceWaitIdle();
 
-    const ga = alloc.gfx_arena_data.allocator();
-
-    // TODO: Allocator cleanup
-    device.device_info.swapchain_support.destroy(ga);
-    device.device_info.swapchain_support = try device.querySwapchainSupport(device.device_info.physical_device, ga);
-
     pipeline.destroy();
     swapchain.destroy(false);
+
     try Swapchain.init(&swapchain, &device, extent);
     pipeline = try createPipeline();
 }

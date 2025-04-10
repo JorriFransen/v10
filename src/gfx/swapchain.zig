@@ -136,7 +136,12 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
 fn createSwapchain(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
-    const swapchain_support = this.device.device_info.swapchain_support;
+    const swapchain_support = &this.device.device_info.swapchain_support;
+    swapchain_support.capabilities =
+        try this.device.vki.getPhysicalDeviceSurfaceCapabilitiesKHR(
+            this.device.device_info.physical_device,
+            this.device.surface,
+        );
 
     const surface_format = this.chooseSwapSurfaceFormat(swapchain_support.formats);
     vklog.info("Using surface format: {}", .{surface_format});
