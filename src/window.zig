@@ -10,8 +10,11 @@ height: i32,
 framebuffer_resized: bool,
 name: []const u8,
 window: glfw.Window,
+platform: glfw.Platform,
 
 pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8) !void {
+    // glfw.initHint(glfw.PLATFORM, @intFromEnum(glfw.Platform.X11));
+
     if (glfw.init() != glfw.TRUE) return error.glfwInitFailed;
 
     glfw.windowHint(glfw.CLIENT_API, glfw.NO_API);
@@ -24,12 +27,15 @@ pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8) !void {
     glfw.setWindowUserPointer(handle, this);
     _ = glfw.setFramebufferSizeCallback(handle, framebufferResizeCallback);
 
+    const platform = glfw.getPlatform();
+
     this.* = .{
         .width = w,
         .height = h,
         .framebuffer_resized = false,
         .name = name,
         .window = handle,
+        .platform = platform,
     };
 }
 
@@ -62,5 +68,5 @@ pub fn framebufferResizeCallback(glfw_window: glfw.Window, width: c_int, height:
     window.framebuffer_resized = true;
     window.width = width;
     window.height = height;
-    // wlog.debug("framebufferResizeCallback(\"{s}\", {}, {})", .{ window.name, width, height });
+    wlog.debug("framebufferResizeCallback(\"{s}\", {}, {})", .{ window.name, width, height });
 }

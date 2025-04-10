@@ -39,13 +39,12 @@ fn run() !void {
     device = try Device.create(&gfx.system, &window);
     defer device.destroy();
 
-    defer swapchain.destroy();
-
     layout = try createPipelineLayout();
     defer device.device.destroyPipelineLayout(layout, null);
 
     try recreateSwapchain();
     defer pipeline.destroy();
+    defer swapchain.destroy();
 
     // const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
     // var sierpinski = try Sierpinski.init(initial_triangle, 5);
@@ -69,7 +68,7 @@ fn run() !void {
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
-        try drawFrame();
+        drawFrame() catch unreachable;
     }
 
     try device.device.deviceWaitIdle();
@@ -184,7 +183,8 @@ fn drawFrame() !void {
     }
 
     result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
-    if (result != .success) {
+    const valid = result == .success or (window.platform == .X11 and result == .suboptimal_khr);
+    if (!valid) {
         return error.swapchainSubmitCommandBuffersFailed;
     }
 }
