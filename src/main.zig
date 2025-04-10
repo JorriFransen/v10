@@ -210,6 +210,8 @@ fn recreateSwapchain() !void {
     while (extent.width == 0 or extent.height == 0) {
         extent = window.getExtent();
         window.waitEvents();
+
+        if (window.shouldClose()) return;
     }
 
     try vkd.deviceWaitIdle();
