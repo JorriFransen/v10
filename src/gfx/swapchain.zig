@@ -206,7 +206,11 @@ fn createImageViews(this: *@This(), allocator: Allocator) !void {
 
     const vkd = this.device.device;
 
-    this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
+    if (this.image_views.len != 0) {
+        std.debug.assert(this.image_views.len == this.images.len);
+    } else {
+        this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
+    }
 
     for (this.images, this.image_views) |image, *view| {
         const view_info = vk.ImageViewCreateInfo{
@@ -297,9 +301,13 @@ fn createRenderPass(this: *@This()) !void {
 fn createDepthResources(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
-    this.depth_images = try allocator.alloc(vk.Image, this.images.len);
-    this.depth_image_memories = try allocator.alloc(vk.DeviceMemory, this.images.len);
-    this.depth_image_views = try allocator.alloc(vk.ImageView, this.images.len);
+    if (this.depth_images.len != 0) {
+        std.debug.assert(this.depth_images.len == this.images.len);
+    } else {
+        this.depth_images = try allocator.alloc(vk.Image, this.images.len);
+        this.depth_image_memories = try allocator.alloc(vk.DeviceMemory, this.images.len);
+        this.depth_image_views = try allocator.alloc(vk.ImageView, this.images.len);
+    }
 
     for (
         this.depth_images,
@@ -341,7 +349,11 @@ fn createDepthResources(this: *@This(), allocator: Allocator) !void {
 fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
-    this.framebuffers = try allocator.alloc(vk.Framebuffer, this.images.len);
+    if (this.framebuffers.len != 0) {
+        std.debug.assert(this.framebuffers.len == this.images.len);
+    } else {
+        this.framebuffers = try allocator.alloc(vk.Framebuffer, this.images.len);
+    }
 
     for (this.framebuffers, 0..) |*fb, i| {
         const attachments = .{ this.image_views[i], this.depth_image_views[i] };
@@ -363,28 +375,33 @@ fn createSyncObjects(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
     const semaphore_info = vk.SemaphoreCreateInfo{};
-    const fence_info = vk.FenceCreateInfo{
-        .flags = .{ .signaled_bit = true },
-    };
+    const fence_info = vk.FenceCreateInfo{ .flags = .{ .signaled_bit = true } };
 
-    if (this.image_available_semaphores.len == 0) {
+    if (this.image_available_semaphores.len != 0) {
+        std.debug.assert(this.image_available_semaphores.len == MAX_FRAMES_IN_FLIGHT);
+        std.debug.assert(this.render_finished_semaphores.len == MAX_FRAMES_IN_FLIGHT);
+        std.debug.assert(this.in_flight_fences.len == MAX_FRAMES_IN_FLIGHT);
+    } else {
         this.image_available_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+        this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+        this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
+
         for (this.image_available_semaphores) |*ias| {
             ias.* = try vkd.createSemaphore(&semaphore_info, null);
         }
+
+        for (this.render_finished_semaphores) |*rfs| {
+            rfs.* = try vkd.createSemaphore(&semaphore_info, null);
+        }
+
+        for (this.in_flight_fences) |*iff| {
+            iff.* = try vkd.createFence(&fence_info, null);
+        }
     }
 
-    if (this.render_finished_semaphores.len == 0) {
-        this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
-        for (this.render_finished_semaphores) |*rfs| rfs.* = try vkd.createSemaphore(&semaphore_info, null);
-    }
-
-    if (this.in_flight_fences.len == 0) {
-        this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
-        for (this.in_flight_fences) |*iff| iff.* = try vkd.createFence(&fence_info, null);
-    }
-
-    if (this.images_in_flight.len == 0) {
+    if (this.images_in_flight.len != 0) {
+        std.debug.assert(this.images_in_flight.len == this.images.len);
+    } else {
         this.images_in_flight = try allocator.alloc(vk.Fence, this.images.len);
         @memset(this.images_in_flight, .null_handle);
     }

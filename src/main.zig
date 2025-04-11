@@ -46,8 +46,9 @@ fn run() !void {
     defer device.device.destroyPipelineLayout(layout, null);
 
     try Swapchain.init(&swapchain, &device, .{ .width = width, .height = height });
-    pipeline = try createPipeline();
     defer swapchain.destroy(true);
+
+    pipeline = try createPipeline();
     defer pipeline.destroy();
 
     // const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
@@ -183,7 +184,6 @@ fn drawFrame(model: *const Model) !void {
     var result = try swapchain.acquireNextImage(&image_index);
 
     if (result == .error_out_of_date_khr) {
-        std.log.debug("Resize framebuffer after acquireNextImage", .{});
         try recreateSwapchain();
         return;
     }
@@ -196,11 +196,9 @@ fn drawFrame(model: *const Model) !void {
 
     result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or window.framebuffer_resized) {
-        std.log.debug("Resize framebuffer after submitcommandbuffers: {}, window_resized: {}", .{ result, window.framebuffer_resized });
         window.framebuffer_resized = false;
         try recreateSwapchain();
     } else if (result != .success) {
-        std.log.err("submitCommandBuffers result: {}", .{result});
         return error.swapchainSubmitCommandBuffersFailed;
     }
 }
