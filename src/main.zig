@@ -30,6 +30,8 @@ var layout: vk.PipelineLayout = .null_handle;
 var pipeline: Pipeline = undefined;
 var command_buffers: []vk.CommandBuffer = undefined;
 
+var model: Model = undefined;
+
 fn run() !void {
     const width = 1920;
     const height = 1080;
@@ -58,8 +60,8 @@ fn run() !void {
     // const vertices = try sierpinski.vertices();
     // defer alloc.gpa.free(vertices);
     //
-    // var model = try Model.create(&device, vertices);
-    var model = try Model.create(&device, &.{
+    // model = try Model.create(&device, vertices);
+    model = try Model.create(&device, &.{
         .{ .position = Vec2.new(0, -0.9), .color = Vec3.new(1, 0, 0) },
         .{ .position = Vec2.new(0.9, 0.9), .color = Vec3.new(0, 1, 0) },
         .{ .position = Vec2.new(-0.9, 0.9), .color = Vec3.new(0, 0, 1) },
@@ -69,10 +71,11 @@ fn run() !void {
     command_buffers = try swapchain.createCommandBuffers();
 
     _ = glfw.setKeyCallback(window.window, keyCallback);
+    _ = glfw.setWindowRefreshCallback(window.window, refreshCallback);
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
-        drawFrame(&model) catch unreachable;
+        drawFrame() catch unreachable;
     }
 
     try device.device.deviceWaitIdle();
@@ -85,6 +88,12 @@ fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: gl
     if (key == glfw.c.GLFW_KEY_ESCAPE and action == .press) {
         glfw.setWindowShouldClose(glfw_window, glfw.TRUE);
     }
+}
+
+fn refreshCallback(glfw_window: glfw.Window) callconv(.c) void {
+    // std.log.debug("Refresh callback for window: {*}", .{glfw_window});
+    _ = glfw_window;
+    drawFrame() catch unreachable;
 }
 
 const Triangle = struct {
@@ -179,7 +188,7 @@ fn createPipeline() !Pipeline {
     return try Pipeline.create(&device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
 }
 
-fn drawFrame(model: *const Model) !void {
+fn drawFrame() !void {
     var image_index: u32 = undefined;
     var result = try swapchain.acquireNextImage(&image_index);
 
@@ -192,7 +201,7 @@ fn drawFrame(model: *const Model) !void {
         return error.swapchainAcquireNextImageFailed;
     }
 
-    try recordCommandBuffer(image_index, model);
+    try recordCommandBuffer(image_index);
 
     result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or window.framebuffer_resized) {
@@ -223,7 +232,7 @@ fn recreateSwapchain() !void {
     pipeline = try createPipeline();
 }
 
-fn recordCommandBuffer(image_index: usize, model: *const Model) !void {
+fn recordCommandBuffer(image_index: usize) !void {
     std.debug.assert(image_index < command_buffers.len);
     const handle = command_buffers[image_index];
 

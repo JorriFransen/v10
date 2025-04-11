@@ -1,12 +1,12 @@
 .{
     .name = .v10,
     .version = "0.0.1",
-    .fingerprint= 0x4fb9faee53eadd66,
+    .fingerprint = 0x4fb9faee53eadd66,
     .dependencies = .{
         .glfw = .{
             // .path = "../glfw-zig-build",
             .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
-            .hash = "glfw_zig-3.4.0-qhyek9adPACdNpNGZoDlE_RoP1U6ApWQTfdkgRp5IVLK",
+            .hash = "glfw_zig-3.4.0-qhyek8KePAD2qKBNSaVAKTl-bngW_sZm7r8gpXhW3CZq",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",

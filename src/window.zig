@@ -68,5 +68,4 @@ pub fn framebufferResizeCallback(glfw_window: glfw.Window, width: c_int, height:
     window.framebuffer_resized = true;
     window.width = width;
     window.height = height;
-    // wlog.debug("framebufferResizeCallback(\"{s}\", {}, {})", .{ window.name, width, height });
 }
