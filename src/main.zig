@@ -186,7 +186,7 @@ fn createPipelineLayout() !vk.PipelineLayout {
 }
 
 fn createPipeline() !Pipeline {
-    var pipeline_config = Pipeline.ConfigInfo.default(swapchain.swapchain_extent.width, swapchain.swapchain_extent.height);
+    var pipeline_config = Pipeline.ConfigInfo.default();
     pipeline_config.render_pass = swapchain.render_pass;
     pipeline_config.pipeline_layout = layout;
 
@@ -230,10 +230,11 @@ fn recreateSwapchain() !void {
 
     try vkd.deviceWaitIdle();
 
-    pipeline.destroy();
     swapchain.destroy(false);
-
     try Swapchain.init(&swapchain, &device, extent);
+
+    // TODO: This can be omitted if the new renderpass is compatible with the old one
+    pipeline.destroy();
     pipeline = try createPipeline();
 }
 
@@ -250,16 +251,33 @@ fn recordCommandBuffer(image_index: usize) !void {
         .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
     };
 
+    const extent = swapchain.swapchain_extent;
     const render_pass_info = vk.RenderPassBeginInfo{
         .render_pass = swapchain.render_pass,
         .framebuffer = swapchain.framebuffers[image_index],
-        .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = swapchain.swapchain_extent },
+        .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = extent },
         .clear_value_count = clear_values.len,
-        .p_clear_values = @ptrCast(&clear_values),
+        .p_clear_values = &clear_values,
     };
 
     cb.beginRenderPass(&render_pass_info, .@"inline");
     cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
+
+    const viewports = [1]vk.Viewport{.{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(extent.width),
+        .height = @floatFromInt(extent.height),
+        .min_depth = 0,
+        .max_depth = 1,
+    }};
+    cb.setViewport(0, viewports.len, &viewports);
+
+    const scissors = [1]vk.Rect2D{.{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = extent,
+    }};
+    cb.setScissor(0, scissors.len, &scissors);
 
     model.bind(handle);
     model.draw(handle);

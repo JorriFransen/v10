@@ -14,31 +14,25 @@ vert_shader_module: vk.ShaderModule,
 frag_shader_module: vk.ShaderModule,
 
 pub const ConfigInfo = struct {
-    viewport: vk.Viewport,
-    scissor: vk.Rect2D,
+    viewport_info: vk.PipelineViewportStateCreateInfo,
     input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo,
     rasterization_info: vk.PipelineRasterizationStateCreateInfo,
     multisample_info: vk.PipelineMultisampleStateCreateInfo,
     color_blend_attachment: vk.PipelineColorBlendAttachmentState,
     color_blend_info: vk.PipelineColorBlendStateCreateInfo,
     depth_stencil_info: vk.PipelineDepthStencilStateCreateInfo,
+    dynamic_state_enables: []vk.DynamicState,
+    dynamic_state_info: vk.PipelineDynamicStateCreateInfo,
     pipeline_layout: vk.PipelineLayout = .null_handle,
     render_pass: vk.RenderPass = .null_handle,
     sub_pass: u32 = 0,
 
-    pub fn default(width: u32, height: u32) @This() {
-        const viewport = vk.Viewport{
-            .x = 0,
-            .y = 0,
-            .width = @floatFromInt(width),
-            .height = @floatFromInt(height),
-            .min_depth = 0,
-            .max_depth = 1,
-        };
-
-        const scissor = vk.Rect2D{
-            .offset = .{ .x = 0, .y = 0 },
-            .extent = .{ .width = width, .height = height },
+    pub fn default() @This() {
+        const viewport_info = vk.PipelineViewportStateCreateInfo{
+            .viewport_count = 1,
+            .p_viewports = null,
+            .scissor_count = 1,
+            .p_scissors = null,
         };
 
         const input_assembly_info = vk.PipelineInputAssemblyStateCreateInfo{
@@ -99,17 +93,27 @@ pub const ConfigInfo = struct {
             .back = std.mem.zeroInit(vk.StencilOpState, .{}),
         };
 
+        const dynamic_state_enables: []vk.DynamicState = @constCast(&default_dynamic_state_enables);
+        const dynamic_state_info = vk.PipelineDynamicStateCreateInfo{
+            .dynamic_state_count = dynamic_state_enables.len,
+            .p_dynamic_states = dynamic_state_enables.ptr,
+            .flags = .{},
+        };
+
         return .{
-            .viewport = viewport,
-            .scissor = scissor,
+            .viewport_info = viewport_info,
             .input_assembly_info = input_assembly_info,
             .rasterization_info = rasterization_info,
             .multisample_info = multisample_info,
             .color_blend_attachment = color_blend_attachment,
             .color_blend_info = color_blend_info,
             .depth_stencil_info = depth_stencil_info,
+            .dynamic_state_enables = dynamic_state_enables,
+            .dynamic_state_info = dynamic_state_info,
         };
     }
+
+    const default_dynamic_state_enables = [_]vk.DynamicState{ .viewport, .scissor };
 };
 
 pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !@This() {
@@ -178,24 +182,17 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
         .p_vertex_attribute_descriptions = @ptrCast(&attribute_descriptions),
     };
 
-    const viewport_info = vk.PipelineViewportStateCreateInfo{
-        .viewport_count = 1,
-        .p_viewports = @ptrCast(&config.viewport),
-        .scissor_count = 1,
-        .p_scissors = @ptrCast(&config.scissor),
-    };
-
     const pipeline_info = vk.GraphicsPipelineCreateInfo{
         .stage_count = shader_stage_infos.len,
         .p_stages = @ptrCast(&shader_stage_infos),
         .p_vertex_input_state = &vertex_input_info,
         .p_input_assembly_state = &config.input_assembly_info,
-        .p_viewport_state = &viewport_info,
+        .p_viewport_state = &config.viewport_info,
         .p_rasterization_state = &config.rasterization_info,
         .p_multisample_state = &config.multisample_info,
         .p_color_blend_state = &config.color_blend_info,
         .p_depth_stencil_state = &config.depth_stencil_info,
-        .p_dynamic_state = null,
+        .p_dynamic_state = &config.dynamic_state_info,
         .layout = config.pipeline_layout,
         .render_pass = config.render_pass,
         .subpass = 0,
