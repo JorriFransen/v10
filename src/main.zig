@@ -71,7 +71,13 @@ fn run() !void {
     command_buffers = try swapchain.createCommandBuffers();
 
     _ = glfw.setKeyCallback(window.window, keyCallback);
-    _ = glfw.setWindowRefreshCallback(window.window, refreshCallback);
+
+    if (window.platform != .WAYLAND) {
+        // The drawFrame() call in refreshCallback() makes window resizing laggy.
+        // This is meant to redraw during resize, to make resizing smoother, but wayland
+        //  doesn't have this problem to start with.
+        _ = glfw.setWindowRefreshCallback(window.window, refreshCallback);
+    }
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -91,7 +97,6 @@ fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: gl
 }
 
 fn refreshCallback(glfw_window: glfw.Window) callconv(.c) void {
-    // std.log.debug("Refresh callback for window: {*}", .{glfw_window});
     _ = glfw_window;
     drawFrame() catch unreachable;
 }
