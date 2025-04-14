@@ -28,7 +28,6 @@ var device: Device = undefined;
 var swapchain: Swapchain = undefined;
 var layout: vk.PipelineLayout = .null_handle;
 var pipeline: Pipeline = undefined;
-var command_buffers: []vk.CommandBuffer = undefined;
 
 var model: Model = undefined;
 
@@ -47,7 +46,7 @@ fn run() !void {
     layout = try createPipelineLayout();
     defer device.device.destroyPipelineLayout(layout, null);
 
-    try Swapchain.init(&swapchain, &device, .{ .width = width, .height = height });
+    try Swapchain.init(&swapchain, &device, .{ .extent = .{ .width = width, .height = height } });
     defer swapchain.destroy(true);
 
     pipeline = try createPipeline();
@@ -68,7 +67,7 @@ fn run() !void {
     });
     defer model.destroy();
 
-    command_buffers = try swapchain.createCommandBuffers();
+    try swapchain.createCommandBuffers();
 
     _ = glfw.setKeyCallback(window.window, keyCallback);
 
@@ -208,7 +207,7 @@ fn drawFrame() !void {
 
     try recordCommandBuffer(image_index);
 
-    result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
+    result = try swapchain.submitCommandBuffers(swapchain.command_buffers[image_index], &image_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or window.framebuffer_resized) {
         window.framebuffer_resized = false;
         try recreateSwapchain();
@@ -230,8 +229,26 @@ fn recreateSwapchain() !void {
 
     try vkd.deviceWaitIdle();
 
-    swapchain.destroy(false);
-    try Swapchain.init(&swapchain, &device, extent);
+    var old_chain = swapchain;
+    var new_chain = swapchain;
+
+    for (old_chain.depth_image_views) |div| vkd.destroyImageView(div, null);
+    for (old_chain.depth_images) |dimg| vkd.destroyImage(dimg, null);
+    for (old_chain.depth_image_memories) |dimm| vkd.freeMemory(dimm, null);
+    for (old_chain.image_views) |iv| vkd.destroyImageView(iv, null);
+    vkd.destroyRenderPass(old_chain.render_pass, null);
+    for (old_chain.framebuffers) |fb| vkd.destroyFramebuffer(fb, null);
+
+    try Swapchain.init(&new_chain, &device, .{ .extent = extent, .old_swapchain = swapchain.swapchain });
+
+    vkd.destroySwapchainKHR(old_chain.swapchain, null);
+
+    if (old_chain.command_buffers.len != new_chain.images.len) {
+        old_chain.freeCommandBuffers();
+        try new_chain.createCommandBuffers();
+    }
+
+    swapchain = new_chain;
 
     // TODO: This can be omitted if the new renderpass is compatible with the old one
     pipeline.destroy();
@@ -239,8 +256,8 @@ fn recreateSwapchain() !void {
 }
 
 fn recordCommandBuffer(image_index: usize) !void {
-    std.debug.assert(image_index < command_buffers.len);
-    const handle = command_buffers[image_index];
+    std.debug.assert(image_index < swapchain.command_buffers.len);
+    const handle = swapchain.command_buffers[image_index];
 
     var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
     const begin_info = vk.CommandBufferBeginInfo{};

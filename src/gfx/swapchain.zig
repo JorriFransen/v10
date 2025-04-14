@@ -32,13 +32,20 @@ in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
 current_frame: usize = 0,
 
-pub fn init(this: *@This(), device: *Device, extent: vk.Extent2D) !void {
+command_buffers: []vk.CommandBuffer = &.{},
+
+pub const SwapchainOptions = struct {
+    extent: vk.Extent2D,
+    old_swapchain: vk.SwapchainKHR = .null_handle,
+};
+
+pub fn init(this: *@This(), device: *Device, options: SwapchainOptions) !void {
     this.device = device;
-    this.window_extent = extent;
+    this.window_extent = options.extent;
 
     const allocator = alloc.gfx_arena_data.allocator();
 
-    try this.createSwapchain(allocator);
+    try this.createSwapchain(options, allocator);
     try this.createImageViews(allocator);
     try this.createRenderPass();
     try this.createDepthResources(allocator);
@@ -133,7 +140,7 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
     return result;
 }
 
-fn createSwapchain(this: *@This(), allocator: Allocator) !void {
+fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocator) !void {
     const vkd = this.device.device;
 
     const swapchain_support = &this.device.device_info.swapchain_support;
@@ -175,10 +182,10 @@ fn createSwapchain(this: *@This(), allocator: Allocator) !void {
         .composite_alpha = .{ .opaque_bit_khr = true },
         .present_mode = present_mode,
         .clipped = vk.TRUE,
-        .old_swapchain = .null_handle,
         .image_sharing_mode = if (same_queue) .exclusive else .concurrent,
         .queue_family_index_count = if (same_queue) queue_indices.len else 0,
         .p_queue_family_indices = if (same_queue) @ptrCast(&queue_indices) else null,
+        .old_swapchain = options.old_swapchain,
     };
 
     this.swapchain = try vkd.createSwapchainKHR(&create_info, null);
@@ -463,17 +470,25 @@ fn findDepthFormat(this: *@This()) !vk.Format {
     );
 }
 
-pub fn createCommandBuffers(this: *@This()) ![]vk.CommandBuffer {
+pub fn createCommandBuffers(this: *@This()) !void {
     const vkd = this.device.device;
-    const handles = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, this.images.len);
+
+    if (this.command_buffers.len != 0) {
+        std.debug.assert(this.command_buffers.len == this.images.len);
+    } else {
+        this.command_buffers = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, this.images.len);
+    }
 
     const alloc_info = vk.CommandBufferAllocateInfo{
         .level = .primary,
         .command_pool = this.device.command_pool,
-        .command_buffer_count = @intCast(handles.len),
+        .command_buffer_count = @intCast(this.command_buffers.len),
     };
 
-    try vkd.allocateCommandBuffers(&alloc_info, handles.ptr);
+    try vkd.allocateCommandBuffers(&alloc_info, this.command_buffers.ptr);
+}
 
-    return handles;
+pub fn freeCommandBuffers(this: *@This()) void {
+    const vkd = this.device.device;
+    vkd.freeCommandBuffers(this.device.command_pool, @intCast(this.command_buffers.len), this.command_buffers.ptr);
 }
