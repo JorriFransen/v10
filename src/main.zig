@@ -31,6 +31,13 @@ var pipeline: Pipeline = undefined;
 
 var model: Model = undefined;
 
+const PushConstantData = extern struct {
+    offset: Vec2,
+    color: Vec3 align(16),
+};
+
+var frame: i64 = 0;
+
 fn run() !void {
     const width = 1920;
     const height = 1080;
@@ -52,18 +59,10 @@ fn run() !void {
     pipeline = try createPipeline();
     defer pipeline.destroy();
 
-    // const initial_triangle = Triangle{ .pos = .{ .x = 0, .y = 0 }, .size = 1.8 };
-    // var sierpinski = try Sierpinski.init(initial_triangle, 5);
-    // defer sierpinski.deinit();
-    //
-    // const vertices = try sierpinski.vertices();
-    // defer alloc.gpa.free(vertices);
-    //
-    // model = try Model.create(&device, vertices);
     model = try Model.create(&device, &.{
-        .{ .position = Vec2.new(0, -0.9), .color = Vec3.new(1, 0, 0) },
-        .{ .position = Vec2.new(0.9, 0.9), .color = Vec3.new(0, 1, 0) },
-        .{ .position = Vec2.new(-0.9, 0.9), .color = Vec3.new(0, 0, 1) },
+        .{ .position = Vec2.new(0, -0.5), .color = Vec3.new(1, 0, 0) },
+        .{ .position = Vec2.new(0.5, 0.5), .color = Vec3.new(0, 1, 0) },
+        .{ .position = Vec2.new(-0.5, 0.5), .color = Vec3.new(0, 0, 1) },
     });
     defer model.destroy();
 
@@ -100,85 +99,18 @@ fn refreshCallback(glfw_window: glfw.Window) callconv(.c) void {
     drawFrame() catch unreachable;
 }
 
-const Triangle = struct {
-    pos: gfx.Vec2,
-    size: f32,
-
-    pub fn vertices(this: @This()) [3]Vertex {
-        const half = this.size / 2;
-        return .{
-            .{ .position = this.pos.add(.{ .x = 0, .y = -half }), .color = Vec3.new(1, 0, 0) },
-            .{ .position = this.pos.add(.{ .x = half, .y = half }), .color = Vec3.new(0, 1, 0) },
-            .{ .position = this.pos.add(.{ .x = -half, .y = half }), .color = Vec3.new(0, 0, 1) },
-        };
-    }
-};
-
-const Sierpinski = struct {
-    triangles: std.ArrayList(Triangle),
-
-    pub fn init(initial_triangle: Triangle, iterations: usize) !@This() {
-        const tri_count = std.math.pow(usize, 3, iterations);
-        var result = @This(){
-            .triangles = try std.ArrayList(Triangle).initCapacity(alloc.gpa, tri_count),
-        };
-
-        try result.triangles.append(initial_triangle);
-        std.debug.assert(result.triangles.items.len == 1);
-
-        try result.sierpinski(iterations);
-
-        return result;
-    }
-
-    fn sierpinski(this: *@This(), iterations: usize) !void {
-        for (0..iterations) |_| {
-            const tri_count = this.triangles.items.len;
-
-            for (0..tri_count) |i| {
-                const idx = tri_count - 1 - i;
-                const triangle = this.triangles.swapRemove(idx);
-
-                const pos = triangle.pos;
-                const size = triangle.size / 2;
-                const offset = size / 2;
-
-                try this.triangles.appendSlice(&.{
-                    Triangle{ .size = size, .pos = pos.add(.{ .x = 0, .y = -offset }) },
-                    Triangle{ .size = size, .pos = pos.add(.{ .x = offset, .y = offset }) },
-                    Triangle{ .size = size, .pos = pos.add(.{ .x = -offset, .y = offset }) },
-                });
-            }
-        }
-    }
-
-    pub fn deinit(this: *@This()) void {
-        this.triangles.deinit();
-    }
-
-    pub fn vertices(this: *@This()) ![]Vertex {
-        const result = try alloc.gpa.alloc(Vertex, this.triangles.items.len * 3);
-
-        var vi: usize = 0;
-        for (this.triangles.items) |triangle| {
-            const tvertices = triangle.vertices();
-            result[vi + 0] = tvertices[0];
-            result[vi + 1] = tvertices[1];
-            result[vi + 2] = tvertices[2];
-
-            vi += 3;
-        }
-
-        return result;
-    }
-};
-
 fn createPipelineLayout() !vk.PipelineLayout {
+    const push_constant_range = vk.PushConstantRange{
+        .offset = 0,
+        .size = @sizeOf(PushConstantData),
+        .stage_flags = .{ .vertex_bit = true, .fragment_bit = true },
+    };
+
     const pipeline_layout_info = vk.PipelineLayoutCreateInfo{
         .set_layout_count = 0,
         .p_set_layouts = null,
-        .push_constant_range_count = 0,
-        .p_push_constant_ranges = null,
+        .push_constant_range_count = 1,
+        .p_push_constant_ranges = @ptrCast(&push_constant_range),
     };
 
     return try device.device.createPipelineLayout(&pipeline_layout_info, null);
@@ -259,12 +191,14 @@ fn recordCommandBuffer(image_index: usize) !void {
     std.debug.assert(image_index < swapchain.command_buffers.len);
     const handle = swapchain.command_buffers[image_index];
 
+    frame = @mod(frame + 1, 1000);
+
     var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
     const begin_info = vk.CommandBufferBeginInfo{};
     try cb.beginCommandBuffer(&begin_info);
 
     const clear_values = [_]vk.ClearValue{
-        .{ .color = .{ .float_32 = .{ 0.05, 0.05, 0.05, 1 } } },
+        .{ .color = .{ .float_32 = .{ 0.01, 0.01, 0.01, 1 } } },
         .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
     };
 
@@ -297,7 +231,19 @@ fn recordCommandBuffer(image_index: usize) !void {
     cb.setScissor(0, scissors.len, &scissors);
 
     model.bind(handle);
-    model.draw(handle);
+
+    const fframe: f32 = @floatFromInt(frame);
+
+    for (0..4) |i| {
+        const fi: f32 = @floatFromInt(i);
+        var pcd = PushConstantData{
+            .offset = .{ .x = -0.5 + fframe * 0.001, .y = -0.4 + fi * 0.25 },
+            .color = .{ .x = 0, .y = 0, .z = 0.2 + 0.2 * fi },
+        };
+        cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
+
+        model.draw(handle);
+    }
 
     cb.endRenderPass();
     try cb.endCommandBuffer();

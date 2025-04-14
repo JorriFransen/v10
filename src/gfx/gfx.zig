@@ -8,10 +8,10 @@ pub const Pipeline = @import("pipeline.zig");
 pub const Swapchain = @import("swapchain.zig");
 pub const Model = @import("model.zig");
 
-pub const Vec2 = math.Vec2f32;
-pub const Vec3 = math.Vec3f32;
-pub const Vec4 = math.Vec4f32;
-pub const Mat4 = math.Mat4f32;
+pub const Vec2 = math.Vec2;
+pub const Vec3 = math.Vec3;
+pub const Vec4 = math.Vec4;
+pub const Mat4 = math.Mat4;
 
 pub var system: System = undefined;
 pub const System = struct {
