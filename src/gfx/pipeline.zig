@@ -128,7 +128,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     {
         const file = try std.fs.cwd().openFile(vert_path, .{});
         defer file.close();
-        vert_code = try file.readToEndAllocOptions(allocator, try file.getEndPos(), null, 4, 0);
+        vert_code = try file.readToEndAllocOptions(allocator, try file.getEndPos(), null, .@"4", 0);
     }
     vklog.debug("vert_code.len: {}", .{vert_code.len});
 
@@ -136,7 +136,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     {
         const file = try std.fs.cwd().openFile(frag_path, .{});
         defer file.close();
-        frag_code = try file.readToEndAllocOptions(allocator, try file.getEndPos() + 8, null, 4, 0);
+        frag_code = try file.readToEndAllocOptions(allocator, try file.getEndPos() + 8, null, .@"4", 0);
     }
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
