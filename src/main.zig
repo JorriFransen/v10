@@ -10,10 +10,11 @@ const Window = @import("window.zig");
 const Device = gfx.Device;
 const Swapchain = gfx.Swapchain;
 const Pipeline = gfx.Pipeline;
+const Entity = @import("entity.zig");
 const Model = gfx.Model;
-const Vertex = Model.Vertex;
 const Vec2 = gfx.Vec2;
 const Vec3 = gfx.Vec3;
+const Mat2 = gfx.math.Mat(2, 2, f32);
 
 pub fn main() !void {
     try run();
@@ -29,14 +30,13 @@ var swapchain: Swapchain = undefined;
 var layout: vk.PipelineLayout = .null_handle;
 var pipeline: Pipeline = undefined;
 
-var model: Model = undefined;
+var entities: []Entity = undefined;
 
 const PushConstantData = extern struct {
-    offset: Vec2,
+    transform: Mat2 align(8),
+    offset: Vec2 align(8),
     color: Vec3 align(16),
 };
-
-var frame: i64 = 0;
 
 fn run() !void {
     const width = 1920;
@@ -59,12 +59,24 @@ fn run() !void {
     pipeline = try createPipeline();
     defer pipeline.destroy();
 
-    model = try Model.create(&device, &.{
+    var model = try Model.create(&device, &.{
         .{ .position = Vec2.new(0, -0.5), .color = Vec3.new(1, 0, 0) },
         .{ .position = Vec2.new(0.5, 0.5), .color = Vec3.new(0, 1, 0) },
         .{ .position = Vec2.new(-0.5, 0.5), .color = Vec3.new(0, 0, 1) },
     });
     defer model.destroy();
+
+    var _entities = [_]Entity{
+        Entity.new(),
+    };
+    const triangle = &_entities[0];
+    triangle.model = &model;
+    triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
+    triangle.transform.translation = .{ .x = 0.2, .y = 0 };
+    triangle.transform.scale = .{ .x = 2, .y = 0.5 };
+    triangle.transform.rotation = 0.25 * std.math.tau;
+
+    entities = &_entities;
 
     try swapchain.createCommandBuffers();
 
@@ -191,8 +203,6 @@ fn recordCommandBuffer(image_index: usize) !void {
     std.debug.assert(image_index < swapchain.command_buffers.len);
     const handle = swapchain.command_buffers[image_index];
 
-    frame = @mod(frame + 1, 1000);
-
     var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
     const begin_info = vk.CommandBufferBeginInfo{};
     try cb.beginCommandBuffer(&begin_info);
@@ -212,7 +222,6 @@ fn recordCommandBuffer(image_index: usize) !void {
     };
 
     cb.beginRenderPass(&render_pass_info, .@"inline");
-    cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
 
     const viewports = [1]vk.Viewport{.{
         .x = 0,
@@ -230,21 +239,25 @@ fn recordCommandBuffer(image_index: usize) !void {
     }};
     cb.setScissor(0, scissors.len, &scissors);
 
-    model.bind(handle);
-
-    const fframe: f32 = @floatFromInt(frame);
-
-    for (0..4) |i| {
-        const fi: f32 = @floatFromInt(i);
-        var pcd = PushConstantData{
-            .offset = .{ .x = -0.5 + fframe * 0.001, .y = -0.4 + fi * 0.25 },
-            .color = .{ .x = 0, .y = 0, .z = 0.2 + 0.2 * fi },
-        };
-        cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
-
-        model.draw(handle);
-    }
+    drawEntities(&cb);
 
     cb.endRenderPass();
     try cb.endCommandBuffer();
+}
+
+fn drawEntities(cb: *const vk.CommandBufferProxy) void {
+    cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
+
+    for (entities) |*entity| {
+        entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
+        var pcd = PushConstantData{
+            .offset = entity.transform.translation,
+            .color = entity.color,
+            .transform = entity.transform.mat2(),
+        };
+        cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
+
+        entity.model.bind(cb.handle);
+        entity.model.draw(cb.handle);
+    }
 }

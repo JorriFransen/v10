@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const options = @import("options");
 
 const BORDER = "=" ** 80;
 
@@ -45,7 +46,8 @@ pub fn main() !void {
     defer if (filter) |f| alloc.free(f);
 
     const printer = Printer.init();
-    printer.fmt("\r\x1b[0K", .{}); // beginning of line and clear to end of line
+    if (options.test_color)
+        printer.fmt("\r\x1b[0K", .{}); // beginning of line and clear to end of line
 
     var pass: usize = 0;
     var fail: usize = 0;
@@ -128,8 +130,11 @@ const Printer = struct {
             else => "",
         };
         const out = self.out;
-        out.writeAll(color) catch @panic("writeAll failed?!");
+
+        if (options.test_color) out.writeAll(color) catch @panic("writeAll failed?!");
+
         std.fmt.format(out, format, args) catch @panic("std.fmt.format failed?!");
-        self.fmt("\x1b[0m", .{});
+
+        if (options.test_color) self.fmt("\x1b[0m", .{});
     }
 };

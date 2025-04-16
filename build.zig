@@ -45,12 +45,17 @@ pub fn build(b: *std.Build) !void {
     const shader_step = try addShaderStep(b);
     exe.step.dependOn(shader_step);
 
+    const test_color = b.option(bool, "test_color", "Enable colored test output") orelse true;
+    const test_options = b.addOptions();
+    test_options.addOption(bool, "test_color", test_color);
+
     const test_exe = b.addTest(.{
         .root_source_file = b.path("src/tests.zig"),
         .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
         .target = target,
         .optimize = optimize,
     });
+    test_exe.root_module.addOptions("options", test_options);
     const run_tests = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);

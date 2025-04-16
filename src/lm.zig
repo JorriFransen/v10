@@ -12,15 +12,17 @@ pub const radians = std.math.degreesToRadians;
 pub const Vec2f32 = Vec(2, f32);
 pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
+pub const Mat2f32 = Mat(2, 2, f32);
 pub const Mat4f32 = Mat(4, 4, f32);
 
-pub fn Vec(comptime N: usize, comptime T: type) type {
-    const V = @Vector(N, T);
+pub fn Vec(comptime N: usize, comptime ET: type) type {
+    const V = @Vector(N, ET);
 
     switch (N) {
         else => @compileError("N must be between 2 and 4"),
 
         2 => return extern struct {
+            pub const T = ET;
             x: T,
             y: T,
             pub fn new(x: T, y: T) @This() {
@@ -30,6 +32,7 @@ pub fn Vec(comptime N: usize, comptime T: type) type {
         },
 
         3 => return extern struct {
+            pub const T = ET;
             x: T,
             y: T,
             z: T,
@@ -40,6 +43,7 @@ pub fn Vec(comptime N: usize, comptime T: type) type {
         },
 
         4 => return extern struct {
+            pub const T = ET;
             x: T,
             y: T,
             z: T,
@@ -55,11 +59,8 @@ pub fn Vec(comptime N: usize, comptime T: type) type {
 pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: type) type {
     const V = @Vector(N, T);
     return extern struct {
-        pub inline fn fromVector(v: V) Base {
-            return @bitCast(v);
-        }
-        pub inline fn toVector(base: Base) V {
-            return @bitCast(base);
+        pub inline fn v(vec: V) Base {
+            return @bitCast(vec);
         }
         pub inline fn scalar(s: T) Base {
             return @bitCast(@as(V, @splat(s)));
@@ -77,7 +78,7 @@ pub fn Mat(comptime c: usize, comptime r: usize, comptime T: type) type {
         pub const V = @Vector(c * r, T);
 
         /// e: elements in row-major order
-        pub inline fn new(e: [C * R]T) @This() {
+        pub inline fn new(e: V) @This() {
             return (@This(){ .data = e }).transpose();
         }
 
@@ -94,38 +95,41 @@ pub fn Mat(comptime c: usize, comptime r: usize, comptime T: type) type {
             break :blk result;
         };
 
-        pub inline fn transpose(m: @This()) @This() {
+        pub inline fn transpose(_m: @This()) @This() {
             std.debug.assert(C == R);
             const D = C;
 
-            var result: @This() = undefined;
+            const m: V = @bitCast(_m);
+            var result: V = undefined;
 
-            for (0..D) |ci| {
-                for (0..D) |ri| {
-                    result.data[ri + (D * ci)] = m.data[ci + (D * ri)];
+            inline for (0..D) |ci| {
+                inline for (0..D) |ri| {
+                    result[ri + (D * ci)] = m[ci + (D * ri)];
                 }
             }
 
-            return result;
+            return @bitCast(result);
         }
 
-        pub inline fn mul(a: @This(), b: @This()) @This() {
+        pub inline fn mul(_a: @This(), _b: @This()) @This() {
             std.debug.assert(C == R);
             const D = C;
 
-            var result: @This() = undefined;
+            const a: V = @bitCast(_a);
+            const b: V = @bitCast(_b);
+            var result: V = undefined;
 
-            for (0..D) |i| {
-                for (0..D) |j| {
+            inline for (0..D) |i| {
+                inline for (0..D) |j| {
                     var sum: f32 = 0;
-                    for (0..D) |k| {
-                        sum += a.data[i + (D * k)] * b.data[k + (D * j)];
+                    inline for (0..D) |k| {
+                        sum += a[i + (D * k)] * b[k + (D * j)];
                     }
-                    result.data[i + (D * j)] = sum;
+                    result[i + (D * j)] = sum;
                 }
             }
 
-            return result;
+            return @bitCast(result);
         }
     };
 }
@@ -149,15 +153,15 @@ test "Matrix2 transpose" {
 test "Matrix2 new" {
     const M = Mat(2, 2, f32);
 
-    const expected = M.new(.{
+    const expected = M{ .data = .{
         1, 3,
         2, 4,
-    });
+    } };
 
     const result = M.new(.{
         1, 2,
         3, 4,
-    }).transpose();
+    });
 
     try expectApproxEqualMatrix(M, expected, result);
 }
@@ -182,17 +186,17 @@ test "Matrix2 mul" {
         1, 0,
     });
 
-    const a = M.new(.{
+    const rot = M.new(.{
         0, -1,
         1, 0,
     });
 
-    const b = M.new(.{
+    const shear = M.new(.{
         1, 1,
         0, 1,
     });
 
-    const result = b.mul(a);
+    const result = shear.mul(rot);
     try expectApproxEqualMatrix(M, expected, result);
 }
 
