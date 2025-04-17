@@ -7,8 +7,8 @@ const vklog = std.log.scoped(.vulkan);
 
 const Allocator = std.mem.Allocator;
 const Window = @import("window.zig");
+const Renderer = @import("renderer.zig");
 const Device = gfx.Device;
-const Swapchain = gfx.Swapchain;
 const Pipeline = gfx.Pipeline;
 const Entity = @import("entity.zig");
 const Model = gfx.Model;
@@ -29,11 +29,9 @@ pub fn main() !void {
 // TODO: Seperate arena for swapchain/pipeline (resizing).
 var window: Window = undefined;
 var device: Device = undefined;
-var swapchain: Swapchain = undefined;
+var renderer: Renderer = undefined;
 var layout: vk.PipelineLayout = .null_handle;
 var pipeline: Pipeline = undefined;
-
-var command_buffers: []vk.CommandBuffer = &.{};
 
 var entities: []Entity = undefined;
 
@@ -43,14 +41,7 @@ const PushConstantData = extern struct {
     color: Vec3 align(16),
 };
 
-// const PushConstantData = extern struct {
-//     transform: Mat4 align(16),
-//     offset: Vec2 align(8),
-//     color: Vec3 align(16),
-// };
-
 fn run() !void {
-    std.log.debug("PCD size: {}", .{@sizeOf(PushConstantData)});
     const width = 1920;
     const height = 1080;
 
@@ -65,8 +56,8 @@ fn run() !void {
     layout = try createPipelineLayout();
     defer device.device.destroyPipelineLayout(layout, null);
 
-    try Swapchain.init(&swapchain, &device, .{ .extent = .{ .width = width, .height = height } });
-    defer swapchain.destroy(true);
+    try renderer.init(&window, &device);
+    defer renderer.destroy();
 
     pipeline = try createPipeline();
     defer pipeline.destroy();
@@ -90,7 +81,7 @@ fn run() !void {
 
     entities = &_entities;
 
-    try createCommandBuffers();
+    try renderer.createCommandBuffers();
 
     _ = glfw.setKeyCallback(window.window, keyCallback);
 
@@ -142,99 +133,42 @@ fn createPipelineLayout() !vk.PipelineLayout {
 
 fn createPipeline() !Pipeline {
     var pipeline_config = Pipeline.ConfigInfo.default();
-    pipeline_config.render_pass = swapchain.render_pass;
+    pipeline_config.render_pass = renderer.swapchain.render_pass;
     pipeline_config.pipeline_layout = layout;
 
     return try Pipeline.create(&device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
 }
 
 fn drawFrame() !void {
-    var image_index: u32 = undefined;
-    var result = try swapchain.acquireNextImage(&image_index);
+    var cb_opt = try renderer.beginFrame();
+    while (cb_opt == null) {
+        cb_opt = try renderer.beginFrame();
 
-    if (result == .error_out_of_date_khr) {
-        try recreateSwapchain();
-        return;
+        // Resized swapchain
+        // TODO: This can be omitted if the new renderpass is compatible with the old one
+        pipeline.destroy();
+        pipeline = try createPipeline();
     }
+    const cb = cb_opt.?;
 
-    if (result != .success and result != .suboptimal_khr) {
-        return error.swapchainAcquireNextImageFailed;
-    }
+    renderer.beginRenderpass(cb);
 
-    try recordCommandBuffer(image_index);
+    try recordCommandBuffer(cb);
 
-    result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
-    if (result == .error_out_of_date_khr or result == .suboptimal_khr or window.framebuffer_resized) {
-        window.framebuffer_resized = false;
-        try recreateSwapchain();
-    } else if (result != .success) {
-        return error.swapchainSubmitCommandBuffersFailed;
-    }
+    renderer.endRenderPass(cb);
+    renderer.endFrame(cb) catch |err| switch (err) {
+        else => return err,
+        error.swapchainRecreated => {
+
+            // TODO: This can be omitted if the new renderpass is compatible with the old one
+            pipeline.destroy();
+            pipeline = try createPipeline();
+        },
+    };
 }
 
-fn recreateSwapchain() !void {
-    const vkd = device.device;
-
-    var extent = window.getExtent();
-    while (extent.width == 0 or extent.height == 0) {
-        extent = window.getExtent();
-        window.waitEvents();
-
-        if (window.shouldClose()) return;
-    }
-
-    try vkd.deviceWaitIdle();
-
-    const old_chain = swapchain;
-    var new_chain = swapchain;
-
-    for (old_chain.depth_image_views) |div| vkd.destroyImageView(div, null);
-    for (old_chain.depth_images) |dimg| vkd.destroyImage(dimg, null);
-    for (old_chain.depth_image_memories) |dimm| vkd.freeMemory(dimm, null);
-    for (old_chain.image_views) |iv| vkd.destroyImageView(iv, null);
-    vkd.destroyRenderPass(old_chain.render_pass, null);
-    for (old_chain.framebuffers) |fb| vkd.destroyFramebuffer(fb, null);
-
-    try Swapchain.init(&new_chain, &device, .{ .extent = extent, .old_swapchain = swapchain.swapchain });
-
-    vkd.destroySwapchainKHR(old_chain.swapchain, null);
-
-    if (command_buffers.len != new_chain.images.len) {
-        freeCommandBuffers();
-        try createCommandBuffers();
-    }
-
-    swapchain = new_chain;
-
-    // TODO: This can be omitted if the new renderpass is compatible with the old one
-    pipeline.destroy();
-    pipeline = try createPipeline();
-}
-
-fn recordCommandBuffer(image_index: usize) !void {
-    std.debug.assert(image_index < command_buffers.len);
-    const handle = command_buffers[image_index];
-
-    var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
-    const begin_info = vk.CommandBufferBeginInfo{};
-    try cb.beginCommandBuffer(&begin_info);
-
-    const clear_values = [_]vk.ClearValue{
-        .{ .color = .{ .float_32 = .{ 0.01, 0.01, 0.01, 1 } } },
-        .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
-    };
-
-    const extent = swapchain.swapchain_extent;
-    const render_pass_info = vk.RenderPassBeginInfo{
-        .render_pass = swapchain.render_pass,
-        .framebuffer = swapchain.framebuffers[image_index],
-        .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = extent },
-        .clear_value_count = clear_values.len,
-        .p_clear_values = &clear_values,
-    };
-
-    cb.beginRenderPass(&render_pass_info, .@"inline");
-
+fn recordCommandBuffer(cb: vk.CommandBufferProxy) !void {
+    const extent = renderer.swapchain.swapchain_extent;
     const viewports = [1]vk.Viewport{.{
         .x = 0,
         .y = 0,
@@ -252,53 +186,21 @@ fn recordCommandBuffer(image_index: usize) !void {
     cb.setScissor(0, scissors.len, &scissors);
 
     drawEntities(&cb);
-
-    cb.endRenderPass();
-    try cb.endCommandBuffer();
 }
 
 fn drawEntities(cb: *const vk.CommandBufferProxy) void {
     cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
 
     for (entities) |*entity| {
-        entity.transform.rotation = @mod(entity.transform.rotation + 0.01, std.math.tau);
-        const tf = entity.transform.mat3();
+        entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
         var pcd = PushConstantData{
             .offset = entity.transform.translation,
             .color = entity.color,
-            // .transform = entity.transform.mat3(),
-            .transform = .{
-                Vec4.new(tf.data[0], tf.data[1], tf.data[2], 0),
-                Vec4.new(tf.data[3], tf.data[4], tf.data[5], 0),
-                Vec4.new(tf.data[6], tf.data[7], tf.data[8], 0),
-            },
+            .transform = gfx.math.padMat3f32(entity.transform.mat3()),
         };
         cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
         entity.model.bind(cb.handle);
         entity.model.draw(cb.handle);
     }
-}
-
-pub fn createCommandBuffers() !void {
-    const vkd = device.device;
-
-    if (command_buffers.len != 0) {
-        std.debug.assert(command_buffers.len == swapchain.images.len);
-    } else {
-        command_buffers = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, swapchain.images.len);
-    }
-
-    const alloc_info = vk.CommandBufferAllocateInfo{
-        .level = .primary,
-        .command_pool = device.command_pool,
-        .command_buffer_count = @intCast(command_buffers.len),
-    };
-
-    try vkd.allocateCommandBuffers(&alloc_info, command_buffers.ptr);
-}
-
-pub fn freeCommandBuffers() void {
-    const vkd = device.device;
-    vkd.freeCommandBuffers(device.command_pool, @intCast(command_buffers.len), command_buffers.ptr);
 }

@@ -135,6 +135,14 @@ pub fn Mat(comptime c: usize, comptime r: usize, comptime T: type) type {
     };
 }
 
+pub inline fn padMat3f32(mat: Mat3f32) [3]Vec4f32 {
+    return .{
+        Vec4f32.new(mat.data[0], mat.data[1], mat.data[2], 0),
+        Vec4f32.new(mat.data[3], mat.data[4], mat.data[5], 0),
+        Vec4f32.new(mat.data[6], mat.data[7], mat.data[8], 0),
+    };
+}
+
 test "Matrix2 transpose" {
     const M = Mat(2, 2, f32);
 
