@@ -169,7 +169,7 @@ fn createInstance(this: *@This()) !void {
         .application_version = @bitCast(vk.makeApiVersion(0, 0, 1, 0)),
         .p_engine_name = "v10",
         .engine_version = @bitCast(vk.makeApiVersion(0, 0, 1, 0)),
-        .api_version = @bitCast(vk.features.version_1_0.version),
+        .api_version = @bitCast(vk.features.version_1_2.version),
     };
 
     const extensions = try this.getRequiredExtensions(ta);

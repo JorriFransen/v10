@@ -14,6 +14,7 @@ const Entity = @import("entity.zig");
 const Model = gfx.Model;
 const Vec2 = gfx.Vec2;
 const Vec3 = gfx.Vec3;
+const Vec4 = gfx.Vec4;
 const Mat2 = gfx.Mat2;
 const Mat3 = gfx.Mat3;
 const Mat4 = gfx.Mat4;
@@ -35,12 +36,19 @@ var pipeline: Pipeline = undefined;
 var entities: []Entity = undefined;
 
 const PushConstantData = extern struct {
-    transform: Mat4 align(16),
-    offset: Vec2,
+    transform: [3]Vec4,
+    offset: Vec2 align(8),
     color: Vec3 align(16),
 };
 
+// const PushConstantData = extern struct {
+//     transform: Mat4 align(16),
+//     offset: Vec2 align(8),
+//     color: Vec3 align(16),
+// };
+
 fn run() !void {
+    std.log.debug("PCD size: {}", .{@sizeOf(PushConstantData)});
     const width = 1920;
     const height = 1080;
 
@@ -251,11 +259,17 @@ fn drawEntities(cb: *const vk.CommandBufferProxy) void {
     cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
 
     for (entities) |*entity| {
-        entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
+        entity.transform.rotation = @mod(entity.transform.rotation + 0.01, std.math.tau);
+        const tf = entity.transform.mat3();
         var pcd = PushConstantData{
             .offset = entity.transform.translation,
             .color = entity.color,
-            .transform = entity.transform.mat4(),
+            // .transform = entity.transform.mat3(),
+            .transform = .{
+                Vec4.new(tf.data[0], tf.data[1], tf.data[2], 0),
+                Vec4.new(tf.data[3], tf.data[4], tf.data[5], 0),
+                Vec4.new(tf.data[6], tf.data[7], tf.data[8], 0),
+            },
         };
         cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 

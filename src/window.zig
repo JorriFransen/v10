@@ -13,7 +13,7 @@ window: glfw.Window,
 platform: glfw.Platform,
 
 pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8) !void {
-    // glfw.initHint(glfw.PLATFORM, @intFromEnum(glfw.Platform.X11));
+    glfw.initHint(glfw.PLATFORM, @intFromEnum(glfw.Platform.X11));
 
     if (glfw.init() != glfw.TRUE) return error.glfwInitFailed;
 
