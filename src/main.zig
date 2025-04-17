@@ -33,6 +33,8 @@ var swapchain: Swapchain = undefined;
 var layout: vk.PipelineLayout = .null_handle;
 var pipeline: Pipeline = undefined;
 
+var command_buffers: []vk.CommandBuffer = &.{};
+
 var entities: []Entity = undefined;
 
 const PushConstantData = extern struct {
@@ -88,7 +90,7 @@ fn run() !void {
 
     entities = &_entities;
 
-    try swapchain.createCommandBuffers();
+    try createCommandBuffers();
 
     _ = glfw.setKeyCallback(window.window, keyCallback);
 
@@ -161,7 +163,7 @@ fn drawFrame() !void {
 
     try recordCommandBuffer(image_index);
 
-    result = try swapchain.submitCommandBuffers(swapchain.command_buffers[image_index], &image_index);
+    result = try swapchain.submitCommandBuffers(command_buffers[image_index], &image_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or window.framebuffer_resized) {
         window.framebuffer_resized = false;
         try recreateSwapchain();
@@ -183,7 +185,7 @@ fn recreateSwapchain() !void {
 
     try vkd.deviceWaitIdle();
 
-    var old_chain = swapchain;
+    const old_chain = swapchain;
     var new_chain = swapchain;
 
     for (old_chain.depth_image_views) |div| vkd.destroyImageView(div, null);
@@ -197,9 +199,9 @@ fn recreateSwapchain() !void {
 
     vkd.destroySwapchainKHR(old_chain.swapchain, null);
 
-    if (old_chain.command_buffers.len != new_chain.images.len) {
-        old_chain.freeCommandBuffers();
-        try new_chain.createCommandBuffers();
+    if (command_buffers.len != new_chain.images.len) {
+        freeCommandBuffers();
+        try createCommandBuffers();
     }
 
     swapchain = new_chain;
@@ -210,8 +212,8 @@ fn recreateSwapchain() !void {
 }
 
 fn recordCommandBuffer(image_index: usize) !void {
-    std.debug.assert(image_index < swapchain.command_buffers.len);
-    const handle = swapchain.command_buffers[image_index];
+    std.debug.assert(image_index < command_buffers.len);
+    const handle = command_buffers[image_index];
 
     var cb = vk.CommandBufferProxy.init(handle, swapchain.device.device.wrapper);
     const begin_info = vk.CommandBufferBeginInfo{};
@@ -276,4 +278,27 @@ fn drawEntities(cb: *const vk.CommandBufferProxy) void {
         entity.model.bind(cb.handle);
         entity.model.draw(cb.handle);
     }
+}
+
+pub fn createCommandBuffers() !void {
+    const vkd = device.device;
+
+    if (command_buffers.len != 0) {
+        std.debug.assert(command_buffers.len == swapchain.images.len);
+    } else {
+        command_buffers = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, swapchain.images.len);
+    }
+
+    const alloc_info = vk.CommandBufferAllocateInfo{
+        .level = .primary,
+        .command_pool = device.command_pool,
+        .command_buffer_count = @intCast(command_buffers.len),
+    };
+
+    try vkd.allocateCommandBuffers(&alloc_info, command_buffers.ptr);
+}
+
+pub fn freeCommandBuffers() void {
+    const vkd = device.device;
+    vkd.freeCommandBuffers(device.command_pool, @intCast(command_buffers.len), command_buffers.ptr);
 }

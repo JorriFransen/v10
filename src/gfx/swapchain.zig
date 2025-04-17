@@ -32,8 +32,6 @@ in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
 current_frame: usize = 0,
 
-command_buffers: []vk.CommandBuffer = &.{},
-
 pub const SwapchainOptions = struct {
     extent: vk.Extent2D,
     old_swapchain: vk.SwapchainKHR = .null_handle,
@@ -468,27 +466,4 @@ fn findDepthFormat(this: *@This()) !vk.Format {
         .optimal,
         .{ .depth_stencil_attachment_bit = true },
     );
-}
-
-pub fn createCommandBuffers(this: *@This()) !void {
-    const vkd = this.device.device;
-
-    if (this.command_buffers.len != 0) {
-        std.debug.assert(this.command_buffers.len == this.images.len);
-    } else {
-        this.command_buffers = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, this.images.len);
-    }
-
-    const alloc_info = vk.CommandBufferAllocateInfo{
-        .level = .primary,
-        .command_pool = this.device.command_pool,
-        .command_buffer_count = @intCast(this.command_buffers.len),
-    };
-
-    try vkd.allocateCommandBuffers(&alloc_info, this.command_buffers.ptr);
-}
-
-pub fn freeCommandBuffers(this: *@This()) void {
-    const vkd = this.device.device;
-    vkd.freeCommandBuffers(this.device.command_pool, @intCast(this.command_buffers.len), this.command_buffers.ptr);
 }
