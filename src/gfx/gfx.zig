@@ -6,6 +6,7 @@ pub const math = @import("../lm.zig");
 pub const Device = @import("device.zig");
 pub const Pipeline = @import("pipeline.zig");
 pub const Swapchain = @import("swapchain.zig");
+pub const Renderer = @import("renderer.zig");
 pub const Model = @import("model.zig");
 
 pub const Vec2 = math.Vec2f32;

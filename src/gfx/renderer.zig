@@ -1,9 +1,9 @@
 const std = @import("std");
-const alloc = @import("alloc.zig");
-const gfx = @import("gfx/gfx.zig");
+const alloc = @import("../alloc.zig");
+const gfx = @import("gfx.zig");
 const vk = @import("vulkan");
 
-const Window = @import("window.zig");
+const Window = @import("../window.zig");
 const Device = gfx.Device;
 const Swapchain = gfx.Swapchain;
 
@@ -22,6 +22,7 @@ pub fn init(this: *@This(), window: *Window, device: *Device) !void {
 }
 
 pub fn destroy(this: *@This()) void {
+    this.freeCommandBuffers();
     this.swapchain.destroy(true);
 }
 
@@ -70,7 +71,8 @@ pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
 
 pub fn endFrame(this: *@This(), cb: vk.CommandBufferProxy) !void {
     try cb.endCommandBuffer();
-    const result = try this.swapchain.submitCommandBuffers(this.command_buffers[this.current_image_index], &this.current_image_index);
+
+    const result = try this.swapchain.submitCommandBuffers(cb.handle, &this.current_image_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or this.window.framebuffer_resized) {
         this.window.framebuffer_resized = false;
         try this.recreateSwapchain();
@@ -96,6 +98,22 @@ pub fn beginRenderpass(this: *@This(), cb: vk.CommandBufferProxy) void {
     };
 
     cb.beginRenderPass(&render_pass_info, .@"inline");
+
+    const viewports = [1]vk.Viewport{.{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(extent.width),
+        .height = @floatFromInt(extent.height),
+        .min_depth = 0,
+        .max_depth = 1,
+    }};
+    cb.setViewport(0, viewports.len, &viewports);
+
+    const scissors = [1]vk.Rect2D{.{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = extent,
+    }};
+    cb.setScissor(0, scissors.len, &scissors);
 }
 
 pub fn endRenderPass(this: *@This(), cb: vk.CommandBufferProxy) void {

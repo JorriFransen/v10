@@ -3,11 +3,9 @@ const alloc = @import("alloc.zig");
 const glfw = @import("glfw");
 const gfx = @import("gfx/gfx.zig");
 const vk = @import("vulkan");
-const vklog = std.log.scoped(.vulkan);
 
-const Allocator = std.mem.Allocator;
 const Window = @import("window.zig");
-const Renderer = @import("renderer.zig");
+const Renderer = gfx.Renderer;
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Entity = @import("entity.zig");
@@ -15,9 +13,6 @@ const Model = gfx.Model;
 const Vec2 = gfx.Vec2;
 const Vec3 = gfx.Vec3;
 const Vec4 = gfx.Vec4;
-const Mat2 = gfx.Mat2;
-const Mat3 = gfx.Mat3;
-const Mat4 = gfx.Mat4;
 
 pub fn main() !void {
     try run();
@@ -26,11 +21,12 @@ pub fn main() !void {
     std.log.debug("Clean exit", .{});
 }
 
-// TODO: Seperate arena for swapchain/pipeline (resizing).
 var window: Window = undefined;
 var device: Device = undefined;
 var renderer: Renderer = undefined;
 var layout: vk.PipelineLayout = .null_handle;
+
+// TODO: Seperate arena for swapchain/pipeline (resizing).
 var pipeline: Pipeline = undefined;
 
 var entities: []Entity = undefined;
@@ -83,6 +79,7 @@ fn run() !void {
 
     try renderer.createCommandBuffers();
 
+    // TODO: Move this to window
     _ = glfw.setKeyCallback(window.window, keyCallback);
 
     if (window.platform != .WAYLAND) {
@@ -153,7 +150,7 @@ fn drawFrame() !void {
 
     renderer.beginRenderpass(cb);
 
-    try recordCommandBuffer(cb);
+    recordCommandBuffer(cb);
 
     renderer.endRenderPass(cb);
     renderer.endFrame(cb) catch |err| switch (err) {
@@ -167,24 +164,7 @@ fn drawFrame() !void {
     };
 }
 
-fn recordCommandBuffer(cb: vk.CommandBufferProxy) !void {
-    const extent = renderer.swapchain.swapchain_extent;
-    const viewports = [1]vk.Viewport{.{
-        .x = 0,
-        .y = 0,
-        .width = @floatFromInt(extent.width),
-        .height = @floatFromInt(extent.height),
-        .min_depth = 0,
-        .max_depth = 1,
-    }};
-    cb.setViewport(0, viewports.len, &viewports);
-
-    const scissors = [1]vk.Rect2D{.{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = extent,
-    }};
-    cb.setScissor(0, scissors.len, &scissors);
-
+fn recordCommandBuffer(cb: vk.CommandBufferProxy) void {
     drawEntities(&cb);
 }
 

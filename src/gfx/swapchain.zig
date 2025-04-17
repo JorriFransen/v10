@@ -18,6 +18,7 @@ image_format: vk.Format = undefined,
 depth_format: vk.Format = undefined,
 swapchain_extent: vk.Extent2D = undefined,
 
+// TODO: Seperate arena for swapchain/pipeline (resizing).
 images: []vk.Image = &.{},
 image_views: []vk.ImageView = &.{},
 render_pass: vk.RenderPass = .null_handle,
