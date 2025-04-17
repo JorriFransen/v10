@@ -8,9 +8,9 @@ const math = @import("math/math.zig");
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
 const Device = gfx.Device;
-const Pipeline = gfx.Pipeline;
 const Entity = @import("entity.zig");
 const Model = gfx.Model;
+const SimpleRenderSystem = @import("simple_render_system.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -25,18 +25,9 @@ pub fn main() !void {
 var window: Window = undefined;
 var device: Device = undefined;
 var renderer: Renderer = undefined;
-var layout: vk.PipelineLayout = .null_handle;
-
-// TODO: Seperate arena for swapchain/pipeline (resizing).
-var pipeline: Pipeline = undefined;
+var simple_render_system: SimpleRenderSystem = undefined;
 
 var entities: []Entity = undefined;
-
-const PushConstantData = extern struct {
-    transform: [3]Vec4,
-    offset: Vec2 align(8),
-    color: Vec3 align(16),
-};
 
 fn run() !void {
     const width = 1920;
@@ -50,14 +41,11 @@ fn run() !void {
     device = try Device.create(&gfx.system, &window);
     defer device.destroy();
 
-    layout = try createPipelineLayout();
-    defer device.device.destroyPipelineLayout(layout, null);
-
     try renderer.init(&window, &device);
     defer renderer.destroy();
 
-    pipeline = try createPipeline();
-    defer pipeline.destroy();
+    try simple_render_system.init(&device, renderer.swapchain.render_pass);
+    defer simple_render_system.destroy();
 
     var model = try Model.create(&device, &.{
         .{ .position = Vec2.new(0, -0.5) },
@@ -92,6 +80,7 @@ fn run() !void {
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
+        updateEntities();
         drawFrame() catch unreachable;
     }
 
@@ -112,29 +101,10 @@ fn refreshCallback(glfw_window: glfw.Window) callconv(.c) void {
     drawFrame() catch unreachable;
 }
 
-fn createPipelineLayout() !vk.PipelineLayout {
-    const push_constant_range = vk.PushConstantRange{
-        .offset = 0,
-        .size = @sizeOf(PushConstantData),
-        .stage_flags = .{ .vertex_bit = true, .fragment_bit = true },
-    };
-
-    const pipeline_layout_info = vk.PipelineLayoutCreateInfo{
-        .set_layout_count = 0,
-        .p_set_layouts = null,
-        .push_constant_range_count = 1,
-        .p_push_constant_ranges = @ptrCast(&push_constant_range),
-    };
-
-    return try device.device.createPipelineLayout(&pipeline_layout_info, null);
-}
-
-fn createPipeline() !Pipeline {
-    var pipeline_config = Pipeline.ConfigInfo.default();
-    pipeline_config.render_pass = renderer.swapchain.render_pass;
-    pipeline_config.pipeline_layout = layout;
-
-    return try Pipeline.create(&device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
+fn updateEntities() void {
+    for (entities) |*entity| {
+        entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
+    }
 }
 
 fn drawFrame() !void {
@@ -142,7 +112,7 @@ fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
-        recordCommandBuffer(cb);
+        simple_render_system.drawEntities(&cb, entities);
 
         renderer.endRenderPass(cb);
         renderer.endFrame(cb) catch |err| switch (err) {
@@ -156,27 +126,8 @@ fn drawFrame() !void {
     if (resize) {
         // Resized swapchain
         // TODO: This can be omitted if the new renderpass is compatible with the old one
-        pipeline.destroy();
-        pipeline = try createPipeline();
-    }
-}
-
-fn recordCommandBuffer(cb: vk.CommandBufferProxy) void {
-    cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
-    drawEntities(&cb);
-}
-
-fn drawEntities(cb: *const vk.CommandBufferProxy) void {
-    for (entities) |*entity| {
-        entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
-        var pcd = PushConstantData{
-            .offset = entity.transform.translation,
-            .color = entity.color,
-            .transform = math.matrix.padMat3f32(entity.transform.mat3()),
-        };
-        cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
-
-        entity.model.bind(cb.handle);
-        entity.model.draw(cb.handle);
+        // pipeline.destroy();
+        // pipeline = try createPipeline();
+        std.debug.assert(false);
     }
 }
