@@ -129,7 +129,10 @@ pub fn recreateSwapchain(this: *@This()) !void {
         extent = this.window.getExtent();
         this.window.waitEvents();
 
-        if (this.window.shouldClose()) return;
+        if (this.window.shouldClose()) {
+            try vkd.deviceWaitIdle();
+            return;
+        }
     }
 
     try vkd.deviceWaitIdle();

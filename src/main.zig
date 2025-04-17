@@ -137,40 +137,35 @@ fn createPipeline() !Pipeline {
 }
 
 fn drawFrame() !void {
-    var cb_opt = try renderer.beginFrame();
-    while (cb_opt == null) {
-        cb_opt = try renderer.beginFrame();
+    var resize = false;
+    if (try renderer.beginFrame()) |cb| {
+        renderer.beginRenderpass(cb);
 
+        recordCommandBuffer(cb);
+
+        renderer.endRenderPass(cb);
+        renderer.endFrame(cb) catch |err| switch (err) {
+            else => return err,
+            error.swapchainRecreated => resize = true,
+        };
+    } else {
+        resize = true;
+    }
+
+    if (resize) {
         // Resized swapchain
         // TODO: This can be omitted if the new renderpass is compatible with the old one
         pipeline.destroy();
         pipeline = try createPipeline();
     }
-    const cb = cb_opt.?;
-
-    renderer.beginRenderpass(cb);
-
-    recordCommandBuffer(cb);
-
-    renderer.endRenderPass(cb);
-    renderer.endFrame(cb) catch |err| switch (err) {
-        else => return err,
-        error.swapchainRecreated => {
-
-            // TODO: This can be omitted if the new renderpass is compatible with the old one
-            pipeline.destroy();
-            pipeline = try createPipeline();
-        },
-    };
 }
 
 fn recordCommandBuffer(cb: vk.CommandBufferProxy) void {
+    cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
     drawEntities(&cb);
 }
 
 fn drawEntities(cb: *const vk.CommandBufferProxy) void {
-    cb.bindPipeline(.graphics, pipeline.graphics_pipeline);
-
     for (entities) |*entity| {
         entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
         var pcd = PushConstantData{
