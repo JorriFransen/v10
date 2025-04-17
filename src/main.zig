@@ -3,7 +3,7 @@ const alloc = @import("alloc.zig");
 const glfw = @import("glfw");
 const gfx = @import("gfx/gfx.zig");
 const vk = @import("vulkan");
-const math = @import("math/math.zig");
+const math = @import("math");
 
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;

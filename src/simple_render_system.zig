@@ -1,7 +1,7 @@
 const std = @import("std");
 const gfx = @import("gfx/gfx.zig");
 const vk = @import("vulkan");
-const math = @import("math/math.zig");
+const math = @import("math");
 
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;

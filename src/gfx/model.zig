@@ -1,6 +1,6 @@
 const std = @import("std");
 const gfx = @import("gfx.zig");
-const math = @import("../math/math.zig");
+const math = @import("math");
 const vk = @import("vulkan");
 
 const Device = gfx.Device;
