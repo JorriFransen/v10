@@ -13,6 +13,7 @@ pub const Vec2f32 = Vec(2, f32);
 pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
 pub const Mat2f32 = Mat(2, 2, f32);
+pub const Mat32 = Mat(3, 3, f32);
 pub const Mat4f32 = Mat(4, 4, f32);
 
 pub fn Vec(comptime N: usize, comptime ET: type) type {

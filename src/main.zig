@@ -14,7 +14,9 @@ const Entity = @import("entity.zig");
 const Model = gfx.Model;
 const Vec2 = gfx.Vec2;
 const Vec3 = gfx.Vec3;
-const Mat2 = gfx.math.Mat(2, 2, f32);
+const Mat2 = gfx.Mat2;
+const Mat3 = gfx.Mat3;
+const Mat4 = gfx.Mat4;
 
 pub fn main() !void {
     try run();
@@ -33,8 +35,8 @@ var pipeline: Pipeline = undefined;
 var entities: []Entity = undefined;
 
 const PushConstantData = extern struct {
-    transform: Mat2 align(8),
-    offset: Vec2 align(8),
+    transform: Mat4 align(16),
+    offset: Vec2,
     color: Vec3 align(16),
 };
 
@@ -60,9 +62,9 @@ fn run() !void {
     defer pipeline.destroy();
 
     var model = try Model.create(&device, &.{
-        .{ .position = Vec2.new(0, -0.5), .color = Vec3.new(1, 0, 0) },
-        .{ .position = Vec2.new(0.5, 0.5), .color = Vec3.new(0, 1, 0) },
-        .{ .position = Vec2.new(-0.5, 0.5), .color = Vec3.new(0, 0, 1) },
+        .{ .position = Vec2.new(0, -0.5) },
+        .{ .position = Vec2.new(0.5, 0.5) },
+        .{ .position = Vec2.new(-0.5, 0.5) },
     });
     defer model.destroy();
 
@@ -253,7 +255,7 @@ fn drawEntities(cb: *const vk.CommandBufferProxy) void {
         var pcd = PushConstantData{
             .offset = entity.transform.translation,
             .color = entity.color,
-            .transform = entity.transform.mat2(),
+            .transform = entity.transform.mat4(),
         };
         cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
