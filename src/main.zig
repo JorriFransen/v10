@@ -3,6 +3,7 @@ const alloc = @import("alloc.zig");
 const glfw = @import("glfw");
 const gfx = @import("gfx/gfx.zig");
 const vk = @import("vulkan");
+const math = @import("math/math.zig");
 
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
@@ -10,9 +11,9 @@ const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Entity = @import("entity.zig");
 const Model = gfx.Model;
-const Vec2 = gfx.Vec2;
-const Vec3 = gfx.Vec3;
-const Vec4 = gfx.Vec4;
+const Vec2 = math.Vec2;
+const Vec3 = math.Vec3;
+const Vec4 = math.Vec4;
 
 pub fn main() !void {
     try run();
@@ -171,7 +172,7 @@ fn drawEntities(cb: *const vk.CommandBufferProxy) void {
         var pcd = PushConstantData{
             .offset = entity.transform.translation,
             .color = entity.color,
-            .transform = gfx.math.padMat3f32(entity.transform.mat3()),
+            .transform = math.matrix.padMat3f32(entity.transform.mat3()),
         };
         cb.pushConstants(layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 

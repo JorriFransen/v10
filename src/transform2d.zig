@@ -1,8 +1,9 @@
-const gfx = @import("gfx/gfx.zig");
-const Vec2 = gfx.Vec2;
-const Mat2 = gfx.Mat2;
-const Mat3 = gfx.Mat3;
-const Mat4 = gfx.Mat4;
+const math = @import("math/math.zig");
+
+const Vec2 = math.Vec2;
+const Mat2 = math.Mat2;
+const Mat3 = math.Mat3;
+const Mat4 = math.Mat4;
 
 translation: Vec2 = Vec2.scalar(0),
 scale: Vec2 = Vec2.scalar(1),

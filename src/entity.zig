@@ -1,9 +1,10 @@
 const gfx = @import("gfx/gfx.zig");
-const Transform = @import("transform2d.zig");
+const math = @import("math/math.zig");
 
+const Transform = @import("transform2d.zig");
 const ID = usize;
 const Model = gfx.Model;
-const Vec3 = gfx.Vec3;
+const Vec3 = math.Vec3;
 
 var current_id: ID = 0;
 

@@ -1,11 +1,12 @@
 const std = @import("std");
 const gfx = @import("gfx.zig");
+const math = @import("../math/math.zig");
 const vk = @import("vulkan");
 
 const Device = gfx.Device;
-const Vec2 = gfx.Vec2;
-const Vec3 = gfx.Vec3;
-const Vec4 = gfx.Vec4;
+const Vec2 = math.Vec2;
+const Vec3 = math.Vec3;
+const Vec4 = math.Vec4;
 
 device: *Device,
 vertex_buffer: vk.Buffer = .null_handle,
