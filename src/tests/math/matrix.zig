@@ -69,6 +69,162 @@ test "Matrix2 mul" {
     try expectApproxEqualMatrix(M, expected, result);
 }
 
+test "Matrix3 transpose" {
+    const M = Mat(3, 3, f32);
+
+    const expected = M{ .data = .{
+        1, 4, 7,
+        2, 5, 8,
+        3, 6, 9,
+    } };
+
+    const result = (M{ .data = .{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+    } }).transpose();
+
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
+test "Matrix3 new" {
+    const M = Mat(3, 3, f32);
+
+    const expected = M{ .data = .{
+        1, 4, 7,
+        2, 5, 8,
+        3, 6, 9,
+    } };
+
+    const result = M.new(.{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+    });
+
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
+test "Matrix3 identity" {
+    const M = Mat(3, 3, f32);
+    const expected = M.new(.{
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1,
+    });
+
+    const result = M.identity;
+
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
+test "Matrix3 mul" {
+    const M = Mat(3, 3, f32);
+
+    const expected = M.new(.{
+        14, 32,  50,
+        32, 77,  122,
+        50, 122, 194,
+    });
+
+    const a = M.new(.{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9,
+    });
+
+    const b = M.new(.{
+        1, 4, 7,
+        2, 5, 8,
+        3, 6, 9,
+    });
+
+    const result = a.mul(b);
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
+test "Matrix4 transpose" {
+    const M = Mat(4, 4, f32);
+
+    const expected = M{ .data = .{
+        1, 5, 9,  13,
+        2, 6, 10, 14,
+        3, 7, 11, 15,
+        4, 8, 12, 16,
+    } };
+
+    const result = (M{ .data = .{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
+        13, 14, 15, 16,
+    } }).transpose();
+
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
+test "Matrix4 new" {
+    const M = Mat(4, 4, f32);
+
+    const expected = M{ .data = .{
+        1, 5, 9,  13,
+        2, 6, 10, 14,
+        3, 7, 11, 15,
+        4, 8, 12, 16,
+    } };
+
+    const result = M.new(.{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
+        13, 14, 15, 16,
+    });
+
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
+test "Matrix4 identity" {
+    const M = Mat(4, 4, f32);
+    const expected = M.new(.{
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    });
+
+    const result = M.identity;
+
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
+test "Matrix4 mul" {
+    const M = Mat(4, 4, f32);
+
+    const expected = M.new(.{
+        30,  70,  110, 150,
+        70,  174, 278, 382,
+        110, 278, 446, 614,
+        150, 382, 614, 846,
+    });
+
+    const a = M.new(.{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
+        13, 14, 15, 16,
+    });
+
+    const b = M.new(.{
+        1, 5, 9,  13,
+        2, 6, 10, 14,
+        3, 7, 11, 15,
+        4, 8, 12, 16,
+    });
+
+    const result = a.mul(b);
+    try expectApproxEqualMatrix(M, expected, result);
+}
+
 fn expectApproxEqualMatrix(M: type, expected: M, actual: M) !void {
     const ve: M.V = @bitCast(expected);
     const va: M.V = @bitCast(actual);

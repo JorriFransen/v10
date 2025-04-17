@@ -46,7 +46,7 @@ pub fn main() !void {
     defer if (filter) |f| alloc.free(f);
 
     const printer = Printer.init();
-    if (options.test_color)
+    if (options.color)
         printer.fmt("\r\x1b[0K", .{}); // beginning of line and clear to end of line
 
     var pass: usize = 0;
@@ -64,7 +64,9 @@ pub fn main() !void {
             }
         }
 
-        printer.fmt("Testing {s}: ", .{t.name});
+        const name = if (options.full_name) t.name else (if (std.mem.lastIndexOf(u8, t.name, ".")) |idx| t.name[idx + 1 ..] else t.name);
+
+        printer.fmt("Testing \"{s}\": ", .{name});
         const result = t.func();
 
         if (std.testing.allocator_instance.deinit() == .leak) {
@@ -131,10 +133,10 @@ const Printer = struct {
         };
         const out = self.out;
 
-        if (options.test_color) out.writeAll(color) catch @panic("writeAll failed?!");
+        if (options.color) out.writeAll(color) catch @panic("writeAll failed?!");
 
         std.fmt.format(out, format, args) catch @panic("std.fmt.format failed?!");
 
-        if (options.test_color) self.fmt("\x1b[0m", .{});
+        if (options.color) self.fmt("\x1b[0m", .{});
     }
 };

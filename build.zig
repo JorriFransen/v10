@@ -48,9 +48,11 @@ pub fn build(b: *std.Build) !void {
     const shader_step = try addShaderStep(b);
     exe.step.dependOn(shader_step);
 
-    const test_color = b.option(bool, "test_color", "Enable colored test output") orelse true;
     const test_options = b.addOptions();
-    test_options.addOption(bool, "test_color", test_color);
+    const test_color = b.option(bool, "color", "Enable colored test output") orelse true;
+    const test_full_name = b.option(bool, "full_name", "Print full test names") orelse false;
+    test_options.addOption(bool, "color", test_color);
+    test_options.addOption(bool, "full_name", test_full_name);
 
     const test_exe = b.addTest(.{
         .root_source_file = b.path("src/tests/tests.zig"),
