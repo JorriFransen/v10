@@ -12,6 +12,7 @@ device: *Device,
 swapchain: Swapchain,
 command_buffers: []vk.CommandBuffer = &.{},
 current_image_index: u32 = 0,
+current_frame_index: usize = 0,
 
 pub fn init(this: *@This(), window: *Window, device: *Device) !void {
     this.window = window;
@@ -30,9 +31,9 @@ pub fn createCommandBuffers(this: *@This()) !void {
     const vkd = this.device.device;
 
     if (this.command_buffers.len != 0) {
-        std.debug.assert(this.command_buffers.len == this.swapchain.images.len);
+        std.debug.assert(this.command_buffers.len == Swapchain.MAX_FRAMES_IN_FLIGHT);
     } else {
-        this.command_buffers = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, this.swapchain.images.len);
+        this.command_buffers = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
     }
 
     const alloc_info = vk.CommandBufferAllocateInfo{
@@ -61,7 +62,7 @@ pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
         return error.swapchainAcquireNextImageFailed;
     }
 
-    const cb = vk.CommandBufferProxy.init(this.command_buffers[this.current_image_index], this.device.device.wrapper);
+    const cb = vk.CommandBufferProxy.init(this.command_buffers[this.current_frame_index], this.device.device.wrapper);
 
     const begin_info = vk.CommandBufferBeginInfo{};
     try cb.beginCommandBuffer(&begin_info);
@@ -79,6 +80,8 @@ pub fn endFrame(this: *@This(), cb: vk.CommandBufferProxy) !void {
     } else if (result != .success) {
         return error.swapchainSubmitCommandBuffersFailed;
     }
+
+    this.current_frame_index = @mod(this.current_frame_index + 1, Swapchain.MAX_FRAMES_IN_FLIGHT);
 }
 
 pub fn beginRenderpass(this: *@This(), cb: vk.CommandBufferProxy) void {
@@ -115,8 +118,7 @@ pub fn beginRenderpass(this: *@This(), cb: vk.CommandBufferProxy) void {
     cb.setScissor(0, scissors.len, &scissors);
 }
 
-pub fn endRenderPass(this: *@This(), cb: vk.CommandBufferProxy) void {
-    _ = this;
+pub fn endRenderPass(_: *@This(), cb: vk.CommandBufferProxy) void {
     cb.endRenderPass();
 }
 
@@ -146,14 +148,13 @@ pub fn recreateSwapchain(this: *@This()) !void {
     vkd.destroyRenderPass(old_chain.render_pass, null);
     for (old_chain.framebuffers) |fb| vkd.destroyFramebuffer(fb, null);
 
-    try new_chain.init(this.device, .{ .extent = extent, .old_swapchain = this.swapchain.swapchain });
+    try new_chain.init(this.device, .{ .extent = extent, .old_swapchain = old_chain.swapchain });
+
+    if (!old_chain.compareSwapFormats(&new_chain)) {
+        return error.swapchainImageOrDepthFormatChanged;
+    }
 
     vkd.destroySwapchainKHR(old_chain.swapchain, null);
-
-    if (this.command_buffers.len != new_chain.images.len) {
-        this.freeCommandBuffers();
-        try this.createCommandBuffers();
-    }
 
     this.swapchain = new_chain;
 }

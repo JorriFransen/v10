@@ -12,7 +12,6 @@ const Vec4 = math.Vec4;
 
 device: *Device,
 layout: vk.PipelineLayout,
-// TODO: Seperate arena for swapchain/pipeline (resizing).
 pipeline: Pipeline,
 
 const PushConstantData = extern struct {

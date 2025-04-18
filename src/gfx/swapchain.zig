@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 
-const MAX_FRAMES_IN_FLIGHT = 2;
+pub const MAX_FRAMES_IN_FLIGHT = 2;
 
 device: *Device,
 window_extent: vk.Extent2D,
@@ -18,7 +18,7 @@ image_format: vk.Format = undefined,
 depth_format: vk.Format = undefined,
 swapchain_extent: vk.Extent2D = undefined,
 
-// TODO: Seperate arena for swapchain/pipeline (resizing).
+// TODO: Seperate arena for swapchain (resizing).
 images: []vk.Image = &.{},
 image_views: []vk.ImageView = &.{},
 render_pass: vk.RenderPass = .null_handle,
@@ -467,4 +467,8 @@ fn findDepthFormat(this: *@This()) !vk.Format {
         .optimal,
         .{ .depth_stencil_attachment_bit = true },
     );
+}
+
+pub fn compareSwapFormats(a: *const @This(), b: *const @This()) bool {
+    return a.image_format == b.image_format and a.depth_format == b.depth_format;
 }
