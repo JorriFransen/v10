@@ -76,7 +76,6 @@ pub fn endFrame(this: *@This(), cb: vk.CommandBufferProxy) !void {
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or this.window.framebuffer_resized) {
         this.window.framebuffer_resized = false;
         try this.recreateSwapchain();
-        return error.swapchainRecreated;
     } else if (result != .success) {
         return error.swapchainSubmitCommandBuffersFailed;
     }

@@ -1,8 +1,6 @@
 const std = @import("std");
 const alloc = @import("alloc.zig");
-const glfw = @import("glfw");
 const gfx = @import("gfx/gfx.zig");
-const vk = @import("vulkan");
 const math = @import("math");
 
 const Window = @import("window.zig");
@@ -13,7 +11,6 @@ const Model = gfx.Model;
 const SimpleRenderSystem = @import("simple_render_system.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
-const Vec4 = math.Vec4;
 
 pub fn main() !void {
     try run();
@@ -35,6 +32,7 @@ fn run() !void {
 
     try window.init(width, height, "v10game");
     defer window.destroy();
+    window.refresh_callback = refreshCallback;
 
     try gfx.System.init();
 
@@ -68,37 +66,13 @@ fn run() !void {
 
     try renderer.createCommandBuffers();
 
-    // TODO: Move this to window
-    _ = glfw.setKeyCallback(window.window, keyCallback);
-
-    if (window.platform != .WAYLAND) {
-        // The drawFrame() call in refreshCallback() makes window resizing laggy.
-        // This is meant to redraw during resize, to make resizing smoother, but wayland
-        //  doesn't have this problem to start with.
-        _ = glfw.setWindowRefreshCallback(window.window, refreshCallback);
-    }
-
     while (!window.shouldClose()) {
-        glfw.pollEvents();
+        window.pollEvents();
         updateEntities();
         drawFrame() catch unreachable;
     }
 
     try device.device.deviceWaitIdle();
-}
-
-fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: glfw.Action, mods: c_int) callconv(.C) void {
-    _ = scancode;
-    _ = mods;
-
-    if (key == glfw.c.GLFW_KEY_ESCAPE and action == .press) {
-        glfw.setWindowShouldClose(glfw_window, glfw.TRUE);
-    }
-}
-
-fn refreshCallback(glfw_window: glfw.Window) callconv(.c) void {
-    _ = glfw_window;
-    drawFrame() catch unreachable;
 }
 
 fn updateEntities() void {
@@ -108,26 +82,16 @@ fn updateEntities() void {
 }
 
 fn drawFrame() !void {
-    var resize = false;
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
         simple_render_system.drawEntities(&cb, entities);
 
         renderer.endRenderPass(cb);
-        renderer.endFrame(cb) catch |err| switch (err) {
-            else => return err,
-            error.swapchainRecreated => resize = true,
-        };
-    } else {
-        resize = true;
+        try renderer.endFrame(cb);
     }
+}
 
-    if (resize) {
-        // Resized swapchain
-        // TODO: This can be omitted if the new renderpass is compatible with the old one
-        // pipeline.destroy();
-        // pipeline = try createPipeline();
-        std.debug.assert(false);
-    }
+fn refreshCallback(_: *Window) void {
+    drawFrame() catch unreachable;
 }
