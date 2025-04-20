@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Vec2f32 = Vec(2, f32);
 pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
@@ -10,8 +12,8 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
 
         2 => return extern struct {
             pub const T = ET;
-            x: T,
-            y: T,
+            x: T = 0,
+            y: T = 0,
             pub fn new(x: T, y: T) @This() {
                 return @bitCast(V{ x, y });
             }
@@ -20,9 +22,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
 
         3 => return extern struct {
             pub const T = ET;
-            x: T,
-            y: T,
-            z: T,
+            x: T = 0,
+            y: T = 0,
+            z: T = 0,
             pub fn new(x: T, y: T, z: T) @This() {
                 return @bitCast(V{ x, y, z });
             }
@@ -31,10 +33,10 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
 
         4 => return extern struct {
             pub const T = ET;
-            x: T,
-            y: T,
-            z: T,
-            w: T,
+            x: T = 0,
+            y: T = 0,
+            z: T = 0,
+            w: T = 0,
             pub fn new(x: T, y: T, z: T, w: T) @This() {
                 return @bitCast(V{ x, y, z, w });
             }
@@ -49,8 +51,37 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         pub inline fn v(vec: V) Base {
             return @bitCast(vec);
         }
+        pub inline fn vector(this: Base) V {
+            return @bitCast(this);
+        }
         pub inline fn scalar(s: T) Base {
             return @bitCast(@as(V, @splat(s)));
+        }
+
+        pub inline fn add(a: Base, b: Base) Base {
+            return v(a.vector() + b.vector());
+        }
+        pub inline fn sub(a: Base, b: Base) Base {
+            return v(a.vector() - b.vector());
+        }
+        pub inline fn mul(a: Base, b: Base) Base {
+            return v(a.vector() * b.vector());
+        }
+        pub inline fn div(a: Base, b: Base) Base {
+            return v(a.vector() / b.vector());
+        }
+
+        pub inline fn mul_scalar(this: Base, s: T) Base {
+            return v(this.vector() * @as(V, @splat(s)));
+        }
+
+        pub inline fn dot(a: Base, b: Base) T {
+            return @reduce(.Add, a.mul(b).vector());
+        }
+
+        pub inline fn length(this: Base) T {
+            const p = this.vector() * this.vector();
+            return std.math.sqrt(@reduce(.Add, p));
         }
     };
 }
