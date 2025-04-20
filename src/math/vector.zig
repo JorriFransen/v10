@@ -71,8 +71,16 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
             return v(a.vector() / b.vector());
         }
 
+        pub inline fn negate(this: Base) Base {
+            return v(-this.vector());
+        }
+
         pub inline fn mul_scalar(this: Base, s: T) Base {
             return v(this.vector() * @as(V, @splat(s)));
+        }
+
+        pub inline fn div_scalar(this: Base, s: T) Base {
+            return v(this.vector() / @as(V, @splat(s)));
         }
 
         pub inline fn dot(a: Base, b: Base) T {
@@ -82,6 +90,10 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         pub inline fn length(this: Base) T {
             const p = this.vector() * this.vector();
             return std.math.sqrt(@reduce(.Add, p));
+        }
+
+        pub inline fn normalized(this: Base) Base {
+            return this.div_scalar(this.length());
         }
     };
 }

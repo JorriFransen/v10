@@ -66,12 +66,14 @@ fn run() !void {
     var red = Entity.new();
     red.transform.scale = Vec2.scalar(0.05);
     red.transform.translation = Vec2.new(0.5, 0.5);
+    red.rigid_body_2d.velocity = .{ .x = -0.5, .y = 0 };
     red.color = Vec3.new(1, 0, 0);
     red.model = &circle_model;
 
     var blue = Entity.new();
     blue.transform.scale = Vec2.scalar(0.05);
     blue.transform.translation = Vec2.new(-0.45, -0.25);
+    blue.rigid_body_2d.velocity = .{ .x = 0.5, .y = 0 };
     blue.color = Vec3.new(0, 0, 1);
     blue.model = &circle_model;
 
@@ -104,7 +106,7 @@ fn run() !void {
     while (!window.shouldClose()) {
         window.pollEvents();
 
-        updateGravitySystem(1.0 / 60.0);
+        updateGravitySystem(1.0 / 60.0, 1);
         updateVectorField();
         drawFrame() catch unreachable;
     }
@@ -173,8 +175,25 @@ fn createSquareModel(offset: Vec2) !Model {
     return try Model.create(&device, &vertices);
 }
 
-fn updateGravitySystem(dt: f32) void {
-    _ = dt;
+fn updateGravitySystem(dt: f32, sub_steps: usize) void {
+    const step_delta = dt / @as(f32, @floatFromInt(sub_steps));
+    for (0..sub_steps) |_| {
+        for (physics_objects) |*obj_a| {
+            for (physics_objects) |*obj_b| {
+                if (obj_a == obj_b) continue;
+
+                const rba = &obj_a.rigid_body_2d;
+                const rbb = &obj_b.rigid_body_2d;
+                const force = computePhysicsForce(obj_a, obj_b);
+                rba.velocity = rba.velocity.add(force.negate().mul_scalar(step_delta).div_scalar(rba.mass));
+                rbb.velocity = rbb.velocity.add(force.mul_scalar(step_delta).div_scalar(rbb.mass));
+            }
+        }
+
+        for (physics_objects) |*obj| {
+            obj.transform.translation = obj.transform.translation.add(obj.rigid_body_2d.velocity.mul_scalar(step_delta));
+        }
+    }
 }
 
 fn updateVectorField() void {
@@ -194,10 +213,14 @@ fn computePhysicsForce(a: *const Entity, b: *const Entity) Vec2 {
     const offset = a.transform.translation.sub(b.transform.translation);
     const dst_squared = offset.dot(offset);
 
-    if (@abs(dst_squared) < math.FLOAT_EPSILON) return .{};
-
+    const adstsq = @abs(dst_squared);
+    if (adstsq < 0.9e-1) {
+        // std.log.debug("Contact!", .{});
+        return .{};
+    }
     const strength_gravity = 0.81;
     const force = strength_gravity * a.rigid_body_2d.mass * b.rigid_body_2d.mass / dst_squared;
 
-    return offset.mul_scalar(force / dst_squared);
+    // return offset.mul_scalar(force / std.math.sqrt(dst_squared));
+    return offset.mul_scalar(force).div_scalar(std.math.sqrt(dst_squared));
 }
