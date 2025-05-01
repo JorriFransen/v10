@@ -46,9 +46,9 @@ fn run() !void {
     defer simple_render_system.destroy();
 
     var model = try Model.create(&device, &.{
-        .{ .position = Vec2.new(0, -0.5) },
-        .{ .position = Vec2.new(0.5, 0.5) },
-        .{ .position = Vec2.new(-0.5, 0.5) },
+        .{ .position = Vec3.new(0, -0.5, 0) },
+        .{ .position = Vec3.new(0.5, 0.5, 0) },
+        .{ .position = Vec3.new(-0.5, 0.5, 0) },
     });
     defer model.destroy();
 
@@ -76,9 +76,9 @@ fn run() !void {
 }
 
 fn updateEntities() void {
-    for (entities) |*entity| {
-        entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
-    }
+    // for (entities) |*entity| {
+    //     entity.transform.rotation = @mod(entity.transform.rotation + 0.001, std.math.tau);
+    // }
 }
 
 fn drawFrame() !void {

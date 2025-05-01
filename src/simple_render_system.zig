@@ -9,14 +9,15 @@ const Entity = @import("entity.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
+const Mat4 = math.Mat4;
 
 device: *Device,
 layout: vk.PipelineLayout,
 pipeline: Pipeline,
 
 const PushConstantData = extern struct {
-    transform: [3]Vec4,
-    offset: Vec2 align(8),
+    transform: Mat4,
+    offset: Vec3 align(8),
     color: Vec3 align(16),
 };
 
@@ -64,7 +65,7 @@ pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: 
         var pcd = PushConstantData{
             .offset = entity.transform.translation,
             .color = entity.color,
-            .transform = math.matrix.padMat3f32(entity.transform.mat3()),
+            .transform = entity.transform.mat4(),
         };
         cb.pushConstants(this.layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 

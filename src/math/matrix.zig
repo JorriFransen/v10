@@ -35,6 +35,16 @@ pub fn Mat(comptime c: usize, comptime r: usize, comptime T: type) type {
             break :blk result;
         };
 
+        pub inline fn col(_m: @This(), n: usize) math.Vec(R, T) {
+            std.debug.assert(n < C);
+
+            const m: V = @bitCast(_m);
+            const a: [C * R]T = m;
+            const offset = n * R;
+            const v: math.Vec(R, T).V = @bitCast(a[offset .. offset + C].*);
+            return @bitCast(v);
+        }
+
         pub inline fn transpose(_m: @This()) @This() {
             std.debug.assert(C == R);
             const D = C;

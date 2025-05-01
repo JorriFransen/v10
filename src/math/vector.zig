@@ -1,14 +1,15 @@
+const std = @import("std");
+
 pub const Vec2f32 = Vec(2, f32);
 pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
 
 pub fn Vec(comptime N: usize, comptime ET: type) type {
-    const V = @Vector(N, ET);
-
     switch (N) {
         else => @compileError("N must be between 2 and 4"),
 
         2 => return extern struct {
+            pub const V = @Vector(N, ET);
             pub const T = ET;
             x: T,
             y: T,
@@ -19,6 +20,7 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         },
 
         3 => return extern struct {
+            pub const V = @Vector(N, ET);
             pub const T = ET;
             x: T,
             y: T,
@@ -30,6 +32,7 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         },
 
         4 => return extern struct {
+            pub const V = @Vector(N, ET);
             pub const T = ET;
             x: T,
             y: T,
@@ -49,8 +52,27 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         pub inline fn v(vec: V) Base {
             return @bitCast(vec);
         }
+        pub inline fn vector(vec: Base) V {
+            return @bitCast(vec);
+        }
         pub inline fn scalar(s: T) Base {
             return @bitCast(@as(V, @splat(s)));
+        }
+        pub inline fn length(vec: Base) T {
+            const p = vec.vector() * vec.vector();
+            return std.math.sqrt(@reduce(.Add, p));
+        }
+        pub inline fn normalized(vec: Base) Base {
+            return vec.div_scalar(vec.length());
+        }
+        pub inline fn add(a: Base, b: Base) Base {
+            return @bitCast(a.vector() + b.vector());
+        }
+        pub inline fn mul_scalar(vec: Base, s: T) Base {
+            return v(vec.vector() * @as(V, @splat(s)));
+        }
+        pub inline fn div_scalar(vec: Base, s: T) Base {
+            return v(vec.vector() / @as(V, @splat(s)));
         }
     };
 }
