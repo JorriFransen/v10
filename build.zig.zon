@@ -3,6 +3,10 @@
     .version = "0.0.1",
     .fingerprint = 0x4fb9faee53eadd66,
     .dependencies = .{
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
+            .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
+        },
         .glfw = .{
             // .path = "../glfw-zig-build",
             .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",

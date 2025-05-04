@@ -14,8 +14,10 @@ name: []const u8,
 window: glfw.Window,
 refresh_callback: PfnRefreshCallback,
 
-pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8) !void {
-    // glfw.initHint(glfw.PLATFORM, @intFromEnum(glfw.Platform.X11));
+pub const InitOptions = struct { platform: glfw.Platform = .ANY };
+
+pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8, options: InitOptions) !void {
+    glfw.initHint(glfw.PLATFORM, @intFromEnum(options.platform));
 
     if (glfw.init() != glfw.TRUE) return error.glfwInitFailed;
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const alloc = @import("alloc.zig");
 const gfx = @import("gfx/gfx.zig");
 const math = @import("math");
+const cla = @import("command_line_args.zig");
 
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
@@ -13,6 +14,8 @@ const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 
 pub fn main() !void {
+    cla.parse();
+
     try run();
     try alloc.deinit();
 
@@ -30,7 +33,9 @@ fn run() !void {
     const width = 1920;
     const height = 1080;
 
-    try window.init(width, height, "v10game");
+    try window.init(width, height, "v10game", .{
+        .platform = cla.clap_options.glfw_platform,
+    });
     defer window.destroy();
     window.refresh_callback = refreshCallback;
 

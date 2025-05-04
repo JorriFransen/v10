@@ -21,9 +21,14 @@ pub fn build(b: *std.Build) !void {
 
     const run_exe = b.addRunArtifact(exe);
     run_exe.cwd = b.path("zig-out/bin");
+    if (b.args) |args| run_exe.addArgs(args);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
     run_step.dependOn(b.getInstallStep());
+
+    const clap_dep = b.dependency("clap", .{ .target = target, .optimize = optimize });
+    const clap_mod = clap_dep.module("clap");
+    exe.root_module.addImport("clap", clap_mod);
 
     const glfw_dep = b.dependency("glfw", .{
         .target = target,
