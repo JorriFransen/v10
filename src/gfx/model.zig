@@ -15,6 +15,7 @@ vertex_count: u32,
 
 pub const Vertex = struct {
     position: Vec3,
+    color: Vec3,
 
     const field_count = @typeInfo(@This()).@"struct".fields.len;
     pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(@This()), .input_rate = .vertex };
