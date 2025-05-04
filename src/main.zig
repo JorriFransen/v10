@@ -58,7 +58,7 @@ fn run() !void {
     const triangle = &_entities[0];
     triangle.model = &model;
     triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
-    // triangle.transform.translation = .{ .x = 0.2, .y = 0 };
+    triangle.transform.translation = .{ .x = 0.1, .y = 0.0, .z = 0 };
     // triangle.transform.scale = .{ .x = 2, .y = 0.5 };
     // triangle.transform.rotation = 0.25 * std.math.tau;
 

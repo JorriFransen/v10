@@ -11,8 +11,8 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         2 => return extern struct {
             pub const V = @Vector(N, ET);
             pub const T = ET;
-            x: T,
-            y: T,
+            x: T = 0,
+            y: T = 0,
             pub fn new(x: T, y: T) @This() {
                 return @bitCast(V{ x, y });
             }
@@ -22,9 +22,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         3 => return extern struct {
             pub const V = @Vector(N, ET);
             pub const T = ET;
-            x: T,
-            y: T,
-            z: T,
+            x: T = 0,
+            y: T = 0,
+            z: T = 0,
             pub fn new(x: T, y: T, z: T) @This() {
                 return @bitCast(V{ x, y, z });
             }
@@ -34,10 +34,10 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         4 => return extern struct {
             pub const V = @Vector(N, ET);
             pub const T = ET;
-            x: T,
-            y: T,
-            z: T,
-            w: T,
+            x: T = 0,
+            y: T = 0,
+            z: T = 0,
+            w: T = 0,
             pub fn new(x: T, y: T, z: T, w: T) @This() {
                 return @bitCast(V{ x, y, z, w });
             }

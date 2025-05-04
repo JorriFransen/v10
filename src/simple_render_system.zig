@@ -17,7 +17,6 @@ pipeline: Pipeline,
 
 const PushConstantData = extern struct {
     transform: Mat4,
-    offset: Vec3 align(8),
     color: Vec3 align(16),
 };
 
@@ -63,7 +62,6 @@ pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: 
 
     for (entities) |*entity| {
         var pcd = PushConstantData{
-            .offset = entity.transform.translation,
             .color = entity.color,
             .transform = entity.transform.mat4(),
         };

@@ -81,6 +81,18 @@ pub fn Mat(comptime c: usize, comptime r: usize, comptime T: type) type {
 
             return @bitCast(result);
         }
+
+        pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            for (0..R) |rr| {
+                try writer.print("{{ ", .{});
+                for (0..C) |cc| {
+                    try writer.print("{}", .{value.data[cc * C + rr]});
+                    if (cc < C - 1) try writer.print(", ", .{});
+                }
+                try writer.print(" }}", .{});
+                if (rr < R - 1) try writer.print("\n", .{});
+            }
+        }
     };
 }
 

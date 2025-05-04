@@ -22,9 +22,9 @@ pub const Mat4 = matrix.Mat4f32;
 pub inline fn translate(mat: Mat4, translation: Vec3) Mat4 {
     var r = mat;
 
-    r.data[13] = r.data[13] * translation.x;
-    r.data[14] = r.data[14] * translation.y;
-    r.data[15] = r.data[15] * translation.z;
+    r.data[12] += r.data[0] * translation.x + r.data[4] * translation.y + r.data[8] * translation.z;
+    r.data[13] += r.data[1] * translation.x + r.data[5] * translation.y + r.data[9] * translation.z;
+    r.data[14] += r.data[2] * translation.x + r.data[6] * translation.y + r.data[10] * translation.z;
 
     return r;
 }
