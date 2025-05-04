@@ -32,17 +32,17 @@ pub inline fn translate(mat: Mat4, translation: Vec3) Mat4 {
 pub inline fn scale(mat: Mat4, scalev: Vec3) Mat4 {
     var r = mat;
 
-    r.data[0] = r.data[0] * scalev.x;
-    r.data[1] = r.data[1] * scalev.x;
-    r.data[2] = r.data[2] * scalev.x;
+    r.data[0] *= scalev.x;
+    r.data[1] *= scalev.x;
+    r.data[2] *= scalev.x;
 
-    r.data[4] = r.data[4] * scalev.y;
-    r.data[5] = r.data[5] * scalev.y;
-    r.data[6] = r.data[6] * scalev.y;
+    r.data[4] *= scalev.y;
+    r.data[5] *= scalev.y;
+    r.data[6] *= scalev.y;
 
-    r.data[8] = r.data[8] * scalev.z;
-    r.data[9] = r.data[9] * scalev.z;
-    r.data[10] = r.data[10] * scalev.z;
+    r.data[8] *= scalev.z;
+    r.data[9] *= scalev.z;
+    r.data[10] *= scalev.z;
 
     return r;
 }
