@@ -50,7 +50,7 @@ fn run() !void {
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
 
-    var model = try createCubeModel();
+    var model = try createCubeModel(.{});
     // var model = try Model.create(&device, &.{
     //     .{ .position = Vec3.new(0, -0.5, 0), .color = Vec3.new(1, 0, 0) },
     //     .{ .position = Vec3.new(0.5, 0.5, 0), .color = Vec3.new(0, 1, 0) },
@@ -63,10 +63,10 @@ fn run() !void {
     };
     const triangle = &_entities[0];
     triangle.model = &model;
-    triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
-    // triangle.transform.translation = .{ .x = 0.5 };
-    // triangle.transform.scale = .{ .x = 1.5, .y = 0.5 };
-    triangle.transform.rotation = .{ .y = 0.25 * std.math.tau };
+    // triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
+    triangle.transform.translation = .{ .z = 0.5 };
+    triangle.transform.scale = Vec3.scalar(0.5);
+    // triangle.transform.rotation = .{ .y = 0.25 * std.math.tau };
 
     entities = &_entities;
 
@@ -82,8 +82,10 @@ fn run() !void {
 }
 
 fn updateEntities() void {
+    const speed = 1.0;
     for (entities) |*entity| {
-        entity.transform.rotation.y = @mod(entity.transform.rotation.y + 0.001, std.math.tau);
+        entity.transform.rotation.y = @mod(entity.transform.rotation.y + 0.001 * speed, std.math.tau);
+        entity.transform.rotation.x = @mod(entity.transform.rotation.x + 0.001 / 2.0 * speed, std.math.tau);
     }
 }
 
@@ -102,13 +104,15 @@ fn refreshCallback(_: *Window) void {
     drawFrame() catch unreachable;
 }
 
-fn createCubeModel() !Model {
+fn createCubeModel(offset: Vec3) !Model {
     const white = Vec3.scalar(1);
     const yellow = Vec3.new(0.8, 0.8, 0.1);
+    const orange = Vec3.new(0.9, 0.6, 0.1);
     const blue = Vec3.new(0.1, 0.1, 0.8);
     const green = Vec3.new(0.1, 0.8, 0.1);
+    const red = Vec3.new(0.8, 0.1, 0.1);
 
-    const vertices = [_]Model.Vertex{
+    var vertices = [_]Model.Vertex{
         // Left face (white);
         .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = white },
         .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = white },
@@ -125,8 +129,21 @@ fn createCubeModel() !Model {
         .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = yellow },
         .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
 
-        // // Top face (orange, y axis points down)
-        // .{.position=Vec3.new(-0.5, -0.5)}
+        // Top face (orange, y axis points down)
+        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
+        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
+        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = orange },
+        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
+        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = orange },
+        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
+
+        // Bottom face (red)
+        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
+        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
+        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = red },
+        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
+        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = red },
+        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
 
         // Nose face (blue)
         .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
@@ -144,5 +161,10 @@ fn createCubeModel() !Model {
         .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = green },
         .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = green },
     };
+
+    for (&vertices) |*vertex| {
+        vertex.position = vertex.position.add(offset);
+    }
+
     return try Model.create(&device, &vertices);
 }

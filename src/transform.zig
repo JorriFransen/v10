@@ -37,13 +37,42 @@ pub fn mat3(this: @This()) Mat3 {
 }
 
 pub fn mat4(this: @This()) Mat4 {
-    var transform = math.translate(Mat4.identity, this.translation);
+    // var transform = math.translate(Mat4.identity, this.translation);
+    //
+    // transform = math.rotate(transform, this.rotation.y, Vec3.new(0, 1, 0));
+    // transform = math.rotate(transform, this.rotation.x, Vec3.new(1, 0, 0));
+    // transform = math.rotate(transform, this.rotation.z, Vec3.new(0, 0, 1));
+    //
+    // transform = math.scale(transform, this.scale);
+    //
+    // return transform;
 
-    transform = math.rotate(transform, this.rotation.y, Vec3.new(0, 1, 0));
-    transform = math.rotate(transform, this.rotation.x, Vec3.new(1, 0, 0));
-    transform = math.rotate(transform, this.rotation.z, Vec3.new(0, 0, 1));
+    const c3 = @cos(this.rotation.z);
+    const s3 = @sin(this.rotation.z);
+    const c2 = @cos(this.rotation.x);
+    const s2 = @sin(this.rotation.x);
+    const c1 = @cos(this.rotation.y);
+    const s1 = @sin(this.rotation.y);
 
-    transform = math.scale(transform, this.scale);
+    return Mat4{ .data = .{
+        this.scale.x * (c1 * c3 + s1 * s2 * s3),
+        this.scale.x * (c2 * s3),
+        this.scale.x * (c1 * s2 * s3 - c3 * s1),
+        0,
 
-    return transform;
+        this.scale.y * (c3 * s1 * s2 - c1 * s3),
+        this.scale.y * (c2 * c3),
+        this.scale.y * (c1 * c3 * s2 + s1 * s3),
+        0,
+
+        this.scale.z * (c2 * s1),
+        this.scale.z * (-s2),
+        this.scale.z * (c1 * c2),
+        0,
+
+        this.translation.x,
+        this.translation.y,
+        this.translation.z,
+        1,
+    } };
 }

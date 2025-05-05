@@ -45,7 +45,7 @@ pub const ConfigInfo = struct {
             .rasterizer_discard_enable = vk.FALSE,
             .polygon_mode = .fill,
             .line_width = 1,
-            .cull_mode = .{},
+            .cull_mode = .{ .back_bit = false },
             .front_face = .clockwise,
             .depth_bias_enable = vk.FALSE,
             .depth_bias_constant_factor = 0,
