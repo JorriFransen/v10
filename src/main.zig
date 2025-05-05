@@ -66,7 +66,7 @@ fn run() !void {
     // triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
     triangle.transform.translation = .{ .z = 0.5 };
     triangle.transform.scale = Vec3.scalar(0.5);
-    // triangle.transform.rotation = .{ .y = 0.25 * std.math.tau };
+    // triangle.transform.rotation = .{ .y = 0.75 * std.math.tau };
 
     entities = &_entities;
 
@@ -93,7 +93,7 @@ fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
-        simple_render_system.drawEntities(&cb, entities);
+        simple_render_system.drawEntities(&cb, entities, window.f_key_down);
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);

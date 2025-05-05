@@ -14,6 +14,9 @@ name: []const u8,
 window: glfw.Window,
 refresh_callback: PfnRefreshCallback,
 
+// TODO: Cleanup when there is a proper input system
+f_key_down: bool = false,
+
 pub const InitOptions = struct { platform: glfw.Platform = .ANY };
 
 pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8, options: InitOptions) !void {
@@ -87,8 +90,14 @@ fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: gl
     _ = scancode;
     _ = mods;
 
+    const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
+
     if (key == glfw.c.GLFW_KEY_ESCAPE and action == .press) {
         glfw.setWindowShouldClose(glfw_window, glfw.TRUE);
+    }
+
+    if (key == glfw.c.GLFW_KEY_F) {
+        window.f_key_down = action == .press or action == .repeat;
     }
 }
 
