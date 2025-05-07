@@ -54,41 +54,37 @@ pub inline fn rotate(mat: Mat4, angle: Vec3.T, axis: Vec3) Mat4 {
     const axis_n = axis.normalized();
     const temp = axis_n.mul_scalar(1 - c);
 
-    const rot = Mat4{ .data = .{
+    const rot_c0 = Vec3.new(
         c + temp.x * axis_n.x,
         temp.x * axis_n.y + s * axis_n.z,
         temp.x * axis_n.z - s * axis_n.y,
-        0,
+    );
 
+    const rot_c1 = Vec3.new(
         temp.y * axis_n.x - s * axis_n.z,
         c + temp.y * axis_n.y,
         temp.y * axis_n.z + s * axis_n.x,
-        0,
+    );
 
+    const rot_c2 = Vec3.new(
         temp.z * axis_n.x + s * axis_n.y,
         temp.z * axis_n.y - s * axis_n.x,
         c + temp.z * axis_n.z,
-        0,
-
-        0,
-        0,
-        0,
-        0,
-    } };
+    );
 
     const c0 = mat.col(0);
     const c1 = mat.col(1);
     const c2 = mat.col(2);
 
-    const rc0 = c0.mul_scalar(rot.data[0]).add(c1.mul_scalar(rot.data[1])).add(c2.mul_scalar(rot.data[2]));
-    const rc1 = c0.mul_scalar(rot.data[4]).add(c1.mul_scalar(rot.data[5])).add(c2.mul_scalar(rot.data[6]));
-    const rc2 = c0.mul_scalar(rot.data[8]).add(c1.mul_scalar(rot.data[9])).add(c2.mul_scalar(rot.data[10]));
-    const rc3 = mat.col(3);
+    const res_c0 = c0.mul_scalar(rot_c0.x).add(c1.mul_scalar(rot_c0.y)).add(c2.mul_scalar(rot_c0.z));
+    const res_c1 = c0.mul_scalar(rot_c1.x).add(c1.mul_scalar(rot_c1.y)).add(c2.mul_scalar(rot_c1.z));
+    const res_c2 = c0.mul_scalar(rot_c2.x).add(c1.mul_scalar(rot_c2.y)).add(c2.mul_scalar(rot_c2.z));
+    const res_c3 = mat.col(3);
 
     return Mat4{ .data = .{
-        rc0.x, rc0.y, rc0.z, rc0.w,
-        rc1.x, rc1.y, rc1.z, rc1.w,
-        rc2.x, rc2.y, rc2.z, rc2.w,
-        rc3.x, rc3.y, rc3.z, rc3.w,
+        res_c0.x, res_c0.y, res_c0.z, res_c0.w,
+        res_c1.x, res_c1.y, res_c1.z, res_c1.w,
+        res_c2.x, res_c2.y, res_c2.z, res_c2.w,
+        res_c3.x, res_c3.y, res_c3.z, res_c3.w,
     } };
 }
