@@ -37,6 +37,16 @@ pub fn mat3(this: @This()) Mat3 {
 }
 
 pub fn mat4(this: @This()) Mat4 {
+    // pub fn mat4Slow(this: @This()) Mat4 {
+    //     var transform = Mat4.translation(this.translation);
+    //
+    //     transform = transform.rotate(this.rotation.y, Vec3.new(0, 1, 0));
+    //     transform = transform.rotate(this.rotation.x, Vec3.new(1, 0, 0));
+    //     transform = transform.rotate(this.rotation.z, Vec3.new(0, 0, 1));
+    //
+    //     return transform.scale(this.scale);
+    // }
+
     const c3 = @cos(this.rotation.z);
     const s3 = @sin(this.rotation.z);
     const c2 = @cos(this.rotation.x);
@@ -65,16 +75,4 @@ pub fn mat4(this: @This()) Mat4 {
         this.translation.z,
         1,
     } };
-}
-
-pub fn mat4Slow(this: @This()) Mat4 {
-    var transform = math.translate(Mat4.identity, this.translation);
-
-    transform = math.rotate(transform, this.rotation.y, Vec3.new(0, 1, 0));
-    transform = math.rotate(transform, this.rotation.x, Vec3.new(1, 0, 0));
-    transform = math.rotate(transform, this.rotation.z, Vec3.new(0, 0, 1));
-
-    transform = math.scale(transform, this.scale);
-
-    return transform;
 }

@@ -57,13 +57,13 @@ fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
     return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
 }
 
-pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: []const Entity, fast_transform: bool) void {
+pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: []const Entity) void {
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
 
     for (entities) |*entity| {
         var pcd = PushConstantData{
             .color = entity.color,
-            .transform = if (fast_transform) entity.transform.mat4() else entity.transform.mat4Slow(),
+            .transform = entity.transform.mat4(),
         };
         cb.pushConstants(this.layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 

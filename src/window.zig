@@ -15,7 +15,6 @@ window: glfw.Window,
 refresh_callback: PfnRefreshCallback,
 
 // TODO: Cleanup when there is a proper input system
-f_key_down: bool = false,
 paused: bool = false,
 
 pub const InitOptions = struct { platform: glfw.Platform = .ANY };
@@ -95,10 +94,6 @@ fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: gl
 
     if (key == glfw.c.GLFW_KEY_ESCAPE and action == .press) {
         glfw.setWindowShouldClose(glfw_window, glfw.TRUE);
-    }
-
-    if (key == glfw.c.GLFW_KEY_F) {
-        window.f_key_down = action == .press or action == .repeat;
     }
 
     if (key == glfw.c.GLFW_KEY_P and action == .press) {
