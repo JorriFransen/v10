@@ -68,11 +68,39 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         pub inline fn add(a: Base, b: Base) Base {
             return @bitCast(a.vector() + b.vector());
         }
+        pub inline fn sub(a: Base, b: Base) Base {
+            return @bitCast(a.vector() - b.vector());
+        }
+        pub inline fn mul(a: Base, b: Base) Base {
+            return @bitCast(a.vector() * b.vector());
+        }
+        pub inline fn div(a: Base, b: Base) Base {
+            return @bitCast(a.vector() / b.vector());
+        }
         pub inline fn mul_scalar(vec: Base, s: T) Base {
             return v(vec.vector() * @as(V, @splat(s)));
         }
         pub inline fn div_scalar(vec: Base, s: T) Base {
             return v(vec.vector() / @as(V, @splat(s)));
+        }
+        pub inline fn cross(a: Base, b: Base) Base {
+            std.debug.assert(N == 3 or N == 4);
+            const av = a.vector();
+            const bv = b.vector();
+
+            const M = @Vector(N, i32);
+            const m1 = if (N == 3) M{ 1, 2, 0 } else M{ 1, 2, 0, 3 };
+            const m2 = if (N == 3) M{ 2, 0, 1 } else M{ 2, 0, 1, 3 };
+
+            const v1 = @shuffle(T, av, undefined, m1);
+            const v2 = @shuffle(T, bv, undefined, m2);
+            const v3 = @shuffle(T, av, undefined, m2);
+            const v4 = @shuffle(T, bv, undefined, m1);
+
+            return v((v1 * v2) - (v3 * v4));
+        }
+        pub inline fn dot(a: Base, b: Base) T {
+            return @reduce(.Add, a.mul(b).vector());
         }
     };
 }

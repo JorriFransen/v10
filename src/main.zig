@@ -80,11 +80,16 @@ fn run() !void {
 
         const aspect = renderer.swapchain.extentSwapchainRatio();
         // if (aspect >= 1) {
-        //     camera.projection_matrix = Mat4.ortho(-aspect, aspect, -1, 1, -1, 1);
+        //     camera.setProjection(.{ .orthographic = .{ .l = -aspect, .r = aspect, .t = -1, .b = 1 } }, -1, 1);
         // } else {
-        //     camera.projection_matrix = Mat4.ortho(-1, 1, -1 / aspect, 1 / aspect, -1, 1);
+        //     camera.setProjection(.{ .orthographic = .{ .l = -1, .r = 1, .t = -1 / aspect, .b = 1 / aspect } }, -1, 1);
         // }
-        camera.projection_matrix = Mat4.perspective(math.radians(50), aspect, 0.1, 10);
+
+        camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
+        camera.setViewTarget(.{}, triangle.transform.translation, .{});
+
+        // camera.setViewDirection(.{}, Vec3.new(0.5, 0, 1), .{});
+        // camera.setViewTarget(Vec3.new(-1, -2, 2), triangle.transform.translation, .{});
 
         updateEntities();
         drawFrame() catch unreachable;

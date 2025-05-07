@@ -61,10 +61,12 @@ fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
 pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: []const Entity, camera: *const Camera) void {
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
 
+    const projection_view = camera.projection_matrix.mul(camera.view_matrix);
+
     for (entities) |*entity| {
         var pcd = PushConstantData{
             .color = entity.color,
-            .transform = camera.projection_matrix.mul(entity.transform.mat4()),
+            .transform = projection_view.mul(entity.transform.mat4()),
         };
         cb.pushConstants(this.layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 

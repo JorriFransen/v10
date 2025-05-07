@@ -191,6 +191,49 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
             } };
         }
 
+        pub inline fn transform(translation_v: Vec3, scale_v: Vec3, rotation_v: Vec3) @This() {
+            comptime std.debug.assert(C == 4 and R == 4);
+
+            // pub fn mat4Slow(this: @This()) Mat4 {
+            //     var transform = Mat4.translation_v(translation_v);
+            //
+            //     transform = transform.rotate(rotation_v.y, Vec3.new(0, 1, 0));
+            //     transform = transform.rotate(rotation_v.x, Vec3.new(1, 0, 0));
+            //     transform = transform.rotate(rotation_v.z, Vec3.new(0, 0, 1));
+            //
+            //     return transform.scale(scale_v);
+            // }
+
+            const c3 = @cos(rotation_v.z);
+            const s3 = @sin(rotation_v.z);
+            const c2 = @cos(rotation_v.x);
+            const s2 = @sin(rotation_v.x);
+            const c1 = @cos(rotation_v.y);
+            const s1 = @sin(rotation_v.y);
+
+            return .{ .data = .{
+                scale_v.x * (c1 * c3 + s1 * s2 * s3),
+                scale_v.x * (c2 * s3),
+                scale_v.x * (c1 * s2 * s3 - c3 * s1),
+                0,
+
+                scale_v.y * (c3 * s1 * s2 - c1 * s3),
+                scale_v.y * (c2 * c3),
+                scale_v.y * (c1 * c3 * s2 + s1 * s3),
+                0,
+
+                scale_v.z * (c2 * s1),
+                scale_v.z * (-s2),
+                scale_v.z * (c1 * c2),
+                0,
+
+                translation_v.x,
+                translation_v.y,
+                translation_v.z,
+                1,
+            } };
+        }
+
         pub inline fn ortho(l: T, r: T, t: T, b: T, n: T, f: T) @This() {
             comptime std.debug.assert(C == 4 and R == 4);
 
@@ -220,6 +263,74 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
                 0,                            1 / (a_denom * tan_half_fov_y), 0,                            0,
                 0,                            0,                              far / (far - near),           1,
                 0,                            0,                              -(far * near) / (far - near), 0,
+            } };
+        }
+
+        pub const UpDirection = extern struct { x: T = 0, y: T = -1, z: T = 0 };
+
+        pub inline fn lookInDirection(pos: Vec3, direction: Vec3, up_: UpDirection) @This() {
+            comptime std.debug.assert(C == 4 and R == 4);
+
+            const up: Vec3 = @bitCast(up_);
+            const w = direction.normalized();
+            const u = w.cross(up).normalized();
+            const v = w.cross(u);
+
+            return .{ .data = .{
+                u.x,         v.x,         w.x,         0,
+                u.y,         v.y,         w.y,         0,
+                u.z,         v.z,         w.z,         0,
+                -u.dot(pos), -v.dot(pos), -w.dot(pos), 1,
+            } };
+        }
+
+        pub inline fn lookAtPosition(pos: Vec3, target: Vec3, up_: UpDirection) @This() {
+            comptime std.debug.assert(C == 4 and R == 4);
+
+            const direction = target.sub(pos);
+
+            const up: Vec3 = @bitCast(up_);
+            const w = direction.normalized();
+            const u = w.cross(up).normalized();
+            const v = w.cross(u);
+
+            return .{ .data = .{
+                u.x,         v.x,         w.x,         0,
+                u.y,         v.y,         w.y,         0,
+                u.z,         v.z,         w.z,         0,
+                -u.dot(pos), -v.dot(pos), -w.dot(pos), 1,
+            } };
+        }
+
+        pub inline fn lookXYZEuler(pos: Vec3, euler_angles: Vec3) @This() {
+            const c3 = @cos(euler_angles.z);
+            const s3 = @sin(euler_angles.z);
+            const c2 = @cos(euler_angles.x);
+            const s2 = @sin(euler_angles.x);
+            const c1 = @cos(euler_angles.y);
+            const s1 = @sin(euler_angles.y);
+
+            const u = Vec3.new(
+                c1 * c3 + s1 * s2 * s3,
+                c2 * s3,
+                c1 * s2 * s3 - c3 * s1,
+            );
+            const v = Vec3.new(
+                c3 * s1 * s2 - c1 * s3,
+                c2 * c3,
+                c1 * c3 * s2 + s1 * s3,
+            );
+            const w = Vec3.new(
+                c2 * s1,
+                -s2,
+                c1 * c2,
+            );
+
+            return .{ .data = .{
+                u.x,         v.x,         w.x,         0,
+                u.y,         v.y,         w.y,         0,
+                u.z,         v.z,         w.z,         0,
+                -u.dot(pos), -v.dot(pos), -w.dot(pos), 1,
             } };
         }
 
