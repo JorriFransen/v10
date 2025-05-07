@@ -16,6 +16,10 @@ pub fn build(b: *std.Build) !void {
     });
     exe.root_module.addImport("math", math_mod);
 
+    // exe.root_module.addImport("zlm", zlm_mod);
+    // const zlm_dep = b.dependency("zlm", .{});
+    // const zlm_mod = zlm_dep.module("zlm");
+
     const exe_install_artifact = b.addInstallArtifact(exe, .{});
     b.getInstallStep().dependOn(&exe_install_artifact.step);
 

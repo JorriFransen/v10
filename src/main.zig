@@ -30,7 +30,7 @@ var simple_render_system: SimpleRenderSystem = undefined;
 var entities: []Entity = undefined;
 
 fn run() !void {
-    const width = 1920;
+    const width = 1080;
     const height = 1080;
 
     try window.init(width, height, "v10game", .{
@@ -82,10 +82,12 @@ fn run() !void {
 }
 
 fn updateEntities() void {
-    const speed = 1.0;
-    for (entities) |*entity| {
-        entity.transform.rotation.y = @mod(entity.transform.rotation.y + 0.001 * speed, std.math.tau);
-        entity.transform.rotation.x = @mod(entity.transform.rotation.x + 0.001 / 2.0 * speed, std.math.tau);
+    if (!window.paused) {
+        const speed = 1.0;
+        for (entities) |*entity| {
+            entity.transform.rotation.y = @mod(entity.transform.rotation.y + 0.001 * speed, std.math.tau);
+            entity.transform.rotation.x = @mod(entity.transform.rotation.x + 0.001 / 2.0 * speed, std.math.tau);
+        }
     }
 }
 

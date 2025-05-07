@@ -54,43 +54,41 @@ pub inline fn rotate(mat: Mat4, angle: Vec3.T, axis: Vec3) Mat4 {
     const axis_n = axis.normalized();
     const temp = axis_n.mul_scalar(1 - c);
 
-    const rc0 = Vec3.new(
+    const rot = Mat4{ .data = .{
         c + temp.x * axis_n.x,
         temp.x * axis_n.y + s * axis_n.z,
-        temp.x * axis_n.z - s * axis_n.x,
-    );
-    const rc1 = Vec3.new(
+        temp.x * axis_n.z - s * axis_n.y,
+        0,
+
         temp.y * axis_n.x - s * axis_n.z,
         c + temp.y * axis_n.y,
         temp.y * axis_n.z + s * axis_n.x,
-    );
-    const rc2 = Vec3.new(
+        0,
+
         temp.z * axis_n.x + s * axis_n.y,
         temp.z * axis_n.y - s * axis_n.x,
         c + temp.z * axis_n.z,
-    );
+        0,
 
-    const col0 = mat.col(0);
-    const col1 = mat.col(1);
-    const col2 = mat.col(2);
-    const col3 = mat.col(3);
+        0,
+        0,
+        0,
+        0,
+    } };
 
-    var c0 = col0.mul_scalar(rc0.x);
-    c0 = c0.add(col1.mul_scalar(rc0.y));
-    c0 = c0.add(col2.mul_scalar(rc0.z));
+    const c0 = mat.col(0);
+    const c1 = mat.col(1);
+    const c2 = mat.col(2);
 
-    var c1 = col0.mul_scalar(rc1.x);
-    c1 = c1.add(col1.mul_scalar(rc1.y));
-    c1 = c1.add(col2.mul_scalar(rc1.z));
+    const rc0 = c0.mul_scalar(rot.data[0]).add(c1.mul_scalar(rot.data[1])).add(c2.mul_scalar(rot.data[2]));
+    const rc1 = c0.mul_scalar(rot.data[4]).add(c1.mul_scalar(rot.data[5])).add(c2.mul_scalar(rot.data[6]));
+    const rc2 = c0.mul_scalar(rot.data[8]).add(c1.mul_scalar(rot.data[9])).add(c2.mul_scalar(rot.data[10]));
+    const rc3 = mat.col(3);
 
-    var c2 = col0.mul_scalar(rc2.x);
-    c2 = c2.add(col1.mul_scalar(rc2.y));
-    c2 = c2.add(col2.mul_scalar(rc2.z));
-
-    return .{ .data = .{
-        c0.x,   c0.y,   c0.z,   0,
-        c1.x,   c1.y,   c1.z,   0,
-        c2.x,   c2.y,   c2.z,   0,
-        col3.x, col3.y, col3.z, mat.data[15],
+    return Mat4{ .data = .{
+        rc0.x, rc0.y, rc0.z, rc0.w,
+        rc1.x, rc1.y, rc1.z, rc1.w,
+        rc2.x, rc2.y, rc2.z, rc2.w,
+        rc3.x, rc3.y, rc3.z, rc3.w,
     } };
 }
