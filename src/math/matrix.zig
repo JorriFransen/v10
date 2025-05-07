@@ -206,13 +206,20 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
             comptime std.debug.assert(C == 4 and R == 4);
             std.debug.assert(@abs(aspect - std.math.floatEps(T)) > 0.0);
 
+            var a_nom = aspect;
+            var a_denom: T = 1;
+            if (aspect < 1) {
+                a_nom = 1;
+                a_denom = 1 / aspect;
+            }
+
             const tan_half_fov_y = @tan(fov_y / 2);
 
             return .{ .data = .{
-                1 / (aspect * tan_half_fov_y), 0,                  0,                            0,
-                0,                             1 / tan_half_fov_y, 0,                            0,
-                0,                             0,                  far / (far - near),           1,
-                0,                             0,                  -(far * near) / (far - near), 0,
+                1 / (a_nom * tan_half_fov_y), 0,                              0,                            0,
+                0,                            1 / (a_denom * tan_half_fov_y), 0,                            0,
+                0,                            0,                              far / (far - near),           1,
+                0,                            0,                              -(far * near) / (far - near), 0,
             } };
         }
 

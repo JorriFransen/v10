@@ -66,7 +66,6 @@ pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: 
             .color = entity.color,
             .transform = camera.projection_matrix.mul(entity.transform.mat4()),
         };
-        std.log.debug("proj: {}", .{camera.projection_matrix});
         cb.pushConstants(this.layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
         entity.model.bind(cb.handle);

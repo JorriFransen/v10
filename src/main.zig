@@ -33,7 +33,7 @@ var camera: Camera = .{};
 var entities: []Entity = undefined;
 
 fn run() !void {
-    const width = 1080;
+    const width = 1920;
     const height = 1080;
 
     try window.init(width, height, "v10game", .{
@@ -53,8 +53,6 @@ fn run() !void {
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
 
-    camera.projection_matrix = Mat4.ortho(-1, 1, -1, 1, -1, 1);
-
     var model = try createCubeModel(.{});
     // var model = try Model.create(&device, &.{
     //     .{ .position = Vec3.new(0, -0.5, 0), .color = Vec3.new(1, 0, 0) },
@@ -69,7 +67,7 @@ fn run() !void {
     const triangle = &_entities[0];
     triangle.model = &model;
     // triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
-    triangle.transform.translation = .{ .z = 0.5 };
+    triangle.transform.translation = .{ .z = 2.5 };
     triangle.transform.scale = Vec3.scalar(0.5);
     // triangle.transform.rotation = .{ .y = 0.75 * std.math.tau };
 
@@ -79,6 +77,15 @@ fn run() !void {
 
     while (!window.shouldClose()) {
         window.pollEvents();
+
+        const aspect = renderer.swapchain.extentSwapchainRatio();
+        // if (aspect >= 1) {
+        //     camera.projection_matrix = Mat4.ortho(-aspect, aspect, -1, 1, -1, 1);
+        // } else {
+        //     camera.projection_matrix = Mat4.ortho(-1, 1, -1 / aspect, 1 / aspect, -1, 1);
+        // }
+        camera.projection_matrix = Mat4.perspective(math.radians(50), aspect, 0.1, 10);
+
         updateEntities();
         drawFrame() catch unreachable;
     }

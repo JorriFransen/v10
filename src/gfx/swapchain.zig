@@ -472,3 +472,9 @@ fn findDepthFormat(this: *@This()) !vk.Format {
 pub fn compareSwapFormats(a: *const @This(), b: *const @This()) bool {
     return a.image_format == b.image_format and a.depth_format == b.depth_format;
 }
+
+pub fn extentSwapchainRatio(this: *const @This()) f32 {
+    const w: f32 = @floatFromInt(this.swapchain_extent.width);
+    const h: f32 = @floatFromInt(this.swapchain_extent.height);
+    return w / h;
+}
