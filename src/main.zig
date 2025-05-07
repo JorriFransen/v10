@@ -10,8 +10,10 @@ const Device = gfx.Device;
 const Entity = @import("entity.zig");
 const Model = gfx.Model;
 const SimpleRenderSystem = @import("simple_render_system.zig");
+const Camera = @import("camera.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
+const Mat4 = math.Mat4;
 
 pub fn main() !void {
     cla.parse();
@@ -26,6 +28,7 @@ var window: Window = undefined;
 var device: Device = undefined;
 var renderer: Renderer = undefined;
 var simple_render_system: SimpleRenderSystem = undefined;
+var camera: Camera = .{};
 
 var entities: []Entity = undefined;
 
@@ -49,6 +52,8 @@ fn run() !void {
 
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
+
+    camera.projection_matrix = Mat4.ortho(-1, 1, -1, 1, -1, 1);
 
     var model = try createCubeModel(.{});
     // var model = try Model.create(&device, &.{
@@ -95,7 +100,7 @@ fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
-        simple_render_system.drawEntities(&cb, entities);
+        simple_render_system.drawEntities(&cb, entities, &camera);
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);

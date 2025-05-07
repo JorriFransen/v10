@@ -109,7 +109,7 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
 
         pub inline fn rotate(mat: @This(), angle: Vec3.T, axis: Vec3) @This() {
             comptime std.debug.assert(C == 4 and R == 4);
-            comptime std.debug.assert(Vec3.T == @This().T);
+            comptime std.debug.assert(Vec3.T == T);
 
             const c = @cos(angle);
             const s = @sin(angle);
@@ -154,13 +154,13 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
 
         pub inline fn rotation(angle: Vec3.T, axis: Vec3) @This() {
             comptime std.debug.assert(C == 4 and R == 4);
-            comptime std.debug.assert(Vec3.T == @This().T);
+            comptime std.debug.assert(Vec3.T == T);
             return identity.rotate(angle, axis);
         }
 
         pub inline fn scale(mat: @This(), scalev: Vec3) @This() {
             comptime std.debug.assert(C == 4 and R == 4);
-            comptime std.debug.assert(Vec3.T == @This().T);
+            comptime std.debug.assert(Vec3.T == T);
 
             var r = mat;
 
@@ -181,13 +181,38 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
 
         pub inline fn scaling(scalev: Vec3) @This() {
             comptime std.debug.assert(C == 4 and R == 4);
-            comptime std.debug.assert(Vec3.T == @This().T);
+            comptime std.debug.assert(Vec3.T == T);
 
             return .{ .data = .{
                 scalev.x, 0,        0,        0,
                 0,        scalev.y, 0,        0,
                 0,        0,        scalev.z, 0,
                 0,        0,        0,        1,
+            } };
+        }
+
+        pub inline fn ortho(l: T, r: T, t: T, b: T, n: T, f: T) @This() {
+            comptime std.debug.assert(C == 4 and R == 4);
+
+            return .{ .data = .{
+                2 / (r - l),        0,                  0,            0,
+                0,                  2 / (b - t),        0,            0,
+                0,                  0,                  1 / (f - n),  0,
+                -(r + l) / (r - l), -(b + t) / (b - t), -n / (f - n), 1,
+            } };
+        }
+
+        pub inline fn perspective(fov_y: T, aspect: T, near: T, far: T) @This() {
+            comptime std.debug.assert(C == 4 and R == 4);
+            std.debug.assert(@abs(aspect - std.math.floatEps(T)) > 0.0);
+
+            const tan_half_fov_y = @tan(fov_y / 2);
+
+            return .{ .data = .{
+                1 / (aspect * tan_half_fov_y), 0,                  0,                            0,
+                0,                             1 / tan_half_fov_y, 0,                            0,
+                0,                             0,                  far / (far - near),           1,
+                0,                             0,                  -(far * near) / (far - near), 0,
             } };
         }
 

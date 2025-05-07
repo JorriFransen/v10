@@ -6,6 +6,7 @@ const math = @import("math");
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Entity = @import("entity.zig");
+const Camera = @import("camera.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -57,14 +58,15 @@ fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
     return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
 }
 
-pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: []const Entity) void {
+pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: []const Entity, camera: *const Camera) void {
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
 
     for (entities) |*entity| {
         var pcd = PushConstantData{
             .color = entity.color,
-            .transform = entity.transform.mat4(),
+            .transform = camera.projection_matrix.mul(entity.transform.mat4()),
         };
+        std.log.debug("proj: {}", .{camera.projection_matrix});
         cb.pushConstants(this.layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
         entity.model.bind(cb.handle);
