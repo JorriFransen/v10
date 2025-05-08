@@ -430,20 +430,24 @@ fn chooseSwapPresentMode(this: *@This(), pmodes: []vk.PresentModeKHR) vk.Present
     std.debug.assert(pmodes.len > 0);
 
     for (pmodes) |pm| vklog.debug("Available present mode: {s}", .{@tagName(pm)});
+    var result = vk.PresentModeKHR.fifo_khr;
 
     for (pmodes) |present_mode| {
         if (present_mode == .mailbox_khr) {
-            return present_mode;
+            result = present_mode;
+            break;
         }
     }
 
-    // for (pmodes) |present_mode| {
-    //     if (present_mode == .immediate_khr)
-    //         vklog.debug("Using present mode: {}", .{.immediate_khr});
-    //     return present_mode;
-    // }
+    var immediate_khr_available = false;
+    for (pmodes) |present_mode| {
+        if (present_mode == .immediate_khr) {
+            immediate_khr_available = true;
+            break;
+        }
+    }
 
-    return .fifo_khr;
+    return result;
 }
 
 fn chooseSwapExtent(this: *@This(), caps: vk.SurfaceCapabilitiesKHR) vk.Extent2D {

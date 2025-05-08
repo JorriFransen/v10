@@ -59,11 +59,16 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
             return @bitCast(@as(V, @splat(s)));
         }
         pub inline fn length(vec: Base) T {
-            const p = vec.vector() * vec.vector();
-            return std.math.sqrt(@reduce(.Add, p));
+            const v_ = vec.vector();
+            return @sqrt(@reduce(.Add, v_ * v_));
         }
         pub inline fn normalized(vec: Base) Base {
-            return vec.div_scalar(vec.length());
+            const v_ = vec.vector();
+            const one_over_len = 1.0 / @sqrt(@reduce(.Add, v_ * v_));
+            return @bitCast(v_ * @as(V, @splat(one_over_len)));
+        }
+        pub inline fn negate(vec: Base) Base {
+            return @bitCast(-vec.vector());
         }
         pub inline fn add(a: Base, b: Base) Base {
             return @bitCast(a.vector() + b.vector());
@@ -78,10 +83,10 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
             return @bitCast(a.vector() / b.vector());
         }
         pub inline fn mul_scalar(vec: Base, s: T) Base {
-            return v(vec.vector() * @as(V, @splat(s)));
+            return @bitCast(vec.vector() * @as(V, @splat(s)));
         }
         pub inline fn div_scalar(vec: Base, s: T) Base {
-            return v(vec.vector() / @as(V, @splat(s)));
+            return @bitCast(vec.vector() / @as(V, @splat(s)));
         }
         pub inline fn cross(a: Base, b: Base) Base {
             std.debug.assert(N == 3 or N == 4);
@@ -97,10 +102,10 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
             const v3 = @shuffle(T, av, undefined, m2);
             const v4 = @shuffle(T, bv, undefined, m1);
 
-            return v((v1 * v2) - (v3 * v4));
+            return @bitCast((v1 * v2) - (v3 * v4));
         }
         pub inline fn dot(a: Base, b: Base) T {
-            return @reduce(.Add, a.mul(b).vector());
+            return @reduce(.Add, a.vector() * b.vector());
         }
     };
 }

@@ -6,6 +6,7 @@ const vk = @import("vulkan");
 const wlog = std.log.scoped(.window);
 
 pub const PfnRefreshCallback = ?*const fn (this: *@This()) void;
+pub const PfnResizeCallback = ?*const fn (this: *@This(), width: i32, height: i32) void;
 
 width: i32,
 height: i32,
@@ -13,11 +14,13 @@ framebuffer_resized: bool,
 name: []const u8,
 window: glfw.Window,
 refresh_callback: PfnRefreshCallback,
+resize_callback: PfnResizeCallback,
 
-// TODO: Cleanup when there is a proper input system
-paused: bool = false,
-
-pub const InitOptions = struct { platform: glfw.Platform = .ANY };
+pub const InitOptions = struct {
+    platform: glfw.Platform = .ANY,
+    refresh_callback: PfnRefreshCallback = null,
+    resize_callback: PfnResizeCallback = null,
+};
 
 pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8, options: InitOptions) !void {
     glfw.initHint(glfw.PLATFORM, @intFromEnum(options.platform));
@@ -42,13 +45,16 @@ pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8, options: InitOpt
         _ = glfw.setWindowRefreshCallback(handle, refreshCallback);
     }
 
+    _ = glfw.setWindowSizeCallback(handle, resizeCallback);
+
     this.* = .{
         .width = w,
         .height = h,
         .framebuffer_resized = false,
         .name = name,
         .window = handle,
-        .refresh_callback = null,
+        .refresh_callback = options.refresh_callback,
+        .resize_callback = options.resize_callback,
     };
 }
 
@@ -79,7 +85,7 @@ pub fn getExtent(this: *const @This()) vk.Extent2D {
     return .{ .width = @intCast(this.width), .height = @intCast(this.height) };
 }
 
-pub fn framebufferResizeCallback(glfw_window: glfw.Window, width: c_int, height: c_int) callconv(.c) void {
+pub fn framebufferResizeCallback(glfw_window: glfw.Window, width: c_int, height: c_int) callconv(.C) void {
     const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
     window.framebuffer_resized = true;
     window.width = width;
@@ -91,17 +97,19 @@ fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: gl
     _ = mods;
 
     const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
+    _ = window;
 
     if (key == glfw.c.GLFW_KEY_ESCAPE and action == .press) {
         glfw.setWindowShouldClose(glfw_window, glfw.TRUE);
     }
-
-    if (key == glfw.c.GLFW_KEY_P and action == .press) {
-        window.paused = !window.paused;
-    }
 }
 
-fn refreshCallback(glfw_window: glfw.Window) callconv(.c) void {
+fn refreshCallback(glfw_window: glfw.Window) callconv(.C) void {
     const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
     if (window.refresh_callback) |cb| cb(window);
+}
+
+fn resizeCallback(glfw_window: glfw.Window, width: c_int, height: c_int) callconv(.C) void {
+    const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
+    if (window.resize_callback) |cb| cb(window, width, height);
 }

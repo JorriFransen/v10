@@ -11,9 +11,11 @@ const Entity = @import("entity.zig");
 const Model = gfx.Model;
 const SimpleRenderSystem = @import("simple_render_system.zig");
 const Camera = @import("camera.zig");
+const Instant = std.time.Instant;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
+const KBMoveController = @import("keyboard_movement_controller.zig");
 
 pub fn main() !void {
     cla.parse();
@@ -29,8 +31,11 @@ var device: Device = undefined;
 var renderer: Renderer = undefined;
 var simple_render_system: SimpleRenderSystem = undefined;
 var camera: Camera = .{};
+var kb_move_controller: KBMoveController = .{};
 
-var entities: []Entity = undefined;
+var camera_entity: Entity = undefined;
+var cube: *Entity = undefined;
+var entities: []Entity = &.{};
 
 fn run() !void {
     const width = 1920;
@@ -38,9 +43,10 @@ fn run() !void {
 
     try window.init(width, height, "v10game", .{
         .platform = cla.clap_options.glfw_platform,
+        .refresh_callback = refreshCallback,
+        .resize_callback = resizeCallback,
     });
     defer window.destroy();
-    window.refresh_callback = refreshCallback;
 
     try gfx.System.init();
 
@@ -53,6 +59,8 @@ fn run() !void {
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
 
+    camera_entity = Entity.new();
+
     var model = try createCubeModel(.{});
     // var model = try Model.create(&device, &.{
     //     .{ .position = Vec3.new(0, -0.5, 0), .color = Vec3.new(1, 0, 0) },
@@ -61,51 +69,54 @@ fn run() !void {
     // });
     defer model.destroy();
 
-    var _entities = [_]Entity{
-        Entity.new(),
-    };
-    const triangle = &_entities[0];
-    triangle.model = &model;
+    var entities_ = [_]Entity{Entity.new()};
+    entities = &entities_;
+
+    cube = &entities[0];
+    cube.model = &model;
     // triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
-    triangle.transform.translation = .{ .z = 2.5 };
-    triangle.transform.scale = Vec3.scalar(0.5);
+    cube.transform.translation = .{ .z = 2.5 };
+    cube.transform.scale = Vec3.scalar(0.5);
     // triangle.transform.rotation = .{ .y = 0.75 * std.math.tau };
 
-    entities = &_entities;
-
     try renderer.createCommandBuffers();
+
+    const aspect = renderer.swapchain.extentSwapchainRatio();
+    // if (aspect >= 1) {
+    //     camera.setProjection(.{ .orthographic = .{ .l = -aspect, .r = aspect, .t = -1, .b = 1 } }, -1, 1);
+    // } else {
+    //     camera.setProjection(.{ .orthographic = .{ .l = -1, .r = 1, .t = -1 / aspect, .b = 1 / aspect } }, -1, 1);
+    // }
+
+    camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
+
+    var current_time = try Instant.now();
 
     while (!window.shouldClose()) {
         window.pollEvents();
 
-        const aspect = renderer.swapchain.extentSwapchainRatio();
-        // if (aspect >= 1) {
-        //     camera.setProjection(.{ .orthographic = .{ .l = -aspect, .r = aspect, .t = -1, .b = 1 } }, -1, 1);
-        // } else {
-        //     camera.setProjection(.{ .orthographic = .{ .l = -1, .r = 1, .t = -1 / aspect, .b = 1 / aspect } }, -1, 1);
-        // }
+        const new_time = try Instant.now();
+        const dt_ns = new_time.since(current_time);
+        const dt: f32 = @as(f32, @floatFromInt(dt_ns)) / std.time.ns_per_s;
+        current_time = new_time;
 
-        camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
-        camera.setViewTarget(.{}, triangle.transform.translation, .{});
+        const cf = camera_entity.transform;
+        camera.setViewYXZ(cf.translation, cf.rotation);
 
-        // camera.setViewDirection(.{}, Vec3.new(0.5, 0, 1), .{});
-        // camera.setViewTarget(Vec3.new(-1, -2, 2), triangle.transform.translation, .{});
-
-        updateEntities();
+        updateEntities(dt);
         drawFrame() catch unreachable;
     }
 
     try device.device.deviceWaitIdle();
 }
 
-fn updateEntities() void {
-    if (!window.paused) {
-        const speed = 1.0;
-        for (entities) |*entity| {
-            entity.transform.rotation.y = @mod(entity.transform.rotation.y + 0.001 * speed, std.math.tau);
-            entity.transform.rotation.x = @mod(entity.transform.rotation.x + 0.001 / 2.0 * speed, std.math.tau);
-        }
-    }
+fn updateEntities(dt: f32) void {
+    kb_move_controller.moveInPlaneXZ(&window, dt, &camera_entity);
+
+    const rot_speed = 1;
+    const ctf = &cube.transform;
+    ctf.rotation.y = @mod(ctf.rotation.y + dt * rot_speed, std.math.tau);
+    ctf.rotation.x = @mod(ctf.rotation.x + dt * rot_speed * 0.5, std.math.tau);
 }
 
 fn drawFrame() !void {
@@ -117,6 +128,17 @@ fn drawFrame() !void {
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
     }
+}
+
+fn resizeCallback(_: *Window, _: i32, _: i32) void {
+    const aspect = renderer.swapchain.extentSwapchainRatio();
+    // if (aspect >= 1) {
+    //     camera.setProjection(.{ .orthographic = .{ .l = -aspect, .r = aspect, .t = -1, .b = 1 } }, -1, 1);
+    // } else {
+    //     camera.setProjection(.{ .orthographic = .{ .l = -1, .r = 1, .t = -1 / aspect, .b = 1 / aspect } }, -1, 1);
+    // }
+
+    camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
 }
 
 fn refreshCallback(_: *Window) void {
