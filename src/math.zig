@@ -1,7 +1,7 @@
 const std = @import("std");
 
-pub const vector = @import("vector.zig");
-pub const matrix = @import("matrix.zig");
+pub const vector = @import("math/vector.zig");
+pub const matrix = @import("math/matrix.zig");
 
 pub const Vec = vector.Vec;
 pub const Mat = matrix.Mat;

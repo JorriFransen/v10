@@ -1,14 +1,14 @@
 const std = @import("std");
 const alloc = @import("alloc.zig");
-const gfx = @import("gfx/gfx.zig");
+const gfx = @import("gfx.zig");
 const math = @import("math");
 const cla = @import("command_line_args.zig");
 
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
 const Device = gfx.Device;
-const Entity = @import("entity.zig");
 const Model = gfx.Model;
+const Entity = @import("entity.zig");
 const SimpleRenderSystem = @import("simple_render_system.zig");
 const Camera = @import("camera.zig");
 const Instant = std.time.Instant;

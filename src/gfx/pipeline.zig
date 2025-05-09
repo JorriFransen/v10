@@ -1,5 +1,5 @@
 const std = @import("std");
-const gfx = @import("gfx.zig");
+const gfx = @import("../gfx.zig");
 const vk = @import("vulkan");
 const alloc = @import("../alloc.zig");
 const vklog = std.log.scoped(.vulkan);

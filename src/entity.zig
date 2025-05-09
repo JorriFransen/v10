@@ -1,4 +1,4 @@
-const gfx = @import("gfx/gfx.zig");
+const gfx = @import("gfx.zig");
 const math = @import("math");
 
 const Transform = @import("transform.zig");

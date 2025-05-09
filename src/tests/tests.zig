@@ -1,6 +1,6 @@
 const std = @import("std");
 
 comptime {
-    _ = @import("math/math.zig");
+    _ = @import("math.zig");
     std.testing.refAllDeclsRecursive(@This());
 }

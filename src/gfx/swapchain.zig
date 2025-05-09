@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const alloc = @import("../alloc.zig");
 const vklog = std.log.scoped(.vulkan);
-const gfx = @import("gfx.zig");
+const gfx = @import("../gfx.zig");
 
 const Allocator = std.mem.Allocator;
 const Device = gfx.Device;

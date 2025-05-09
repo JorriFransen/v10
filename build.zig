@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const math_mod = b.addModule("math", .{ .root_source_file = b.path("src/math/math.zig") });
+    const math_mod = b.addModule("math", .{ .root_source_file = b.path("src/math.zig") });
 
     const exe = b.addExecutable(.{
         .name = "v10game",

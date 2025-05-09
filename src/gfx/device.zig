@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const vklog = std.log.scoped(.vulkan);
 const glfw = @import("glfw");
 const alloc = @import("../alloc.zig");
-const gfx = @import("gfx.zig");
+const gfx = @import("../gfx.zig");
 const vk = gfx.vk;
 
 const Allocator = std.mem.Allocator;

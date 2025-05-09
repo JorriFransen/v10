@@ -2,11 +2,11 @@ const glfw = @import("glfw");
 
 pub const vk = @import("vulkan");
 
-pub const Device = @import("device.zig");
-pub const Pipeline = @import("pipeline.zig");
-pub const Swapchain = @import("swapchain.zig");
-pub const Renderer = @import("renderer.zig");
-pub const Model = @import("model.zig");
+pub const Device = @import("gfx/device.zig");
+pub const Pipeline = @import("gfx/pipeline.zig");
+pub const Swapchain = @import("gfx/swapchain.zig");
+pub const Renderer = @import("gfx/renderer.zig");
+pub const Model = @import("gfx/model.zig");
 
 pub var system: System = undefined;
 pub const System = struct {

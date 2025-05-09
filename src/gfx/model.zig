@@ -1,5 +1,5 @@
 const std = @import("std");
-const gfx = @import("gfx.zig");
+const gfx = @import("../gfx.zig");
 const math = @import("math");
 const vk = @import("vulkan");
 

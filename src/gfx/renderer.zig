@@ -1,6 +1,6 @@
 const std = @import("std");
 const alloc = @import("../alloc.zig");
-const gfx = @import("gfx.zig");
+const gfx = @import("../gfx.zig");
 const vk = @import("vulkan");
 
 const Window = @import("../window.zig");

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const math = @import("math.zig");
+const math = @import("../math.zig");
 
 pub const Mat2f32 = Mat(2, 2, f32);
 pub const Mat3f32 = Mat(3, 3, f32);
