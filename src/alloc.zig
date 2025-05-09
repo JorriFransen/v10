@@ -6,7 +6,7 @@ pub const gpa = gpa_data.allocator();
 
 pub var gfx_arena_data = heap.ArenaAllocator.init(heap.page_allocator);
 
-pub var temp_arena_data = heap.ArenaAllocator.init(gpa);
+pub var temp_arena_data = heap.ArenaAllocator.init(heap.page_allocator);
 
 pub fn deinit() !void {
     gfx_arena_data.deinit();
