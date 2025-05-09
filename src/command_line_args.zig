@@ -52,12 +52,8 @@ fn parseCommandLine() !ClapOptions {
         }
     }.f;
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    var arg_it = try std.process.ArgIterator.initWithAllocator(arena.allocator());
-    defer {
-        arg_it.deinit();
-        arena.deinit();
-    }
+    var arg_it = try std.process.ArgIterator.initWithAllocator(alloc.gpa);
+    defer arg_it.deinit();
 
     const exe_name = std.fs.path.basename(arg_it.next().?);
     var diag = clap.Diagnostic{};

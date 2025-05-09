@@ -309,6 +309,8 @@ fn createDepthResources(this: *@This(), allocator: Allocator) !void {
 
     if (this.depth_images.len != 0) {
         std.debug.assert(this.depth_images.len == this.images.len);
+        std.debug.assert(this.depth_images.len == this.depth_image_memories.len);
+        std.debug.assert(this.depth_images.len == this.depth_image_views.len);
     } else {
         this.depth_images = try allocator.alloc(vk.Image, this.images.len);
         this.depth_image_memories = try allocator.alloc(vk.DeviceMemory, this.images.len);

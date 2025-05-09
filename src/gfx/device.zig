@@ -1,17 +1,12 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 const builtin = @import("builtin");
-
 const vklog = std.log.scoped(.vulkan);
-
 const glfw = @import("glfw");
-
 const alloc = @import("../alloc.zig");
-
 const gfx = @import("gfx.zig");
 const vk = gfx.vk;
 
+const Allocator = std.mem.Allocator;
 const Window = @import("../window.zig");
 
 const enable_validation_layers: bool = builtin.mode == .Debug;
