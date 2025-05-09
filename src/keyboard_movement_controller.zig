@@ -44,21 +44,11 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *E
         trot.y = @mod(trot.y, std.math.tau); // Avoid overflow
     }
 
-    const pitch = entity.transform.rotation.x;
     const yaw = entity.transform.rotation.y;
-
-    const cp = @cos(pitch);
     const cy = @cos(yaw);
-    const sp = @sin(pitch);
     const sy = @sin(yaw);
-
-    const forward = Vec3.new(cp * sy, -sp, cp * cy);
+    const forward = Vec3.new(sy, 0, cy);
     const right = Vec3.new(cy, 0, -sy);
-
-    // relative up
-    // const up = Vec3.new(-sp * sy, -cp, sp * -cy); // -y is up
-
-    // world up
     const up = Vec3.new(0, -1, 0);
 
     var mdir = Vec3{};
