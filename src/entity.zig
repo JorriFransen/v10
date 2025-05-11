@@ -1,5 +1,5 @@
 const gfx = @import("gfx.zig");
-const math = @import("math");
+const math = @import("math.zig");
 
 const Transform = @import("transform.zig");
 const ID = usize;

@@ -1,4 +1,4 @@
-const math = @import("math");
+const math = @import("math.zig");
 
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;

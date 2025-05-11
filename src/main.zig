@@ -1,7 +1,7 @@
 const std = @import("std");
 const alloc = @import("alloc.zig");
 const gfx = @import("gfx.zig");
-const math = @import("math");
+const math = @import("math.zig");
 const cla = @import("command_line_args.zig");
 
 const Window = @import("window.zig");
@@ -16,6 +16,12 @@ const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
+
+comptime {
+    _ = @import("memory.zig");
+    _ = @import("math.zig");
+    std.testing.refAllDeclsRecursive(@This());
+}
 
 pub fn main() !void {
     cla.parse();

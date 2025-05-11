@@ -6,19 +6,12 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const math_mod = b.addModule("math", .{ .root_source_file = b.path("src/math.zig") });
-
     const exe = b.addExecutable(.{
         .name = "v10game",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("math", math_mod);
-
-    // exe.root_module.addImport("zlm", zlm_mod);
-    // const zlm_dep = b.dependency("zlm", .{});
-    // const zlm_mod = zlm_dep.module("zlm");
 
     const exe_install_artifact = b.addInstallArtifact(exe, .{});
     b.getInstallStep().dependOn(&exe_install_artifact.step);
@@ -64,13 +57,12 @@ pub fn build(b: *std.Build) !void {
     test_options.addOption(bool, "full_name", test_full_name);
 
     const test_exe = b.addTest(.{
-        .root_source_file = b.path("src/tests/tests.zig"),
-        .test_runner = .{ .path = b.path("src/tests/test_runner.zig"), .mode = .simple },
+        .root_module = exe.root_module,
+        .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
         .target = target,
         .optimize = optimize,
     });
     test_exe.root_module.addOptions("options", test_options);
-    test_exe.root_module.addImport("math", math_mod);
     const run_tests = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);

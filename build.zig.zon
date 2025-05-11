@@ -20,10 +20,6 @@
             .url = "https://github.com/Snektron/vulkan-zig/archive/40ad90a912eafb81581a121e585688fbbd7d8ddf.tar.gz",
             .hash = "vulkan-0.0.0-r7Ytx1JTAwC3R0cfA3SxaWPGJa6p3EUw3OTXTgSPr_hF",
         },
-        // .zlm = .{
-        //     .url = "https://github.com/ziglibs/zlm/archive/refs/heads/master.tar.gz",
-        //     .hash = "zlm-0.1.0-AAAAAPGfAAA0KsMzll3pFfdKhCXkhI_-RoUtoOR4kQP5",
-        // },
     },
     .paths = .{
         "src/",

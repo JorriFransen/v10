@@ -91,7 +91,7 @@ pub const Arena = struct {
 
 test "Arena from slice" {
     var mem = [1]u8{0} ** 1024;
-    // try std.testing.expectEqual(@as(*u8, @ptrCast(&mem)), &mem[0]);
+    try std.testing.expectEqual(@as(*u8, @ptrCast(&mem)), &mem[0]);
     var arena = Arena.create(&mem);
     const aa = arena.allocator();
 
