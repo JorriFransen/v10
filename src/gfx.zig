@@ -7,6 +7,8 @@ pub const Pipeline = @import("gfx/pipeline.zig");
 pub const Swapchain = @import("gfx/swapchain.zig");
 pub const Renderer = @import("gfx/renderer.zig");
 pub const Model = @import("gfx/model.zig");
+pub const Camera = @import("gfx/camera.zig");
+pub const SimpleRenderSystem = @import("gfx/simple_render_system.zig");
 
 pub var system: System = undefined;
 pub const System = struct {

@@ -1,12 +1,12 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const gfx = @import("gfx.zig");
-const math = @import("math.zig");
+const gfx = @import("../gfx.zig");
+const math = @import("../math.zig");
 
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
-const Entity = @import("entity.zig");
-const Camera = @import("camera.zig");
+const Camera = gfx.Camera;
+const Entity = @import("../entity.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
