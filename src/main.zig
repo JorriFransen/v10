@@ -17,12 +17,6 @@ const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
-comptime {
-    _ = @import("memory.zig");
-    _ = @import("math.zig");
-    std.testing.refAllDeclsRecursive(@This());
-}
-
 pub fn main() !void {
     cla.parse();
 

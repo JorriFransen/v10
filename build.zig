@@ -51,10 +51,14 @@ pub fn build(b: *std.Build) !void {
     test_options.addOption(bool, "full_name", test_full_name);
 
     const test_exe = b.addTest(.{
-        .root_module = exe.root_module,
-        .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
         .target = target,
         .optimize = optimize,
+        .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
     });
     test_exe.root_module.addOptions("options", test_options);
     const run_tests = b.addRunArtifact(test_exe);
