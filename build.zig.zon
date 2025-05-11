@@ -16,7 +16,7 @@
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
             .hash = "N-V-__8AAAkkoQGn5z1yoNVrwqZfnYmZp8AZ5CJgoHRMQI0c",
         },
-        .vulkan_zig = .{
+        .vulkan = .{
             .url = "https://github.com/Snektron/vulkan-zig/archive/40ad90a912eafb81581a121e585688fbbd7d8ddf.tar.gz",
             .hash = "vulkan-0.0.0-r7Ytx1JTAwC3R0cfA3SxaWPGJa6p3EUw3OTXTgSPr_hF",
         },

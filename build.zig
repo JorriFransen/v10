@@ -6,46 +6,33 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "v10game",
+    const clap = b.dependency("clap", .{ .target = target });
+    const glfw = b.dependency("glfw", .{ .target = target, .x11 = true, .wayland = true });
+    const vulkan = b.dependency("vulkan", .{
+        .target = target,
+        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+    });
+
+    const main_module = b.addModule("main", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+    main_module.addImport("clap", clap.module("clap"));
+    main_module.addImport("glfw", glfw.module("glfw"));
+    main_module.addImport("vulkan", vulkan.module("vulkan-zig"));
 
-    const exe_install_artifact = b.addInstallArtifact(exe, .{});
-    b.getInstallStep().dependOn(&exe_install_artifact.step);
+    const exe = b.addExecutable(.{
+        .name = "v10game",
+        .root_module = main_module,
+    });
+    b.installArtifact(exe);
 
     const run_exe = b.addRunArtifact(exe);
     run_exe.cwd = b.path("zig-out/bin");
     if (b.args) |args| run_exe.addArgs(args);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
-    run_step.dependOn(b.getInstallStep());
-
-    const clap_dep = b.dependency("clap", .{ .target = target, .optimize = optimize });
-    const clap_mod = clap_dep.module("clap");
-    exe.root_module.addImport("clap", clap_mod);
-
-    const glfw_dep = b.dependency("glfw", .{
-        .target = target,
-        .optimize = optimize,
-        .x11 = true,
-        .wayland = true,
-    });
-    const glfw_lib = glfw_dep.artifact("glfw");
-    const glfw_mod = glfw_dep.module("glfw");
-    exe.root_module.addImport("glfw", glfw_mod);
-    exe.linkLibrary(glfw_lib);
-
-    const vulkan_mod = b.dependency(
-        "vulkan_zig",
-        .{
-            .target = target,
-            .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
-        },
-    ).module("vulkan-zig");
-    exe.root_module.addImport("vulkan", vulkan_mod);
 
     const shader_step = try addShaderStep(b);
     exe.step.dependOn(shader_step);
