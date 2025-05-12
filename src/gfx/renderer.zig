@@ -52,6 +52,7 @@ pub fn freeCommandBuffers(this: *@This()) void {
 
 pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
     const result = try this.swapchain.acquireNextImage(&this.current_image_index);
+    std.log.debug("renderer.beginFrame() - current_image_index: {}", .{this.current_image_index});
 
     if (result == .error_out_of_date_khr) {
         try this.recreateSwapchain();
@@ -73,10 +74,15 @@ pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
 pub fn endFrame(this: *@This(), cb: vk.CommandBufferProxy) !void {
     try cb.endCommandBuffer();
 
+    std.log.debug("renderer.endFrame() - current_image_index: {}", .{this.current_image_index});
+    std.log.debug("renderer.endFrame() - current_frame_index: {}", .{this.current_frame_index});
+    std.log.debug("renderer.endFrame() - swapchain.current_frame: {}\n", .{this.swapchain.current_frame});
+
     const result = try this.swapchain.submitCommandBuffers(cb.handle, &this.current_image_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or this.window.framebuffer_resized) {
         this.window.framebuffer_resized = false;
         try this.recreateSwapchain();
+        return;
     } else if (result != .success) {
         return error.swapchainSubmitCommandBuffersFailed;
     }

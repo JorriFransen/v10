@@ -102,19 +102,19 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
 
     this.images_in_flight[image_index.*] = this.in_flight_fences[this.current_frame];
 
-    const wait_semaphore = this.image_available_semaphores[this.current_frame];
+    const wait_semaphores = [_]vk.Semaphore{this.image_available_semaphores[this.current_frame]};
     const wait_stage = vk.PipelineStageFlags{ .color_attachment_output_bit = true };
-    const signal_semaphore = this.render_finished_semaphores[this.current_frame];
+    const signal_semaphores = [_]vk.Semaphore{this.render_finished_semaphores[this.current_frame]};
 
-    const buffers = .{buffer};
+    const buffers = [_]vk.CommandBuffer{buffer};
     const submit_info = vk.SubmitInfo{
-        .wait_semaphore_count = 1,
-        .p_wait_semaphores = @ptrCast(&wait_semaphore),
+        .wait_semaphore_count = @intCast(wait_semaphores.len),
+        .p_wait_semaphores = &wait_semaphores,
         .p_wait_dst_stage_mask = @ptrCast(&wait_stage),
         .command_buffer_count = @intCast(buffers.len),
-        .p_command_buffers = @ptrCast(&buffers),
-        .signal_semaphore_count = 1,
-        .p_signal_semaphores = @ptrCast(&signal_semaphore),
+        .p_command_buffers = &buffers,
+        .signal_semaphore_count = @intCast(signal_semaphores.len),
+        .p_signal_semaphores = &signal_semaphores,
     };
 
     try vkd.resetFences(1, @ptrCast(&this.in_flight_fences[this.current_frame]));
@@ -122,8 +122,8 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
     try this.device.graphics_queue.submit(1, @ptrCast(&submit_info), this.in_flight_fences[this.current_frame]);
 
     const present_info = vk.PresentInfoKHR{
-        .wait_semaphore_count = 1,
-        .p_wait_semaphores = @ptrCast(&signal_semaphore),
+        .wait_semaphore_count = @intCast(signal_semaphores.len),
+        .p_wait_semaphores = &signal_semaphores,
         .swapchain_count = 1,
         .p_swapchains = @ptrCast(&this.swapchain),
         .p_image_indices = @ptrCast(image_index),
