@@ -67,7 +67,7 @@ pub const Arena = struct {
         std.debug.assert(options.reserved_capacity >= options.initial_commit);
 
         switch (builtin.os.tag) {
-            else => @compileError("missing implementation for platforn for 'Arena.init_virtual'"),
+            else => @compileError("missing implementation for platform for 'Arena.init_virtual'"),
 
             .linux => {
                 const data: []align(page_size_min) u8 = std.posix.mmap(
@@ -124,7 +124,7 @@ pub const Arena = struct {
         std.log.debug("\nGrowing arena to cap: {}", .{new_cap});
 
         switch (builtin.os.tag) {
-            else => @compileError("missing implementation for platforn for 'Arena.init_virtual'"),
+            else => @compileError("missing implementation for platform for 'Arena.init_virtual'"),
 
             .linux => {
                 const old_cap = this.data.len;
