@@ -61,36 +61,37 @@ pub const Arena = struct {
         const page_size = std.heap.pageSize();
         std.debug.assert(options.reserved_capacity >= page_size);
 
-        if (builtin.os.tag == .linux) {
-            const data = std.posix.mmap(
-                null,
-                options.reserved_capacity,
-                std.c.PROT.NONE,
-                .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
-                -1,
-                0,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => return error.Unexpected,
-            };
+        return switch (builtin.os.tag) {
+            else => @compileError("missing implementation for platforn for 'Arena.init_virtual'"),
+            .linux => {
+                const data = std.posix.mmap(
+                    null,
+                    options.reserved_capacity,
+                    std.c.PROT.NONE,
+                    .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+                    -1,
+                    0,
+                ) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return error.Unexpected,
+                };
 
-            std.posix.mprotect(data[0..page_size], std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.AccessDenied => return error.AccessDenied,
-                error.Unexpected => return error.Unexpected,
-            };
+                std.posix.mprotect(data[0..page_size], std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.AccessDenied => return error.AccessDenied,
+                    error.Unexpected => return error.Unexpected,
+                };
 
-            return .{
-                .data = data,
-                .used = 0,
-                .reserved_capacity = options.reserved_capacity,
-                .flags = options.flags,
-                .last_allocation = null,
-                .last_size = 0,
-            };
-        } else {
-            @compileError("missing implementation for platforn for 'Arena.init_virtual'");
-        }
+                return .{
+                    .data = data,
+                    .used = 0,
+                    .reserved_capacity = options.reserved_capacity,
+                    .flags = options.flags,
+                    .last_allocation = null,
+                    .last_size = 0,
+                };
+            },
+        };
     }
 
     pub fn allocator(this: *@This()) Allocator {
