@@ -5,6 +5,9 @@ const mem = @import("../memory.zig");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
+const page_size_min = std.heap.page_size_min;
+pub const max_cap: usize = mem.GiB * 4;
+
 pub const Arena = struct {
     data: []u8,
     used: usize,
@@ -25,7 +28,8 @@ pub const Arena = struct {
     pub const InitOptions = union(enum) {
         pub const Virtual = struct {
             flags: Flags = .{ .rvas = true },
-            reserved_capacity: usize,
+            reserved_capacity: usize = max_cap,
+            initial_commit: usize = page_size_min,
         };
 
         slice: struct {
@@ -35,13 +39,15 @@ pub const Arena = struct {
         virtual: Virtual,
     };
 
-    pub const InitError = error{
+    pub const ArenaError = error{
         OutOfMemory,
         AccessDenied,
+        CantGrow,
+        ReachedReservedCapacity,
         Unexpected,
     };
 
-    pub fn init(options: InitOptions) InitError!Arena {
+    pub fn init(options: InitOptions) ArenaError!Arena {
         return switch (options) {
             .slice => |s| return .{
                 .data = s.data,
@@ -55,16 +61,16 @@ pub const Arena = struct {
         };
     }
 
-    fn init_virtual(options: InitOptions.Virtual) InitError!Arena {
+    fn init_virtual(options: InitOptions.Virtual) ArenaError!Arena {
         std.debug.assert(options.flags.rvas);
 
-        const page_size = std.heap.pageSize();
-        std.debug.assert(options.reserved_capacity >= page_size);
+        std.debug.assert(options.reserved_capacity >= options.initial_commit);
 
-        return switch (builtin.os.tag) {
+        switch (builtin.os.tag) {
             else => @compileError("missing implementation for platforn for 'Arena.init_virtual'"),
+
             .linux => {
-                const data = std.posix.mmap(
+                const data: []align(page_size_min) u8 = std.posix.mmap(
                     null,
                     options.reserved_capacity,
                     std.c.PROT.NONE,
@@ -76,14 +82,15 @@ pub const Arena = struct {
                     else => return error.Unexpected,
                 };
 
-                std.posix.mprotect(data[0..page_size], std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
+                const committed = data[0..options.initial_commit];
+                std.posix.mprotect(committed, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.AccessDenied => return error.AccessDenied,
                     error.Unexpected => return error.Unexpected,
                 };
 
                 return .{
-                    .data = data,
+                    .data = committed,
                     .used = 0,
                     .reserved_capacity = options.reserved_capacity,
                     .flags = options.flags,
@@ -91,10 +98,10 @@ pub const Arena = struct {
                     .last_size = 0,
                 };
             },
-        };
+        }
     }
 
-    pub fn allocator(this: *@This()) Allocator {
+    pub fn allocator(this: *Arena) Allocator {
         return .{
             .ptr = this,
             .vtable = &.{
@@ -106,12 +113,36 @@ pub const Arena = struct {
         };
     }
 
-    fn grow(this: *@This(), min_size: usize) bool {
-        if (!this.flags.rvas) return false;
+    fn grow(this: *Arena, min_cap: usize) ArenaError!void {
+        if (!this.flags.rvas) return error.CantGrow;
 
-        _ = min_size;
-        std.debug.assert(false);
-        return true;
+        var new_cap = this.data.len * 2;
+        while (new_cap < min_cap) new_cap *= 2;
+
+        if (new_cap > max_cap or new_cap > this.reserved_capacity) return error.ReachedReservedCapacity;
+
+        std.log.debug("\nGrowing arena to cap: {}", .{new_cap});
+
+        switch (builtin.os.tag) {
+            else => @compileError("missing implementation for platforn for 'Arena.init_virtual'"),
+
+            .linux => {
+                const old_cap = this.data.len;
+                const base_ptr: [*]u8 = this.data.ptr;
+
+                std.debug.assert(this.data.len % page_size_min == 0); // Newly committed blocks must start on page boundaries
+
+                const new_slice: []align(page_size_min) u8 = @alignCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]);
+
+                std.posix.mprotect(new_slice, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.AccessDenied => return error.AccessDenied,
+                    error.Unexpected => return error.Unexpected,
+                };
+
+                this.data = base_ptr[0..new_cap];
+            },
+        }
     }
 
     pub fn alloc(ctx: *anyopaque, n: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
@@ -127,9 +158,9 @@ pub const Arena = struct {
         const available = this.data[this.used..];
 
         if (aligned_size > available.len) {
-            if (!this.grow(this.data.len + aligned_size)) {
+            this.grow(this.data.len + aligned_size) catch {
                 return null;
-            }
+            };
         }
 
         const unaligned_addr: usize = @intFromPtr(available.ptr);
@@ -218,7 +249,7 @@ test "Arena from slice" {
 
 test "Arena uncommitted" {
     const page_size = std.heap.pageSize();
-    var arena = try Arena.init(.{ .virtual = .{ .reserved_capacity = page_size } });
+    var arena = try Arena.init(.{ .virtual = .{ .reserved_capacity = page_size * 2 } });
     const aa = arena.allocator();
 
     const first = try aa.create(u8);
