@@ -2,6 +2,14 @@
     .name = .v10,
     .version = "0.0.1",
     .fingerprint = 0x4fb9faee53eadd66,
+
+
+    .paths = .{
+        "src/",
+        "build.zig",
+        "build.zig.zon",
+    },
+
     .dependencies = .{
         .clap = .{
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
@@ -10,20 +18,15 @@
         .glfw = .{
             // .path = "../glfw-zig-build",
             .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
-            .hash = "glfw_zig-3.4.0-qhyekySgPAAXjByqb2HF1gi0kqO-LOYiiEOECkNRceVl",
+            .hash = "glfw_zig-3.4.0-qhyekyagPACc6ClbJa80Gwvbgcw7SG5TPG5qCZKwhE3v",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
             .hash = "N-V-__8AAAkkoQGn5z1yoNVrwqZfnYmZp8AZ5CJgoHRMQI0c",
         },
         .vulkan = .{
-            .url = "https://github.com/Snektron/vulkan-zig/archive/40ad90a912eafb81581a121e585688fbbd7d8ddf.tar.gz",
-            .hash = "vulkan-0.0.0-r7Ytx1JTAwC3R0cfA3SxaWPGJa6p3EUw3OTXTgSPr_hF",
+            .url = "https://github.com/Snektron/vulkan-zig/archive/9b4090c852760ce3210562f62ffaf301479c38ba.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx2dUAwDhoUvuIqliqPUbyDZZi0bl_CQIwspUpHs_",
         },
-    },
-    .paths = .{
-        "src/",
-        "build.zig",
-        "build.zig.zon",
     },
 }
