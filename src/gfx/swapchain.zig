@@ -104,7 +104,7 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
 
     const wait_semaphores = [_]vk.Semaphore{this.image_available_semaphores[this.current_frame]};
     const wait_stage = vk.PipelineStageFlags{ .color_attachment_output_bit = true };
-    const signal_semaphores = [_]vk.Semaphore{this.render_finished_semaphores[this.current_frame]};
+    const signal_semaphores = [_]vk.Semaphore{this.render_finished_semaphores[image_index.*]};
 
     const buffers = [_]vk.CommandBuffer{buffer};
     const submit_info = vk.SubmitInfo{
@@ -387,11 +387,11 @@ fn createSyncObjects(this: *@This(), allocator: Allocator) !void {
 
     if (this.image_available_semaphores.len != 0) {
         std.debug.assert(this.image_available_semaphores.len == MAX_FRAMES_IN_FLIGHT);
-        std.debug.assert(this.render_finished_semaphores.len == MAX_FRAMES_IN_FLIGHT);
+        std.debug.assert(this.render_finished_semaphores.len == this.images.len);
         std.debug.assert(this.in_flight_fences.len == MAX_FRAMES_IN_FLIGHT);
     } else {
         this.image_available_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
-        this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+        this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, this.images.len);
         this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
 
         for (this.image_available_semaphores) |*ias| {
