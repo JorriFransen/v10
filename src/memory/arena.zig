@@ -124,7 +124,7 @@ pub const Arena = struct {
         std.log.debug("\nGrowing arena to cap: {}", .{new_cap});
 
         switch (builtin.os.tag) {
-            else => @compileError("missing implementation for platform for 'Arena.init_virtual'"),
+            else => @compileError("missing implementation for platform for 'Arena.grow'"),
 
             .linux => {
                 const old_cap = this.data.len;
