@@ -117,12 +117,27 @@ pub const ConfigInfo = struct {
     const default_dynamic_state_enables = [_]vk.DynamicState{ .viewport, .scissor };
 };
 
-fn readFile(allocator: Allocator, path: []const u8) ![:0]align(4) const u8 {
-    const file = try std.fs.cwd().openFile(path, .{});
+const ReadFileAllocError = error{
+    Unexpected,
+    FileNotFound,
+    OutOfMemory,
+};
+
+fn readFileAlloc(allocator: Allocator, path: []const u8) ReadFileAllocError![:0]align(4) const u8 {
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+        else => return error.Unexpected,
+        error.FileNotFound => {
+            std.log.err("Unable to open file: '{s}'", .{path});
+            return error.FileNotFound;
+        },
+    };
     defer file.close();
 
-    const size = try file.getEndPos();
-    return try file.readToEndAllocOptions(allocator, size, size, .@"4", 0);
+    const size = file.getEndPos() catch return error.Unexpected;
+    return file.readToEndAllocOptions(allocator, size, size, .@"4", 0) catch |err| switch (err) {
+        else => return error.Unexpected,
+        error.OutOfMemory => return error.OutOfMemory,
+    };
 }
 
 pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !@This() {
@@ -133,10 +148,10 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
 
     const allocator = alloc.temp_arena_data.allocator();
 
-    const vert_code = try readFile(allocator, vert_path);
+    const vert_code = try readFileAlloc(allocator, vert_path);
     vklog.debug("vert_code.len: {}", .{vert_code.len});
 
-    const frag_code = try readFile(allocator, frag_path);
+    const frag_code = try readFileAlloc(allocator, frag_path);
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
     var this = @This(){
