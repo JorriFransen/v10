@@ -6,13 +6,8 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const clap = b.dependency("clap", .{ .target = target });
-    const glfw = b.dependency("glfw", .{
-        .target = target,
-        .optimize = optimize,
-        .x11 = true,
-        .wayland = true,
-    });
+    const clap = b.dependency("clap", .{});
+    const glfw = b.dependency("glfw", .{ .x11 = true, .wayland = true });
     const vulkan = b.dependency("vulkan", .{
         .target = target,
         .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
