@@ -7,7 +7,12 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const clap = b.dependency("clap", .{ .target = target });
-    const glfw = b.dependency("glfw", .{ .target = target, .x11 = true, .wayland = true });
+    const glfw = b.dependency("glfw", .{
+        .target = target,
+        .optimize = optimize,
+        .x11 = true,
+        .wayland = true,
+    });
     const vulkan = b.dependency("vulkan", .{
         .target = target,
         .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
