@@ -7,6 +7,8 @@ const Window = @import("../window.zig");
 const Device = gfx.Device;
 const Swapchain = gfx.Swapchain;
 
+const assert = std.debug.assert;
+
 window: *Window,
 device: *Device,
 swapchain: Swapchain,
@@ -30,11 +32,8 @@ pub fn destroy(this: *@This()) void {
 pub fn createCommandBuffers(this: *@This()) !void {
     const vkd = this.device.device;
 
-    if (this.command_buffers.len != 0) {
-        std.debug.assert(this.command_buffers.len == Swapchain.MAX_FRAMES_IN_FLIGHT);
-    } else {
-        this.command_buffers = try alloc.gfx_arena_data.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
-    }
+    assert(this.command_buffers.len == 0);
+    this.command_buffers = try alloc.common_arena.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
 
     const alloc_info = vk.CommandBufferAllocateInfo{
         .level = .primary,
@@ -148,6 +147,25 @@ pub fn recreateSwapchain(this: *@This()) !void {
     for (old_chain.image_views) |iv| vkd.destroyImageView(iv, null);
     vkd.destroyRenderPass(old_chain.render_pass, null);
     for (old_chain.framebuffers) |fb| vkd.destroyFramebuffer(fb, null);
+
+    new_chain.depth_image_views = &.{};
+    new_chain.depth_images = &.{};
+    new_chain.depth_image_memories = &.{};
+    new_chain.image_views = &.{};
+    new_chain.render_pass = .null_handle;
+    new_chain.framebuffers = &.{};
+    new_chain.images = &.{};
+
+    for (old_chain.image_available_semaphores) |ias| vkd.destroySemaphore(ias, null);
+    for (old_chain.render_finished_semaphores) |rfs| vkd.destroySemaphore(rfs, null);
+    for (old_chain.in_flight_fences) |iff| vkd.destroyFence(iff, null);
+
+    new_chain.image_available_semaphores = &.{};
+    new_chain.render_finished_semaphores = &.{};
+    new_chain.in_flight_fences = &.{};
+    new_chain.images_in_flight = &.{};
+
+    alloc.swapchain_arena.reset();
 
     try new_chain.init(this.device, .{ .extent = extent, .old_swapchain = old_chain.swapchain });
 

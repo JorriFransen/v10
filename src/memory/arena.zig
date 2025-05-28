@@ -9,11 +9,11 @@ const page_size_min = std.heap.page_size_min;
 pub const max_cap: usize = mem.GiB * 4;
 
 pub const Arena = struct {
-    data: []u8,
+    data: []const u8,
     used: usize,
     reserved_capacity: usize,
 
-    flags: Flags,
+    flags: Flags = .{},
 
     last_allocation: ?*anyopaque,
     last_size: usize,
@@ -101,6 +101,23 @@ pub const Arena = struct {
         }
     }
 
+    pub fn deinit(this: *Arena) void {
+        if (this.flags.rvas) {
+            switch (builtin.os.tag) {
+                else => @compileError("missing implementation for platforn for 'Arena.init_virtual'"),
+                .linux => {
+                    std.posix.munmap(@alignCast(this.data));
+                },
+            }
+        }
+
+        this.data = &.{};
+        this.used = 0;
+        this.reserved_capacity = 0;
+        this.last_allocation = null;
+        this.last_size = 0;
+    }
+
     pub fn allocator(this: *Arena) Allocator {
         return .{
             .ptr = this,
@@ -113,6 +130,10 @@ pub const Arena = struct {
         };
     }
 
+    pub fn reset(this: *Arena) void {
+        this.used = 0;
+    }
+
     fn grow(this: *Arena, min_cap: usize) ArenaError!void {
         if (!this.flags.rvas) return error.CantGrow;
 
@@ -121,18 +142,16 @@ pub const Arena = struct {
 
         if (new_cap > max_cap or new_cap > this.reserved_capacity) return error.ReachedReservedCapacity;
 
-        std.log.debug("\nGrowing arena to cap: {}", .{new_cap});
-
         switch (builtin.os.tag) {
             else => @compileError("missing implementation for platform for 'Arena.grow'"),
 
             .linux => {
                 const old_cap = this.data.len;
-                const base_ptr: [*]u8 = this.data.ptr;
+                const base_ptr: [*]const u8 = this.data.ptr;
 
                 std.debug.assert(this.data.len % page_size_min == 0); // Newly committed blocks must start on page boundaries
 
-                const new_slice: []align(page_size_min) u8 = @alignCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]);
+                const new_slice: []align(page_size_min) u8 = @constCast(@alignCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]));
 
                 std.posix.mprotect(new_slice, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,

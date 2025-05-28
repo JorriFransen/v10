@@ -9,6 +9,8 @@ const vk = gfx.vk;
 const Allocator = std.mem.Allocator;
 const Window = @import("../window.zig");
 
+const assert = std.debug.assert;
+
 const enable_validation_layers: bool = builtin.mode == .Debug;
 const validation_layers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 const device_extensions = [_][*:0]const u8{vk.extensions.khr_swapchain.name};
@@ -65,7 +67,7 @@ pub const QueueFamilyIndices = struct {
     }
 
     pub fn uniqueFamilies(this: @This(), allocator: Allocator) ![]u32 {
-        std.debug.assert(this.isComplete());
+        assert(this.isComplete());
 
         var _indices = [_]u32{ this.graphics_family.?, this.present_family.? };
         var indices: []u32 = &_indices;
@@ -223,8 +225,6 @@ fn pickPhysicalDevice(this: *@This()) !void {
     const ta = alloc.temp_arena_data.allocator();
     defer _ = alloc.temp_arena_data.reset(.retain_capacity);
 
-    const ga = alloc.gfx_arena_data.allocator();
-
     const devices = try ta.alloc(vk.PhysicalDevice, device_count);
 
     if (try this.vki.enumeratePhysicalDevices(&device_count, devices.ptr) != .success) {
@@ -250,7 +250,7 @@ fn pickPhysicalDevice(this: *@This()) !void {
         if (try this.isDeviceSuitable(dev_info, ta)) {
             if (device_index < 0) {
                 device_index = @intCast(i);
-                this.device_info = try dev_info.copy(ga);
+                this.device_info = try dev_info.copy(alloc.common_arena.allocator());
                 chosen = true;
             }
         }
@@ -536,6 +536,7 @@ pub fn debugCallback(message_severity: vk.DebugUtilsMessageSeverityFlagsEXT, mes
 
     if (message_severity.error_bit_ext) {
         vklog.err(fmt, args);
+        assert(false);
     } else if (message_severity.warning_bit_ext) {
         vklog.warn(fmt, args);
     } else if (message_severity.verbose_bit_ext) {

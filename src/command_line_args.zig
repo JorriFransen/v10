@@ -52,6 +52,7 @@ fn parseCommandLine() !ClapOptions {
         }
     }.f;
 
+    // TODO(allocator): Use temporary allocator
     var arg_it = try std.process.ArgIterator.initWithAllocator(alloc.gpa);
     defer arg_it.deinit();
 
@@ -59,6 +60,7 @@ fn parseCommandLine() !ClapOptions {
     var diag = clap.Diagnostic{};
     var result = clap.parseEx(clap.Help, &clap_params, parsers, &arg_it, .{
         .diagnostic = &diag,
+        // TODO(allocator): Use temporary allocator
         .allocator = alloc.gpa,
     }) catch |err| {
         const err_args = diag.name.longest();

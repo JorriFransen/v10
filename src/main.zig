@@ -18,6 +18,8 @@ const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
 pub fn main() !void {
+    try alloc.init();
+
     cla.parse();
 
     try run();
@@ -78,8 +80,6 @@ fn run() !void {
     cube.transform.translation = .{ .z = 2.5 };
     cube.transform.scale = Vec3.scalar(0.5);
     // triangle.transform.rotation = .{ .y = 0.75 * std.math.tau };
-
-    try renderer.createCommandBuffers();
 
     const aspect = renderer.swapchain.extentSwapchainRatio();
     // if (aspect >= 1) {

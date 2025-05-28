@@ -7,6 +7,7 @@ const gfx = @import("../gfx.zig");
 const Allocator = std.mem.Allocator;
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
+const assert = std.debug.assert;
 
 pub const MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -18,7 +19,6 @@ image_format: vk.Format = undefined,
 depth_format: vk.Format = undefined,
 swapchain_extent: vk.Extent2D = undefined,
 
-// TODO: Seperate arena for swapchain (resizing).
 images: []vk.Image = &.{},
 image_views: []vk.ImageView = &.{},
 render_pass: vk.RenderPass = .null_handle,
@@ -42,7 +42,8 @@ pub fn init(this: *@This(), device: *Device, options: SwapchainOptions) !void {
     this.device = device;
     this.window_extent = options.extent;
 
-    const allocator = alloc.gfx_arena_data.allocator();
+    var arena = &alloc.swapchain_arena;
+    const allocator = arena.allocator();
 
     try this.createSwapchain(options, allocator);
     try this.createImageViews(allocator);
@@ -193,11 +194,8 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         return error.vkGetSwapchainImagesKHRFailed;
     }
 
-    if (this.images.len != 0) {
-        std.debug.assert(this.images.len == image_count);
-    } else {
-        this.images = try allocator.alloc(vk.Image, image_count);
-    }
+    assert(this.images.len == 0);
+    this.images = try allocator.alloc(vk.Image, image_count);
 
     if (try vkd.getSwapchainImagesKHR(this.swapchain, &image_count, this.images.ptr) != .success) {
         return error.vkGetSwapchainImagesKHRFailed;
@@ -208,15 +206,12 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
 }
 
 fn createImageViews(this: *@This(), allocator: Allocator) !void {
-    std.debug.assert(this.images.len > 0);
+    assert(this.images.len > 0);
 
     const vkd = this.device.device;
 
-    if (this.image_views.len != 0) {
-        std.debug.assert(this.image_views.len == this.images.len);
-    } else {
-        this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
-    }
+    assert(this.image_views.len == 0);
+    this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
 
     for (this.images, this.image_views) |image, *view| {
         const view_info = vk.ImageViewCreateInfo{
@@ -307,15 +302,13 @@ fn createRenderPass(this: *@This()) !void {
 fn createDepthResources(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
-    if (this.depth_images.len != 0) {
-        std.debug.assert(this.depth_images.len == this.images.len);
-        std.debug.assert(this.depth_images.len == this.depth_image_memories.len);
-        std.debug.assert(this.depth_images.len == this.depth_image_views.len);
-    } else {
-        this.depth_images = try allocator.alloc(vk.Image, this.images.len);
-        this.depth_image_memories = try allocator.alloc(vk.DeviceMemory, this.images.len);
-        this.depth_image_views = try allocator.alloc(vk.ImageView, this.images.len);
-    }
+    assert(this.depth_images.len == 0);
+    assert(this.depth_image_memories.len == 0);
+    assert(this.depth_image_views.len == 0);
+
+    this.depth_images = try allocator.alloc(vk.Image, this.images.len);
+    this.depth_image_memories = try allocator.alloc(vk.DeviceMemory, this.images.len);
+    this.depth_image_views = try allocator.alloc(vk.ImageView, this.images.len);
 
     for (
         this.depth_images,
@@ -357,11 +350,8 @@ fn createDepthResources(this: *@This(), allocator: Allocator) !void {
 fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
     const vkd = this.device.device;
 
-    if (this.framebuffers.len != 0) {
-        std.debug.assert(this.framebuffers.len == this.images.len);
-    } else {
-        this.framebuffers = try allocator.alloc(vk.Framebuffer, this.images.len);
-    }
+    assert(this.framebuffers.len == 0);
+    this.framebuffers = try allocator.alloc(vk.Framebuffer, this.images.len);
 
     for (this.framebuffers, 0..) |*fb, i| {
         const attachments = .{ this.image_views[i], this.depth_image_views[i] };
@@ -385,39 +375,34 @@ fn createSyncObjects(this: *@This(), allocator: Allocator) !void {
     const semaphore_info = vk.SemaphoreCreateInfo{};
     const fence_info = vk.FenceCreateInfo{ .flags = .{ .signaled_bit = true } };
 
-    if (this.image_available_semaphores.len != 0) {
-        std.debug.assert(this.image_available_semaphores.len == MAX_FRAMES_IN_FLIGHT);
-        std.debug.assert(this.render_finished_semaphores.len == this.images.len);
-        std.debug.assert(this.in_flight_fences.len == MAX_FRAMES_IN_FLIGHT);
-    } else {
-        this.image_available_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
-        this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, this.images.len);
-        this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
+    assert(this.image_available_semaphores.len == 0);
+    assert(this.render_finished_semaphores.len == 0);
+    assert(this.in_flight_fences.len == 0);
+    assert(this.images_in_flight.len == 0);
 
-        for (this.image_available_semaphores) |*ias| {
-            ias.* = try vkd.createSemaphore(&semaphore_info, null);
-        }
+    this.image_available_semaphores = try allocator.alloc(vk.Semaphore, MAX_FRAMES_IN_FLIGHT);
+    this.render_finished_semaphores = try allocator.alloc(vk.Semaphore, this.images.len);
+    this.in_flight_fences = try allocator.alloc(vk.Fence, MAX_FRAMES_IN_FLIGHT);
 
-        for (this.render_finished_semaphores) |*rfs| {
-            rfs.* = try vkd.createSemaphore(&semaphore_info, null);
-        }
-
-        for (this.in_flight_fences) |*iff| {
-            iff.* = try vkd.createFence(&fence_info, null);
-        }
+    for (this.image_available_semaphores) |*ias| {
+        ias.* = try vkd.createSemaphore(&semaphore_info, null);
     }
 
-    if (this.images_in_flight.len != 0) {
-        std.debug.assert(this.images_in_flight.len == this.images.len);
-    } else {
-        this.images_in_flight = try allocator.alloc(vk.Fence, this.images.len);
-        @memset(this.images_in_flight, .null_handle);
+    for (this.render_finished_semaphores) |*rfs| {
+        rfs.* = try vkd.createSemaphore(&semaphore_info, null);
     }
+
+    for (this.in_flight_fences) |*iff| {
+        iff.* = try vkd.createFence(&fence_info, null);
+    }
+
+    this.images_in_flight = try allocator.alloc(vk.Fence, this.images.len);
+    @memset(this.images_in_flight, .null_handle);
 }
 
 fn chooseSwapSurfaceFormat(this: *@This(), formats: []vk.SurfaceFormatKHR) vk.SurfaceFormatKHR {
     _ = this;
-    std.debug.assert(formats.len > 0);
+    assert(formats.len > 0);
 
     for (formats) |format| {
         if (format.format == .b8g8r8a8_srgb and format.color_space == .srgb_nonlinear_khr)
@@ -429,7 +414,7 @@ fn chooseSwapSurfaceFormat(this: *@This(), formats: []vk.SurfaceFormatKHR) vk.Su
 
 fn chooseSwapPresentMode(this: *@This(), pmodes: []vk.PresentModeKHR) vk.PresentModeKHR {
     _ = this;
-    std.debug.assert(pmodes.len > 0);
+    assert(pmodes.len > 0);
 
     for (pmodes) |pm| vklog.debug("Available present mode: {s}", .{@tagName(pm)});
     var result = vk.PresentModeKHR.fifo_khr;
