@@ -1,9 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const mem = @import("../memory.zig");
+const posix = std.posix;
+const windows = std.os.windows;
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
+
+const assert = std.debug.assert;
 
 const page_size_min = std.heap.page_size_min;
 pub const max_cap: usize = mem.GiB * 4;
@@ -62,15 +66,15 @@ pub const Arena = struct {
     }
 
     fn init_virtual(options: InitOptions.Virtual) ArenaError!Arena {
-        std.debug.assert(options.flags.rvas);
+        assert(options.flags.rvas);
 
-        std.debug.assert(options.reserved_capacity >= options.initial_commit);
+        assert(options.reserved_capacity >= options.initial_commit);
 
         switch (builtin.os.tag) {
             else => @compileError("missing implementation for platform for 'Arena.init_virtual'"),
 
             .linux => {
-                const data: []align(page_size_min) u8 = std.posix.mmap(
+                const data: []align(page_size_min) u8 = posix.mmap(
                     null,
                     options.reserved_capacity,
                     std.c.PROT.NONE,
@@ -83,7 +87,7 @@ pub const Arena = struct {
                 };
 
                 const committed = data[0..options.initial_commit];
-                std.posix.mprotect(committed, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
+                posix.mprotect(committed, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.AccessDenied => return error.AccessDenied,
                     error.Unexpected => return error.Unexpected,
@@ -98,16 +102,46 @@ pub const Arena = struct {
                     .last_size = 0,
                 };
             },
+
+            .windows => {
+                const reserved_ptr = windows.VirtualAlloc(
+                    null,
+                    options.reserved_capacity,
+                    windows.MEM_RESERVE,
+                    windows.PAGE_NOACCESS,
+                ) catch |err| switch (err) {
+                    error.Unexpected => return error.Unexpected,
+                };
+
+                const commit_ptr = windows.VirtualAlloc(
+                    reserved_ptr,
+                    options.initial_commit,
+                    windows.MEM_COMMIT,
+                    windows.PAGE_READWRITE,
+                ) catch |err| switch (err) {
+                    error.Unexpected => return error.Unexpected,
+                };
+
+                const ptr: [*]u8 = @ptrCast(commit_ptr);
+
+                return .{
+                    .data = ptr[0..options.initial_commit],
+                    .used = 0,
+                    .reserved_capacity = options.reserved_capacity,
+                    .flags = options.flags,
+                    .last_allocation = null,
+                    .last_size = 0,
+                };
+            },
         }
     }
 
     pub fn deinit(this: *Arena) void {
         if (this.flags.rvas) {
             switch (builtin.os.tag) {
-                else => @compileError("missing implementation for platforn for 'Arena.init_virtual'"),
-                .linux => {
-                    std.posix.munmap(@alignCast(this.data));
-                },
+                else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
+                .linux => posix.munmap(@alignCast(this.data)),
+                .windows => windows.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, windows.MEM_RELEASE),
             }
         }
 
@@ -142,26 +176,37 @@ pub const Arena = struct {
 
         if (new_cap > max_cap or new_cap > this.reserved_capacity) return error.ReachedReservedCapacity;
 
+        const old_cap = this.data.len;
+        const base_ptr: [*]const u8 = this.data.ptr;
+
+        assert(this.data.len % page_size_min == 0); // Newly committed blocks must start on page boundaries
+
+        const new_slice: []align(page_size_min) u8 = @constCast(@alignCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]));
+
         switch (builtin.os.tag) {
             else => @compileError("missing implementation for platform for 'Arena.grow'"),
 
             .linux => {
-                const old_cap = this.data.len;
-                const base_ptr: [*]const u8 = this.data.ptr;
-
-                std.debug.assert(this.data.len % page_size_min == 0); // Newly committed blocks must start on page boundaries
-
-                const new_slice: []align(page_size_min) u8 = @constCast(@alignCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]));
-
-                std.posix.mprotect(new_slice, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
+                posix.mprotect(new_slice, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.AccessDenied => return error.AccessDenied,
                     error.Unexpected => return error.Unexpected,
                 };
+            },
 
-                this.data = base_ptr[0..new_cap];
+            .windows => {
+                _ = windows.VirtualAlloc(
+                    new_slice.ptr,
+                    new_slice.len,
+                    windows.MEM_COMMIT,
+                    windows.PAGE_READWRITE,
+                ) catch |err| switch (err) {
+                    error.Unexpected => return error.Unexpected,
+                };
             },
         }
+
+        this.data = base_ptr[0..new_cap];
     }
 
     pub fn alloc(ctx: *anyopaque, n: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
@@ -169,7 +214,7 @@ pub const Arena = struct {
         const this: *Arena = @ptrCast(@alignCast(ctx));
 
         if (builtin.mode == .Debug) {
-            if (!this.flags.@"align") std.debug.assert(alignment == .@"1");
+            if (!this.flags.@"align") assert(alignment == .@"1");
         }
 
         const ptr_align = alignment.toByteUnits();
@@ -200,7 +245,7 @@ pub const Arena = struct {
         _ = alignment;
         _ = new_len;
         _ = ret_addr;
-        std.debug.assert(false);
+        assert(false);
         unreachable;
     }
 
@@ -210,7 +255,7 @@ pub const Arena = struct {
         _ = alignment;
         _ = new_len;
         _ = ret_addr;
-        std.debug.assert(false);
+        assert(false);
         unreachable;
     }
 
@@ -219,7 +264,7 @@ pub const Arena = struct {
         _ = memory;
         _ = alignment;
         _ = ret_addr;
-        std.debug.assert(false);
+        assert(false);
         unreachable;
     }
 };

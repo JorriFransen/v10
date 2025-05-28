@@ -6,6 +6,7 @@ const vklog = std.log.scoped(.vulkan);
 
 const Device = gfx.Device;
 const Model = gfx.Model;
+const Allocator = std.mem.Allocator;
 
 device: *Device,
 config: ConfigInfo,
@@ -116,6 +117,14 @@ pub const ConfigInfo = struct {
     const default_dynamic_state_enables = [_]vk.DynamicState{ .viewport, .scissor };
 };
 
+fn readFile(allocator: Allocator, path: []const u8) ![:0]align(4) const u8 {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const size = try file.getEndPos();
+    return try file.readToEndAllocOptions(allocator, size, size, .@"4", 0);
+}
+
 pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !@This() {
     std.debug.assert(config.pipeline_layout != .null_handle);
     std.debug.assert(config.render_pass != .null_handle);
@@ -124,20 +133,10 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
 
     const allocator = alloc.temp_arena_data.allocator();
 
-    var vert_code: [:0]align(4) const u8 = undefined;
-    {
-        const file = try std.fs.cwd().openFile(vert_path, .{});
-        defer file.close();
-        vert_code = try file.readToEndAllocOptions(allocator, try file.getEndPos(), null, .@"4", 0);
-    }
+    const vert_code = try readFile(allocator, vert_path);
     vklog.debug("vert_code.len: {}", .{vert_code.len});
 
-    var frag_code: [:0]align(4) const u8 = undefined;
-    {
-        const file = try std.fs.cwd().openFile(frag_path, .{});
-        defer file.close();
-        frag_code = try file.readToEndAllocOptions(allocator, try file.getEndPos() + 8, null, .@"4", 0);
-    }
+    const frag_code = try readFile(allocator, frag_path);
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
     var this = @This(){

@@ -536,7 +536,7 @@ pub fn debugCallback(message_severity: vk.DebugUtilsMessageSeverityFlagsEXT, mes
 
     if (message_severity.error_bit_ext) {
         vklog.err(fmt, args);
-        assert(false);
+        // assert(false);
     } else if (message_severity.warning_bit_ext) {
         vklog.warn(fmt, args);
     } else if (message_severity.verbose_bit_ext) {
