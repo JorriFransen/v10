@@ -156,14 +156,13 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     const vkd = device.device;
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const vert_code = try readShaderFile(ta, vert_path);
+    const vert_code = try readShaderFile(tmp.allocator, vert_path);
     vklog.debug("vert_code.len: {}", .{vert_code.len});
 
-    const frag_code = try readShaderFile(ta, frag_path);
+    const frag_code = try readShaderFile(tmp.allocator, frag_path);
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
     var this = @This(){

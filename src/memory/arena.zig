@@ -275,6 +275,21 @@ pub const Arena = struct {
     }
 };
 
+pub const TempArena = struct {
+    allocator: Allocator,
+    reset_to: usize,
+
+    pub fn init(arena: *Arena) TempArena {
+        return .{ .allocator = arena.allocator(), .reset_to = arena.used };
+    }
+
+    pub fn release(this: *TempArena) void {
+        const arena: *Arena = @ptrCast(@alignCast(this.allocator.ptr));
+        assert(arena.used >= this.reset_to);
+        arena.used = this.reset_to;
+    }
+};
+
 test "Arena from slice" {
     var buf: [70]u8 align(8) = [_]u8{1} ** 70; // Needs to be bigger to account for alignment
     try std.testing.expectEqual(@as(*u8, @ptrCast(&buf)), &buf[0]);

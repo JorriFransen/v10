@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = @import("memory.zig");
 
 const Arena = mem.Arena;
+const TempArena = mem.TempArena;
 
 pub var common_arena: Arena = undefined;
 pub var swapchain_arena: Arena = undefined;
@@ -20,4 +21,8 @@ pub fn deinit() !void {
     swapchain_arena.deinit();
 
     temp_arena.deinit();
+}
+
+pub fn get_temp() TempArena {
+    return TempArena.init(&temp_arena);
 }

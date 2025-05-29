@@ -167,11 +167,10 @@ fn createInstance(this: *@This()) !void {
     };
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const extensions = try this.getRequiredExtensions(ta);
+    const extensions = try this.getRequiredExtensions(tmp.allocator);
 
     vklog.debug("required_extensions: {}", .{extensions.len});
     for (extensions, 0..) |r_ext, i| {
@@ -225,11 +224,10 @@ fn pickPhysicalDevice(this: *@This()) !void {
     vklog.debug("{} physical devices found", .{device_count});
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const devices = try ta.alloc(vk.PhysicalDevice, device_count);
+    const devices = try tmp.allocator.alloc(vk.PhysicalDevice, device_count);
 
     if (try this.vki.enumeratePhysicalDevices(&device_count, devices.ptr) != .success) {
         return error.vkEnumeratePhysicalDevicesFailed;
@@ -247,7 +245,7 @@ fn pickPhysicalDevice(this: *@This()) !void {
             .physical_device = pdev,
             .properties = properties,
             .queue_family_indices = try this.findQueueFamilies(pdev),
-            .swapchain_support = try this.querySwapchainSupport(pdev, ta),
+            .swapchain_support = try this.querySwapchainSupport(pdev, tmp.allocator),
         };
 
         var chosen = false;
@@ -271,12 +269,11 @@ fn createLogicalDevice(this: *@This()) !void {
     const indices = &this.device_info.queue_family_indices;
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const unique_families = try indices.uniqueFamilies(ta);
-    const queue_create_infos = try ta.alloc(vk.DeviceQueueCreateInfo, unique_families.len);
+    const unique_families = try indices.uniqueFamilies(tmp.allocator);
+    const queue_create_infos = try tmp.allocator.alloc(vk.DeviceQueueCreateInfo, unique_families.len);
 
     const prio = &[_]f32{1};
     for (unique_families, queue_create_infos) |family_index, *qci| {
@@ -330,11 +327,10 @@ fn checkValidationLayerSupport(this: *@This()) !bool {
     }
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const available_layers = try ta.alloc(vk.LayerProperties, layer_count);
+    const available_layers = try tmp.allocator.alloc(vk.LayerProperties, layer_count);
 
     if (try vkb.enumerateInstanceLayerProperties(&layer_count, available_layers.ptr) != .success) {
         return error.vkEnumerateInstanceLayerPropertiesFailed;
@@ -397,11 +393,10 @@ fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0
     vklog.debug("available_extensions: {}", .{extension_count});
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const available_extensions = try ta.alloc(vk.ExtensionProperties, extension_count);
+    const available_extensions = try tmp.allocator.alloc(vk.ExtensionProperties, extension_count);
 
     if (try vkb.enumerateInstanceExtensionProperties(null, &extension_count, available_extensions.ptr) != .success) {
         return error.vkEnumerateInstanceExtensionPropertiesFailed;
@@ -447,11 +442,10 @@ fn findQueueFamilies(this: *@This(), device: vk.PhysicalDevice) !QueueFamilyIndi
     vklog.debug("Queue family count: {}", .{family_count});
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const family_properties = try ta.alloc(vk.QueueFamilyProperties, family_count);
+    const family_properties = try tmp.allocator.alloc(vk.QueueFamilyProperties, family_count);
 
     this.vki.getPhysicalDeviceQueueFamilyProperties(device, &family_count, family_properties.ptr);
 
@@ -479,11 +473,10 @@ fn checkDeviceExtensionSupport(this: *@This(), device: vk.PhysicalDevice) !bool 
     vklog.debug("Device has {} extensions", .{extension_count});
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    const available_extensions = try ta.alloc(vk.ExtensionProperties, extension_count);
+    const available_extensions = try tmp.allocator.alloc(vk.ExtensionProperties, extension_count);
 
     if (try this.vki.enumerateDeviceExtensionProperties(device, null, &extension_count, available_extensions.ptr) != .success) {
         return error.vkEnumerateDeviceExtensionPropertiesFailed;

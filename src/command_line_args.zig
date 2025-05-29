@@ -1,5 +1,6 @@
 const std = @import("std");
 const alloc = @import("alloc.zig");
+const mem = @import("memory.zig");
 const clap = @import("clap");
 const glfw = @import("glfw");
 
@@ -53,18 +54,17 @@ fn parseCommandLine() !ClapOptions {
     }.f;
 
     // TODO: CLEANUP: Temp allocator
-    const ta = alloc.temp_arena.allocator();
-    const ta_mark = alloc.temp_arena.used;
-    defer alloc.temp_arena.used = ta_mark;
+    var tmp = alloc.get_temp();
+    defer tmp.release();
 
-    var arg_it = try std.process.ArgIterator.initWithAllocator(ta);
+    var arg_it = try std.process.ArgIterator.initWithAllocator(tmp.allocator);
     defer arg_it.deinit();
 
     const exe_name = std.fs.path.basename(arg_it.next().?);
     var diag = clap.Diagnostic{};
     var result = clap.parseEx(clap.Help, &clap_params, parsers, &arg_it, .{
         .diagnostic = &diag,
-        .allocator = ta,
+        .allocator = tmp.allocator,
     }) catch |err| {
         const err_args = diag.name.longest();
         const prefix = switch (err_args.kind) {
