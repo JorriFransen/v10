@@ -245,8 +245,10 @@ pub const Arena = struct {
         _ = alignment;
         _ = new_len;
         _ = ret_addr;
-        assert(false);
-        unreachable;
+
+        if (builtin.mode == .Debug) {
+            @panic("Invalid resize on memory allocated by arena");
+        }
     }
 
     pub fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
@@ -255,8 +257,10 @@ pub const Arena = struct {
         _ = alignment;
         _ = new_len;
         _ = ret_addr;
-        assert(false);
-        unreachable;
+
+        if (builtin.mode == .Debug) {
+            @panic("Invalid remap on memory allocated by arena");
+        }
     }
 
     pub fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
@@ -264,8 +268,10 @@ pub const Arena = struct {
         _ = memory;
         _ = alignment;
         _ = ret_addr;
-        assert(false);
-        unreachable;
+
+        if (builtin.mode == .Debug) {
+            @panic("Invalid free/destroy on memory allocated by arena");
+        }
     }
 };
 
