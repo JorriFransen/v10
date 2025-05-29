@@ -8,6 +8,8 @@ const Device = gfx.Device;
 const Model = gfx.Model;
 const Allocator = std.mem.Allocator;
 
+const assert = std.debug.assert;
+
 device: *Device,
 config: ConfigInfo,
 graphics_pipeline: vk.Pipeline,
@@ -123,7 +125,7 @@ const ReadFileAllocError = error{
     OutOfMemory,
 };
 
-fn readFileAlloc(allocator: Allocator, path: []const u8) ReadFileAllocError![:0]align(4) const u8 {
+fn readShaderFile(allocator: Allocator, path: []const u8) ReadFileAllocError![:0]align(4) const u8 {
     const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
         else => return error.Unexpected,
         error.FileNotFound => {
@@ -134,24 +136,34 @@ fn readFileAlloc(allocator: Allocator, path: []const u8) ReadFileAllocError![:0]
     defer file.close();
 
     const size = file.getEndPos() catch return error.Unexpected;
-    return file.readToEndAllocOptions(allocator, size, size, .@"4", 0) catch |err| switch (err) {
-        else => return error.Unexpected,
+    assert(size % 4 == 0); // .spv file size must be divisable by 4
+
+    const buf = allocator.alignedAlloc(u8, .@"4", size + 1) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
     };
+
+    const read = file.readAll(buf) catch return error.Unexpected;
+    assert(read == size);
+    buf[read] = 0;
+
+    return @ptrCast(buf[0..read]);
 }
 
 pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !@This() {
-    std.debug.assert(config.pipeline_layout != .null_handle);
-    std.debug.assert(config.render_pass != .null_handle);
+    assert(config.pipeline_layout != .null_handle);
+    assert(config.render_pass != .null_handle);
 
     const vkd = device.device;
 
-    const allocator = alloc.temp_arena_data.allocator();
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
 
-    const vert_code = try readFileAlloc(allocator, vert_path);
+    const vert_code = try readShaderFile(ta, vert_path);
     vklog.debug("vert_code.len: {}", .{vert_code.len});
 
-    const frag_code = try readFileAlloc(allocator, frag_path);
+    const frag_code = try readShaderFile(ta, frag_path);
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
     var this = @This(){
@@ -164,8 +176,6 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
 
     this.vert_shader_module = try this.createShaderModule(vert_code);
     this.frag_shader_module = try this.createShaderModule(frag_code);
-
-    _ = alloc.temp_arena_data.reset(.retain_capacity);
 
     const shader_stage_infos = [2]vk.PipelineShaderStageCreateInfo{
         .{

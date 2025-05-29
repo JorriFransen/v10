@@ -52,14 +52,19 @@ fn parseCommandLine() !ClapOptions {
         }
     }.f;
 
-    var arg_it = try std.process.ArgIterator.initWithAllocator(alloc.temp_arena_data.allocator());
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
+
+    var arg_it = try std.process.ArgIterator.initWithAllocator(ta);
     defer arg_it.deinit();
 
     const exe_name = std.fs.path.basename(arg_it.next().?);
     var diag = clap.Diagnostic{};
     var result = clap.parseEx(clap.Help, &clap_params, parsers, &arg_it, .{
         .diagnostic = &diag,
-        .allocator = alloc.temp_arena_data.allocator(),
+        .allocator = ta,
     }) catch |err| {
         const err_args = diag.name.longest();
         const prefix = switch (err_args.kind) {

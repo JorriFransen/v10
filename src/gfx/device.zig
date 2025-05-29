@@ -154,10 +154,7 @@ pub fn destroy(this: *@This()) void {
 fn createInstance(this: *@This()) !void {
     const vkb = this.system.vkb;
 
-    const ta = alloc.temp_arena_data.allocator();
-    defer _ = alloc.temp_arena_data.reset(.retain_capacity);
-
-    if (enable_validation_layers and !try this.checkValidationLayerSupport(ta)) {
+    if (enable_validation_layers and !try this.checkValidationLayerSupport()) {
         return error.vulkanValidationLayersUnavailable;
     }
 
@@ -169,6 +166,11 @@ fn createInstance(this: *@This()) !void {
         .api_version = @bitCast(vk.features.version_1_2.version),
     };
 
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
+
     const extensions = try this.getRequiredExtensions(ta);
 
     vklog.debug("required_extensions: {}", .{extensions.len});
@@ -176,7 +178,7 @@ fn createInstance(this: *@This()) !void {
         vklog.debug("required_extensions[{}]: {s}", .{ i, r_ext });
     }
 
-    if (!try this.hasGlfwRequiredInstanceExtensions(extensions, ta)) {
+    if (!try this.hasGlfwRequiredInstanceExtensions(extensions)) {
         return error.requirdExtensionUnavailable;
     }
 
@@ -222,8 +224,10 @@ fn pickPhysicalDevice(this: *@This()) !void {
 
     vklog.debug("{} physical devices found", .{device_count});
 
-    const ta = alloc.temp_arena_data.allocator();
-    defer _ = alloc.temp_arena_data.reset(.retain_capacity);
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
 
     const devices = try ta.alloc(vk.PhysicalDevice, device_count);
 
@@ -242,12 +246,12 @@ fn pickPhysicalDevice(this: *@This()) !void {
             .name = name,
             .physical_device = pdev,
             .properties = properties,
-            .queue_family_indices = try this.findQueueFamilies(pdev, ta),
+            .queue_family_indices = try this.findQueueFamilies(pdev),
             .swapchain_support = try this.querySwapchainSupport(pdev, ta),
         };
 
         var chosen = false;
-        if (try this.isDeviceSuitable(dev_info, ta)) {
+        if (try this.isDeviceSuitable(dev_info)) {
             if (device_index < 0) {
                 device_index = @intCast(i);
                 this.device_info = try dev_info.copy(alloc.common_arena.allocator());
@@ -266,8 +270,10 @@ fn pickPhysicalDevice(this: *@This()) !void {
 fn createLogicalDevice(this: *@This()) !void {
     const indices = &this.device_info.queue_family_indices;
 
-    const ta = alloc.temp_arena_data.allocator();
-    defer _ = alloc.temp_arena_data.reset(.retain_capacity);
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
 
     const unique_families = try indices.uniqueFamilies(ta);
     const queue_create_infos = try ta.alloc(vk.DeviceQueueCreateInfo, unique_families.len);
@@ -315,7 +321,7 @@ fn createCommandPool(this: *@This()) !void {
     this.command_pool = try this.device.createCommandPool(&pool_create_info, null);
 }
 
-fn checkValidationLayerSupport(this: *@This(), allocator: Allocator) !bool {
+fn checkValidationLayerSupport(this: *@This()) !bool {
     const vkb = this.system.vkb;
 
     var layer_count: u32 = undefined;
@@ -323,8 +329,12 @@ fn checkValidationLayerSupport(this: *@This(), allocator: Allocator) !bool {
         return error.vkEnumerateInstanceLayerPropertiesFailed;
     }
 
-    const available_layers = try allocator.alloc(vk.LayerProperties, layer_count);
-    defer allocator.free(available_layers);
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
+
+    const available_layers = try ta.alloc(vk.LayerProperties, layer_count);
 
     if (try vkb.enumerateInstanceLayerProperties(&layer_count, available_layers.ptr) != .success) {
         return error.vkEnumerateInstanceLayerPropertiesFailed;
@@ -377,7 +387,7 @@ fn getRequiredExtensions(this: *const @This(), allocator: Allocator) ![]const [*
     return required_extensions;
 }
 
-fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0]const u8, allocator: Allocator) !bool {
+fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0]const u8) !bool {
     const vkb = this.system.vkb;
 
     var extension_count: u32 = undefined;
@@ -386,8 +396,12 @@ fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0
     }
     vklog.debug("available_extensions: {}", .{extension_count});
 
-    const available_extensions = try allocator.alloc(vk.ExtensionProperties, extension_count);
-    defer allocator.free(available_extensions);
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
+
+    const available_extensions = try ta.alloc(vk.ExtensionProperties, extension_count);
 
     if (try vkb.enumerateInstanceExtensionProperties(null, &extension_count, available_extensions.ptr) != .success) {
         return error.vkEnumerateInstanceExtensionPropertiesFailed;
@@ -411,10 +425,10 @@ fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0
     return true;
 }
 
-fn isDeviceSuitable(this: *@This(), dev_info: DeviceInfo, allocator: Allocator) !bool {
+fn isDeviceSuitable(this: *@This(), dev_info: DeviceInfo) !bool {
     if (!dev_info.queue_family_indices.isComplete()) return false;
 
-    if (!try this.checkDeviceExtensionSupport(dev_info.physical_device, allocator)) return false;
+    if (!try this.checkDeviceExtensionSupport(dev_info.physical_device)) return false;
 
     if (dev_info.swapchain_support.formats.len == 0 or
         dev_info.swapchain_support.present_modes.len == 0) return false;
@@ -425,15 +439,19 @@ fn isDeviceSuitable(this: *@This(), dev_info: DeviceInfo, allocator: Allocator) 
     return true;
 }
 
-fn findQueueFamilies(this: *@This(), device: vk.PhysicalDevice, allocator: Allocator) !QueueFamilyIndices {
+fn findQueueFamilies(this: *@This(), device: vk.PhysicalDevice) !QueueFamilyIndices {
     var result = QueueFamilyIndices{};
 
     var family_count: u32 = 0;
     this.vki.getPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
     vklog.debug("Queue family count: {}", .{family_count});
 
-    const family_properties = try allocator.alloc(vk.QueueFamilyProperties, family_count);
-    defer allocator.free(family_properties);
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
+
+    const family_properties = try ta.alloc(vk.QueueFamilyProperties, family_count);
 
     this.vki.getPhysicalDeviceQueueFamilyProperties(device, &family_count, family_properties.ptr);
 
@@ -453,15 +471,20 @@ fn findQueueFamilies(this: *@This(), device: vk.PhysicalDevice, allocator: Alloc
     return result;
 }
 
-fn checkDeviceExtensionSupport(this: *@This(), device: vk.PhysicalDevice, allocator: Allocator) !bool {
+fn checkDeviceExtensionSupport(this: *@This(), device: vk.PhysicalDevice) !bool {
     var extension_count: u32 = 0;
     if (try this.vki.enumerateDeviceExtensionProperties(device, null, &extension_count, null) != .success) {
         return error.vkEnumerateDeviceExtensionPropertiesFailed;
     }
     vklog.debug("Device has {} extensions", .{extension_count});
 
-    const available_extensions = try allocator.alloc(vk.ExtensionProperties, extension_count);
-    defer allocator.free(available_extensions);
+    // TODO: CLEANUP: Temp allocator
+    const ta = alloc.temp_arena.allocator();
+    const ta_mark = alloc.temp_arena.used;
+    defer alloc.temp_arena.used = ta_mark;
+
+    const available_extensions = try ta.alloc(vk.ExtensionProperties, extension_count);
+
     if (try this.vki.enumerateDeviceExtensionProperties(device, null, &extension_count, available_extensions.ptr) != .success) {
         return error.vkEnumerateDeviceExtensionPropertiesFailed;
     }
