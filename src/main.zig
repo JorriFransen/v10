@@ -19,10 +19,12 @@ const KBMoveController = @import("keyboard_movement_controller.zig");
 
 pub fn main() !void {
     try mem.init();
+    mem.initTemp();
 
     cla.parse();
-
     try run();
+
+    mem.deinitTemp();
     try mem.deinit();
 
     std.log.debug("Clean exit", .{});

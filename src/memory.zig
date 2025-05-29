@@ -21,8 +21,6 @@ threadlocal var temp_arena_next: *Arena = undefined;
 pub fn init() !void {
     common_arena = try Arena.init(.{ .virtual = .{} });
     swapchain_arena = try Arena.init(.{ .virtual = .{} });
-
-    // temp_arena = try Arena.init(.{ .virtual = .{ .reserved_capacity = GiB } });
 }
 
 pub fn deinit() !void {
@@ -30,17 +28,33 @@ pub fn deinit() !void {
     swapchain_arena.deinit();
 }
 
-inline fn initializeTemp() void {
-    if (!temp_initialized) {
-        temp_arena_a = Arena.init(.{ .virtual = .{ .reserved_capacity = GiB } }) catch @panic("Temp arena init failed");
-        temp_arena_b = Arena.init(.{ .virtual = .{ .reserved_capacity = GiB } }) catch @panic("Temp arena init failed");
-        temp_arena_next = &temp_arena_a;
-        temp_initialized = true;
-    } else assert(temp_arena_next == &temp_arena_a or temp_arena_next == &temp_arena_b);
+/// Must be called on each thread using temp/scratch arenas
+pub fn initTemp() void {
+    assert(!temp_initialized);
+
+    const options = Arena.InitOptions{ .virtual = .{ .reserved_capacity = 1 * GiB } };
+    temp_arena_a = Arena.init(options) catch @panic("Temp arena init failed");
+    temp_arena_b = Arena.init(options) catch @panic("Temp arena init failed");
+    temp_arena_next = &temp_arena_a;
+
+    temp_initialized = true;
+}
+
+pub fn deinitTemp() void {
+    assert(temp_initialized);
+
+    temp_arena_a.deinit();
+    temp_arena_b.deinit();
+
+    temp_arena_a = undefined;
+    temp_arena_b = undefined;
+    temp_arena_next = undefined;
+
+    temp_initialized = false;
 }
 
 pub fn get_temp() TempArena {
-    initializeTemp();
+    assert(temp_initialized);
 
     const use = temp_arena_next;
 
@@ -54,9 +68,9 @@ pub fn get_temp() TempArena {
 }
 
 pub fn get_scratch(conflict: *Arena) TempArena {
-    initializeTemp();
+    assert(temp_initialized);
 
-    var use: *Arena = undefined;
+    var use: *Arena = temp_arena_next;
 
     if (conflict == &temp_arena_a) {
         use = &temp_arena_b;
@@ -65,11 +79,9 @@ pub fn get_scratch(conflict: *Arena) TempArena {
         use = &temp_arena_a;
         temp_arena_next = &temp_arena_b;
     } else if (temp_arena_next == &temp_arena_a) {
-        use = &temp_arena_a;
         temp_arena_next = &temp_arena_b;
     } else {
         assert(temp_arena_next == &temp_arena_b);
-        use = &temp_arena_b;
         temp_arena_next = &temp_arena_a;
     }
 
