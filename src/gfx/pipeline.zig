@@ -1,7 +1,7 @@
 const std = @import("std");
 const gfx = @import("../gfx.zig");
 const vk = @import("vulkan");
-const alloc = @import("../alloc.zig");
+const mem = @import("../memory.zig");
 const vklog = std.log.scoped(.vulkan);
 
 const Device = gfx.Device;
@@ -156,7 +156,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     const vkd = device.device;
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const vert_code = try readShaderFile(tmp.allocator, vert_path);

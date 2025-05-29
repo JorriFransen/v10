@@ -1,5 +1,5 @@
 const std = @import("std");
-const alloc = @import("alloc.zig");
+const mem = @import("memory.zig");
 const gfx = @import("gfx.zig");
 const math = @import("math.zig");
 const cla = @import("command_line_args.zig");
@@ -18,12 +18,12 @@ const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
 pub fn main() !void {
-    try alloc.init();
+    try mem.init();
 
     cla.parse();
 
     try run();
-    try alloc.deinit();
+    try mem.deinit();
 
     std.log.debug("Clean exit", .{});
 }

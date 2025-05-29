@@ -1,6 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const alloc = @import("../alloc.zig");
+const mem = @import("../memory.zig");
 const vklog = std.log.scoped(.vulkan);
 const gfx = @import("../gfx.zig");
 
@@ -42,7 +42,7 @@ pub fn init(this: *@This(), device: *Device, options: SwapchainOptions) !void {
     this.device = device;
     this.window_extent = options.extent;
 
-    var arena = &alloc.swapchain_arena;
+    var arena = &mem.swapchain_arena;
     const allocator = arena.allocator();
 
     try this.createSwapchain(options, allocator);

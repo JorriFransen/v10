@@ -1,5 +1,5 @@
 const std = @import("std");
-const alloc = @import("../alloc.zig");
+const mem = @import("../memory.zig");
 const gfx = @import("../gfx.zig");
 const vk = @import("vulkan");
 
@@ -33,7 +33,7 @@ pub fn createCommandBuffers(this: *@This()) !void {
     const vkd = this.device.device;
 
     assert(this.command_buffers.len == 0);
-    this.command_buffers = try alloc.common_arena.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
+    this.command_buffers = try mem.common_arena.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
 
     const alloc_info = vk.CommandBufferAllocateInfo{
         .level = .primary,
@@ -165,7 +165,7 @@ pub fn recreateSwapchain(this: *@This()) !void {
     new_chain.in_flight_fences = &.{};
     new_chain.images_in_flight = &.{};
 
-    alloc.swapchain_arena.reset();
+    mem.swapchain_arena.reset();
 
     try new_chain.init(this.device, .{ .extent = extent, .old_swapchain = old_chain.swapchain });
 

@@ -1,5 +1,4 @@
 const std = @import("std");
-const alloc = @import("alloc.zig");
 const mem = @import("memory.zig");
 const clap = @import("clap");
 const glfw = @import("glfw");
@@ -54,7 +53,7 @@ fn parseCommandLine() !ClapOptions {
     }.f;
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     var arg_it = try std.process.ArgIterator.initWithAllocator(tmp.allocator);

@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vklog = std.log.scoped(.vulkan);
 const glfw = @import("glfw");
-const alloc = @import("../alloc.zig");
+const mem = @import("../memory.zig");
 const gfx = @import("../gfx.zig");
 const vk = gfx.vk;
 
@@ -167,7 +167,7 @@ fn createInstance(this: *@This()) !void {
     };
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const extensions = try this.getRequiredExtensions(tmp.allocator);
@@ -224,7 +224,7 @@ fn pickPhysicalDevice(this: *@This()) !void {
     vklog.debug("{} physical devices found", .{device_count});
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const devices = try tmp.allocator.alloc(vk.PhysicalDevice, device_count);
@@ -252,7 +252,7 @@ fn pickPhysicalDevice(this: *@This()) !void {
         if (try this.isDeviceSuitable(dev_info)) {
             if (device_index < 0) {
                 device_index = @intCast(i);
-                this.device_info = try dev_info.copy(alloc.common_arena.allocator());
+                this.device_info = try dev_info.copy(mem.common_arena.allocator());
                 chosen = true;
             }
         }
@@ -269,7 +269,7 @@ fn createLogicalDevice(this: *@This()) !void {
     const indices = &this.device_info.queue_family_indices;
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const unique_families = try indices.uniqueFamilies(tmp.allocator);
@@ -327,7 +327,7 @@ fn checkValidationLayerSupport(this: *@This()) !bool {
     }
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const available_layers = try tmp.allocator.alloc(vk.LayerProperties, layer_count);
@@ -393,7 +393,7 @@ fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0
     vklog.debug("available_extensions: {}", .{extension_count});
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const available_extensions = try tmp.allocator.alloc(vk.ExtensionProperties, extension_count);
@@ -442,7 +442,7 @@ fn findQueueFamilies(this: *@This(), device: vk.PhysicalDevice) !QueueFamilyIndi
     vklog.debug("Queue family count: {}", .{family_count});
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const family_properties = try tmp.allocator.alloc(vk.QueueFamilyProperties, family_count);
@@ -473,7 +473,7 @@ fn checkDeviceExtensionSupport(this: *@This(), device: vk.PhysicalDevice) !bool 
     vklog.debug("Device has {} extensions", .{extension_count});
 
     // TODO: CLEANUP: Temp allocator
-    var tmp = alloc.get_temp();
+    var tmp = mem.get_temp();
     defer tmp.release();
 
     const available_extensions = try tmp.allocator.alloc(vk.ExtensionProperties, extension_count);
