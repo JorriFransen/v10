@@ -57,7 +57,6 @@ fn parseCommandLine() !ClapOptions {
     defer tmp.release();
 
     var arg_it = try std.process.ArgIterator.initWithAllocator(tmp.allocator);
-    defer arg_it.deinit();
 
     const exe_name = std.fs.path.basename(arg_it.next().?);
     var diag = clap.Diagnostic{};
