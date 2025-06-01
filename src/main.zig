@@ -4,6 +4,7 @@ const gfx = @import("gfx.zig");
 const math = @import("math.zig");
 const cla = @import("command_line_args.zig");
 
+const Instant = std.time.Instant;
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
 const Device = gfx.Device;
@@ -11,7 +12,6 @@ const Model = gfx.Model;
 const Camera = gfx.Camera;
 const SimpleRenderSystem = gfx.SimpleRenderSystem;
 const Entity = @import("entity.zig");
-const Instant = std.time.Instant;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
@@ -19,12 +19,10 @@ const KBMoveController = @import("keyboard_movement_controller.zig");
 
 pub fn main() !void {
     try mem.init();
-    mem.initTemp();
 
     cla.parse();
     try run();
 
-    mem.deinitTemp();
     try mem.deinit();
 
     std.log.debug("Clean exit", .{});
@@ -67,10 +65,20 @@ fn run() !void {
 
     var model = try createCubeModel(.{});
     // var model = try Model.create(&device, &.{
-    //     .{ .position = Vec3.new(0, -0.5, 0), .color = Vec3.new(1, 0, 0) },
-    //     .{ .position = Vec3.new(0.5, 0.5, 0), .color = Vec3.new(0, 1, 0) },
-    //     .{ .position = Vec3.new(-0.5, 0.5, 0), .color = Vec3.new(0, 0, 1) },
-    // });
+    //     .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
+    //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
+    //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
+    //
+    //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
+    //     .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
+    //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
+    // }, null);
+    // var model = try Model.create(&device, &.{
+    //     .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
+    //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
+    //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
+    //     .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
+    // }, &.{ 0, 1, 2, 1, 3, 2 });
     defer model.destroy();
 
     var entities_ = [_]Entity{Entity.new()};
@@ -115,10 +123,10 @@ fn run() !void {
 fn updateEntities(dt: f32) void {
     kb_move_controller.moveInPlaneXZ(&window, dt, &camera_entity);
 
-    const rot_speed = 1;
-    const ctf = &cube.transform;
-    ctf.rotation.y = @mod(ctf.rotation.y + dt * rot_speed, std.math.tau);
-    ctf.rotation.x = @mod(ctf.rotation.x + dt * rot_speed * 0.5, std.math.tau);
+    // const rot_speed = 1;
+    // const ctf = &cube.transform;
+    // ctf.rotation.y = @mod(ctf.rotation.y + dt * rot_speed, std.math.tau);
+    // ctf.rotation.x = @mod(ctf.rotation.x + dt * rot_speed * 0.5, std.math.tau);
 }
 
 fn drawFrame() !void {
@@ -209,5 +217,5 @@ fn createCubeModel(offset: Vec3) !Model {
         vertex.position = vertex.position.add(offset);
     }
 
-    return try Model.create(&device, &vertices);
+    return try Model.create(&device, &vertices, null);
 }

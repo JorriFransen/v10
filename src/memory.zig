@@ -21,9 +21,13 @@ threadlocal var temp_arena_next: *Arena = undefined;
 pub fn init() !void {
     common_arena = try Arena.init(.{ .virtual = .{} });
     swapchain_arena = try Arena.init(.{ .virtual = .{} });
+
+    initTemp();
 }
 
 pub fn deinit() !void {
+    deinitTemp();
+
     common_arena.deinit();
     swapchain_arena.deinit();
 }
