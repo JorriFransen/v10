@@ -2,7 +2,9 @@ const std = @import("std");
 const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
+const tol = @import("../tinyobjloader/tiny_obj_loader.zig");
 
+const Model = @This();
 const Device = gfx.Device;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
@@ -23,14 +25,16 @@ index_type: vk.IndexType = .none_khr,
 pub const Vertex = struct {
     position: Vec3,
     color: Vec3,
+    normal: Vec3 = Vec3.scalar(0),
+    uv: Vec2 = Vec2.scalar(0),
 
-    const field_count = @typeInfo(@This()).@"struct".fields.len;
-    pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(@This()), .input_rate = .vertex };
+    const field_count = @typeInfo(Vertex).@"struct".fields.len;
+    pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(Vertex), .input_rate = .vertex };
     pub const attribute_descriptions: [field_count]vk.VertexInputAttributeDescription = blk: {
         var result: [field_count]vk.VertexInputAttributeDescription = undefined;
 
         for (&result, 0..) |*desc, i| {
-            const field_info = @typeInfo(@This()).@"struct".fields[i];
+            const field_info = @typeInfo(Vertex).@"struct".fields[i];
 
             desc.* = .{
                 .location = i,
@@ -41,18 +45,23 @@ pub const Vertex = struct {
                     Vec3 => .r32g32b32_sfloat,
                     Vec4 => .r32g32b32a32_sfloat,
                 },
-                .offset = @offsetOf(@This(), field_info.name),
+                .offset = @offsetOf(Vertex, field_info.name),
             };
         }
         break :blk result;
     };
 };
 
-pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: type, indices_opt: ?[]const IndexType) !@This() {
+pub fn load(path: []const u8) Model {
+    _ = path;
+    tol.tinyobj_parse_obj();
+}
+
+pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: type, indices_opt: ?[]const IndexType) !Model {
     const vkd = device.device;
     assert(vertices.len >= 3);
 
-    var this = @This(){
+    var this = Model{
         .device = device,
         .vertex_count = @intCast(vertices.len),
     };
@@ -129,7 +138,7 @@ pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: typ
     return this;
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn destroy(this: *Model) void {
     const vkd = this.device.device;
 
     vkd.destroyBuffer(this.vertex_buffer, null);
@@ -141,7 +150,7 @@ pub fn destroy(this: *@This()) void {
     }
 }
 
-pub fn bind(this: *const @This(), command_buffer: vk.CommandBuffer) void {
+pub fn bind(this: *const Model, command_buffer: vk.CommandBuffer) void {
     const vkd = this.device.device;
     const offsets = [_]vk.DeviceSize{0};
 
@@ -153,7 +162,7 @@ pub fn bind(this: *const @This(), command_buffer: vk.CommandBuffer) void {
     }
 }
 
-pub fn draw(this: *const @This(), command_buffer: vk.CommandBuffer) void {
+pub fn draw(this: *const Model, command_buffer: vk.CommandBuffer) void {
     const vkd = this.device.device;
 
     if (this.index_type != .none_khr) {

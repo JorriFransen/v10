@@ -646,6 +646,7 @@ pub fn createBuffer(this: *@This(), size: vk.DeviceSize, usage: vk.BufferUsageFl
 }
 
 pub fn copyBuffer(this: *@This(), src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) void {
+    // TODO: Use memory barrier
     const command_buffer = this.beginSingleTimeCommands();
     defer this.endSingleTimeCommands(command_buffer);
 

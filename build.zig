@@ -34,7 +34,10 @@ pub fn build(b: *std.Build) !void {
         .name = "v10game",
         .root_module = main_module,
     });
+    exe.addIncludePath(b.path("src/tinyobjloader/"));
+    exe.addCSourceFile(.{ .file = b.path("src/tinyobjloader/tiny_obj_loader.c") });
     b.installArtifact(exe);
+    b.installDirectory(.{ .source_dir = b.path("res"), .install_dir = .bin, .install_subdir = "res" });
 
     std.fs.cwd().makeDir("res") catch |e| switch (e) {
         error.PathAlreadyExists => {}, // ok,
