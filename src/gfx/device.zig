@@ -13,7 +13,10 @@ const assert = std.debug.assert;
 
 const enable_validation_layers: bool = builtin.mode == .Debug;
 const validation_layers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
-const device_extensions = [_][*:0]const u8{vk.extensions.khr_swapchain.name};
+const device_extensions = [_][*:0]const u8{
+    vk.extensions.khr_swapchain.name,
+    vk.extensions.khr_index_type_uint_8.name,
+};
 
 const debug_messenger_create_info = vk.DebugUtilsMessengerCreateInfoEXT{
     .message_severity = .{ .warning_bit_ext = true, .error_bit_ext = true },
@@ -288,6 +291,10 @@ fn createLogicalDevice(this: *@This()) !void {
         .sampler_anisotropy = vk.TRUE,
     };
 
+    const index_type_uint8_features = vk.PhysicalDeviceIndexTypeUint8FeaturesKHR{
+        .index_type_uint_8 = vk.TRUE,
+    };
+
     const create_info = vk.DeviceCreateInfo{
         .queue_create_info_count = @intCast(queue_create_infos.len),
         .p_queue_create_infos = queue_create_infos.ptr,
@@ -296,6 +303,7 @@ fn createLogicalDevice(this: *@This()) !void {
         .pp_enabled_extension_names = @ptrCast(&device_extensions),
         .enabled_layer_count = if (enable_validation_layers) validation_layers.len else 0,
         .pp_enabled_layer_names = if (enable_validation_layers) @ptrCast(&validation_layers) else null,
+        .p_next = &index_type_uint8_features,
     };
 
     const device = try this.vki.createDevice(this.device_info.physical_device, &create_info, null);

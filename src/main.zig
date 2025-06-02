@@ -63,7 +63,8 @@ fn run() !void {
 
     camera_entity = Entity.new();
 
-    var model = try createCubeModel(.{});
+    // var model = try createCubeModel(.{});
+    var model = try createCubeModelIndexed(.{});
     // var model = try Model.create(&device, &.{
     //     .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
     //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
@@ -72,13 +73,13 @@ fn run() !void {
     //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
     //     .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
     //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
-    // }, null);
+    // }, void, null);
     // var model = try Model.create(&device, &.{
     //     .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
     //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
     //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
     //     .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
-    // }, &.{ 0, 1, 2, 1, 3, 2 });
+    // }, u32, &.{ 0, 1, 2, 1, 3, 2 });
     defer model.destroy();
 
     var entities_ = [_]Entity{Entity.new()};
@@ -217,5 +218,67 @@ fn createCubeModel(offset: Vec3) !Model {
         vertex.position = vertex.position.add(offset);
     }
 
-    return try Model.create(&device, &vertices, null);
+    return try Model.create(&device, &vertices, void, null);
+}
+
+fn createCubeModelIndexed(offset: Vec3) !Model {
+    const white = Vec3.scalar(1);
+    const yellow = Vec3.new(0.8, 0.8, 0.1);
+    const orange = Vec3.new(0.9, 0.6, 0.1);
+    const blue = Vec3.new(0.1, 0.1, 0.8);
+    const green = Vec3.new(0.1, 0.8, 0.1);
+    const red = Vec3.new(0.8, 0.1, 0.1);
+
+    var vertices = [_]Model.Vertex{
+        // Left face (white);
+        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = white },
+        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = white },
+        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = white },
+        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = white },
+
+        // Right face (yellow)
+        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = yellow },
+        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
+        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = yellow },
+        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = yellow },
+
+        // Top face (orange, y axis points down)
+        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
+        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
+        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = orange },
+        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = orange },
+
+        // Bottom face (red)
+        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
+        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
+        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = red },
+        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = red },
+
+        // Nose face (blue)
+        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
+        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
+        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = blue },
+        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = blue },
+
+        // Tail face (green)
+        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = green },
+        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = green },
+        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = green },
+        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = green },
+    };
+
+    for (&vertices) |*vertex| {
+        vertex.position = vertex.position.add(offset);
+    }
+
+    const indices = [_]u8{
+        0,  1,  2,  0,  3,  1,
+        4,  5,  6,  4,  7,  5,
+        8,  9,  10, 8,  11, 9,
+        12, 13, 14, 12, 15, 13,
+        16, 17, 18, 16, 19, 17,
+        20, 21, 22, 20, 23, 21,
+    };
+
+    return try Model.create(&device, &vertices, @TypeOf(indices[0]), &indices);
 }
