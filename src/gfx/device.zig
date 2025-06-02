@@ -634,3 +634,52 @@ pub fn createBuffer(this: *@This(), size: vk.DeviceSize, usage: vk.BufferUsageFl
 
     return buffer;
 }
+
+pub fn copyBuffer(this: *@This(), src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) void {
+    const command_buffer = this.beginSingleTimeCommands();
+    defer this.endSingleTimeCommands(command_buffer);
+
+    const copy_region = vk.BufferCopy{
+        .src_offset = 0,
+        .dst_offset = 0,
+        .size = size,
+    };
+
+    command_buffer.copyBuffer(src, dst, 1, @ptrCast(&copy_region));
+}
+
+pub fn beginSingleTimeCommands(this: *@This()) vk.CommandBufferProxy {
+    const alloc_info = vk.CommandBufferAllocateInfo{
+        .level = .primary,
+        .command_pool = this.command_pool,
+        .command_buffer_count = 1,
+    };
+
+    var command_buffer: vk.CommandBuffer = .null_handle;
+    this.device.allocateCommandBuffers(&alloc_info, @ptrCast(&command_buffer)) catch @panic("vkAllocateCommandBuffers failed");
+
+    const proxy = vk.CommandBufferProxy.init(command_buffer, this.device.wrapper);
+
+    const begin_info = vk.CommandBufferBeginInfo{
+        .flags = .{ .one_time_submit_bit = true },
+    };
+
+    proxy.beginCommandBuffer(&begin_info) catch @panic("vkBeginCommandBuffer failed");
+
+    return proxy;
+}
+
+pub fn endSingleTimeCommands(this: *@This(), command_buffer: vk.CommandBufferProxy) void {
+    command_buffer.endCommandBuffer() catch @panic("vkEndCommandBuffer failed");
+
+    const handle = command_buffer.handle;
+    const submit_info = vk.SubmitInfo{
+        .command_buffer_count = 1,
+        .p_command_buffers = @ptrCast(&handle),
+    };
+
+    this.graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle) catch @panic("vkQueueSubmit failed");
+    this.graphics_queue.waitIdle() catch @panic("vkQueueWaitIdle failed");
+
+    this.device.freeCommandBuffers(this.command_pool, 1, @ptrCast(&handle));
+}

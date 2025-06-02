@@ -58,16 +58,31 @@ pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: typ
     };
 
     const vertex_buffer_size: vk.DeviceSize = @sizeOf(@TypeOf(vertices[0])) * vertices.len;
-    this.vertex_buffer = try device.createBuffer(
+    var vertex_staging_buffer_memory: vk.DeviceMemory = .null_handle;
+    const vertex_staging_buffer = try device.createBuffer(
         vertex_buffer_size,
-        .{ .vertex_buffer_bit = true },
+        .{ .transfer_src_bit = true },
         .{ .host_visible_bit = true, .host_coherent_bit = true },
-        &this.vertex_buffer_memory,
+        &vertex_staging_buffer_memory,
     );
-    const vertex_data = try vkd.mapMemory(this.vertex_buffer_memory, 0, vertex_buffer_size, .{}) orelse return error.vkMapMemoryFailed;
+    defer {
+        vkd.destroyBuffer(vertex_staging_buffer, null);
+        vkd.freeMemory(vertex_staging_buffer_memory, null);
+    }
+
+    const vertex_data = try vkd.mapMemory(vertex_staging_buffer_memory, 0, vertex_buffer_size, .{}) orelse return error.vkMapMemoryFailed;
     const vertices_mapped: [*]Vertex = @ptrCast(@alignCast(vertex_data));
     @memcpy(vertices_mapped, vertices);
-    vkd.unmapMemory(this.vertex_buffer_memory);
+    vkd.unmapMemory(vertex_staging_buffer_memory);
+
+    this.vertex_buffer = try device.createBuffer(
+        vertex_buffer_size,
+        .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
+        .{ .device_local_bit = true },
+        &this.vertex_buffer_memory,
+    );
+
+    device.copyBuffer(vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
 
     if (IndexType != void) {
         const indices = indices_opt orelse @panic("Expected indices when IndexType is not void");
@@ -82,16 +97,31 @@ pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: typ
         };
 
         const index_buffer_size: vk.DeviceSize = @sizeOf(IndexType) * indices.len;
-        this.index_buffer = try device.createBuffer(
+        var index_staging_buffer_memory: vk.DeviceMemory = .null_handle;
+        const index_staging_buffer = try device.createBuffer(
             index_buffer_size,
-            .{ .index_buffer_bit = true },
+            .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
-            &this.index_buffer_memory,
+            &index_staging_buffer_memory,
         );
-        const index_data = try vkd.mapMemory(this.index_buffer_memory, 0, index_buffer_size, .{}) orelse return error.vkMapMemoryFailed;
+        defer {
+            vkd.destroyBuffer(index_staging_buffer, null);
+            vkd.freeMemory(index_staging_buffer_memory, null);
+        }
+
+        const index_data = try vkd.mapMemory(index_staging_buffer_memory, 0, index_buffer_size, .{}) orelse return error.vkMapMemoryFailed;
         const indices_mapped: [*]IndexType = @ptrCast(@alignCast(index_data));
         @memcpy(indices_mapped, indices);
-        vkd.unmapMemory(this.index_buffer_memory);
+        vkd.unmapMemory(index_staging_buffer_memory);
+
+        this.index_buffer = try device.createBuffer(
+            index_buffer_size,
+            .{ .transfer_dst_bit = true, .index_buffer_bit = true },
+            .{ .device_local_bit = true },
+            &this.index_buffer_memory,
+        );
+
+        device.copyBuffer(index_staging_buffer, this.index_buffer, index_buffer_size);
     } else {
         assert(indices_opt == null or indices_opt.?.len == 0);
     }
