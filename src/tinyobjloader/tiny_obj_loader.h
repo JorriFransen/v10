@@ -93,6 +93,12 @@ typedef struct {
 #define TINYOBJ_ERROR_INVALID_PARAMETER (-2)
 #define TINYOBJ_ERROR_FILE_OPERATION (-3)
 
+/* Provide a callback for warning messages.
+ *
+ * @param[in] msg the warning message
+ */
+typedef void (*report_warning_callback)(const char *msg);
+
 /* Provide a callback that can read text file without any parsing or modification.
  * The obj and mtl parser is going to read all the necessary data:
  * tinyobj_parse_obj
@@ -115,6 +121,7 @@ typedef void (*file_reader_callback)(void *ctx, const char *filename, int is_mtl
  * @param[out] num_materials Array length of `materials`
  * @param[in] file_name File name of .obj
  * @param[in] file_reader File reader callback function(to read .obj and .mtl).
+ * @param[in] report_warning Warning callback function.
  * @param[in] ctx Context pointer passed to the file_reader_callback.
  * @param[in] flags combination of TINYOBJ_FLAG_***
  *
@@ -124,7 +131,7 @@ typedef void (*file_reader_callback)(void *ctx, const char *filename, int is_mtl
 extern int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
                              size_t *num_shapes, tinyobj_material_t **materials,
                              size_t *num_materials, const char *file_name, file_reader_callback file_reader,
-                             void *ctx, unsigned int flags);
+                             report_warning_callback report_warning, void *ctx, unsigned int flags);
 
 /* Parse wavefront .mtl
  *
@@ -1393,8 +1400,9 @@ static char *generate_mtl_filename(const char *obj_filename,
 int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
                       size_t *num_shapes, tinyobj_material_t **materials_out,
                       size_t *num_materials_out, const char *obj_filename,
-                      file_reader_callback file_reader, void *ctx,
-                      unsigned int flags) {
+                      file_reader_callback file_reader,
+                      report_warning_callback report_warning,
+                      void *ctx, unsigned int flags) {
   LineInfo *line_infos = NULL;
   Command *commands = NULL;
   size_t num_lines = 0;
@@ -1496,8 +1504,10 @@ int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
                                            &material_table);
 
     if (ret != TINYOBJ_SUCCESS) {
-      /* warning. */
-      fprintf(stderr, "TINYOBJ: Failed to parse material file '%s': %d\n", mtl_filename, ret);
+      // /* warning. */
+      char buf[2048];
+      snprintf(buf, 2048, "Failed to parse material file '%s': %d", mtl_filename, ret);
+      report_warning(buf);
     }
     TINYOBJ_FREE(mtl_filename);
     TINYOBJ_FREE(mtllib_name);

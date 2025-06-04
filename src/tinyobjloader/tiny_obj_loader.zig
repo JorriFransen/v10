@@ -41,6 +41,8 @@ const LoadFileFN = *const fn (
     out_len: *usize,
 ) callconv(.c) void;
 
+const ReportWarningFN = *const fn (msg: [*:0]const u8) callconv(.c) void;
+
 extern fn tinyobj_parse_obj(
     attrib: *Attributes,
     shapes: *[*]Shape,
@@ -49,6 +51,7 @@ extern fn tinyobj_parse_obj(
     num_materials: *usize,
     file_name: [*:0]const u8,
     loadFile: LoadFileFN,
+    reportWarning: ReportWarningFN,
     ctx: ?*anyopaque,
     flags: Flags,
 ) callconv(.c) ParseResult;
@@ -65,7 +68,7 @@ pub fn loadWithIndexType(arena: *mem.Arena, path: [:0]const u8, comptime IndexTy
     var materials: []Material = undefined;
 
     current_arena = arena;
-    const parse_result = tinyobj_parse_obj(&attribs, &shapes.ptr, &shapes.len, &materials.ptr, &materials.len, path, file_reader_callback, null, .{ .triangulate = true });
+    const parse_result = tinyobj_parse_obj(&attribs, &shapes.ptr, &shapes.len, &materials.ptr, &materials.len, path, file_reader_callback, warn, null, .{ .triangulate = true });
     assert(parse_result == .success);
 
     const vertex_indices = attribs.faces[0..attribs.num_faces];
@@ -88,6 +91,10 @@ pub fn loadWithIndexType(arena: *mem.Arena, path: [:0]const u8, comptime IndexTy
     }
 
     return Builder(IndexType){ .vertices = vertices, .indices = null };
+}
+
+fn warn(msg: [*:0]const u8) callconv(.c) void {
+    log.warn("{s}", .{msg});
 }
 
 pub fn file_reader_callback(ctx: ?*anyopaque, _file_name: [*:0]const u8, is_mtl: c_int, _: [*:0]const u8, out_buf: *?[*]u8, out_len: *usize) callconv(.c) void {
