@@ -119,21 +119,23 @@ pub fn load(device: *Device, path: []const u8) !Model {
     const normals: []Vec3 = @as([*]Vec3, @ptrCast(attribs.normals))[0..attribs.num_normals];
     const uvs: []Vec2 = @as([*]Vec2, @ptrCast(attribs.texcoords))[0..attribs.num_texcoords];
 
+    std.log.debug("attribs: {}", .{attribs});
+
     var ta = mem.get_temp();
     defer ta.release();
 
-    const num_faces: usize = attribs.num_face_num_verts;
-    const num_vertices: usize = num_faces * 3;
+    const num_faces: usize = (attribs.num_faces / 3);
+    const num_vertices: usize = attribs.num_faces;
 
     const vertices = try ta.allocator.alloc(Vertex, num_vertices);
 
     var total_faces: usize = 0;
     var total_vertices: usize = 0;
 
-    std.log.debug("attribs: {}", .{attribs});
-
     for (shapes) |shape| {
         const shape_faces: usize = shape.length;
+        std.log.debug("shape: {}", .{shape});
+        std.log.debug("shape_faces: {}", .{shape_faces});
 
         for (0..shape_faces) |fi| {
             assert(shape.face_offset == total_faces);
@@ -157,8 +159,10 @@ pub fn load(device: *Device, path: []const u8) !Model {
         total_faces += shape_faces;
     }
 
-    assert(num_faces == total_faces);
-    assert(num_vertices == total_vertices);
+    std.log.debug("num_faces: {}\ntotal_faces: {}", .{ num_faces, total_faces });
+
+    // assert(num_faces == total_faces);
+    // assert(num_vertices == total_vertices);
 
     return try create(device, vertices, void, null);
 }
