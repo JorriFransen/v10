@@ -228,15 +228,21 @@ pub const Arena = struct {
         }
 
         const unaligned_addr: usize = @intFromPtr(available.ptr);
-        this.used += n;
+        var total_size = n;
 
-        return @ptrFromInt(blk: {
+        const result: ?[*]u8 = @ptrFromInt(blk: {
             if (this.flags.@"align") {
                 const r = std.mem.alignForward(usize, unaligned_addr, ptr_align);
-                this.used += r - unaligned_addr;
+                const alignment_used = r - unaligned_addr;
+                total_size += alignment_used;
                 break :blk r;
             } else break :blk unaligned_addr;
         });
+
+        this.used += total_size;
+        this.last_allocation = result;
+        this.last_size = total_size;
+        return result;
     }
 
     pub fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
@@ -254,27 +260,43 @@ pub const Arena = struct {
     }
 
     pub fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ctx;
-        _ = memory;
         _ = alignment;
-        _ = new_len;
         _ = ret_addr;
 
-        if (builtin.mode == .Debug) {
-            @panic("Invalid remap on memory allocated by arena");
-        }
+        const this: *Arena = @ptrCast(@alignCast(ctx));
 
-        return null;
+        if (@as(?[*]const u8, @ptrCast(this.last_allocation)) == memory.ptr) {
+            assert(memory.len == this.last_size);
+
+            const diff = new_len - memory.len;
+            if (this.used + diff > this.data.len) {
+                this.grow(this.used + diff) catch return null;
+            }
+
+            this.used += diff;
+            this.last_size += diff;
+
+            return @ptrCast(this.last_allocation);
+        } else {
+            assert(new_len > memory.len); // Otherwise this should be fine?
+            return null;
+        }
     }
 
     pub fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
-        _ = ctx;
-        _ = memory;
-        _ = alignment;
         _ = ret_addr;
 
-        if (builtin.mode == .Debug) {
-            @panic("Invalid free/destroy on memory allocated by arena");
+        const this: *Arena = @ptrCast(@alignCast(ctx));
+
+        if (@as(?[*]u8, @ptrCast(this.last_allocation)) == memory.ptr) {
+            assert(alignment == .@"8");
+            assert(std.mem.Alignment.check(alignment, @intFromPtr(memory.ptr)));
+
+            this.used -= memory.len;
+            this.last_allocation = null;
+            this.last_size = 0;
+        } else {
+            //nop
         }
     }
 };
