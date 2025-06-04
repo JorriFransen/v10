@@ -152,7 +152,7 @@ pub const Arena = struct {
         this.last_size = 0;
     }
 
-    pub fn allocator(this: *Arena) Allocator {
+    pub inline fn allocator(this: *Arena) Allocator {
         return .{
             .ptr = this,
             .vtable = &.{
@@ -174,7 +174,9 @@ pub const Arena = struct {
         var new_cap = this.data.len * 2;
         while (new_cap < min_cap) new_cap *= 2;
 
-        if (new_cap > max_cap or new_cap > this.reserved_capacity) return error.ReachedReservedCapacity;
+        if (new_cap > max_cap or new_cap > this.reserved_capacity) {
+            return error.ReachedReservedCapacity;
+        }
 
         const old_cap = this.data.len;
         const base_ptr: [*]const u8 = this.data.ptr;
@@ -228,15 +230,22 @@ pub const Arena = struct {
         }
 
         const unaligned_addr: usize = @intFromPtr(available.ptr);
-        this.used += n;
+        var total_size = n;
 
-        return @ptrFromInt(blk: {
+        const result: ?[*]u8 = @ptrFromInt(blk: {
             if (this.flags.@"align") {
                 const r = std.mem.alignForward(usize, unaligned_addr, ptr_align);
-                this.used += r - unaligned_addr;
+                const alignment_used = r - unaligned_addr;
+                total_size += alignment_used;
                 break :blk r;
             } else break :blk unaligned_addr;
         });
+
+        this.used += total_size;
+        this.last_allocation = result;
+        this.last_size = total_size;
+
+        return result;
     }
 
     pub fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
@@ -246,35 +255,46 @@ pub const Arena = struct {
         _ = new_len;
         _ = ret_addr;
 
-        if (builtin.mode == .Debug) {
-            @panic("Invalid resize on memory allocated by arena");
-        }
-
-        return false;
+        @panic("Invalid resize on memory allocated by arena");
     }
 
     pub fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ctx;
-        _ = memory;
-        _ = alignment;
-        _ = new_len;
-        _ = ret_addr;
+        const this: *Arena = @ptrCast(@alignCast(ctx));
 
-        if (builtin.mode == .Debug) {
-            @panic("Invalid remap on memory allocated by arena");
+        if (@as(?[*]const u8, @ptrCast(this.last_allocation)) == memory.ptr) {
+            assert(memory.len == this.last_size);
+
+            const diff = new_len - memory.len;
+            if (this.used + diff > this.data.len) {
+                this.grow(this.used + diff) catch return null;
+            }
+
+            this.used += diff;
+            this.last_size += diff;
+
+            return @ptrCast(this.last_allocation);
+        } else {
+            const result = alloc(ctx, new_len, alignment, ret_addr).?[0..new_len];
+            @memcpy(result[0..memory.len], memory);
+            // Can't free since this is not the last allocation
+            return result.ptr;
         }
-
-        return null;
     }
 
     pub fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
-        _ = ctx;
-        _ = memory;
-        _ = alignment;
         _ = ret_addr;
 
-        if (builtin.mode == .Debug) {
-            @panic("Invalid free/destroy on memory allocated by arena");
+        const this: *Arena = @ptrCast(@alignCast(ctx));
+
+        if (@as(?[*]u8, @ptrCast(this.last_allocation)) == memory.ptr) {
+            assert(alignment == .@"8");
+            assert(std.mem.Alignment.check(alignment, @intFromPtr(memory.ptr)));
+
+            this.used -= memory.len;
+            this.last_allocation = null;
+            this.last_size = 0;
+        } else {
+            //nop
         }
     }
 };
@@ -302,6 +322,7 @@ test "Arena from slice" {
     try std.testing.expectEqual(@as(*u8, @ptrCast(&buf)), &buf[0]);
 
     var arena = try Arena.init(.{ .slice = .{ .data = &buf } });
+    defer arena.deinit();
     const aa = arena.allocator();
 
     const first = try aa.create(u8);
@@ -342,6 +363,7 @@ test "Arena from slice" {
 test "Arena uncommitted" {
     const page_size = std.heap.pageSize();
     var arena = try Arena.init(.{ .virtual = .{ .reserved_capacity = page_size * 2 } });
+    defer arena.deinit();
     const aa = arena.allocator();
 
     const first = try aa.create(u8);
@@ -383,4 +405,26 @@ test "Arena uncommitted" {
     // should trigger grow/commit
     const newmem = try aa.create(u64);
     _ = newmem;
+}
+
+test "Arena remap" {
+    const page_size = std.heap.pageSize();
+    var arena = try Arena.init(.{ .virtual = .{ .reserved_capacity = page_size * 4 } });
+    defer arena.deinit();
+    const aa = arena.allocator();
+
+    const first = try aa.alloc(u8, page_size);
+    try std.testing.expectEqual(arena.data.ptr, first.ptr);
+
+    const second = aa.remap(first, page_size + 1);
+    try std.testing.expect(second != null);
+    try std.testing.expectEqual(first.ptr, second.?.ptr);
+
+    _ = try aa.alloc(u8, 16);
+    const third = aa.remap(second.?, second.?.len + 1);
+    try std.testing.expect(third != null);
+    try std.testing.expect(second.?.ptr != third.?.ptr);
+
+    const fourth = aa.remap(third.?, third.?.len * 3);
+    try std.testing.expect(fourth == null);
 }

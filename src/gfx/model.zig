@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
 const tol = @import("../tinyobjloader/tiny_obj_loader.zig");
+const mem = @import("../memory.zig");
 
 const Model = @This();
 const Device = gfx.Device;
@@ -61,7 +62,10 @@ pub fn Builder(comptime IndexType_: type) type {
 }
 
 pub fn load(device: *Device, path: []const u8) !Model {
-    const builder = try tol.load(path);
+    var ta = mem.get_temp();
+    defer ta.release();
+
+    const builder = try tol.load(ta.arena, path);
     return create(device, @TypeOf(builder).IndexType, builder);
 }
 

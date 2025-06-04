@@ -16,17 +16,20 @@ const tol = @cImport({
     @cInclude("tiny_obj_loader.h");
 });
 
-pub fn load(path: []const u8) !Model.Builder(u32) {
-    return loadWithIndexType(path, u32);
+var current_arena: ?*mem.Arena = null;
+
+pub fn load(arena: *mem.Arena, path: []const u8) !Model.Builder(u32) {
+    return loadWithIndexType(arena, path, u32);
 }
 
-pub fn loadWithIndexType(path: []const u8, comptime IndexType: type) !Model.Builder(IndexType) {
+pub fn loadWithIndexType(arena: *mem.Arena, path: []const u8, comptime IndexType: type) !Model.Builder(IndexType) {
     var attribs: tol.tinyobj_attrib_t = undefined;
     var _shapes: [*]tol.tinyobj_shape_t = undefined;
     var num_shapes: usize = undefined;
     var materials: [*]tol.tinyobj_material_t = undefined;
     var num_materials: usize = undefined;
 
+    current_arena = arena;
     const parse_result = tol.tinyobj_parse_obj(
         &attribs,
         @ptrCast(&_shapes),
@@ -45,10 +48,7 @@ pub fn loadWithIndexType(path: []const u8, comptime IndexType: type) !Model.Buil
     const normals: []Vec3 = @as([*]Vec3, @ptrCast(attribs.normals))[0..attribs.num_normals];
     const uvs: []Vec2 = @as([*]Vec2, @ptrCast(attribs.texcoords))[0..attribs.num_texcoords];
 
-    var ta = mem.get_temp();
-    defer ta.release();
-
-    const vertices = try ta.allocator.alloc(Vertex, vertex_indices.len);
+    const vertices = try arena.allocator().alloc(Vertex, vertex_indices.len);
 
     // This can't be done by shape(/face) since tol doesn't expose face count for triangulated shapes
     for (vertices, vertex_indices) |*vertex, vi| {
@@ -97,23 +97,42 @@ pub fn file_reader_callback(ctx: ?*anyopaque, _file_name: [*c]const u8, is_mtl: 
 }
 
 export fn tinyobj_malloc(size: usize) ?*anyopaque {
-    _ = size;
-    unreachable;
+    if (current_arena) |arena| {
+        return arena.allocator().rawAlloc(size, .@"8", 0);
+    } else {
+        @panic("tinyobj_allocator null arena");
+    }
 }
 
 export fn tinyobj_calloc(num: usize, size: usize) ?*anyopaque {
-    _ = num;
-    _ = size;
-    unreachable;
+    if (current_arena) |arena| {
+        const result = arena.allocator().rawAlloc(num * size, .@"8", 0);
+        if (result) |r| @memset(r[0 .. num * size], 0);
+        return result;
+    } else {
+        @panic("tinyobj_allocator null arena");
+    }
 }
 
 export fn tinyobj_free(ptr: ?*anyopaque) void {
-    _ = ptr;
-    unreachable;
+    if (current_arena) |arena| {
+        const slice: []u8 = @as([*]u8, @ptrCast(ptr))[0..1];
+        arena.allocator().rawFree(slice, .@"8", 0);
+    } else {
+        @panic("tinyobj_allocator null arena");
+    }
 }
 
-export fn tinyobj_realloc(ptr: ?*anyopaque, new_size: usize) ?*anyopaque {
-    _ = ptr;
-    _ = new_size;
-    unreachable;
+export fn tinyobj_realloc(ptr_opt: ?*anyopaque, new_size: usize) ?*anyopaque {
+    if (current_arena) |arena| {
+        if (ptr_opt) |ptr| {
+            const len = if (ptr == arena.last_allocation) arena.last_size else 1;
+            const slice: []u8 = @as([*]u8, @ptrCast(ptr))[0..len];
+            return arena.allocator().rawRemap(slice, .@"8", new_size, 0);
+        } else {
+            return arena.allocator().rawAlloc(new_size, .@"8", 0);
+        }
+    } else {
+        @panic("tinyobj_allocator null arena");
+    }
 }
