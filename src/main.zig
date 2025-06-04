@@ -64,8 +64,8 @@ fn run() !void {
     camera_entity = Entity.new();
 
     // var model = try createCubeModel(.{});
-    var model = try createCubeModelIndexed(.{});
-    // var model = try Model.create(&device, &.{
+    // var model = try createCubeModelIndexed(.{});
+    // var model = try Model.create(&device, Model.build(&.{
     //     .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
     //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
     //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
@@ -73,13 +73,17 @@ fn run() !void {
     //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
     //     .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
     //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
-    // }, void, null);
-    // var model = try Model.create(&device, &.{
-    //     .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
-    //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
-    //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
-    //     .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
-    // }, u32, &.{ 0, 1, 2, 1, 3, 2 });
+    // }));
+    // var model = try Model.create(&device, Model.buildIndexed(
+    //     &.{
+    //         .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
+    //         .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
+    //         .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
+    //         .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
+    //     },
+    //     &[_]u8{ 0, 1, 2, 1, 3, 2 },
+    // ));
+    var model = try Model.load(&device, "res/cube.obj");
     defer model.destroy();
 
     var entities_ = [_]Entity{Entity.new()};
@@ -218,7 +222,7 @@ fn createCubeModel(offset: Vec3) !Model {
         vertex.position = vertex.position.add(offset);
     }
 
-    return try Model.create(&device, &vertices, void, null);
+    return try Model.create(&device, Model.build(&vertices));
 }
 
 fn createCubeModelIndexed(offset: Vec3) !Model {
@@ -280,5 +284,5 @@ fn createCubeModelIndexed(offset: Vec3) !Model {
         20, 21, 22, 20, 23, 21,
     };
 
-    return try Model.create(&device, &vertices, @TypeOf(indices[0]), &indices);
+    return try Model.create(&device, Model.buildIndexed(&vertices, &indices));
 }
