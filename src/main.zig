@@ -63,7 +63,7 @@ fn run() !void {
 
     camera_entity = Entity.new();
 
-    var model = try Model.load(&device, "res/custom.obj");
+    var model = try Model.load(&device, "res/smooth_vase.obj");
     defer model.destroy();
 
     var entities_ = [_]Entity{Entity.new()};
