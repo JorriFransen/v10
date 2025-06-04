@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
 const tol = @import("../tinyobjloader/tiny_obj_loader.zig");
+const mem = @import("../memory.zig");
 
 const Model = @This();
 const Device = gfx.Device;
@@ -50,11 +51,116 @@ pub const Vertex = struct {
         }
         break :blk result;
     };
+
+    pub fn format(v: Vertex, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return writer.print("p({},{},{}), c({},{},{}), n({},{},{}), u({},{})", .{ v.position.x, v.position.y, v.position.z, v.color.x, v.color.y, v.color.z, v.normal.x, v.normal.y, v.normal.z, v.uv.x, v.uv.y });
+    }
 };
 
-pub fn load(path: []const u8) Model {
-    _ = path;
-    tol.tinyobj_parse_obj();
+pub fn load(device: *Device, path: []const u8) !Model {
+    const file_reader_callback = struct {
+        pub fn f(ctx: ?*anyopaque, _file_name: [*c]const u8, is_mtl: c_int, _: [*c]const u8, out_buf: [*c][*c]u8, out_len: [*c]usize) callconv(.c) void {
+            _ = ctx;
+
+            const file_name = std.mem.span(_file_name);
+
+            if (std.fs.cwd().openFile(file_name, .{})) |file| {
+                defer file.close();
+                const size = file.getEndPos() catch unreachable;
+                const buflen = size + 1;
+
+                // TODO: CLEANUP: Modify tinyobj to use a custom allocator (tinyobj_parse_obj calls free(c) on this buffer)
+                const ptr = std.c.malloc(buflen).?;
+                const buffer: []u8 = @as([*]u8, @ptrCast(ptr))[0..buflen];
+
+                const read = file.readAll(buffer) catch unreachable;
+                assert(size == read);
+                buffer[read] = 0;
+
+                out_buf.* = buffer.ptr;
+                out_len.* = read;
+            } else |_| {
+                out_buf.* = null;
+                out_len.* = 0;
+
+                if (is_mtl == 1) {
+                    return; // Don't report error on missing mtl file
+                }
+
+                std.log.err("Unable to open file: '{s}'", .{file_name});
+                @panic("Unable to open .obj file");
+            }
+        }
+    }.f;
+
+    var attribs: tol.tinyobj_attrib_t = undefined;
+    var _shapes: [*]tol.tinyobj_shape_t = undefined;
+    var num_shapes: usize = undefined;
+    var materials: [*]tol.tinyobj_material_t = undefined;
+    var num_materials: usize = undefined;
+
+    const parse_result = tol.tinyobj_parse_obj(
+        &attribs,
+        @ptrCast(&_shapes),
+        &num_shapes,
+        @ptrCast(&materials),
+        &num_materials,
+        path.ptr,
+        file_reader_callback,
+        null,
+        tol.TINYOBJ_FLAG_TRIANGULATE,
+    );
+    assert(parse_result == tol.TINYOBJ_SUCCESS);
+
+    const shapes = _shapes[0..num_shapes];
+    const vertex_indices = attribs.faces[0..attribs.num_faces];
+    const vertices_per_face = attribs.face_num_verts[0..attribs.num_face_num_verts];
+    const positions: []Vec3 = @as([*]Vec3, @ptrCast(attribs.vertices))[0..attribs.num_vertices];
+    const normals: []Vec3 = @as([*]Vec3, @ptrCast(attribs.normals))[0..attribs.num_normals];
+    const uvs: []Vec2 = @as([*]Vec2, @ptrCast(attribs.texcoords))[0..attribs.num_texcoords];
+
+    var ta = mem.get_temp();
+    defer ta.release();
+
+    const num_faces: usize = attribs.num_face_num_verts;
+    const num_vertices: usize = num_faces * 3;
+
+    const vertices = try ta.allocator.alloc(Vertex, num_vertices);
+
+    var total_faces: usize = 0;
+    var total_vertices: usize = 0;
+
+    std.log.debug("attribs: {}", .{attribs});
+
+    for (shapes) |shape| {
+        const shape_faces: usize = shape.length;
+
+        for (0..shape_faces) |fi| {
+            assert(shape.face_offset == total_faces);
+            const face_vertices: usize = @intCast(vertices_per_face[shape.face_offset + fi]);
+            assert(face_vertices == 3);
+
+            const first_index = total_vertices;
+            for (0..face_vertices) |vi| {
+                const vertex_index = vertex_indices[first_index + vi];
+
+                vertices[first_index + vi] = .{
+                    .position = positions[@intCast(vertex_index.v_idx)],
+                    .color = Vec3.scalar(1),
+                    .normal = normals[@intCast(vertex_index.vn_idx)],
+                    .uv = uvs[@intCast(vertex_index.vt_idx)],
+                };
+            }
+
+            total_vertices += face_vertices;
+        }
+        total_faces += shape_faces;
+    }
+
+    assert(num_faces == total_faces);
+    assert(num_vertices == total_vertices);
+
+    return try create(device, vertices, void, null);
 }
 
 pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: type, indices_opt: ?[]const IndexType) !Model {

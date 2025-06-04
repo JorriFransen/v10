@@ -545,31 +545,6 @@ static char *my_strndup(const char *s, size_t len) {
   return d;
 }
 
-char *dynamic_fgets(char **buf, size_t *size, FILE *file) {
-  char *offset;
-  char *ret;
-  size_t old_size;
-
-  if (!(ret = fgets(*buf, (int)*size, file))) {
-    return ret;
-  }
-
-  if (NULL != strchr(*buf, '\n')) {
-    return ret;
-  }
-
-  do {
-    old_size = *size;
-    *size *= 2;
-    *buf = (char*)TINYOBJ_REALLOC_SIZED(*buf, old_size, *size);
-    offset = &((*buf)[old_size - 1]);
-
-    ret = fgets(offset, (int)(old_size + 1), file);
-  } while(ret && (NULL == strchr(*buf, '\n')));
-
-  return ret;
-}
-
 static void initMaterial(tinyobj_material_t *material) {
   int i;
   material->name = NULL;
@@ -1200,7 +1175,7 @@ static int parseLine(Command *command, const char *p, size_t p_len,
   /* line */
   if (token[0] == 'l' && IS_SPACE((token[1]))) {
     size_t num_f = 0;
-    
+
     tinyobj_vertex_index_t f[2];
     token += 2;
     skip_space(&token);
@@ -1345,7 +1320,7 @@ static size_t basename_len(const char *filename, size_t filename_length) {
   size_t count = 1;
 
   /* On Windows, the directory delimiter is '\' and both it and '/' is
-   * reserved by the filesystem. On *nix platforms, only the '/' character 
+   * reserved by the filesystem. On *nix platforms, only the '/' character
    * is reserved, so account for the two cases separately. */
   #if _WIN32
     while (p[-1] != '/' && p[-1] != '\\') {
