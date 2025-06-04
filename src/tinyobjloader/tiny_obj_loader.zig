@@ -2,6 +2,7 @@ const std = @import("std");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
 const mem = @import("../memory.zig");
+const log = std.log.scoped(.tinyobjloader);
 
 const Device = gfx.Device;
 const Model = gfx.Model;
@@ -31,8 +32,26 @@ const ParseResult = enum(c_int) {
     error_file_operation = -3,
 };
 
-const LoadFileFN = *const fn (ctx: ?*anyopaque, file_name: [*:0]const u8, is_mtl: c_int, obj_file_name: [*:0]const u8, out_buf: *?[*]u8, out_len: *usize) callconv(.c) void;
-extern fn tinyobj_parse_obj(attrib: *Attributes, shapes: *[*]Shape, num_shapes: *usize, materials: *[*]Material, num_materials: *usize, file_name: [*:0]const u8, loadFile: LoadFileFN, ctx: ?*anyopaque, flags: Flags) callconv(.c) ParseResult;
+const LoadFileFN = *const fn (
+    ctx: ?*anyopaque,
+    file_name: [*:0]const u8,
+    is_mtl: c_int,
+    obj_file_name: [*:0]const u8,
+    out_buf: *?[*]u8,
+    out_len: *usize,
+) callconv(.c) void;
+
+extern fn tinyobj_parse_obj(
+    attrib: *Attributes,
+    shapes: *[*]Shape,
+    num_shapes: *usize,
+    materials: *[*]Material,
+    num_materials: *usize,
+    file_name: [*:0]const u8,
+    loadFile: LoadFileFN,
+    ctx: ?*anyopaque,
+    flags: Flags,
+) callconv(.c) ParseResult;
 
 var current_arena: ?*mem.Arena = null;
 
@@ -51,6 +70,7 @@ pub fn loadWithIndexType(arena: *mem.Arena, path: [:0]const u8, comptime IndexTy
 
     const vertex_indices = attribs.faces[0..attribs.num_faces];
     const positions: []Vec3 = @as([*]Vec3, @ptrCast(attribs.vertices))[0..attribs.num_vertices];
+    const colors: []Vec3 = if (attribs.num_colors > 0) @as([*]Vec3, @ptrCast(attribs.colors))[0..attribs.num_colors] else &.{};
     const normals: []Vec3 = @as([*]Vec3, @ptrCast(attribs.normals))[0..attribs.num_normals];
     const uvs: []Vec2 = @as([*]Vec2, @ptrCast(attribs.texcoords))[0..attribs.num_texcoords];
 
@@ -58,9 +78,10 @@ pub fn loadWithIndexType(arena: *mem.Arena, path: [:0]const u8, comptime IndexTy
 
     // This can't be done by shape(/face) since tol doesn't expose face count for triangulated shapes
     for (vertices, vertex_indices) |*vertex, vi| {
+        const v_index = vi.v_idx;
         vertex.* = .{
-            .position = positions[@intCast(vi.v_idx)],
-            .color = Vec3.scalar(1),
+            .position = positions[@intCast(v_index)],
+            .color = if (v_index < colors.len) colors[@intCast(v_index)] else Vec3.scalar(1),
             .normal = normals[@intCast(vi.vn_idx)],
             .uv = uvs[@intCast(vi.vt_idx)],
         };
@@ -96,7 +117,7 @@ pub fn file_reader_callback(ctx: ?*anyopaque, _file_name: [*:0]const u8, is_mtl:
             return; // Don't report error on missing mtl file
         }
 
-        std.log.err("Unable to open file: '{s}'", .{file_name});
+        log.err("Unable to open file: '{s}'", .{file_name});
         @panic("Unable to open .obj file");
     }
 }

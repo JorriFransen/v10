@@ -66,6 +66,7 @@ typedef struct { int v_idx, vt_idx, vn_idx; } tinyobj_vertex_index_t;
 
 typedef struct {
   unsigned int num_vertices;
+  unsigned int num_colors;
   unsigned int num_normals;
   unsigned int num_texcoords;
   unsigned int num_faces;
@@ -74,6 +75,7 @@ typedef struct {
   int pad0;
 
   float *vertices;
+  float *colors;
   float *normals;
   float *texcoords;
   tinyobj_vertex_index_t *faces;
@@ -1072,6 +1074,7 @@ int tinyobj_parse_mtl_file(tinyobj_material_t **materials_out,
 typedef enum {
   COMMAND_EMPTY,
   COMMAND_V,
+  COMMAND_VC,
   COMMAND_VN,
   COMMAND_VT,
   COMMAND_F,
@@ -1083,9 +1086,12 @@ typedef enum {
 } CommandType;
 
 typedef struct {
-  float vx, vy, vz;
-  float nx, ny, nz;
-  float tx, ty;
+  union {
+    struct { float vx, vy, vz; };
+    struct { float x, y, z, r, g, b; } vc;
+    struct { float nx, ny, nz; };
+    struct { float tx, ty; };
+  };
 
   /* @todo { Use dynamic array } */
   tinyobj_vertex_index_t f[TINYOBJ_MAX_FACES_PER_F_LINE];
@@ -1145,7 +1151,19 @@ static int parseLine(Command *command, const char *p, size_t p_len,
     command->vx = x;
     command->vy = y;
     command->vz = z;
-    command->type = COMMAND_V;
+
+    skip_space(&token);
+    if (!IS_NEW_LINE(token[0])) {
+      float r, g, b;
+      parseFloat3(&r, &g, &b, &token);
+      command->vc.r = r;
+      command->vc.g = g;
+      command->vc.b = b;
+      command->type = COMMAND_VC;
+    } else {
+      command->type = COMMAND_V;
+    }
+
     return 1;
   }
 
@@ -1382,6 +1400,7 @@ int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
   size_t num_lines = 0;
 
   size_t num_v = 0;
+  size_t num_c = 0;
   size_t num_vn = 0;
   size_t num_vt = 0;
   size_t num_f = 0;
@@ -1426,6 +1445,9 @@ int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
       if (ret) {
         if (commands[i].type == COMMAND_V) {
           num_v++;
+        } else if (commands[i].type == COMMAND_VC) {
+          num_v++;
+          num_c++;
         } else if (commands[i].type == COMMAND_VN) {
           num_vn++;
         } else if (commands[i].type == COMMAND_VT) {
@@ -1485,6 +1507,7 @@ int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
 
   {
     size_t v_count = 0;
+    size_t c_count = 0;
     size_t n_count = 0;
     size_t t_count = 0;
     size_t f_count = 0;
@@ -1494,6 +1517,8 @@ int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
 
     attrib->vertices = (float *)TINYOBJ_MALLOC(sizeof(float) * num_v * 3);
     attrib->num_vertices = (unsigned int)num_v;
+    attrib->colors = (float *)TINYOBJ_MALLOC(sizeof(float) * num_c * 3);
+    attrib->num_colors = (unsigned int)num_c;
     attrib->normals = (float *)TINYOBJ_MALLOC(sizeof(float) * num_vn * 3);
     attrib->num_normals = (unsigned int)num_vn;
     attrib->texcoords = (float *)TINYOBJ_MALLOC(sizeof(float) * num_vt * 2);
@@ -1543,6 +1568,17 @@ int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
         attrib->vertices[3 * v_count + 1] = commands[i].vy;
         attrib->vertices[3 * v_count + 2] = commands[i].vz;
         v_count++;
+      } else if (commands[i].type == COMMAND_VC) {
+        attrib->vertices[3 * v_count + 0] = commands[i].vc.x;
+        attrib->vertices[3 * v_count + 1] = commands[i].vc.y;
+        attrib->vertices[3 * v_count + 2] = commands[i].vc.z;
+        v_count++;
+
+        attrib->colors[3 * c_count + 0] = commands[i].vc.r;
+        attrib->colors[3 * c_count + 1] = commands[i].vc.g;
+        attrib->colors[3 * c_count + 2] = commands[i].vc.b;
+        c_count++;
+
       } else if (commands[i].type == COMMAND_VN) {
         attrib->normals[3 * n_count + 0] = commands[i].nx;
         attrib->normals[3 * n_count + 1] = commands[i].ny;
@@ -1683,6 +1719,8 @@ int tinyobj_parse_obj(tinyobj_attrib_t *attrib, tinyobj_shape_t **shapes,
 void tinyobj_attrib_init(tinyobj_attrib_t *attrib) {
   attrib->vertices = NULL;
   attrib->num_vertices = 0;
+  attrib->colors = NULL;
+  attrib->num_colors = 0;
   attrib->normals = NULL;
   attrib->num_normals = 0;
   attrib->texcoords = NULL;
@@ -1696,6 +1734,7 @@ void tinyobj_attrib_init(tinyobj_attrib_t *attrib) {
 
 void tinyobj_attrib_free(tinyobj_attrib_t *attrib) {
   if (attrib->vertices) TINYOBJ_FREE(attrib->vertices);
+  if (attrib->colors) TINYOBJ_FREE(attrib->colors);
   if (attrib->normals) TINYOBJ_FREE(attrib->normals);
   if (attrib->texcoords) TINYOBJ_FREE(attrib->texcoords);
   if (attrib->faces) TINYOBJ_FREE(attrib->faces);
