@@ -9,6 +9,9 @@ const Vertex = Model.Vertex;
 const Builder = Model.Builder;
 const Vec3 = math.Vec3;
 const Vec2 = math.Vec2;
+const Attributes = tol.tinyobj_attrib_t;
+const Shape = tol.tinyobj_shape_t;
+const Material = tol.tinyobj_material_t;
 
 const assert = std.debug.assert;
 
@@ -16,32 +19,35 @@ const tol = @cImport({
     @cInclude("tiny_obj_loader.h");
 });
 
+const Flags = packed struct(c_uint) {
+    triangulate: bool = true,
+    __reserved__: u31 = 0,
+};
+
+const ParseResult = enum(c_int) {
+    success = 0,
+    error_empty = -1,
+    error_invalid_parameter = -2,
+    error_file_operation = -3,
+};
+
+const LoadFileFN = *const fn (ctx: ?*anyopaque, file_name: [*:0]const u8, is_mtl: c_int, obj_file_name: [*:0]const u8, out_buf: *?[*]u8, out_len: *usize) callconv(.c) void;
+extern fn tinyobj_parse_obj(attrib: *Attributes, shapes: *[*]Shape, num_shapes: *usize, materials: *[*]Material, num_materials: *usize, file_name: [*:0]const u8, loadFile: LoadFileFN, ctx: ?*anyopaque, flags: Flags) callconv(.c) ParseResult;
+
 var current_arena: ?*mem.Arena = null;
 
-pub fn load(arena: *mem.Arena, path: []const u8) !Model.Builder(u32) {
+pub fn load(arena: *mem.Arena, path: [:0]const u8) !Model.Builder(u32) {
     return loadWithIndexType(arena, path, u32);
 }
 
-pub fn loadWithIndexType(arena: *mem.Arena, path: []const u8, comptime IndexType: type) !Model.Builder(IndexType) {
-    var attribs: tol.tinyobj_attrib_t = undefined;
-    var _shapes: [*]tol.tinyobj_shape_t = undefined;
-    var num_shapes: usize = undefined;
-    var materials: [*]tol.tinyobj_material_t = undefined;
-    var num_materials: usize = undefined;
+pub fn loadWithIndexType(arena: *mem.Arena, path: [:0]const u8, comptime IndexType: type) !Model.Builder(IndexType) {
+    var attribs: Attributes = undefined;
+    var shapes: []Shape = undefined;
+    var materials: []Material = undefined;
 
     current_arena = arena;
-    const parse_result = tol.tinyobj_parse_obj(
-        &attribs,
-        @ptrCast(&_shapes),
-        &num_shapes,
-        @ptrCast(&materials),
-        &num_materials,
-        path.ptr,
-        file_reader_callback,
-        null,
-        tol.TINYOBJ_FLAG_TRIANGULATE,
-    );
-    assert(parse_result == tol.TINYOBJ_SUCCESS);
+    const parse_result = tinyobj_parse_obj(&attribs, &shapes.ptr, &shapes.len, &materials.ptr, &materials.len, path, file_reader_callback, null, .{ .triangulate = true });
+    assert(parse_result == .success);
 
     const vertex_indices = attribs.faces[0..attribs.num_faces];
     const positions: []Vec3 = @as([*]Vec3, @ptrCast(attribs.vertices))[0..attribs.num_vertices];
@@ -63,7 +69,7 @@ pub fn loadWithIndexType(arena: *mem.Arena, path: []const u8, comptime IndexType
     return Builder(IndexType){ .vertices = vertices, .indices = null };
 }
 
-pub fn file_reader_callback(ctx: ?*anyopaque, _file_name: [*c]const u8, is_mtl: c_int, _: [*c]const u8, out_buf: [*c][*c]u8, out_len: [*c]usize) callconv(.c) void {
+pub fn file_reader_callback(ctx: ?*anyopaque, _file_name: [*:0]const u8, is_mtl: c_int, _: [*:0]const u8, out_buf: *?[*]u8, out_len: *usize) callconv(.c) void {
     _ = ctx;
 
     const file_name = std.mem.span(_file_name);
@@ -73,8 +79,7 @@ pub fn file_reader_callback(ctx: ?*anyopaque, _file_name: [*c]const u8, is_mtl: 
         const size = file.getEndPos() catch unreachable;
         const buflen = size + 1;
 
-        // TODO: CLEANUP: Modify tinyobj to use a custom allocator (tinyobj_parse_obj calls free(c) on this buffer)
-        const ptr = std.c.malloc(buflen).?;
+        const ptr = tinyobj_malloc(buflen).?;
         const buffer: []u8 = @as([*]u8, @ptrCast(ptr))[0..buflen];
 
         const read = file.readAll(buffer) catch unreachable;

@@ -61,7 +61,7 @@ pub fn Builder(comptime IndexType_: type) type {
     };
 }
 
-pub fn load(device: *Device, path: []const u8) !Model {
+pub fn load(device: *Device, path: [:0]const u8) !Model {
     var ta = mem.get_temp();
     defer ta.release();
 
