@@ -412,11 +412,19 @@ fn chooseSwapSurfaceFormat(this: *@This(), formats: []vk.SurfaceFormatKHR) vk.Su
     return formats[0];
 }
 
+fn tagName(v: anytype) ?[]const u8 {
+    const E = @TypeOf(v);
+
+    return inline for (@typeInfo(E).@"enum".fields) |f| {
+        if (@intFromEnum(v) == f.value) break f.name;
+    } else return null;
+}
+
 fn chooseSwapPresentMode(this: *@This(), pmodes: []vk.PresentModeKHR) vk.PresentModeKHR {
     _ = this;
     assert(pmodes.len > 0);
 
-    for (pmodes) |pm| vklog.debug("Available present mode: {s}", .{@tagName(pm)});
+    for (pmodes) |pm| vklog.debug("Available present mode: {?s}({})", .{ tagName(pm), @intFromEnum(pm) });
     var result = vk.PresentModeKHR.fifo_khr;
 
     for (pmodes) |present_mode| {
