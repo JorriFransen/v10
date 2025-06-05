@@ -15,7 +15,7 @@ const enable_validation_layers: bool = builtin.mode == .Debug;
 const validation_layers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 const device_extensions = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
-    vk.extensions.khr_index_type_uint_8.name,
+    vk.extensions.ext_index_type_uint_8.name,
 };
 
 const debug_messenger_create_info = vk.DebugUtilsMessengerCreateInfoEXT{
