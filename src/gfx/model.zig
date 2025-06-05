@@ -2,6 +2,11 @@ const std = @import("std");
 const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
+const mem = @import("../memory.zig");
+const resource = @import("../resource.zig");
+const obj_parser = @import("../obj_parser.zig");
+
+const log = std.log.scoped(.model);
 
 const Device = gfx.Device;
 const Model = @This();
@@ -49,11 +54,49 @@ pub const Vertex = struct {
     };
 };
 
+pub const LoadModelError =
+    resource.LoadResourceError ||
+    obj_parser.ObjParseError ||
+    CreateModelError;
+
+pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
+    var ta = mem.get_temp();
+    defer ta.release();
+
+    const content = try resource.load(ta.allocator(), name);
+
+    var mta = mem.get_scratch(ta.arena);
+    defer mta.release();
+
+    const model = try obj_parser.parse(mta.allocator(), .{ .buffer = content, .name = name });
+    ta.release();
+
+    const vertices = try ta.allocator().alloc(Vertex, model.faces.len * 3);
+    for (model.faces, 0..) |face, i| {
+        vertices[3 * i] = .{
+            .position = Vec3.v(model.vertices[face.indices[0].vertex]),
+            .color = Vec3.scalar(1),
+        };
+
+        vertices[3 * i + 1] = .{
+            .position = Vec3.v(model.vertices[face.indices[1].vertex]),
+            .color = Vec3.scalar(1),
+        };
+
+        vertices[3 * i + 2] = .{
+            .position = Vec3.v(model.vertices[face.indices[2].vertex]),
+            .color = Vec3.scalar(1),
+        };
+    }
+
+    return try create(device, build(vertices));
+}
+
 inline fn validIndexType(T: type) bool {
     return T == u32 or T == u16 or T == u8;
 }
 
-pub fn build(vertices: []const Vertex) ModelBuilder(void) {
+pub fn build(vertices: []const Vertex) Builder(void) {
     return .{ .vertices = vertices };
 }
 
@@ -63,7 +106,6 @@ pub fn buildIndexed(vertices: []const Vertex, indices: anytype) blk: {
 
     const ptr_info = @typeInfo(@TypeOf(indices));
     if (ptr_info != .pointer) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
-    // if (ptr_info.pointer.is_const) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
     if (ptr_info.pointer.size != .one) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
 
     const array_info = @typeInfo(ptr_info.pointer.child);
@@ -72,12 +114,12 @@ pub fn buildIndexed(vertices: []const Vertex, indices: anytype) blk: {
     const child_info = @typeInfo(array_info.array.child);
     if (child_info != .int or !validIndexType(array_info.array.child)) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
 
-    break :blk ModelBuilder(array_info.array.child);
+    break :blk Builder(array_info.array.child);
 } {
     return .{ .vertices = vertices, .indices = indices };
 }
 
-pub fn ModelBuilder(comptime IT: type) type {
+pub fn Builder(comptime IT: type) type {
     return struct {
         pub const IndexType = IT;
         vertices: []const Vertex,
@@ -85,7 +127,12 @@ pub fn ModelBuilder(comptime IT: type) type {
     };
 }
 
-pub fn create(device: *Device, builder: anytype) !Model {
+pub const CreateModelError = error{
+    VulkanUnexpected,
+    VulkanMapMemory,
+};
+
+pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
     const IndexType = @TypeOf(builder).IndexType;
     assert(builder.vertices.len >= 3);
 
@@ -98,28 +145,31 @@ pub fn create(device: *Device, builder: anytype) !Model {
 
     const vertex_buffer_size: vk.DeviceSize = @sizeOf(@TypeOf(builder.vertices[0])) * builder.vertices.len;
     var vertex_staging_buffer_memory: vk.DeviceMemory = .null_handle;
-    const vertex_staging_buffer = try device.createBuffer(
+    const vertex_staging_buffer = device.createBuffer(
         vertex_buffer_size,
         .{ .transfer_src_bit = true },
         .{ .host_visible_bit = true, .host_coherent_bit = true },
         &vertex_staging_buffer_memory,
-    );
+    ) catch return error.VulkanUnexpected;
     defer {
         vkd.destroyBuffer(vertex_staging_buffer, null);
         vkd.freeMemory(vertex_staging_buffer_memory, null);
     }
 
-    const vertex_data = try vkd.mapMemory(vertex_staging_buffer_memory, 0, vertex_buffer_size, .{}) orelse return error.vkMapMemoryFailed;
+    const vertex_data_opt = vkd.mapMemory(vertex_staging_buffer_memory, 0, vertex_buffer_size, .{}) catch
+        return error.VulkanMapMemory;
+    const vertex_data = vertex_data_opt orelse return error.VulkanMapMemory;
+
     const vertices_mapped: [*]Vertex = @ptrCast(@alignCast(vertex_data));
     @memcpy(vertices_mapped, builder.vertices);
     vkd.unmapMemory(vertex_staging_buffer_memory);
 
-    this.vertex_buffer = try device.createBuffer(
+    this.vertex_buffer = device.createBuffer(
         vertex_buffer_size,
         .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
         .{ .device_local_bit = true },
         &this.vertex_buffer_memory,
-    );
+    ) catch return error.VulkanUnexpected;
 
     device.copyBuffer(vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
 
@@ -136,28 +186,30 @@ pub fn create(device: *Device, builder: anytype) !Model {
 
         const index_buffer_size: vk.DeviceSize = @sizeOf(IndexType) * indices.len;
         var index_staging_buffer_memory: vk.DeviceMemory = .null_handle;
-        const index_staging_buffer = try device.createBuffer(
+        const index_staging_buffer = device.createBuffer(
             index_buffer_size,
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
             &index_staging_buffer_memory,
-        );
+        ) catch return error.VulkanUnexpected;
         defer {
             vkd.destroyBuffer(index_staging_buffer, null);
             vkd.freeMemory(index_staging_buffer_memory, null);
         }
 
-        const index_data = try vkd.mapMemory(index_staging_buffer_memory, 0, index_buffer_size, .{}) orelse return error.vkMapMemoryFailed;
+        const index_data_opt = vkd.mapMemory(index_staging_buffer_memory, 0, index_buffer_size, .{}) catch return error.VulkanMapMemory;
+        const index_data = index_data_opt orelse return error.VulkanMapMemory;
+
         const indices_mapped: [*]IndexType = @ptrCast(@alignCast(index_data));
         @memcpy(indices_mapped, indices);
         vkd.unmapMemory(index_staging_buffer_memory);
 
-        this.index_buffer = try device.createBuffer(
+        this.index_buffer = device.createBuffer(
             index_buffer_size,
             .{ .transfer_dst_bit = true, .index_buffer_bit = true },
             .{ .device_local_bit = true },
             &this.index_buffer_memory,
-        );
+        ) catch return error.VulkanUnexpected;
 
         device.copyBuffer(index_staging_buffer, this.index_buffer, index_buffer_size);
     } else {
