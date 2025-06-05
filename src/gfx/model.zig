@@ -4,6 +4,7 @@ const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
 
 const Device = gfx.Device;
+const Model = @This();
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -24,13 +25,13 @@ pub const Vertex = struct {
     position: Vec3,
     color: Vec3,
 
-    const field_count = @typeInfo(@This()).@"struct".fields.len;
-    pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(@This()), .input_rate = .vertex };
+    const field_count = @typeInfo(Vertex).@"struct".fields.len;
+    pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(Vertex), .input_rate = .vertex };
     pub const attribute_descriptions: [field_count]vk.VertexInputAttributeDescription = blk: {
         var result: [field_count]vk.VertexInputAttributeDescription = undefined;
 
         for (&result, 0..) |*desc, i| {
-            const field_info = @typeInfo(@This()).@"struct".fields[i];
+            const field_info = @typeInfo(Vertex).@"struct".fields[i];
 
             desc.* = .{
                 .location = i,
@@ -41,23 +42,61 @@ pub const Vertex = struct {
                     Vec3 => .r32g32b32_sfloat,
                     Vec4 => .r32g32b32a32_sfloat,
                 },
-                .offset = @offsetOf(@This(), field_info.name),
+                .offset = @offsetOf(Vertex, field_info.name),
             };
         }
         break :blk result;
     };
 };
 
-pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: type, indices_opt: ?[]const IndexType) !@This() {
-    const vkd = device.device;
-    assert(vertices.len >= 3);
+inline fn validIndexType(T: type) bool {
+    return T == u32 or T == u16 or T == u8;
+}
 
-    var this = @This(){
+pub fn build(vertices: []const Vertex) ModelBuilder(void) {
+    return .{ .vertices = vertices };
+}
+
+pub fn buildIndexed(vertices: []const Vertex, indices: anytype) blk: {
+    const err_fmt = "indices must be a single item non const pointer to an array (slice) of u32, u16 or u8. Found: '{}'";
+    const err_args = .{@TypeOf(indices)};
+
+    const ptr_info = @typeInfo(@TypeOf(indices));
+    if (ptr_info != .pointer) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+    // if (ptr_info.pointer.is_const) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+    if (ptr_info.pointer.size != .one) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+
+    const array_info = @typeInfo(ptr_info.pointer.child);
+    if (array_info != .array) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+
+    const child_info = @typeInfo(array_info.array.child);
+    if (child_info != .int or !validIndexType(array_info.array.child)) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+
+    break :blk ModelBuilder(array_info.array.child);
+} {
+    return .{ .vertices = vertices, .indices = indices };
+}
+
+pub fn ModelBuilder(comptime IT: type) type {
+    return struct {
+        pub const IndexType = IT;
+        vertices: []const Vertex,
+        indices: ?[]const IndexType = null,
+    };
+}
+
+pub fn create(device: *Device, builder: anytype) !Model {
+    const IndexType = @TypeOf(builder).IndexType;
+    assert(builder.vertices.len >= 3);
+
+    const vkd = device.device;
+
+    var this = Model{
         .device = device,
-        .vertex_count = @intCast(vertices.len),
+        .vertex_count = @intCast(builder.vertices.len),
     };
 
-    const vertex_buffer_size: vk.DeviceSize = @sizeOf(@TypeOf(vertices[0])) * vertices.len;
+    const vertex_buffer_size: vk.DeviceSize = @sizeOf(@TypeOf(builder.vertices[0])) * builder.vertices.len;
     var vertex_staging_buffer_memory: vk.DeviceMemory = .null_handle;
     const vertex_staging_buffer = try device.createBuffer(
         vertex_buffer_size,
@@ -72,7 +111,7 @@ pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: typ
 
     const vertex_data = try vkd.mapMemory(vertex_staging_buffer_memory, 0, vertex_buffer_size, .{}) orelse return error.vkMapMemoryFailed;
     const vertices_mapped: [*]Vertex = @ptrCast(@alignCast(vertex_data));
-    @memcpy(vertices_mapped, vertices);
+    @memcpy(vertices_mapped, builder.vertices);
     vkd.unmapMemory(vertex_staging_buffer_memory);
 
     this.vertex_buffer = try device.createBuffer(
@@ -84,13 +123,12 @@ pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: typ
 
     device.copyBuffer(vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
 
-    if (IndexType != void) {
-        const indices = indices_opt orelse @panic("Expected indices when IndexType is not void");
+    if (builder.indices) |indices| {
         assert(indices.len >= 3);
 
         this.index_count = @intCast(indices.len);
         this.index_type = switch (IndexType) {
-            else => @compileError(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{IndexType})),
+            else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{IndexType})),
             u8 => .uint8_khr,
             u16 => .uint16,
             u32 => .uint32,
@@ -123,13 +161,13 @@ pub fn create(device: *Device, vertices: []const Vertex, comptime IndexType: typ
 
         device.copyBuffer(index_staging_buffer, this.index_buffer, index_buffer_size);
     } else {
-        assert(indices_opt == null or indices_opt.?.len == 0);
+        assert(IndexType == void);
     }
 
     return this;
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn destroy(this: *Model) void {
     const vkd = this.device.device;
 
     vkd.destroyBuffer(this.vertex_buffer, null);
@@ -141,7 +179,7 @@ pub fn destroy(this: *@This()) void {
     }
 }
 
-pub fn bind(this: *const @This(), command_buffer: vk.CommandBuffer) void {
+pub fn bind(this: *const Model, command_buffer: vk.CommandBuffer) void {
     const vkd = this.device.device;
     const offsets = [_]vk.DeviceSize{0};
 
@@ -153,7 +191,7 @@ pub fn bind(this: *const @This(), command_buffer: vk.CommandBuffer) void {
     }
 }
 
-pub fn draw(this: *const @This(), command_buffer: vk.CommandBuffer) void {
+pub fn draw(this: *const Model, command_buffer: vk.CommandBuffer) void {
     const vkd = this.device.device;
 
     if (this.index_type != .none_khr) {
