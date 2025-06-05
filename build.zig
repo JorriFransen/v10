@@ -7,16 +7,19 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const clap = b.dependency("clap", .{});
+    const vulkan = b.dependency("vulkan", .{
+        .target = target,
+        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+    });
+    const vulkan_module = vulkan.module("vulkan-zig");
     const glfw = b.dependency("glfw", .{
         .x11 = true,
         .wayland = true,
         .target = target,
         .optimize = optimize,
     });
-    const vulkan = b.dependency("vulkan", .{
-        .target = target,
-        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
-    });
+    const glfw_module = glfw.module("glfw");
+    glfw_module.addImport("vulkan", vulkan_module);
 
     const main_module = b.addModule("main", .{
         .root_source_file = b.path("src/main.zig"),
@@ -24,8 +27,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     main_module.addImport("clap", clap.module("clap"));
-    main_module.addImport("glfw", glfw.module("glfw"));
-    main_module.addImport("vulkan", vulkan.module("vulkan-zig"));
+    main_module.addImport("glfw", glfw_module);
+    main_module.addImport("vulkan", vulkan_module);
 
     const exe = b.addExecutable(.{
         .name = "v10game",
