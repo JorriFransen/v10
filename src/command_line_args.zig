@@ -56,13 +56,13 @@ fn parseCommandLine() !ClapOptions {
     var tmp = mem.get_temp();
     defer tmp.release();
 
-    var arg_it = try std.process.ArgIterator.initWithAllocator(tmp.allocator);
+    var arg_it = try std.process.ArgIterator.initWithAllocator(tmp.allocator());
 
     const exe_name = std.fs.path.basename(arg_it.next().?);
     var diag = clap.Diagnostic{};
     var result = clap.parseEx(clap.Help, &clap_params, parsers, &arg_it, .{
         .diagnostic = &diag,
-        .allocator = tmp.allocator,
+        .allocator = tmp.allocator(),
     }) catch |err| {
         const err_args = diag.name.longest();
         const prefix = switch (err_args.kind) {

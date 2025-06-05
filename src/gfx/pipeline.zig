@@ -159,10 +159,10 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     var tmp = mem.get_temp();
     defer tmp.release();
 
-    const vert_code = try readShaderFile(tmp.allocator, vert_path);
+    const vert_code = try readShaderFile(tmp.allocator(), vert_path);
     vklog.debug("vert_code.len: {}", .{vert_code.len});
 
-    const frag_code = try readShaderFile(tmp.allocator, frag_path);
+    const frag_code = try readShaderFile(tmp.allocator(), frag_path);
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
     var this = @This(){

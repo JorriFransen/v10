@@ -280,17 +280,20 @@ pub const Arena = struct {
 };
 
 pub const TempArena = struct {
-    allocator: Allocator,
+    arena: *Arena,
     reset_to: usize,
 
     pub fn init(arena: *Arena) TempArena {
-        return .{ .allocator = arena.allocator(), .reset_to = arena.used };
+        return .{ .arena = arena, .reset_to = arena.used };
     }
 
     pub fn release(this: *TempArena) void {
-        const arena: *Arena = @ptrCast(@alignCast(this.allocator.ptr));
-        assert(arena.used >= this.reset_to);
-        arena.used = this.reset_to;
+        assert(this.arena.used >= this.reset_to);
+        this.arena.used = this.reset_to;
+    }
+
+    pub fn allocator(this: *TempArena) Allocator {
+        return this.arena.allocator();
     }
 };
 
