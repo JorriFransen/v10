@@ -237,6 +237,8 @@ fn pickPhysicalDevice(this: *@This()) !void {
     }
 
     var device_index: i64 = -1;
+    var high_score: i64 = -1;
+
     for (devices, 0..) |pdev, i| {
         const properties = this.vki.getPhysicalDeviceProperties(pdev);
         const name = std.mem.span(@as([*:0]const u8, @ptrCast(&properties.device_name)));
@@ -251,12 +253,20 @@ fn pickPhysicalDevice(this: *@This()) !void {
             .swapchain_support = try this.querySwapchainSupport(pdev, tmp.allocator()),
         };
 
-        var chosen = false;
         if (try this.isDeviceSuitable(dev_info)) {
-            if (device_index < 0) {
+            var score: i64 = 0;
+            score += switch (dev_info.properties.device_type) {
+                .discrete_gpu => 5,
+                .integrated_gpu => 4,
+                .virtual_gpu => 3,
+                .other, .cpu => 2,
+                else => 1,
+            };
+
+            if (score > high_score) {
+                high_score = score;
                 device_index = @intCast(i);
                 this.device_info = try dev_info.copy(mem.common_arena.allocator());
-                chosen = true;
             }
         }
     }
