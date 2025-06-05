@@ -33,6 +33,12 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(exe);
 
+    std.fs.cwd().makeDir("res") catch |e| switch (e) {
+        error.PathAlreadyExists => {}, // ok,
+        else => return e,
+    };
+    b.installDirectory(.{ .source_dir = b.path("res"), .install_dir = .bin, .install_subdir = "res" });
+
     const run_exe = b.addRunArtifact(exe);
     run_exe.step.dependOn(b.getInstallStep());
     run_exe.setCwd(b.path("zig-out/bin"));
