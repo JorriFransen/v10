@@ -29,6 +29,8 @@ index_type: vk.IndexType = .none_khr,
 pub const Vertex = struct {
     position: Vec3,
     color: Vec3,
+    normal: Vec3,
+    texcoord: Vec2,
 
     const field_count = @typeInfo(Vertex).@"struct".fields.len;
     pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(Vertex), .input_rate = .vertex };
@@ -71,21 +73,35 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     const model = try obj_parser.parse(mta.allocator(), .{ .buffer = content, .name = name });
     ta.release();
 
+    const mv = model.vertices;
+    const mn = model.normals;
+    const mt = model.texcoords;
+
     const vertices = try ta.allocator().alloc(Vertex, model.faces.len * 3);
     for (model.faces, 0..) |face, i| {
+        const idx0 = face.indices[0];
+        const idx1 = face.indices[1];
+        const idx2 = face.indices[2];
+
         vertices[3 * i] = .{
-            .position = Vec3.v(model.vertices[face.indices[0].vertex]),
+            .position = Vec3.v(mv[idx0.vertex]),
             .color = Vec3.scalar(1),
+            .normal = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{},
+            .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
         };
 
         vertices[3 * i + 1] = .{
-            .position = Vec3.v(model.vertices[face.indices[1].vertex]),
+            .position = Vec3.v(mv[idx1.vertex]),
             .color = Vec3.scalar(1),
+            .normal = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{},
+            .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
         };
 
         vertices[3 * i + 2] = .{
-            .position = Vec3.v(model.vertices[face.indices[2].vertex]),
+            .position = Vec3.v(mv[idx2.vertex]),
             .color = Vec3.scalar(1),
+            .normal = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{},
+            .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
         };
     }
 

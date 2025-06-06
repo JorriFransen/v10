@@ -171,13 +171,26 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
         };
 
         var field_it = split(fields, '/');
-        const vertex = parseInt64(field_it.next() orelse "");
-        const texcoord = parseInt64(field_it.next() orelse "");
-        const normal = parseInt64(field_it.next() orelse "");
+        const vertex = parseInt64(field_it.next() orelse "") - 1;
+        const texcoord = parseInt64(field_it.next() orelse "") - 1;
+        const normal = parseInt64(field_it.next() orelse "") - 1;
 
-        r.indices[i].vertex = if (vertex < 0) @intCast(vertex + (1 + num_verts)) else @intCast(vertex - 1);
-        r.indices[i].texcoord = if (texcoord < 0) @intCast(texcoord + (1 + num_texcoords)) else @intCast(texcoord - 1);
-        r.indices[i].normal = if (normal < 0) @intCast(normal + (1 + num_normals)) else @intCast(normal - 1);
+        if (vertex >= num_verts) {
+            log.err("Invalid vertex index: {}", .{vertex + 1});
+            return error.Syntax;
+        }
+        if (texcoord >= num_texcoords) {
+            log.err("Invalid texcoord index: {}", .{texcoord + 1});
+            return error.Syntax;
+        }
+        if (normal >= num_normals) {
+            log.err("Invalid normal index: {}", .{normal + 1});
+            return error.Syntax;
+        }
+
+        r.indices[i].vertex = @intCast(if (vertex < 0) vertex + (1 + num_verts) else vertex);
+        r.indices[i].texcoord = @intCast(if (texcoord < 0) texcoord + (1 + num_texcoords) else texcoord);
+        r.indices[i].normal = @intCast(if (normal < 0) normal + (1 + num_normals) else normal);
     }
 
     if (index_it.next() != null) {
