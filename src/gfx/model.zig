@@ -71,9 +71,10 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     defer mta.release();
 
     const model = try obj_parser.parse(mta.allocator(), .{ .buffer = content, .name = name });
-    ta.release();
+    ta.release(); // Free content
 
     const mv = model.vertices;
+    const mc = model.colors;
     const mn = model.normals;
     const mt = model.texcoords;
 
@@ -81,6 +82,8 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
 
     var face_count: usize = 0;
     var vi: usize = 0;
+
+    const white = Vec3.scalar(1);
 
     for (model.objects) |o| {
         face_count += o.faces.len;
@@ -92,21 +95,21 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
 
             vertices[vi] = .{
                 .position = Vec3.v(mv[idx0.vertex]),
-                .color = Vec3.scalar(1),
+                .color = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white,
                 .normal = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{},
                 .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
             };
 
             vertices[vi + 1] = .{
                 .position = Vec3.v(mv[idx1.vertex]),
-                .color = Vec3.scalar(1),
+                .color = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white,
                 .normal = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{},
                 .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
             };
 
             vertices[vi + 2] = .{
                 .position = Vec3.v(mv[idx2.vertex]),
-                .color = Vec3.scalar(1),
+                .color = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white,
                 .normal = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{},
                 .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
             };

@@ -5,14 +5,22 @@ const mem = @import("memory.zig");
 
 const Allocator = std.mem.Allocator;
 const Arena = mem.Arena;
+const SplitIterator = std.mem.SplitIterator(u8, .scalar);
+const TokenIterator = std.mem.TokenIterator(u8, .scalar);
 
 const assert = std.debug.assert;
+
+pub const ParseFlags = packed struct(u8) {
+    vertex_colors: bool = true,
+    __reserved__: u7 = 0,
+};
 
 pub const ParseOptions = struct {
     /// Contents of an obj file.
     buffer: []const u8,
     /// Filename or other identifier used in error messages.
     name: []const u8 = "",
+    flags: ParseFlags = .{},
 };
 
 pub const ObjParseError = error{
@@ -37,6 +45,7 @@ const Face = struct {
 
 const Model = struct {
     vertices: []const @Vector(3, f32),
+    colors: []const @Vector(3, f32),
     normals: []const @Vector(3, f32),
     texcoords: []const @Vector(2, f32),
     faces: []const Face,
@@ -52,7 +61,6 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     var num_texcoords: u32 = 0;
     var num_faces: usize = 0;
 
-    // First pass
     var line_it = tokenize(buffer, '\n'); // TODO: Make this work with CRLF
     var line_num: usize = 1;
     while (line_it.next()) |line| : (line_num += 1) {
@@ -90,6 +98,13 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     const faces = try allocator.alloc(Face, num_faces);
     const objects = try allocator.alloc(Object, num_objects);
 
+    var colors: []@Vector(3, f32) = &.{};
+    var parse_vector_fn = &parseVector;
+    if (options.flags.vertex_colors) {
+        colors = try allocator.alloc(@Vector(3, f32), num_verts);
+        parse_vector_fn = parseVectorAndColor;
+    }
+
     num_verts = 0;
     num_normals = 0;
     num_texcoords = 0;
@@ -104,17 +119,17 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     while (line_it.next()) |line| : (line_num += 1) {
         errdefer log.err("{s}:{}: Invalid line: '{s}'", .{ options.name, line_num, line });
 
-        var field_it = split(line, ' ');
+        var field_it = tokenize(line, ' ');
         const field = field_it.next() orelse return error.Syntax;
 
         if (eq(field, "v")) {
-            vertices[num_verts] = parseVec3(field_it.rest());
+            parse_vector_fn(&field_it, num_verts, vertices, colors);
             num_verts += 1;
         } else if (eq(field, "vn")) {
-            normals[num_normals] = parseVec3(field_it.rest());
+            normals[num_normals] = parseVec3(&field_it);
             num_normals += 1;
         } else if (eq(field, "vt")) {
-            texcoords[num_texcoords] = parseVec2(field_it.rest());
+            texcoords[num_texcoords] = parseVec2(&field_it);
             num_texcoords += 1;
         } else if (eq(field, "f")) {
             faces[num_faces] = try parseFace(field_it.rest(), num_verts, num_texcoords, num_normals);
@@ -126,7 +141,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
             obj_face_offset = num_faces;
 
             const obj = &objects[num_objects];
-            obj.name = trimLeft(trimRight(field_it.rest()));
+            obj.name = field_it.rest();
 
             current_object = obj;
             num_objects += 1;
@@ -147,6 +162,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     }
 
     assert(vertices.len == num_verts);
+    if (options.flags.vertex_colors) assert(colors.len == num_verts);
     assert(texcoords.len == num_texcoords);
     assert(normals.len == num_normals);
     assert(faces.len == num_faces);
@@ -154,6 +170,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
 
     return .{
         .vertices = vertices,
+        .colors = colors,
         .normals = normals,
         .texcoords = texcoords,
         .faces = faces,
@@ -188,9 +205,9 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
             return error.Syntax;
         }
 
-        r.indices[i].vertex = @intCast(if (vertex < 0) vertex + (1 + num_verts) else vertex);
-        r.indices[i].texcoord = @intCast(if (texcoord < 0) texcoord + (1 + num_texcoords) else texcoord);
-        r.indices[i].normal = @intCast(if (normal < 0) normal + (1 + num_normals) else normal);
+        r.indices[i].vertex = @intCast(if (vertex < 0) (vertex + (1 + num_verts)) else (vertex));
+        r.indices[i].texcoord = @intCast(if (texcoord < 0) (texcoord + (1 + num_texcoords)) else (texcoord));
+        r.indices[i].normal = @intCast(if (normal < 0) (normal + (1 + num_normals)) else (normal));
     }
 
     if (index_it.next() != null) {
@@ -201,9 +218,17 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
     return r;
 }
 
-fn parseVec3(str: []const u8) @Vector(3, f32) {
-    var field_it = tokenize(str, ' ');
+fn parseVector(field_it: *TokenIterator, num_verts: usize, vertices: []@Vector(3, f32), colors: []@Vector(3, f32)) void {
+    _ = colors;
+    vertices[num_verts] = parseVec3(field_it);
+}
 
+fn parseVectorAndColor(field_it: *TokenIterator, num_verts: usize, vertices: []@Vector(3, f32), colors: []@Vector(3, f32)) void {
+    vertices[num_verts] = parseVec3(field_it);
+    colors[num_verts] = if (field_it.rest().len == 0) .{ 1, 1, 1 } else parseVec3(field_it);
+}
+
+inline fn parseVec3(field_it: *TokenIterator) @Vector(3, f32) {
     return .{
         parseFloat(field_it.next() orelse ""),
         parseFloat(field_it.next() orelse ""),
@@ -211,9 +236,7 @@ fn parseVec3(str: []const u8) @Vector(3, f32) {
     };
 }
 
-fn parseVec2(str: []const u8) @Vector(2, f32) {
-    var field_it = tokenize(str, ' ');
-
+inline fn parseVec2(field_it: *TokenIterator) @Vector(2, f32) {
     return .{
         parseFloat(field_it.next() orelse ""),
         parseFloat(field_it.next() orelse ""),
@@ -284,28 +307,12 @@ fn parseInt32(str: []const u8) i32 {
     return @as(i32, @intCast(r)) * sign;
 }
 
-fn trimLeft(s: []const u8) []const u8 {
-    var str = s;
-    while (str.len > 0 and str[0] <= ' ') str = str[1..];
-    return str;
-}
-
-fn trimRight(s: []const u8) []const u8 {
-    var str = s;
-    while (str.len > 0 and str[str.len - 1] <= ' ') str = str[0 .. str.len - 1];
-    return str;
-}
-
-inline fn split(buf: []const u8, s: u8) std.mem.SplitIterator(u8, .scalar) {
+inline fn split(buf: []const u8, s: u8) SplitIterator {
     return std.mem.splitScalar(u8, buf, s);
 }
 
-inline fn tokenize(buf: []const u8, s: u8) std.mem.TokenIterator(u8, .scalar) {
+inline fn tokenize(buf: []const u8, s: u8) TokenIterator {
     return std.mem.tokenizeScalar(u8, buf, s);
-}
-
-inline fn startsWith(buf: []const u8, sub: []const u8) bool {
-    return std.mem.startsWith(u8, buf, sub);
 }
 
 inline fn eq(a: []const u8, b: []const u8) bool {
