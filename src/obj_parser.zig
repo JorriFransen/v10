@@ -147,19 +147,10 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     }
 
     assert(vertices.len == num_verts);
-    for (vertices, 0..) |v, i| log.debug("v[{}]: {}", .{ i, v });
-
     assert(texcoords.len == num_texcoords);
-    for (texcoords, 0..) |v, i| log.debug("vt[{}]: {}", .{ i, v });
-
     assert(normals.len == num_normals);
-    for (normals, 0..) |v, i| log.debug("vn[{}]: {}", .{ i, v });
-
     assert(faces.len == num_faces);
-    for (faces, 0..) |v, i| log.debug("f[{}]: {any}", .{ i, v });
-
     assert(objects.len == num_objects);
-    for (objects, 0..) |v, i| log.debug("o[{}]: {}\no[{}].face_count: {}", .{ i, v, i, objects[i].faces.len });
 
     return .{
         .vertices = vertices,
