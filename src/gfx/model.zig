@@ -78,32 +78,45 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     const mt = model.texcoords;
 
     const vertices = try ta.allocator().alloc(Vertex, model.faces.len * 3);
-    for (model.faces, 0..) |face, i| {
-        const idx0 = face.indices[0];
-        const idx1 = face.indices[1];
-        const idx2 = face.indices[2];
 
-        vertices[3 * i] = .{
-            .position = Vec3.v(mv[idx0.vertex]),
-            .color = Vec3.scalar(1),
-            .normal = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{},
-            .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
-        };
+    var face_count: usize = 0;
+    var vi: usize = 0;
 
-        vertices[3 * i + 1] = .{
-            .position = Vec3.v(mv[idx1.vertex]),
-            .color = Vec3.scalar(1),
-            .normal = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{},
-            .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
-        };
+    for (model.objects) |o| {
+        face_count += o.faces.len;
 
-        vertices[3 * i + 2] = .{
-            .position = Vec3.v(mv[idx2.vertex]),
-            .color = Vec3.scalar(1),
-            .normal = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{},
-            .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
-        };
+        for (o.faces) |face| {
+            const idx0 = face.indices[0];
+            const idx1 = face.indices[1];
+            const idx2 = face.indices[2];
+
+            vertices[vi] = .{
+                .position = Vec3.v(mv[idx0.vertex]),
+                .color = Vec3.scalar(1),
+                .normal = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{},
+                .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
+            };
+
+            vertices[vi + 1] = .{
+                .position = Vec3.v(mv[idx1.vertex]),
+                .color = Vec3.scalar(1),
+                .normal = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{},
+                .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
+            };
+
+            vertices[vi + 2] = .{
+                .position = Vec3.v(mv[idx2.vertex]),
+                .color = Vec3.scalar(1),
+                .normal = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{},
+                .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
+            };
+
+            vi += 3;
+        }
     }
+
+    assert(model.faces.len == face_count);
+    assert(vertices.len == vi);
 
     return try create(device, build(vertices));
 }
