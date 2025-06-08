@@ -28,19 +28,19 @@ pub const ObjParseError = error{
     OutOfMemory,
 };
 
-const Object = struct {
-    name: []const u8,
-    faces: []const Face,
+pub const Object = struct {
+    name: []const u8 = "",
+    faces: []const Face = &.{},
 };
 
-const Face = struct {
-    pub const Index = struct {
-        vertex: u32 = 0,
-        texcoord: u32 = 0,
-        normal: u32 = 0,
-    };
+pub const Face = struct {
+    indices: []Index = &.{},
+};
 
-    indices: [3]Index align(1) = .{Index{}} ** 3,
+pub const Index = struct {
+    vertex: u32 = 0,
+    texcoord: u32 = 0,
+    normal: u32 = 0,
 };
 
 const Model = struct {
@@ -48,8 +48,9 @@ const Model = struct {
     colors: []const @Vector(3, f32),
     normals: []const @Vector(3, f32),
     texcoords: []const @Vector(2, f32),
-    faces: []const Face,
-    objects: []const Object,
+    indices: []const Index = &.{},
+    faces: []const Face = &.{},
+    objects: []const Object = &.{},
 };
 
 pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
@@ -59,6 +60,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     var num_verts: u32 = 0;
     var num_normals: u32 = 0;
     var num_texcoords: u32 = 0;
+    var num_indices: usize = 0;
     var num_faces: usize = 0;
 
     var line_it = tokenize(buffer, '\n'); // TODO: Make this work with CRLF
@@ -76,6 +78,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         } else if (eq(field, "vt")) {
             num_texcoords += 1;
         } else if (eq(field, "f")) {
+            num_indices += 3;
             num_faces += 1;
         } else if (eq(field, "o")) {
             num_objects += 1;
@@ -97,6 +100,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     const texcoords = try allocator.alloc(@Vector(2, f32), num_texcoords);
     const faces = try allocator.alloc(Face, num_faces);
     const objects = try allocator.alloc(Object, num_objects);
+    const indices = try allocator.alloc(Index, num_faces * 3);
 
     var colors: []@Vector(3, f32) = &.{};
     var parse_vector_fn = &parseVector;
@@ -108,6 +112,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     num_verts = 0;
     num_normals = 0;
     num_texcoords = 0;
+    num_indices = 0;
     num_faces = 0;
     num_objects = 0;
 
@@ -132,7 +137,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
             texcoords[num_texcoords] = parseVec2(&field_it);
             num_texcoords += 1;
         } else if (eq(field, "f")) {
-            faces[num_faces] = try parseFace(field_it.rest(), num_verts, num_texcoords, num_normals);
+            faces[num_faces] = try parseFace(field_it.rest(), num_verts, num_texcoords, num_normals, indices, &num_indices);
             num_faces += 1;
         } else if (eq(field, "o")) {
             if (current_object) |obj| {
@@ -165,6 +170,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     if (options.flags.vertex_colors) assert(colors.len == num_verts);
     assert(texcoords.len == num_texcoords);
     assert(normals.len == num_normals);
+    assert(indices.len == num_indices);
     assert(faces.len == num_faces);
     assert(objects.len == num_objects);
 
@@ -173,12 +179,13 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         .colors = colors,
         .normals = normals,
         .texcoords = texcoords,
+        .indices = indices,
         .faces = faces,
         .objects = objects,
     };
 }
 
-fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u32) !Face {
+fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u32, indices: []Index, num_indices: *usize) !Face {
     var r = Face{};
     var index_it = tokenize(str, ' ');
     for (0..3) |i| {
@@ -205,10 +212,14 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
             return error.Syntax;
         }
 
-        r.indices[i].vertex = @intCast(if (vertex < 0) (vertex + (1 + num_verts)) else (vertex));
-        r.indices[i].texcoord = @intCast(if (texcoord < 0) (texcoord + (1 + num_texcoords)) else (texcoord));
-        r.indices[i].normal = @intCast(if (normal < 0) (normal + (1 + num_normals)) else (normal));
+        indices[num_indices.* + i].vertex = @intCast(if (vertex < 0) (vertex + (1 + num_verts)) else (vertex));
+        indices[num_indices.* + i].texcoord = @intCast(if (texcoord < 0) (texcoord + (1 + num_texcoords)) else (texcoord));
+        indices[num_indices.* + i].normal = @intCast(if (normal < 0) (normal + (1 + num_normals)) else (normal));
     }
+
+    r.indices = indices[num_indices.* .. num_indices.* + 3];
+
+    num_indices.* += 3;
 
     if (index_it.next() != null) {
         log.err("Non triangulate faces are not supported!", .{});
