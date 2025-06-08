@@ -59,26 +59,34 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     var num_objects: usize = 0;
     var num_verts: u32 = 0;
     var num_normals: u32 = 0;
-    var num_texcoords: u32 = 0;
+    var num_uvs: u32 = 0;
     var num_indices: usize = 0;
     var num_faces: usize = 0;
+    var need_triangulation = false;
 
     var line_it = tokenize(buffer, '\n'); // TODO: Make this work with CRLF
     var line_num: usize = 1;
+
     while (line_it.next()) |line| : (line_num += 1) {
         errdefer log.err("{s}:{}: Invalid line: '{s}'", .{ options.name, line_num, line });
 
         var field_it = split(line, ' ');
-        const field = field_it.first();
+        const field = field_it.next() orelse return error.Syntax;
 
         if (eq(field, "v")) {
             num_verts += 1;
         } else if (eq(field, "vn")) {
             num_normals += 1;
         } else if (eq(field, "vt")) {
-            num_texcoords += 1;
+            num_uvs += 1;
         } else if (eq(field, "f")) {
-            num_indices += 3;
+            const face_indices = findFaceIndexCount(field_it.rest());
+            assert(face_indices >= 3);
+            if (face_indices > 3) {
+                need_triangulation = true;
+            }
+
+            num_indices += face_indices;
             num_faces += 1;
         } else if (eq(field, "o")) {
             num_objects += 1;
@@ -95,26 +103,24 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
 
-    const vertices = try allocator.alloc(@Vector(3, f32), num_verts);
-    const normals = try allocator.alloc(@Vector(3, f32), num_normals);
-    const texcoords = try allocator.alloc(@Vector(2, f32), num_texcoords);
-    const faces = try allocator.alloc(Face, num_faces);
-    const objects = try allocator.alloc(Object, num_objects);
-    const indices = try allocator.alloc(Index, num_faces * 3);
+    var vertex_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_verts);
+    var normal_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_normals);
+    var uv_array = try std.ArrayListUnmanaged(@Vector(2, f32)).initCapacity(allocator, num_uvs);
+    var obj_array = try std.ArrayListUnmanaged(Object).initCapacity(allocator, num_objects);
 
-    var colors: []@Vector(3, f32) = &.{};
+    var colors_array: std.ArrayListUnmanaged(@Vector(3, f32)) = undefined;
     var parse_vector_fn = &parseVector;
     if (options.flags.vertex_colors) {
-        colors = try allocator.alloc(@Vector(3, f32), num_verts);
+        colors_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_verts);
         parse_vector_fn = parseVectorAndColor;
     }
 
-    num_verts = 0;
-    num_normals = 0;
-    num_texcoords = 0;
-    num_indices = 0;
-    num_faces = 0;
-    num_objects = 0;
+    var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
+    defer ta.release();
+
+    const face_alloc = if (need_triangulation) ta.allocator() else allocator;
+    var face_array = try std.ArrayListUnmanaged(Face).initCapacity(face_alloc, num_faces);
+    var index_array = try std.ArrayListUnmanaged(Index).initCapacity(face_alloc, num_indices);
 
     var current_object: ?*Object = null;
     var obj_face_offset: usize = 0;
@@ -128,28 +134,23 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         const field = field_it.next() orelse return error.Syntax;
 
         if (eq(field, "v")) {
-            parse_vector_fn(&field_it, num_verts, vertices, colors);
-            num_verts += 1;
+            parse_vector_fn(&field_it, &vertex_array, &colors_array);
         } else if (eq(field, "vn")) {
-            normals[num_normals] = parseVec3(&field_it);
-            num_normals += 1;
+            normal_array.appendAssumeCapacity(parseVec3(&field_it));
         } else if (eq(field, "vt")) {
-            texcoords[num_texcoords] = parseVec2(&field_it);
-            num_texcoords += 1;
+            uv_array.appendAssumeCapacity(parseVec2(&field_it));
         } else if (eq(field, "f")) {
-            faces[num_faces] = try parseFace(field_it.rest(), num_verts, num_texcoords, num_normals, indices, &num_indices);
-            num_faces += 1;
+            const face = try parseFace(field_it.rest(), @intCast(vertex_array.items.len), num_uvs, @intCast(normal_array.items.len), &index_array);
+            face_array.appendAssumeCapacity(face);
         } else if (eq(field, "o")) {
             if (current_object) |obj| {
-                obj.faces = faces[obj_face_offset..num_faces];
+                obj.faces = face_array.items[obj_face_offset..face_array.items.len];
             }
-            obj_face_offset = num_faces;
+            obj_face_offset = face_array.items.len;
 
-            const obj = &objects[num_objects];
+            const obj = obj_array.addOneAssumeCapacity();
             obj.name = field_it.rest();
-
             current_object = obj;
-            num_objects += 1;
         } else if (eq(field, "s")) {
             // ok, skip
         } else if (eq(field, "mtllib")) {
@@ -163,37 +164,46 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
     if (current_object) |obj| {
-        obj.faces = faces[obj_face_offset..num_faces];
+        obj.faces = face_array.items[obj_face_offset..face_array.items.len];
     }
 
-    assert(vertices.len == num_verts);
-    if (options.flags.vertex_colors) assert(colors.len == num_verts);
-    assert(texcoords.len == num_texcoords);
-    assert(normals.len == num_normals);
-    assert(indices.len == num_indices);
-    assert(faces.len == num_faces);
-    assert(objects.len == num_objects);
+    assert(vertex_array.items.len == num_verts);
+    if (options.flags.vertex_colors) assert(colors_array.items.len == num_verts);
+    assert(uv_array.items.len == num_uvs);
+    assert(normal_array.items.len == num_normals);
+    assert(index_array.items.len == num_indices);
+    assert(face_array.items.len == num_faces);
+    assert(obj_array.items.len == num_objects);
+
+    if (need_triangulation) {
+        ta.release();
+    }
 
     return .{
-        .vertices = vertices,
-        .colors = colors,
-        .normals = normals,
-        .texcoords = texcoords,
-        .indices = indices,
-        .faces = faces,
-        .objects = objects,
+        .vertices = vertex_array.items,
+        .colors = colors_array.items,
+        .normals = normal_array.items,
+        .texcoords = uv_array.items,
+        .indices = index_array.items,
+        .faces = face_array.items,
+        .objects = obj_array.items,
     };
 }
 
-fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u32, indices: []Index, num_indices: *usize) !Face {
+fn findFaceIndexCount(str: []const u8) usize {
+    var index_it = tokenize(str, ' ');
+    var r: usize = 0;
+    while (index_it.next()) |_| r += 1;
+    return r;
+}
+
+fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u32, indices: *std.ArrayListUnmanaged(Index)) !Face {
     var r = Face{};
     var index_it = tokenize(str, ' ');
-    for (0..3) |i| {
-        const fields = index_it.next() orelse {
-            log.err("Face needs at least 3 vertices", .{});
-            return error.Syntax;
-        };
 
+    const start_idx = indices.items.len;
+
+    while (index_it.next()) |fields| {
         var field_it = split(fields, '/');
         const vertex = parseInt64(field_it.next() orelse "") - 1;
         const texcoord = parseInt64(field_it.next() orelse "") - 1;
@@ -212,31 +222,26 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
             return error.Syntax;
         }
 
-        indices[num_indices.* + i].vertex = @intCast(if (vertex < 0) (vertex + (1 + num_verts)) else (vertex));
-        indices[num_indices.* + i].texcoord = @intCast(if (texcoord < 0) (texcoord + (1 + num_texcoords)) else (texcoord));
-        indices[num_indices.* + i].normal = @intCast(if (normal < 0) (normal + (1 + num_normals)) else (normal));
+        indices.appendAssumeCapacity(.{
+            .vertex = @intCast(if (vertex < 0) (vertex + (1 + num_verts)) else (vertex)),
+            .texcoord = @intCast(if (texcoord < 0) (texcoord + (1 + num_texcoords)) else (texcoord)),
+            .normal = @intCast(if (normal < 0) (normal + (1 + num_normals)) else (normal)),
+        });
     }
 
-    r.indices = indices[num_indices.* .. num_indices.* + 3];
-
-    num_indices.* += 3;
-
-    if (index_it.next() != null) {
-        log.err("Non triangulate faces are not supported!", .{});
-        return error.Syntax;
-    }
+    r.indices = indices.items[start_idx..];
 
     return r;
 }
 
-fn parseVector(field_it: *TokenIterator, num_verts: usize, vertices: []@Vector(3, f32), colors: []@Vector(3, f32)) void {
+fn parseVector(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(@Vector(3, f32)), colors: *std.ArrayListUnmanaged(@Vector(3, f32))) void {
     _ = colors;
-    vertices[num_verts] = parseVec3(field_it);
+    vertices.appendAssumeCapacity(parseVec3(field_it));
 }
 
-fn parseVectorAndColor(field_it: *TokenIterator, num_verts: usize, vertices: []@Vector(3, f32), colors: []@Vector(3, f32)) void {
-    vertices[num_verts] = parseVec3(field_it);
-    colors[num_verts] = if (field_it.rest().len == 0) .{ 1, 1, 1 } else parseVec3(field_it);
+fn parseVectorAndColor(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(@Vector(3, f32)), colors: *std.ArrayListUnmanaged(@Vector(3, f32))) void {
+    vertices.appendAssumeCapacity(parseVec3(field_it));
+    colors.appendAssumeCapacity(if (field_it.rest().len == 0) .{ 1, 1, 1 } else parseVec3(field_it));
 }
 
 inline fn parseVec3(field_it: *TokenIterator) @Vector(3, f32) {

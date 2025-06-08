@@ -83,7 +83,7 @@ fn run() !void {
     //     },
     //     &[_]u8{ 0, 1, 2, 1, 3, 2 },
     // ));
-    var model = try Model.load(&device, "res/custom_t.obj");
+    var model = try Model.load(&device, "res/cube.obj");
     defer model.destroy();
 
     var entities_ = [_]Entity{Entity.new()};

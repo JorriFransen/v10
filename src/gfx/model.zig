@@ -78,7 +78,7 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     const mn = model.normals;
     const mt = model.texcoords;
 
-    const vertices = try ta.allocator().alloc(Vertex, model.faces.len * 3);
+    const vertices = try ta.allocator().alloc(Vertex, model.indices.len);
 
     var face_count: usize = 0;
     var vi: usize = 0;
@@ -89,6 +89,7 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
         face_count += o.faces.len;
 
         for (o.faces) |face| {
+            assert(face.indices.len == 3);
             const idx0 = face.indices[0];
             const idx1 = face.indices[1];
             const idx2 = face.indices[2];
