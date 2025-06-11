@@ -49,7 +49,7 @@ pub const ConfigInfo = struct {
             .polygon_mode = .fill,
             .line_width = 1,
             .cull_mode = .{ .back_bit = false },
-            .front_face = .clockwise,
+            .front_face = .counter_clockwise,
             .depth_bias_enable = vk.FALSE,
             .depth_bias_constant_factor = 0,
             .depth_bias_clamp = 0,

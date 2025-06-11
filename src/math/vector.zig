@@ -28,6 +28,12 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub fn new(x: T, y: T, z: T) @This() {
                 return @bitCast(V{ x, y, z });
             }
+            pub fn toPoint4(this: @This()) Vec(4, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 1 };
+            }
+            pub fn toVector4(this: @This()) Vec(4, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 0 };
+            }
             pub usingnamespace VecFunctionsMixin(N, T, @This());
         },
 
@@ -40,6 +46,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             w: T = 0,
             pub fn new(x: T, y: T, z: T, w: T) @This() {
                 return @bitCast(V{ x, y, z, w });
+            }
+            pub fn xyz(this: @This()) Vec(3, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z };
             }
             pub usingnamespace VecFunctionsMixin(N, T, @This());
         },
@@ -89,13 +98,22 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
             return @bitCast(vec.vector() / @as(V, @splat(s)));
         }
         pub inline fn cross(a: Base, b: Base) Base {
-            std.debug.assert(N == 3 or N == 4);
+            if (!(N == 3 or N == 4)) @compileError("Invalid vector length");
+
             const av = a.vector();
             const bv = b.vector();
 
             const M = @Vector(N, i32);
-            const m1 = if (N == 3) M{ 1, 2, 0 } else M{ 1, 2, 0, 3 };
-            const m2 = if (N == 3) M{ 2, 0, 1 } else M{ 2, 0, 1, 3 };
+            const m1 = switch (N) {
+                else => unreachable,
+                3 => M{ 1, 2, 0 },
+                4 => M{ 1, 2, 0, 3 },
+            };
+            const m2 = switch (N) {
+                else => unreachable,
+                3 => M{ 2, 0, 1 },
+                4 => M{ 2, 0, 1, 3 },
+            };
 
             const v1 = @shuffle(T, av, undefined, m1);
             const v2 = @shuffle(T, bv, undefined, m2);

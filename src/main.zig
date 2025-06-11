@@ -36,8 +36,9 @@ var camera: Camera = .{};
 var kb_move_controller: KBMoveController = .{};
 
 var camera_entity: Entity = .{};
-var cube: *Entity = undefined;
 var entities: []Entity = &.{};
+var arrow: *Entity = undefined;
+var arrow_t: *Entity = undefined;
 
 fn run() !void {
     const width = 1920;
@@ -63,46 +64,28 @@ fn run() !void {
 
     camera_entity = Entity.new();
 
-    // var model = try createCubeModel(.{});
-    // var model = try createCubeModelIndexed(.{});
-    // var model = try Model.create(&device, Model.build(&.{
-    //     .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
-    //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
-    //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
-    //
-    //     .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
-    //     .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
-    //     .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
-    // }));
-    // var model = try Model.create(&device, Model.buildIndexed(
-    //     &.{
-    //         .{ .position = Vec3.new(-1, -1, 0), .color = Vec3.new(1, 0, 0) },
-    //         .{ .position = Vec3.new(1, -1, 0), .color = Vec3.new(0, 1, 0) },
-    //         .{ .position = Vec3.new(-1, 1, 0), .color = Vec3.new(0, 0, 1) },
-    //         .{ .position = Vec3.new(1, 1, 0), .color = Vec3.new(0, 1, 0) },
-    //     },
-    //     &[_]u8{ 0, 1, 2, 1, 3, 2 },
-    // ));
-    var model = try Model.load(&device, "res/cube.obj");
-    defer model.destroy();
+    // var arrow_model = try Model.load(&device, "res/arrow.obj");
+    var arrow_model = try Model.load(&device, "res/test.obj");
+    defer arrow_model.destroy();
 
-    var entities_ = [_]Entity{Entity.new()};
+    var arrow_model_t = try Model.load(&device, "res/splane_t.obj");
+    defer arrow_model_t.destroy();
+
+    var entities_: [2]Entity = undefined;
+    for (&entities_) |*e| e.* = Entity.new();
     entities = &entities_;
 
-    cube = &entities[0];
-    cube.model = &model;
-    // triangle.color = Vec3.v(.{ 0.1, 0.8, 0.1 });
-    cube.transform.translation = .{ .z = 2.5 };
-    cube.transform.scale = Vec3.scalar(0.5);
-    // triangle.transform.rotation = .{ .y = 0.75 * std.math.tau };
+    arrow = &entities[0];
+    arrow.model = &arrow_model;
+    arrow.transform.translation = .{ .z = 2.5, .y = 2 };
+    arrow.transform.scale = Vec3.scalar(0.5);
+
+    // arrow_t = &entities[1];
+    // arrow_t.model = &arrow_model_t;
+    // arrow_t.transform.translation = .{ .z = 2.5, .y = -2.5 };
+    // arrow_t.transform.scale = Vec3.scalar(0.5);
 
     const aspect = renderer.swapchain.extentSwapchainRatio();
-    // if (aspect >= 1) {
-    //     camera.setProjection(.{ .orthographic = .{ .l = -aspect, .r = aspect, .t = -1, .b = 1 } }, -1, 1);
-    // } else {
-    //     camera.setProjection(.{ .orthographic = .{ .l = -1, .r = 1, .t = -1 / aspect, .b = 1 / aspect } }, -1, 1);
-    // }
-
     camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
 
     var current_time = try Instant.now();

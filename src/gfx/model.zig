@@ -85,38 +85,85 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
 
     const white = Vec3.scalar(1);
 
-    for (model.objects) |o| {
-        face_count += o.faces.len;
+    // TODO: Fix triangulation to update faces/indices on objects
+    // for (model.objects) |o| {
+    //     face_count += o.faces.len;
+    //
+    //     for (o.faces) |face| {
+    //         assert(face.indices.len == 3);
+    //         const idx0 = face.indices[0];
+    //         const idx1 = face.indices[1];
+    //         const idx2 = face.indices[2];
+    //
+    //         vertices[vi] = .{
+    //             .position = Vec3.v(mv[idx0.vertex]),
+    //             .color = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white,
+    //             .normal = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{},
+    //             .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
+    //         };
+    //
+    //         vertices[vi + 1] = .{
+    //             .position = Vec3.v(mv[idx1.vertex]),
+    //             .color = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white,
+    //             .normal = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{},
+    //             .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
+    //         };
+    //
+    //         vertices[vi + 2] = .{
+    //             .position = Vec3.v(mv[idx2.vertex]),
+    //             .color = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white,
+    //             .normal = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{},
+    //             .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
+    //         };
+    //
+    //         vi += 3;
+    //     }
+    // }
 
-        for (o.faces) |face| {
-            assert(face.indices.len == 3);
-            const idx0 = face.indices[0];
-            const idx1 = face.indices[1];
-            const idx2 = face.indices[2];
+    // TODO: Check if we can do this by swizzeling and negating elements
+    // var transform = math.Mat4.rotation(math.radians(180), Vec3.new(0, 1, 0));
+    const transform = math.Mat4.rotation(math.radians(-180), Vec3.new(1, 0, 0));
+    // const transform = math.Mat4.identity;
 
-            vertices[vi] = .{
-                .position = Vec3.v(mv[idx0.vertex]),
-                .color = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white,
-                .normal = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{},
-                .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
-            };
+    for (model.faces) |face| {
+        face_count += 1;
+        assert(face.indices.len == 3);
+        const idx0 = face.indices[0];
+        const idx1 = face.indices[1];
+        const idx2 = face.indices[2];
 
-            vertices[vi + 1] = .{
-                .position = Vec3.v(mv[idx1.vertex]),
-                .color = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white,
-                .normal = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{},
-                .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
-            };
+        const v0 = transform.mul_vec(Vec3.v(mv[idx0.vertex]).toPoint4());
+        const v1 = transform.mul_vec(Vec3.v(mv[idx1.vertex]).toPoint4());
+        const v2 = transform.mul_vec(Vec3.v(mv[idx2.vertex]).toPoint4());
 
-            vertices[vi + 2] = .{
-                .position = Vec3.v(mv[idx2.vertex]),
-                .color = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white,
-                .normal = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{},
-                .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
-            };
+        const n0: Vec4 = if (idx0.normal < mn.len) transform.mul_vec(Vec3.v(mn[idx0.normal]).toPoint4()) else .{};
+        const n1: Vec4 = if (idx1.normal < mn.len) transform.mul_vec(Vec3.v(mn[idx1.normal]).toPoint4()) else .{};
+        const n2: Vec4 = if (idx2.normal < mn.len) transform.mul_vec(Vec3.v(mn[idx2.normal]).toPoint4()) else .{};
 
-            vi += 3;
-        }
+        vertices[vi] = .{
+            .position = v0.xyz(),
+            .color = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white,
+            .normal = n0.xyz(),
+            .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
+        };
+
+        // This vertex and the next are swapped, since blender uses counter-clockwise winding order.
+        // V10 used clockwise winding order.
+        vertices[vi + 1] = .{
+            .position = v1.xyz(),
+            .color = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white,
+            .normal = n1.xyz(),
+            .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
+        };
+
+        vertices[vi + 2] = .{
+            .position = v2.xyz(),
+            .color = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white,
+            .normal = n2.xyz(),
+            .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
+        };
+
+        vi += 3;
     }
 
     assert(model.faces.len == face_count);

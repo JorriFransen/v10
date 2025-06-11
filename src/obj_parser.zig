@@ -2,13 +2,20 @@ const std = @import("std");
 const log = std.log.scoped(.obj_parser);
 const gfx = @import("gfx.zig");
 const mem = @import("memory.zig");
+const math = @import("math.zig");
 
 const Allocator = std.mem.Allocator;
 const Arena = mem.Arena;
+const TempArena = mem.TempArena;
 const SplitIterator = std.mem.SplitIterator(u8, .scalar);
 const TokenIterator = std.mem.TokenIterator(u8, .scalar);
 
+const Vec2 = @Vector(2, f32);
+const Vec3 = @Vector(3, f32);
+
 const assert = std.debug.assert;
+
+const EPS = 1e-6;
 
 pub const ParseFlags = packed struct(u8) {
     vertex_colors: bool = true,
@@ -44,9 +51,9 @@ pub const Index = struct {
 };
 
 const Model = struct {
-    vertices: []const @Vector(3, f32),
-    colors: []const @Vector(3, f32),
-    normals: []const @Vector(3, f32),
+    vertices: []const Vec3,
+    colors: []const Vec3,
+    normals: []const Vec3,
     texcoords: []const @Vector(2, f32),
     indices: []const Index = &.{},
     faces: []const Face = &.{},
@@ -103,15 +110,15 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
 
-    var vertex_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_verts);
-    var normal_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_normals);
+    var vertex_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
+    var normal_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_normals);
     var uv_array = try std.ArrayListUnmanaged(@Vector(2, f32)).initCapacity(allocator, num_uvs);
     var obj_array = try std.ArrayListUnmanaged(Object).initCapacity(allocator, num_objects);
 
-    var colors_array: std.ArrayListUnmanaged(@Vector(3, f32)) = undefined;
+    var colors_array: std.ArrayListUnmanaged(Vec3) = undefined;
     var parse_vector_fn = &parseVector;
     if (options.flags.vertex_colors) {
-        colors_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_verts);
+        colors_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
         parse_vector_fn = parseVectorAndColor;
     }
 
@@ -175,9 +182,22 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     assert(face_array.items.len == num_faces);
     assert(obj_array.items.len == num_objects);
 
-    if (need_triangulation) {
-        ta.release();
-    }
+    log.debug("\n\n", .{});
+
+    for (vertex_array.items, 0..) |v, i| log.debug("vertex_array.items[{}]: {}", .{ i, v });
+    for (uv_array.items, 0..) |v, i| log.debug("uv_array.items[{}]: {}", .{ i, v });
+    for (normal_array.items, 0..) |v, i| log.debug("normal_array.items[{}]: {}", .{ i, v });
+    for (index_array.items, 0..) |v, i| log.debug("index_array.items[{}]: {}", .{ i, v.vertex });
+    for (face_array.items, 0..) |v, i| log.debug("face_array.items[{}]: {}", .{ i, v });
+    for (obj_array.items, 0..) |v, i| log.debug("obj_array.items[{}]: {}", .{ i, v });
+
+    log.debug("\n\n", .{});
+
+    log.debug("need_triangulation: {}\n", .{need_triangulation});
+
+    // if (need_triangulation) {
+    //     assert(false);
+    // }
 
     return .{
         .vertices = vertex_array.items,
@@ -188,6 +208,52 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         .faces = face_array.items,
         .objects = obj_array.items,
     };
+}
+
+inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
+    const v0 = tc - ta;
+    const v1 = tb - ta;
+    const v2 = p - ta;
+
+    const dot00 = dot(Vec2, v0, v0);
+    const dot01 = dot(Vec2, v0, v1);
+    const dot02 = dot(Vec2, v0, v2);
+    const dot11 = dot(Vec2, v1, v1);
+    const dot12 = dot(Vec2, v1, v2);
+
+    const denom = dot00 * dot11 - dot01 * dot01;
+    const u = (dot11 * dot02 - dot01 * dot12) / denom;
+    const v = (dot00 * dot12 - dot01 * dot02) / denom;
+
+    return u > EPS and v > EPS and (u + v) < (1 - EPS);
+}
+
+inline fn cross(comptime V: type, a: V, b: V) switch (@typeInfo(V).vector.len) {
+    else => @compileError("Invalid vector length"),
+    3 => V,
+    2 => @typeInfo(V).vector.child,
+} {
+    switch (@typeInfo(V).vector.len) {
+        else => @compileError("Invalid vector length"),
+        3 => return @bitCast(math.Vec3.cross(@bitCast(a), @bitCast(b))),
+        2 => return (a[0] * b[1]) - (a[1] * b[0]),
+    }
+}
+
+inline fn dot(comptime V: type, a: V, b: V) @typeInfo(V).vector.child {
+    switch (@typeInfo(V).vector.len) {
+        else => @compileError("Invalid vector length"),
+        2 => return @bitCast(math.Vec2.dot(@bitCast(a), @bitCast(b))),
+        3 => return @bitCast(math.Vec3.dot(@bitCast(a), @bitCast(b))),
+    }
+}
+
+inline fn normalize(comptime V: type, v: V) V {
+    switch (@typeInfo(V).vector.len) {
+        else => @compileError("Invalid vector length"),
+        2 => return @bitCast(math.Vec2.normalized(@bitCast(v))),
+        3 => return @bitCast(math.Vec3.normalized(@bitCast(v))),
+    }
 }
 
 fn findFaceIndexCount(str: []const u8) usize {
@@ -234,17 +300,17 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
     return r;
 }
 
-fn parseVector(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(@Vector(3, f32)), colors: *std.ArrayListUnmanaged(@Vector(3, f32))) void {
+fn parseVector(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(Vec3), colors: *std.ArrayListUnmanaged(Vec3)) void {
     _ = colors;
     vertices.appendAssumeCapacity(parseVec3(field_it));
 }
 
-fn parseVectorAndColor(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(@Vector(3, f32)), colors: *std.ArrayListUnmanaged(@Vector(3, f32))) void {
+fn parseVectorAndColor(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(Vec3), colors: *std.ArrayListUnmanaged(Vec3)) void {
     vertices.appendAssumeCapacity(parseVec3(field_it));
     colors.appendAssumeCapacity(if (field_it.rest().len == 0) .{ 1, 1, 1 } else parseVec3(field_it));
 }
 
-inline fn parseVec3(field_it: *TokenIterator) @Vector(3, f32) {
+inline fn parseVec3(field_it: *TokenIterator) Vec3 {
     return .{
         parseFloat(field_it.next() orelse ""),
         parseFloat(field_it.next() orelse ""),
