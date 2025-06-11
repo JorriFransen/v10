@@ -70,7 +70,9 @@ pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: 
         };
         cb.pushConstants(this.layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
-        entity.model.bind(cb.handle);
-        entity.model.draw(cb.handle);
+        if (entity.model) |model| {
+            model.bind(cb.handle);
+            model.draw(cb.handle);
+        }
     }
 }

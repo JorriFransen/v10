@@ -15,5 +15,6 @@ layout (push_constant) uniform Push {
 void main () {
     vec4 pos = push.transform * vec4(position, 1);
     gl_Position = pos;
-    frag_color = color;
+    // frag_color = color;
+    frag_color = normal;
 }

@@ -8,6 +8,9 @@ const Arena = mem.Arena;
 const SplitIterator = std.mem.SplitIterator(u8, .scalar);
 const TokenIterator = std.mem.TokenIterator(u8, .scalar);
 
+const Vec2 = @Vector(2, f32);
+const Vec3 = @Vector(3, f32);
+
 const assert = std.debug.assert;
 
 pub const ParseFlags = packed struct(u8) {
@@ -44,9 +47,9 @@ pub const Index = struct {
 };
 
 const Model = struct {
-    vertices: []const @Vector(3, f32),
-    colors: []const @Vector(3, f32),
-    normals: []const @Vector(3, f32),
+    vertices: []const Vec3,
+    colors: []const Vec3,
+    normals: []const Vec3,
     texcoords: []const @Vector(2, f32),
     indices: []const Index = &.{},
     faces: []const Face = &.{},
@@ -103,15 +106,15 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
 
-    var vertex_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_verts);
-    var normal_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_normals);
+    var vertex_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
+    var normal_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_normals);
     var uv_array = try std.ArrayListUnmanaged(@Vector(2, f32)).initCapacity(allocator, num_uvs);
     var obj_array = try std.ArrayListUnmanaged(Object).initCapacity(allocator, num_objects);
 
-    var colors_array: std.ArrayListUnmanaged(@Vector(3, f32)) = undefined;
+    var colors_array: std.ArrayListUnmanaged(Vec3) = undefined;
     var parse_vector_fn = &parseVector;
     if (options.flags.vertex_colors) {
-        colors_array = try std.ArrayListUnmanaged(@Vector(3, f32)).initCapacity(allocator, num_verts);
+        colors_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
         parse_vector_fn = parseVectorAndColor;
     }
 
@@ -176,6 +179,97 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     assert(obj_array.items.len == num_objects);
 
     if (need_triangulation) {
+        log.debug("TRIANGULATE!", .{});
+
+        log.debug("face_array.items.len: {}", .{face_array.items.len});
+        log.debug("index_array.items.len: {}", .{index_array.items.len});
+
+        var final_face_count: usize = 0;
+        for (face_array.items) |face| {
+            assert(face.indices.len >= 3);
+            final_face_count += face.indices.len - 2;
+        }
+
+        log.debug("final_face_count: {}", .{final_face_count});
+
+        var t_faces = try std.ArrayListUnmanaged(Face).initCapacity(allocator, final_face_count);
+        var t_indices = try std.ArrayListUnmanaged(Index).initCapacity(allocator, final_face_count * 3);
+
+        for (face_array.items) |face| {
+            if (face.indices.len == 3) {
+                const start_idx = t_indices.items.len;
+                t_indices.appendUnalignedSliceAssumeCapacity(face.indices);
+                const new_face = Face{ .indices = t_indices.items[start_idx .. start_idx + 3] };
+                t_faces.appendAssumeCapacity(new_face);
+            } else {
+                var vi: usize = 0;
+                var indices = std.ArrayListUnmanaged(Index).fromOwnedSlice(face.indices);
+
+                while (indices.items.len > 3) {
+                    const idx0 = indices.items[if (vi == 0) indices.items.len - 1 else vi - 1];
+                    const idx1 = indices.items[vi];
+                    const idx2 = indices.items[if (vi == indices.items.len - 1) 0 else vi + 1];
+                    const a = vertex_array.items[idx0.vertex];
+                    const b = vertex_array.items[idx1.vertex];
+                    const c = vertex_array.items[idx2.vertex];
+
+                    log.debug("\n", .{});
+                    log.debug("Remaining indices: {}", .{indices.items.len});
+                    log.debug("Testing {}, {}, {}", .{ idx0, idx1, idx2 });
+                    log.debug("Testing {}, {}, {}", .{ a, b, c });
+
+                    const angle = angleBetween(a, b, c);
+                    log.debug("angle: {}", .{std.math.radiansToDegrees(angle)});
+                    if (std.math.approxEqAbs(f32, angle, 0, std.math.floatEps(f32)) or angle >= 180) {
+                        // Colinear or reflex angle
+                        vi += 1;
+                        log.debug("skipping colinear or reflex: {}", .{vi});
+                        continue;
+                    }
+
+                    log.debug("Angles passed", .{});
+
+                    // Check if any other vertices are in the triangle formed by abc
+                    // Assume all points are in the same plane for this
+                    var tvi = vi + 2;
+                    var collision = false;
+                    for (0..indices.items.len - 3) |_| {
+                        if (tvi >= indices.items.len) tvi = 0;
+
+                        const p = vertex_array.items[indices.items[tvi].vertex];
+                        log.debug("Checking for collission with {}", .{p});
+
+                        if (inTriangle(p, a, b, c)) {
+                            log.debug("found point in triangle!", .{});
+                            collision = true;
+                            break;
+                        }
+
+                        tvi += 1;
+                    }
+
+                    if (!collision) {
+                        const start_idx = t_indices.items.len;
+                        t_indices.appendSliceAssumeCapacity(&.{ idx0, idx1, idx2 });
+                        const new_face = Face{ .indices = t_indices.items[start_idx .. start_idx + 3] };
+                        t_faces.appendAssumeCapacity(new_face);
+                        _ = indices.orderedRemove(vi);
+                        vi = 0;
+                    } else {
+                        vi += 1;
+                    }
+                }
+
+                // Last triangle
+                const start_idx = t_indices.items.len;
+                t_indices.appendSliceAssumeCapacity(indices.items);
+                const new_face = Face{ .indices = t_indices.items[start_idx .. start_idx + 3] };
+                t_faces.appendAssumeCapacity(new_face);
+            }
+        }
+
+        face_array = t_faces;
+        index_array = t_indices;
         ta.release();
     }
 
@@ -188,6 +282,42 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         .faces = face_array.items,
         .objects = obj_array.items,
     };
+}
+
+inline fn angleBetween(a: Vec3, b: Vec3, c: Vec3) f32 {
+    const ba = a - b;
+    const bc = c - b;
+    const ba_length = @sqrt(@reduce(.Add, ba * ba));
+    const bc_length = @sqrt(@reduce(.Add, bc * bc));
+    const ba_d_bc = dot(ba, bc);
+
+    log.debug("angleBetween - ba_m: {}", .{ba_length});
+    log.debug("angleBetween - bc_m: {}", .{bc_length});
+    log.debug("angleBetween - dot: {}", .{ba_d_bc});
+
+    return std.math.acos(std.math.clamp(ba_d_bc / (ba_length * bc_length), -1, 1));
+}
+
+inline fn inTriangle(p: Vec3, ta: Vec3, tb: Vec3, tc: Vec3) bool {
+    const v0 = tc - ta;
+    const v1 = tb - ta;
+    const v2 = p - ta;
+
+    const dot00 = dot(v0, v0);
+    const dot01 = dot(v0, v1);
+    const dot02 = dot(v0, v2);
+    const dot11 = dot(v1, v1);
+    const dot12 = dot(v1, v2);
+
+    const denom = dot00 * dot11 - dot01 * dot01;
+    const u = (dot11 * dot02 - dot01 * dot12) / denom;
+    const v = (dot00 * dot12 - dot01 * dot02) / denom;
+
+    return u >= 0 and v >= 0 and u + v <= 1;
+}
+
+inline fn dot(a: Vec3, b: Vec3) f32 {
+    return @reduce(.Add, a * b);
 }
 
 fn findFaceIndexCount(str: []const u8) usize {
@@ -234,17 +364,17 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
     return r;
 }
 
-fn parseVector(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(@Vector(3, f32)), colors: *std.ArrayListUnmanaged(@Vector(3, f32))) void {
+fn parseVector(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(Vec3), colors: *std.ArrayListUnmanaged(Vec3)) void {
     _ = colors;
     vertices.appendAssumeCapacity(parseVec3(field_it));
 }
 
-fn parseVectorAndColor(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(@Vector(3, f32)), colors: *std.ArrayListUnmanaged(@Vector(3, f32))) void {
+fn parseVectorAndColor(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(Vec3), colors: *std.ArrayListUnmanaged(Vec3)) void {
     vertices.appendAssumeCapacity(parseVec3(field_it));
     colors.appendAssumeCapacity(if (field_it.rest().len == 0) .{ 1, 1, 1 } else parseVec3(field_it));
 }
 
-inline fn parseVec3(field_it: *TokenIterator) @Vector(3, f32) {
+inline fn parseVec3(field_it: *TokenIterator) Vec3 {
     return .{
         parseFloat(field_it.next() orelse ""),
         parseFloat(field_it.next() orelse ""),
@@ -333,4 +463,24 @@ inline fn tokenize(buf: []const u8, s: u8) TokenIterator {
 
 inline fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+test "colinear" {
+    const eps = @sqrt(std.math.floatEps(f32));
+    {
+        const a = Vec3{ 0, 0, 0 };
+        const b = Vec3{ 0, 1, 0 };
+        const c = Vec3{ 0, 2, 0 };
+
+        try std.testing.expectApproxEqRel(std.math.pi, angleBetween(a, b, c), eps);
+        try std.testing.expectApproxEqRel(0, angleBetween(b, a, c), eps);
+    }
+
+    {
+        const a = Vec3{ 1, 0, 0 };
+        const b = Vec3{ 0, 0, 0 };
+        const c = Vec3{ 0, 1, 0 };
+
+        try std.testing.expectApproxEqRel(std.math.pi / 2.0, angleBetween(a, b, c), eps);
+    }
 }
