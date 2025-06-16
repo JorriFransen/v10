@@ -5,6 +5,7 @@ const math = @import("../math.zig");
 pub const Mat2f32 = Mat(2, 2, f32);
 pub const Mat3f32 = Mat(3, 3, f32);
 pub const Mat4f32 = Mat(4, 4, f32);
+const Vec = math.Vec;
 const Vec3 = math.Vec3;
 
 // Matrices are column major
@@ -82,6 +83,24 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
             }
 
             return @bitCast(result);
+        }
+
+        pub inline fn mul_vec(m: @This(), v_: Vec(C, Type)) Vec(R, Type) {
+            const matrix_data: V = @bitCast(m);
+
+            const v = v_.vector();
+            var rv: @TypeOf(v) = undefined;
+
+            inline for (0..R) |i| {
+                var sum: T = 0;
+
+                inline for (0..C) |j| {
+                    sum += matrix_data[i + j * R] * v[j];
+                }
+                rv[i] = sum;
+            }
+
+            return @bitCast(rv);
         }
 
         pub inline fn translate(this: @This(), t: Vec3) @This() {

@@ -15,6 +15,8 @@ const Vec3 = @Vector(3, f32);
 
 const assert = std.debug.assert;
 
+const EPS = 1e-6;
+
 pub const ParseFlags = packed struct(u8) {
     vertex_colors: bool = true,
     __reserved__: u7 = 0,
@@ -180,183 +182,22 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     assert(face_array.items.len == num_faces);
     assert(obj_array.items.len == num_objects);
 
-    if (need_triangulation) {
-        log.debug("TRIANGULATE!", .{});
+    log.debug("\n\n", .{});
 
-        log.debug("face_array.items.len: {}", .{face_array.items.len});
-        log.debug("index_array.items.len: {}", .{index_array.items.len});
+    for (vertex_array.items, 0..) |v, i| log.debug("vertex_array.items[{}]: {}", .{ i, v });
+    for (uv_array.items, 0..) |v, i| log.debug("uv_array.items[{}]: {}", .{ i, v });
+    for (normal_array.items, 0..) |v, i| log.debug("normal_array.items[{}]: {}", .{ i, v });
+    for (index_array.items, 0..) |v, i| log.debug("index_array.items[{}]: {}", .{ i, v.vertex });
+    for (face_array.items, 0..) |v, i| log.debug("face_array.items[{}]: {}", .{ i, v });
+    for (obj_array.items, 0..) |v, i| log.debug("obj_array.items[{}]: {}", .{ i, v });
 
-        var final_face_count: usize = 0;
-        for (face_array.items) |face| {
-            assert(face.indices.len >= 3);
-            final_face_count += face.indices.len - 2;
-        }
+    log.debug("\n\n", .{});
 
-        log.debug("final_face_count: {}", .{final_face_count});
+    log.debug("need_triangulation: {}\n", .{need_triangulation});
 
-        var t_faces = try std.ArrayListUnmanaged(Face).initCapacity(allocator, final_face_count);
-        var t_indices = try std.ArrayListUnmanaged(Index).initCapacity(allocator, final_face_count * 3);
-
-        for (face_array.items, 0..) |face, fi| {
-            var indices = std.ArrayListUnmanaged(Index).fromOwnedSlice(face.indices);
-
-            log.debug("\n", .{});
-            for (indices.items, 0..) |idx, i| log.debug("indices[{}]: {}, vertices[{}]: {}", .{ i, idx.vertex, idx.vertex, vertex_array.items[idx.vertex] });
-
-            var face_ta = TempArena.init(ta.arena);
-            defer face_ta.release();
-
-            var proj_verts = try std.ArrayListUnmanaged(Vec2).initCapacity(face_ta.allocator(), indices.items.len);
-
-            const pa3 = vertex_array.items[indices.items[0].vertex];
-            const pb3 = vertex_array.items[indices.items[1].vertex];
-            const pc3 = vertex_array.items[indices.items[2].vertex];
-
-            const pba3 = pb3 - pa3;
-            const pca3 = pc3 - pa3;
-            const ppn_cross = cross(Vec3, pba3, pca3);
-            log.debug("pba3: {}", .{pba3});
-            log.debug("pca3: {}", .{pca3});
-            log.debug("pcross: {}", .{ppn_cross});
-            if (dot(Vec3, ppn_cross, ppn_cross) < 1e-9) {
-                log.err("Colinear!?", .{});
-                unreachable;
-            }
-
-            const pplane_normal = normalize(Vec3, ppn_cross);
-            log.debug("pplane_normal: {}", .{pplane_normal});
-
-            const U = normalize(Vec3, pba3);
-            const W = normalize(Vec3, cross(Vec3, pplane_normal, U));
-            log.debug("U: {}", .{U});
-            log.debug("W: {}", .{W});
-
-            var signed_area: f32 = 0.0;
-            for (indices.items, 0..) |idx, i| {
-                const c = vertex_array.items[idx.vertex];
-                const n = vertex_array.items[indices.items[(i + 1) % indices.items.len].vertex];
-
-                const cpa = c - pa3;
-                const npa = n - pa3;
-                const pc = Vec2{ dot(Vec3, cpa, U), dot(Vec3, cpa, W) };
-                const pn = Vec2{ dot(Vec3, npa, U), dot(Vec3, npa, W) };
-
-                proj_verts.appendAssumeCapacity(pc);
-
-                signed_area += cross(Vec2, pc, pn);
-            }
-            signed_area /= 2;
-            log.debug("signed_area: {}", .{signed_area});
-            assert(@abs(signed_area) > std.math.floatEps(f32));
-            const ccw = signed_area > 0;
-            log.debug("ccw: {}", .{ccw});
-
-            const vi_dir: isize = if (ccw) 1 else -1;
-            var vi: usize = if (ccw) 0 else indices.items.len - 1;
-
-            while (indices.items.len > 3) {
-                const idx0 = indices.items[if (vi == 0) indices.items.len - 1 else vi - 1];
-                const idx1 = indices.items[vi];
-                const idx2 = indices.items[if (vi == indices.items.len - 1) 0 else vi + 1];
-                const a3 = vertex_array.items[idx0.vertex];
-                const b3 = vertex_array.items[idx1.vertex];
-                const c3 = vertex_array.items[idx2.vertex];
-
-                log.debug("\n", .{});
-                log.debug("Face idx: {}", .{fi});
-                log.debug("Remaining indices: {}", .{indices.items.len});
-                log.debug("Testing {}, {}, {}", .{ idx0, idx1, idx2 });
-                log.debug("Testing {}, {}, {}", .{ a3, b3, c3 });
-
-                const a = proj_verts.items[if (vi == 0) indices.items.len - 1 else vi - 1];
-                const b = proj_verts.items[vi];
-                const c = proj_verts.items[(vi + 1) % indices.items.len];
-
-                log.debug("a: {}", .{a});
-                log.debug("b: {}", .{b});
-                log.debug("c: {}", .{c});
-
-                const ba = a - b;
-                const bc = c - b;
-
-                log.debug("ba: {}", .{ba});
-                log.debug("bc: {}", .{bc});
-
-                const convex = cross(Vec2, ba, bc);
-                log.debug("convex: {}", .{convex});
-
-                var convex_ear = false;
-                if (ccw) {
-                    if (convex > std.math.floatEps(f32)) convex_ear = true;
-                } else {
-                    if (convex < -std.math.floatEps(f32)) convex_ear = true;
-                }
-
-                if (!convex_ear) {
-                    // Colinear or reflex angle
-                    log.debug("skipping colinear or reflex: {}", .{vi});
-                    var nvi = @as(isize, @intCast(vi)) + vi_dir;
-                    if (nvi < 0) nvi = @intCast(indices.items.len);
-                    if (nvi >= indices.items.len) nvi = 0;
-                    vi = @intCast(nvi);
-                    continue;
-                }
-
-                log.debug("Angles passed", .{});
-
-                // Check if any other vertices are in the triangle formed by abc
-                var tvi = vi + 2;
-                var collision = false;
-                for (0..indices.items.len - 3) |_| {
-                    if (tvi >= indices.items.len) tvi = 0;
-
-                    const p3 = vertex_array.items[indices.items[tvi].vertex];
-                    log.debug("Checking for collission with {}", .{p3});
-
-                    const p = proj_verts.items[tvi];
-                    log.debug("p: {}", .{p});
-
-                    if (inTriangle(p, a, b, c)) {
-                        collision = true;
-                        break;
-                    }
-
-                    tvi += 1;
-                }
-
-                if (!collision) {
-                    const start_idx = t_indices.items.len;
-                    t_indices.appendSliceAssumeCapacity(&.{ idx0, idx1, idx2 });
-                    const new_face = Face{ .indices = t_indices.items[start_idx .. start_idx + 3] };
-                    t_faces.appendAssumeCapacity(new_face);
-                    _ = indices.orderedRemove(vi);
-                    _ = proj_verts.orderedRemove(vi);
-                    log.debug("add ear: {}", .{vi});
-
-                    if (vi > indices.items.len) {
-                        vi = 0;
-                    }
-                } else {
-                    log.debug("skipping collision: vi: {}", .{vi});
-                    var nvi = @as(isize, @intCast(vi)) + vi_dir;
-                    if (nvi < 0) nvi = @intCast(indices.items.len);
-                    if (nvi >= indices.items.len) nvi = 0;
-                    vi = @intCast(nvi);
-                }
-            }
-
-            // Last triangle
-            assert(indices.items.len == 3);
-            const start_idx = t_indices.items.len;
-            t_indices.appendSliceAssumeCapacity(indices.items);
-            const new_face = Face{ .indices = t_indices.items[start_idx .. start_idx + 3] };
-            t_faces.appendAssumeCapacity(new_face);
-        }
-
-        face_array = t_faces;
-        index_array = t_indices;
-        ta.release();
-    }
+    // if (need_triangulation) {
+    //     assert(false);
+    // }
 
     return .{
         .vertices = vertex_array.items,
@@ -383,8 +224,6 @@ inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
     const denom = dot00 * dot11 - dot01 * dot01;
     const u = (dot11 * dot02 - dot01 * dot12) / denom;
     const v = (dot00 * dot12 - dot01 * dot02) / denom;
-
-    const EPS = 1e-6;
 
     return u > EPS and v > EPS and (u + v) < (1 - EPS);
 }

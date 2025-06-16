@@ -28,6 +28,12 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub fn new(x: T, y: T, z: T) @This() {
                 return @bitCast(V{ x, y, z });
             }
+            pub fn toPoint4(this: @This()) Vec(4, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 1 };
+            }
+            pub fn toVector4(this: @This()) Vec(4, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 0 };
+            }
             pub usingnamespace VecFunctionsMixin(N, T, @This());
         },
 
@@ -40,6 +46,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             w: T = 0,
             pub fn new(x: T, y: T, z: T, w: T) @This() {
                 return @bitCast(V{ x, y, z, w });
+            }
+            pub fn xyz(this: @This()) Vec(3, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z };
             }
             pub usingnamespace VecFunctionsMixin(N, T, @This());
         },

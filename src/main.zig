@@ -64,11 +64,11 @@ fn run() !void {
 
     camera_entity = Entity.new();
 
-    var arrow_model = try Model.load(&device, "res/fplane.obj");
     // var arrow_model = try Model.load(&device, "res/arrow.obj");
+    var arrow_model = try Model.load(&device, "res/test.obj");
     defer arrow_model.destroy();
 
-    var arrow_model_t = try Model.load(&device, "res/fplane_t.obj");
+    var arrow_model_t = try Model.load(&device, "res/splane_t.obj");
     defer arrow_model_t.destroy();
 
     var entities_: [2]Entity = undefined;
@@ -77,13 +77,13 @@ fn run() !void {
 
     arrow = &entities[0];
     arrow.model = &arrow_model;
-    arrow.transform.translation = .{ .z = 2.5 };
+    arrow.transform.translation = .{ .z = 2.5, .y = 2 };
     arrow.transform.scale = Vec3.scalar(0.5);
 
-    arrow_t = &entities[1];
-    arrow_t.model = &arrow_model_t;
-    arrow_t.transform.translation = .{ .z = 2.5, .y = 1.5 };
-    arrow_t.transform.scale = Vec3.scalar(0.5);
+    // arrow_t = &entities[1];
+    // arrow_t.model = &arrow_model_t;
+    // arrow_t.transform.translation = .{ .z = 2.5, .y = -2.5 };
+    // arrow_t.transform.scale = Vec3.scalar(0.5);
 
     const aspect = renderer.swapchain.extentSwapchainRatio();
     camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
