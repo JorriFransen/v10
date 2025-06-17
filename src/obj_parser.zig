@@ -182,22 +182,22 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     assert(face_array.items.len == num_faces);
     assert(obj_array.items.len == num_objects);
 
-    log.debug("\n\n", .{});
-
-    for (vertex_array.items, 0..) |v, i| log.debug("vertex_array.items[{}]: {}", .{ i, v });
-    for (uv_array.items, 0..) |v, i| log.debug("uv_array.items[{}]: {}", .{ i, v });
-    for (normal_array.items, 0..) |v, i| log.debug("normal_array.items[{}]: {}", .{ i, v });
-    for (index_array.items, 0..) |v, i| log.debug("index_array.items[{}]: {}", .{ i, v.vertex });
-    for (face_array.items, 0..) |v, i| log.debug("face_array.items[{}]: {}", .{ i, v });
-    for (obj_array.items, 0..) |v, i| log.debug("obj_array.items[{}]: {}", .{ i, v });
-
-    log.debug("\n\n", .{});
+    // log.debug("\n\n", .{});
+    //
+    // for (vertex_array.items, 0..) |v, i| log.debug("vertex_array.items[{}]: {}", .{ i, v });
+    // for (uv_array.items, 0..) |v, i| log.debug("uv_array.items[{}]: {}", .{ i, v });
+    // for (normal_array.items, 0..) |v, i| log.debug("normal_array.items[{}]: {}", .{ i, v });
+    // for (index_array.items, 0..) |v, i| log.debug("index_array.items[{}]: {}", .{ i, v.vertex });
+    // for (face_array.items, 0..) |v, i| log.debug("face_array.items[{}]: {}", .{ i, v });
+    // for (obj_array.items, 0..) |v, i| log.debug("obj_array.items[{}]: {}", .{ i, v });
+    //
+    // log.debug("\n\n", .{});
 
     log.debug("need_triangulation: {}\n", .{need_triangulation});
 
-    // if (need_triangulation) {
-    //     assert(false);
-    // }
+    if (need_triangulation) {
+        assert(false);
+    }
 
     return .{
         .vertices = vertex_array.items,

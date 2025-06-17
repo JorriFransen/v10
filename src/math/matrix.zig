@@ -278,10 +278,10 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
             const tan_half_fov_y = @tan(fov_y / 2);
 
             return .{ .data = .{
-                1 / (a_nom * tan_half_fov_y), 0,                              0,                            0,
-                0,                            1 / (a_denom * tan_half_fov_y), 0,                            0,
-                0,                            0,                              far / (far - near),           1,
-                0,                            0,                              -(far * near) / (far - near), 0,
+                1 / (a_nom * tan_half_fov_y), 0,                               0,                            0,
+                0,                            -1 / (a_denom * tan_half_fov_y), 0,                            0,
+                0,                            0,                               far / (far - near),           1,
+                0,                            0,                               -(far * near) / (far - near), 0,
             } };
         }
 

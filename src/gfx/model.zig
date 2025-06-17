@@ -56,120 +56,91 @@ pub const Vertex = struct {
     };
 };
 
-pub const LoadModelError =
+pub const LoadModelError = error{UnsupportedFileType} ||
     resource.LoadResourceError ||
     obj_parser.ObjParseError ||
     CreateModelError;
 
+// TODO: Move this to resource.zig
 pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     var ta = mem.get_temp();
     defer ta.release();
 
-    const content = try resource.load(ta.allocator(), name);
+    const model_res = try resource.load(ta.allocator(), name);
+    const model_file = switch (model_res) {
+        .model_file => model_res.model_file,
+    };
 
-    var mta = mem.get_scratch(ta.arena);
-    defer mta.release();
+    switch (model_file.kind) {
+        // else => return error.UnsupportedFileType,
+        .obj => {
+            var mta = mem.get_scratch(ta.arena);
+            defer mta.release();
 
-    const model = try obj_parser.parse(mta.allocator(), .{ .buffer = content, .name = name });
-    ta.release(); // Free content
+            const model = try obj_parser.parse(mta.allocator(), .{
+                .buffer = model_file.data,
+                .name = name,
+            });
+            ta.release(); // Free content
 
-    const mv = model.vertices;
-    const mc = model.colors;
-    const mn = model.normals;
-    const mt = model.texcoords;
+            const mv = model.vertices;
+            const mc = model.colors;
+            const mn = model.normals;
+            const mt = model.texcoords;
 
-    const vertices = try ta.allocator().alloc(Vertex, model.indices.len);
+            var vertices = try ta.allocator().alloc(Vertex, model.indices.len);
 
-    var face_count: usize = 0;
-    var vi: usize = 0;
+            var face_count: usize = 0;
 
-    const white = Vec3.scalar(1);
+            const white = Vec3.scalar(1);
 
-    // TODO: Fix triangulation to update faces/indices on objects
-    // for (model.objects) |o| {
-    //     face_count += o.faces.len;
-    //
-    //     for (o.faces) |face| {
-    //         assert(face.indices.len == 3);
-    //         const idx0 = face.indices[0];
-    //         const idx1 = face.indices[1];
-    //         const idx2 = face.indices[2];
-    //
-    //         vertices[vi] = .{
-    //             .position = Vec3.v(mv[idx0.vertex]),
-    //             .color = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white,
-    //             .normal = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{},
-    //             .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
-    //         };
-    //
-    //         vertices[vi + 1] = .{
-    //             .position = Vec3.v(mv[idx1.vertex]),
-    //             .color = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white,
-    //             .normal = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{},
-    //             .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
-    //         };
-    //
-    //         vertices[vi + 2] = .{
-    //             .position = Vec3.v(mv[idx2.vertex]),
-    //             .color = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white,
-    //             .normal = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{},
-    //             .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
-    //         };
-    //
-    //         vi += 3;
-    //     }
-    // }
+            // TODO: Fix triangulation to update faces/indices on objects
+            for (model.faces, 0..) |face, i| {
+                face_count += 1;
+                assert(face.indices.len == 3);
+                const idx0 = face.indices[0];
+                const idx1 = face.indices[1];
+                const idx2 = face.indices[2];
 
-    // TODO: Check if we can do this by swizzeling and negating elements
-    // var transform = math.Mat4.rotation(math.radians(180), Vec3.new(0, 1, 0));
-    const transform = math.Mat4.rotation(math.radians(-180), Vec3.new(1, 0, 0));
-    // const transform = math.Mat4.identity;
+                var v0 = Vec3.v(mv[idx0.vertex]);
+                var v1 = Vec3.v(mv[idx1.vertex]);
+                var v2 = Vec3.v(mv[idx2.vertex]);
 
-    for (model.faces) |face| {
-        face_count += 1;
-        assert(face.indices.len == 3);
-        const idx0 = face.indices[0];
-        const idx1 = face.indices[1];
-        const idx2 = face.indices[2];
+                var n0: Vec3 = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{};
+                var n1: Vec3 = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{};
+                var n2: Vec3 = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{};
 
-        const v0 = transform.mul_vec(Vec3.v(mv[idx0.vertex]).toPoint4());
-        const v1 = transform.mul_vec(Vec3.v(mv[idx1.vertex]).toPoint4());
-        const v2 = transform.mul_vec(Vec3.v(mv[idx2.vertex]).toPoint4());
+                // Transform from the default blender export coordinate system to v10
+                v0.z = -v0.z;
+                v1.z = -v1.z;
+                v2.z = -v2.z;
+                n0.z = -n0.z;
+                n1.z = -n1.z;
+                n2.z = -n2.z;
 
-        const n0: Vec4 = if (idx0.normal < mn.len) transform.mul_vec(Vec3.v(mn[idx0.normal]).toPoint4()) else .{};
-        const n1: Vec4 = if (idx1.normal < mn.len) transform.mul_vec(Vec3.v(mn[idx1.normal]).toPoint4()) else .{};
-        const n2: Vec4 = if (idx2.normal < mn.len) transform.mul_vec(Vec3.v(mn[idx2.normal]).toPoint4()) else .{};
+                const c0 = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white;
+                const c1 = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white;
+                const c2 = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white;
 
-        vertices[vi] = .{
-            .position = v0.xyz(),
-            .color = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white,
-            .normal = n0.xyz(),
-            .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
-        };
+                const t0: Vec2 = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{};
+                const t1: Vec2 = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{};
+                const t2: Vec2 = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{};
 
-        // This vertex and the next are swapped, since blender uses counter-clockwise winding order.
-        // V10 used clockwise winding order.
-        vertices[vi + 1] = .{
-            .position = v1.xyz(),
-            .color = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white,
-            .normal = n1.xyz(),
-            .texcoord = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{},
-        };
+                const triangle = [3]Vertex{
+                    .{ .position = v0, .color = c0, .normal = n0, .texcoord = t0 },
+                    .{ .position = v1, .color = c1, .normal = n1, .texcoord = t1 },
+                    .{ .position = v2, .color = c2, .normal = n2, .texcoord = t2 },
+                };
 
-        vertices[vi + 2] = .{
-            .position = v2.xyz(),
-            .color = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white,
-            .normal = n2.xyz(),
-            .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
-        };
+                const vi = i * 3;
+                @memcpy(vertices[vi .. vi + 3], &triangle);
+            }
 
-        vi += 3;
+            assert(model.faces.len == face_count);
+
+            return try create(device, build(vertices));
+        },
     }
-
-    assert(model.faces.len == face_count);
-    assert(vertices.len == vi);
-
-    return try create(device, build(vertices));
 }
 
 inline fn validIndexType(T: type) bool {

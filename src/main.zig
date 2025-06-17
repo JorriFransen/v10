@@ -62,13 +62,12 @@ fn run() !void {
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
 
-    camera_entity = Entity.new();
-
-    // var arrow_model = try Model.load(&device, "res/arrow.obj");
-    var arrow_model = try Model.load(&device, "res/test.obj");
+    // var arrow_model = try Model.load(&device, "res/t.obj");
+    var arrow_model = try Model.load(&device, "res/cube_t.obj");
+    // var arrow_model = try Model.load(&device, "res/test.obj");
     defer arrow_model.destroy();
 
-    var arrow_model_t = try Model.load(&device, "res/splane_t.obj");
+    var arrow_model_t = try Model.load(&device, "res/cube_t.obj");
     defer arrow_model_t.destroy();
 
     var entities_: [2]Entity = undefined;
@@ -77,16 +76,19 @@ fn run() !void {
 
     arrow = &entities[0];
     arrow.model = &arrow_model;
-    arrow.transform.translation = .{ .z = 2.5, .y = 2 };
+    arrow.transform.translation = .{ .z = 2.5, .y = 0.2 };
     arrow.transform.scale = Vec3.scalar(0.5);
 
-    // arrow_t = &entities[1];
-    // arrow_t.model = &arrow_model_t;
-    // arrow_t.transform.translation = .{ .z = 2.5, .y = -2.5 };
-    // arrow_t.transform.scale = Vec3.scalar(0.5);
+    camera_entity = Entity.new();
+    camera_entity.transform.translation = .{ .z = 0 };
+
+    arrow_t = &entities[1];
+    arrow_t.model = &arrow_model_t;
+    arrow_t.transform.translation = .{ .z = 2.5, .y = -1.2 };
+    arrow_t.transform.scale = Vec3.scalar(0.5);
 
     const aspect = renderer.swapchain.extentSwapchainRatio();
-    camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
+    camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 100);
 
     var current_time = try Instant.now();
 
