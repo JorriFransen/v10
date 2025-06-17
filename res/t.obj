@@ -1,6 +1,5 @@
 # Blender 4.4.3
 # www.blender.org
-mtllib t.mtl
 o Plane
 v -0.500000 0.000000 0.000000
 v 0.500000 0.000000 0.000000
