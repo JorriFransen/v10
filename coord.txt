@@ -1,0 +1,7 @@
+
+WORLDSPACE:
+    Right-handed
+    +X right
+    +Y up
+    +Z into screen
+

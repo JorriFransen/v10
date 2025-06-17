@@ -64,12 +64,24 @@ fn run() !void {
 
     camera_entity = Entity.new();
 
+    var arrow_model = try Model.load(&device, "res/t.obj");
     // var arrow_model = try Model.load(&device, "res/arrow.obj");
-    var arrow_model = try Model.load(&device, "res/test.obj");
+    // var arrow_model = try Model.load(&device, "res/test.obj");
     defer arrow_model.destroy();
 
-    var arrow_model_t = try Model.load(&device, "res/splane_t.obj");
+    const red = Vec3.new(1, 0, 0);
+    const green = Vec3.new(0, 1, 0);
+    const blue = Vec3.new(0, 0, 1);
+
+    var arrow_model_t = try Model.create(&device, Model.build(&.{
+        .{ .position = Vec3.new(0, 0.5, 0), .color = red, .normal = Vec3.new(0, 0, 1), .texcoord = .{} },
+        .{ .position = Vec3.new(-0.5, 0, 0), .color = blue, .normal = Vec3.new(0, 0, 1), .texcoord = .{} },
+        .{ .position = Vec3.new(0.5, 0, 0), .color = green, .normal = Vec3.new(0, 0, 1), .texcoord = .{} },
+    }));
     defer arrow_model_t.destroy();
+
+    // var arrow_model_t = try Model.load(&device, "res/splane_t.obj");
+    // defer arrow_model_t.destroy();
 
     var entities_: [2]Entity = undefined;
     for (&entities_) |*e| e.* = Entity.new();
@@ -77,16 +89,18 @@ fn run() !void {
 
     arrow = &entities[0];
     arrow.model = &arrow_model;
-    arrow.transform.translation = .{ .z = 2.5, .y = 2 };
-    arrow.transform.scale = Vec3.scalar(0.5);
+    arrow.transform.translation = .{ .z = 1.5, .y = 0 };
+    // arrow.transform.scale = Vec3.scalar(0.5);
 
-    // arrow_t = &entities[1];
-    // arrow_t.model = &arrow_model_t;
-    // arrow_t.transform.translation = .{ .z = 2.5, .y = -2.5 };
+    camera_entity.transform.translation = .{ .z = 0 };
+
+    arrow_t = &entities[1];
+    arrow_t.model = &arrow_model_t;
+    arrow_t.transform.translation = .{ .z = 1.5, .y = -1 };
     // arrow_t.transform.scale = Vec3.scalar(0.5);
 
     const aspect = renderer.swapchain.extentSwapchainRatio();
-    camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
+    camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 100);
 
     var current_time = try Instant.now();
 

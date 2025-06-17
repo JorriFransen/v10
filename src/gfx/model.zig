@@ -121,8 +121,11 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     // }
 
     // TODO: Check if we can do this by swizzeling and negating elements
-    // var transform = math.Mat4.rotation(math.radians(180), Vec3.new(0, 1, 0));
-    const transform = math.Mat4.rotation(math.radians(-180), Vec3.new(1, 0, 0));
+    // var transform = math.Mat4.rotation(math.radians(180), Vec3.new(0, -1, 0));
+    // transform = transform.rotate(math.radians(90), Vec3.new(0, 0, 1));
+    // const transform = math.Mat4.rotation(math.radians(-180), Vec3.new(1, 0, 0));
+    var transform = math.Mat4.scaling(.{ .x = 1, .y = 1, .z = -1 });
+
     // const transform = math.Mat4.identity;
 
     for (model.faces) |face| {
@@ -146,9 +149,6 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
             .normal = n0.xyz(),
             .texcoord = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{},
         };
-
-        // This vertex and the next are swapped, since blender uses counter-clockwise winding order.
-        // V10 used clockwise winding order.
         vertices[vi + 1] = .{
             .position = v1.xyz(),
             .color = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white,
@@ -163,6 +163,13 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
             .texcoord = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{},
         };
 
+        std.log.debug("Loaded vertex[{}]: {}", .{ vi, vertices[vi].position });
+        std.log.debug("Loaded vertex[{}]: {}", .{ vi, vertices[vi + 1].position });
+        std.log.debug("Loaded vertex[{}]: {}", .{ vi, vertices[vi + 2].position });
+
+        std.log.debug("Loaded normal[{}]: {}", .{ vi, vertices[vi].normal });
+        std.log.debug("Loaded normal[{}]: {}", .{ vi, vertices[vi + 1].normal });
+        std.log.debug("Loaded normal[{}]: {}", .{ vi, vertices[vi + 2].normal });
         vi += 3;
     }
 
