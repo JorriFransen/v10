@@ -62,5 +62,6 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *E
     if (mdir.dot(mdir) > epsilon) {
         const ttra = &entity.transform.translation;
         ttra.* = ttra.add(mdir.normalized().mul_scalar(dt * this.move_speed));
+        // std.log.debug("Cam pos: {}", .{ttra.*});
     }
 }
