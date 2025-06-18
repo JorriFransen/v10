@@ -3,19 +3,21 @@ const log = std.log.scoped(.obj_parser);
 const gfx = @import("gfx.zig");
 const mem = @import("memory.zig");
 const math = @import("math.zig");
+const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 const Arena = mem.Arena;
 const TempArena = mem.TempArena;
 const SplitIterator = std.mem.SplitIterator(u8, .scalar);
 const TokenIterator = std.mem.TokenIterator(u8, .scalar);
+const LinkedList = std.DoublyLinkedList;
 
 const Vec2 = @Vector(2, f32);
 const Vec3 = @Vector(3, f32);
 
 const assert = std.debug.assert;
 
-const EPS = 1e-6;
+const GEOM_EPS = 1e-6;
 
 pub const ParseFlags = packed struct(u8) {
     vertex_colors: bool = true,
@@ -33,6 +35,7 @@ pub const ParseOptions = struct {
 pub const ObjParseError = error{
     Syntax,
     OutOfMemory,
+    TriangulationFailed,
 };
 
 pub const Object = struct {
@@ -41,7 +44,7 @@ pub const Object = struct {
 };
 
 pub const Face = struct {
-    indices: []Index = &.{},
+    indices: []const Index = &.{},
 };
 
 pub const Index = struct {
@@ -58,6 +61,12 @@ const Model = struct {
     indices: []const Index = &.{},
     faces: []const Face = &.{},
     objects: []const Object = &.{},
+};
+
+const ProjectedVertex = struct {
+    pos: Vec2,
+    idx: Index,
+    node: LinkedList.Node = .{},
 };
 
 pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
@@ -110,15 +119,15 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
 
-    var vertex_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
-    var normal_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_normals);
-    var uv_array = try std.ArrayListUnmanaged(@Vector(2, f32)).initCapacity(allocator, num_uvs);
-    var obj_array = try std.ArrayListUnmanaged(Object).initCapacity(allocator, num_objects);
+    var vertices = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
+    var normals = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_normals);
+    var texcoords = try std.ArrayListUnmanaged(@Vector(2, f32)).initCapacity(allocator, num_uvs);
+    var objects = try std.ArrayListUnmanaged(Object).initCapacity(allocator, num_objects);
 
-    var colors_array: std.ArrayListUnmanaged(Vec3) = undefined;
+    var colors: std.ArrayListUnmanaged(Vec3) = undefined;
     var parse_vector_fn = &parseVector;
     if (options.flags.vertex_colors) {
-        colors_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
+        colors = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
         parse_vector_fn = parseVectorAndColor;
     }
 
@@ -126,8 +135,8 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     defer ta.release();
 
     const face_alloc = if (need_triangulation) ta.allocator() else allocator;
-    var face_array = try std.ArrayListUnmanaged(Face).initCapacity(face_alloc, num_faces);
-    var index_array = try std.ArrayListUnmanaged(Index).initCapacity(face_alloc, num_indices);
+    var faces = try std.ArrayListUnmanaged(Face).initCapacity(face_alloc, num_faces);
+    var indices = try std.ArrayListUnmanaged(Index).initCapacity(face_alloc, num_indices);
 
     var current_object: ?*Object = null;
     var obj_face_offset: usize = 0;
@@ -141,21 +150,21 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         const field = field_it.next() orelse return error.Syntax;
 
         if (eq(field, "v")) {
-            parse_vector_fn(&field_it, &vertex_array, &colors_array);
+            parse_vector_fn(&field_it, &vertices, &colors);
         } else if (eq(field, "vn")) {
-            normal_array.appendAssumeCapacity(parseVec3(&field_it));
+            normals.appendAssumeCapacity(parseVec3(&field_it));
         } else if (eq(field, "vt")) {
-            uv_array.appendAssumeCapacity(parseVec2(&field_it));
+            texcoords.appendAssumeCapacity(parseVec2(&field_it));
         } else if (eq(field, "f")) {
-            const face = try parseFace(field_it.rest(), @intCast(vertex_array.items.len), num_uvs, @intCast(normal_array.items.len), &index_array);
-            face_array.appendAssumeCapacity(face);
+            const face = try parseFace(field_it.rest(), @intCast(vertices.items.len), num_uvs, @intCast(normals.items.len), &indices);
+            faces.appendAssumeCapacity(face);
         } else if (eq(field, "o")) {
             if (current_object) |obj| {
-                obj.faces = face_array.items[obj_face_offset..face_array.items.len];
+                obj.faces = faces.items[obj_face_offset..faces.items.len];
             }
-            obj_face_offset = face_array.items.len;
+            obj_face_offset = faces.items.len;
 
-            const obj = obj_array.addOneAssumeCapacity();
+            const obj = objects.addOneAssumeCapacity();
             obj.name = field_it.rest();
             current_object = obj;
         } else if (eq(field, "s")) {
@@ -171,23 +180,23 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
     if (current_object) |obj| {
-        obj.faces = face_array.items[obj_face_offset..face_array.items.len];
+        obj.faces = faces.items[obj_face_offset..faces.items.len];
     }
 
-    assert(vertex_array.items.len == num_verts);
-    if (options.flags.vertex_colors) assert(colors_array.items.len == num_verts);
-    assert(uv_array.items.len == num_uvs);
-    assert(normal_array.items.len == num_normals);
-    assert(index_array.items.len == num_indices);
-    assert(face_array.items.len == num_faces);
-    assert(obj_array.items.len == num_objects);
+    assert(vertices.items.len == num_verts);
+    if (options.flags.vertex_colors) assert(colors.items.len == num_verts);
+    assert(texcoords.items.len == num_uvs);
+    assert(normals.items.len == num_normals);
+    assert(indices.items.len == num_indices);
+    assert(faces.items.len == num_faces);
+    assert(objects.items.len == num_objects);
 
     // log.debug("\n\n", .{});
     //
-    // for (vertex_array.items, 0..) |v, i| log.debug("vertex_array.items[{}]: {}", .{ i, v });
+    // for (vertices.items, 0..) |v, i| log.debug("vertices.items[{}]: {}", .{ i, v });
     // for (uv_array.items, 0..) |v, i| log.debug("uv_array.items[{}]: {}", .{ i, v });
     // for (normal_array.items, 0..) |v, i| log.debug("normal_array.items[{}]: {}", .{ i, v });
-    // for (index_array.items, 0..) |v, i| log.debug("index_array.items[{}]: {}", .{ i, v.vertex });
+    // for (indices.items, 0..) |v, i| log.debug("indices.items[{}]: {}", .{ i, v });
     // for (face_array.items, 0..) |v, i| log.debug("face_array.items[{}]: {}", .{ i, v });
     // for (obj_array.items, 0..) |v, i| log.debug("obj_array.items[{}]: {}", .{ i, v });
     //
@@ -196,64 +205,260 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     log.debug("need_triangulation: {}\n", .{need_triangulation});
 
     if (need_triangulation) {
-        assert(false);
+        var triangle_face_count: usize = 0;
+        for (faces.items) |face| {
+            assert(face.indices.len >= 3);
+            triangle_face_count += face.indices.len - 2;
+        }
+
+        var fta = TempArena.init(ta.arena);
+
+        var new_faces = try std.ArrayListUnmanaged(Face).initCapacity(allocator, triangle_face_count);
+        var new_indices = try std.ArrayListUnmanaged(Index).initCapacity(allocator, triangle_face_count * 3);
+
+        for (faces.items, 0..) |face, i| {
+            assert(face.indices.len >= 3);
+
+            // Find the face normal
+            const v0 = vertices.items[face.indices[0].vertex];
+            const v1 = vertices.items[face.indices[1].vertex];
+            const v2 = vertices.items[face.indices[2].vertex];
+            const face_normal_ = cross(v1 - v0, v2 - v0);
+            const fn_mag_sq = dot(face_normal_, face_normal_);
+            if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
+            const face_normal = normalize(face_normal_);
+
+            log.debug("\n", .{});
+            log.debug("face[{}].normal: {}", .{ i, face_normal });
+
+            const nx = @abs(face_normal[0]);
+            const ny = @abs(face_normal[1]);
+            const nz = @abs(face_normal[2]);
+
+            const Mask = struct {
+                u: usize,
+                v: usize,
+                s: f32,
+            };
+
+            // Third element is sign of projection
+            const mask: Mask =
+                if (nx >= ny and nx >= nz)
+                    .{ .u = 1, .v = 2, .s = if (face_normal[0] > 0) 1 else -1 }
+                else if (ny >= nx and ny >= nz)
+                    .{ .u = 0, .v = 2, .s = if (face_normal[1] > 0) 1 else -1 }
+                else
+                    .{ .u = 0, .v = 1, .s = if (face_normal[2] > 0) 1 else -1 };
+
+            log.debug("Plane mask: {}", .{mask});
+
+            var u_basis = Vec3{ 0, 0, 0 };
+            var v_basis = Vec3{ 0, 0, 0 };
+            u_basis[mask.u] = 1;
+            v_basis[mask.v] = 1;
+            const basis_cross = cross(u_basis, v_basis);
+            const bdot = dot(basis_cross, face_normal);
+            const plane_handedness_factor: f32 = if (bdot > 0) 1 else -1; // Controls winding order of indices added to the final list
+
+            fta.release();
+            const projected_vertices_mem = try fta.allocator().alloc(ProjectedVertex, face.indices.len);
+            var vertex_list: LinkedList = .{};
+
+            for (face.indices, projected_vertices_mem) |idx, *pv| {
+                const v = vertices.items[idx.vertex];
+                const p: Vec2 = .{ v[mask.u], v[mask.v] };
+
+                pv.* = .{ .pos = p, .idx = idx };
+
+                // TODO: Don't append duplicates
+                // TODO: Remove collinear intermidate vertices
+                vertex_list.append(&pv.node);
+            }
+
+            {
+                var it = vertex_list.first;
+                while (it) |node| : (it = node.next) {
+                    const pv: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+                    log.debug("Projected vertex: pos: {}, idx: {}", .{ pv.pos, pv.idx });
+                }
+            }
+
+            {
+                // TODO: Abstract to function so we can merge this code with test code.
+                var winding_sum: f32 = 0.0; // Determines (c)cw (cw is reversed to ccw later)
+                var current_node = vertex_list.first;
+
+                // Calculate the *original* winding sum of the projected polygon
+                while (current_node) |node| {
+                    const pv_cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+                    const pv_next_node = node.next orelse vertex_list.first.?;
+                    const pv_next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", pv_next_node));
+
+                    winding_sum += (pv_cur.pos[0] * pv_next.pos[1]) - (pv_next.pos[0] * pv_cur.pos[1]);
+                    current_node = node.next;
+                }
+
+                log.debug("Original Winding sum for face {}: {}", .{ i, winding_sum });
+                log.debug("Plane handedness factor for face {}: {}", .{ i, plane_handedness_factor });
+
+                if (winding_sum < -GEOM_EPS) {
+                    log.debug("Face {} effective winding is negative. Reversing winding order for consistent PD.", .{i});
+                    var temp_list: LinkedList = .{};
+                    while (vertex_list.pop()) |node| {
+                        temp_list.append(node);
+                    }
+                    vertex_list = temp_list;
+                } else if (winding_sum > GEOM_EPS) {
+                    log.debug("Face {} effective winding is positive. No reversal needed.", .{i});
+                } else {
+                    log.warn("Face {} has a near-zero effective winding sum. Skipping triangulation (likely degenerate).", .{i});
+                    continue;
+                }
+            }
+
+            var num_vertices = face.indices.len;
+            var it = vertex_list.first;
+
+            while (num_vertices > 3) {
+                const node = it.?;
+                const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.prev orelse vertex_list.last.?));
+                const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+                const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.next orelse vertex_list.first.?));
+
+                log.debug("vi (cur): {}", .{cur.idx.vertex});
+                log.debug("Checking for ear with vertices: {}, {}, {}", .{ vertices.items[prev.idx.vertex], vertices.items[cur.idx.vertex], vertices.items[next.idx.vertex] });
+                log.debug("\tprojected: {}, {}, {}", .{ prev.pos, cur.pos, next.pos });
+
+                if (!convex(prev.pos, cur.pos, next.pos)) {
+                    it = node.next orelse vertex_list.first;
+                    log.debug("not convex vi: {}", .{cur.idx.vertex});
+                    continue;
+                }
+
+                log.debug("convex vi: {}", .{cur.idx.vertex});
+
+                var c_it = next.node.next orelse vertex_list.first;
+                while (c_it) |c_node| {
+                    if (c_node == &prev.node) break;
+
+                    const c: *ProjectedVertex = @alignCast(@fieldParentPtr("node", c_node));
+                    log.debug("Checking collision with {}", .{c});
+
+                    if (inTriangle(c.pos, prev.pos, cur.pos, next.pos)) {
+                        log.debug("Collision with {}, vi: {}", .{ c, cur.idx.vertex });
+                        it = node.next orelse vertex_list.first;
+                        break;
+                    }
+
+                    c_it = c_node.next orelse vertex_list.first;
+                }
+
+                log.debug("Passed collision tests with vi: {}", .{cur.idx.vertex});
+
+                // Found ear
+                const new_triangle: [3]Index = if (plane_handedness_factor > 0)
+                    .{ prev.idx, cur.idx, next.idx }
+                else
+                    .{ prev.idx, next.idx, cur.idx };
+
+                const start_idx = new_indices.items.len;
+                new_indices.appendSliceAssumeCapacity(&new_triangle);
+                new_faces.appendAssumeCapacity(.{ .indices = new_indices.items[start_idx .. start_idx + 3] });
+
+                it = node.prev orelse vertex_list.first;
+                vertex_list.remove(&cur.node);
+
+                num_vertices -= 1;
+            }
+
+            assert(num_vertices == 3);
+            const n0 = vertex_list.first.?;
+            const n1 = n0.next.?;
+            const n2 = vertex_list.last.?;
+            assert(n1.next == n2);
+            const lv0: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n0));
+            const lv1: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n1));
+            const lv2: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n2));
+            const last_triangle: [3]Index = if (plane_handedness_factor > 0)
+                .{ lv0.idx, lv1.idx, lv2.idx }
+            else
+                .{ lv0.idx, lv2.idx, lv1.idx };
+
+            const start_idx = new_indices.items.len;
+            new_indices.appendSliceAssumeCapacity(&last_triangle);
+            new_faces.appendAssumeCapacity(.{ .indices = new_indices.items[start_idx .. start_idx + 3] });
+        }
+
+        indices = new_indices;
+        faces = new_faces;
     }
 
     return .{
-        .vertices = vertex_array.items,
-        .colors = colors_array.items,
-        .normals = normal_array.items,
-        .texcoords = uv_array.items,
-        .indices = index_array.items,
-        .faces = face_array.items,
-        .objects = obj_array.items,
+        .vertices = vertices.items,
+        .colors = colors.items,
+        .normals = normals.items,
+        .texcoords = texcoords.items,
+        .indices = indices.items,
+        .faces = faces.items,
+        .objects = objects.items,
     };
 }
-
 inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
     const v0 = tc - ta;
     const v1 = tb - ta;
     const v2 = p - ta;
 
-    const dot00 = dot(Vec2, v0, v0);
-    const dot01 = dot(Vec2, v0, v1);
-    const dot02 = dot(Vec2, v0, v2);
-    const dot11 = dot(Vec2, v1, v1);
-    const dot12 = dot(Vec2, v1, v2);
+    const dot00 = dot(v0, v0);
+    const dot01 = dot(v0, v1);
+    const dot02 = dot(v0, v2);
+    const dot11 = dot(v1, v1);
+    const dot12 = dot(v1, v2);
 
+    const DENOM_EPS = 1e-9;
     const denom = dot00 * dot11 - dot01 * dot01;
+    if (@abs(denom) < DENOM_EPS) {
+        log.warn("Found degenerate triangle in 'inTriangle({}, {}, {}, {})'", .{ p, ta, tb, tc });
+        return false;
+    }
+
     const u = (dot11 * dot02 - dot01 * dot12) / denom;
     const v = (dot00 * dot12 - dot01 * dot02) / denom;
 
-    return u > EPS and v > EPS and (u + v) < (1 - EPS);
+    return u > GEOM_EPS and v > GEOM_EPS and (u + v) < (1 - GEOM_EPS);
 }
 
-inline fn cross(comptime V: type, a: V, b: V) switch (@typeInfo(V).vector.len) {
-    else => @compileError("Invalid vector length"),
-    3 => V,
-    2 => @typeInfo(V).vector.child,
-} {
-    switch (@typeInfo(V).vector.len) {
-        else => @compileError("Invalid vector length"),
-        3 => return @bitCast(math.Vec3.cross(@bitCast(a), @bitCast(b))),
-        2 => return (a[0] * b[1]) - (a[1] * b[0]),
-    }
+inline fn cross(a: Vec3, b: Vec3) Vec3 {
+    const v1 = Vec3{ a[1], a[2], a[0] };
+    const v2 = Vec3{ b[2], b[0], b[1] };
+    const v3 = Vec3{ a[2], a[0], a[1] };
+    const v4 = Vec3{ b[1], b[2], b[0] };
+    return (v1 * v2) - (v3 * v4);
 }
 
-inline fn dot(comptime V: type, a: V, b: V) @typeInfo(V).vector.child {
-    switch (@typeInfo(V).vector.len) {
-        else => @compileError("Invalid vector length"),
-        2 => return @bitCast(math.Vec2.dot(@bitCast(a), @bitCast(b))),
-        3 => return @bitCast(math.Vec3.dot(@bitCast(a), @bitCast(b))),
-    }
+inline fn cross2d(a: Vec2, b: Vec2) f32 {
+    return (a[0] * b[1]) - (a[1] * b[0]);
 }
 
-inline fn normalize(comptime V: type, v: V) V {
-    switch (@typeInfo(V).vector.len) {
-        else => @compileError("Invalid vector length"),
-        2 => return @bitCast(math.Vec2.normalized(@bitCast(v))),
-        3 => return @bitCast(math.Vec3.normalized(@bitCast(v))),
-    }
+inline fn convex(prev: Vec2, cur: Vec2, next: Vec2) bool {
+    const vec_in = cur - prev;
+    const vec_out = next - cur;
+    log.debug("convex cur_to_prev: {}", .{vec_in});
+    log.debug("convex cur_to_next: {}", .{vec_out});
+    const pd = cross2d(vec_in, vec_out);
+
+    log.debug("convex pd: {}", .{pd});
+    if (pd > -GEOM_EPS) return true;
+    return false;
+}
+
+inline fn dot(a: anytype, b: anytype) @typeInfo(@TypeOf(a)).vector.child {
+    assert(@TypeOf(a) == @TypeOf(b));
+    return @reduce(.Add, a * b);
+}
+
+inline fn normalize(v: anytype) @TypeOf(v) {
+    const one_over_len = 1.0 / @sqrt(@reduce(.Add, v * v));
+    return v * @as(@TypeOf(v), @splat(one_over_len));
 }
 
 fn findFaceIndexCount(str: []const u8) usize {
@@ -399,4 +604,146 @@ inline fn tokenize(buf: []const u8, s: u8) TokenIterator {
 
 inline fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+test "cross2d" {
+    const pv0 = Vec2{ 0, 0 };
+    const pv1 = Vec2{ 1, 0 };
+    const pv2 = Vec2{ 1, 1 };
+
+    const vec_in = pv1 - pv0;
+    const vec_out = pv2 - pv1;
+
+    const r = cross2d(vec_in, vec_out);
+    try std.testing.expect(r > 0);
+    try std.testing.expectEqual(1, r);
+}
+
+test "winding sum" {
+    const pv0 = Vec2{ 0, 0 };
+    const pv1 = Vec2{ 1, 0 };
+    const pv2 = Vec2{ 1, 1 };
+    const pv3 = Vec2{ 0, 1 };
+
+    const edges = [_][2]Vec2{
+        .{ pv0, pv1 },
+        .{ pv1, pv2 },
+        .{ pv2, pv3 },
+        .{ pv3, pv0 },
+    };
+
+    var sum: f32 = 0;
+    for (edges) |e| {
+        const edge = (e[0][0] * e[1][1]) - (e[1][0] * e[0][1]);
+        sum += edge;
+    }
+
+    try std.testing.expect(sum > 0);
+    try std.testing.expectEqual(2, sum);
+}
+
+test "convex" {
+    const pv0 = Vec2{ 0, 0 };
+    const pv1 = Vec2{ 1, 0 };
+    const pv2 = Vec2{ 1, 1 };
+
+    const r = convex(pv0, pv1, pv2);
+    try std.testing.expectEqual(true, r);
+}
+
+test "handedness normalization" {
+    const v0 = Vec3{ 1, 1, -1 };
+    const v1 = Vec3{ -1, 1, -1 };
+    const v2 = Vec3{ -1, 1, 1 };
+    const v3 = Vec3{ 1, 1, 1 };
+
+    const face_normal_ = cross(v1 - v0, v2 - v0);
+    const fn_mag_sq = dot(face_normal_, face_normal_);
+    if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
+    const face_normal = normalize(face_normal_);
+
+    const nx = @abs(face_normal[0]);
+    const ny = @abs(face_normal[1]);
+    const nz = @abs(face_normal[2]);
+
+    const Mask = struct {
+        u: usize,
+        v: usize,
+        s: f32,
+    };
+
+    // Third element is sign of projection
+    const mask: Mask =
+        if (nx >= ny and nx >= nz)
+            .{ .u = 1, .v = 2, .s = if (face_normal[0] > 0) 1 else -1 }
+        else if (ny >= nx and ny >= nz)
+            .{ .u = 0, .v = 2, .s = if (face_normal[1] > 0) 1 else -1 }
+        else
+            .{ .u = 0, .v = 1, .s = if (face_normal[2] > 0) 1 else -1 };
+
+    assert(mask.u == 0);
+    assert(mask.v == 2);
+    assert(mask.s == 1);
+
+    const pv0 = Vec2{ v0[0], v0[2] };
+    const pv1 = Vec2{ v1[0], v1[2] };
+    const pv2 = Vec2{ v2[0], v2[2] };
+    const pv3 = Vec2{ v3[0], v3[2] };
+
+    var n0 = ProjectedVertex{ .pos = pv0, .idx = .{} };
+    var n1 = ProjectedVertex{ .pos = pv1, .idx = .{} };
+    var n2 = ProjectedVertex{ .pos = pv2, .idx = .{} };
+    var n3 = ProjectedVertex{ .pos = pv3, .idx = .{} };
+
+    var vertex_list = LinkedList{};
+    vertex_list.append(&n0.node);
+    vertex_list.append(&n1.node);
+    vertex_list.append(&n2.node);
+    vertex_list.append(&n3.node);
+
+    var u_basis = Vec3{ 0, 0, 0 };
+    var v_basis = Vec3{ 0, 0, 0 };
+    u_basis[mask.u] = 1;
+    v_basis[mask.v] = 1;
+
+    const basis_cross = cross(u_basis, v_basis);
+    const bdot = dot(basis_cross, face_normal);
+    const plane_handedness_factor: f32 = if (bdot > 0) 1 else -1;
+
+    var winding_sum: f32 = 0.0;
+    var current_node = vertex_list.first;
+
+    while (current_node) |node| {
+        const pv_cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+        const pv_next_node = node.next orelse vertex_list.first.?;
+        const pv_next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", pv_next_node));
+
+        winding_sum += (pv_cur.pos[0] * pv_next.pos[1]) - (pv_next.pos[0] * pv_cur.pos[1]);
+        current_node = node.next;
+    }
+
+    const effective_winding_sign = winding_sum * plane_handedness_factor;
+
+    const revert = if (effective_winding_sign < -GEOM_EPS)
+        true
+    else if (effective_winding_sign > GEOM_EPS)
+        false
+    else {
+        return error.NearZeroWindingSumDegenerate;
+    };
+
+    try std.testing.expectEqual(Vec3{ 0, 1, 0 }, face_normal);
+    try std.testing.expectEqual(Mask{ .u = 0, .v = 2, .s = 1 }, mask);
+    try std.testing.expectEqual(Vec2{ 1, -1 }, pv0);
+    try std.testing.expectEqual(Vec2{ -1, -1 }, pv1);
+    try std.testing.expectEqual(Vec2{ -1, 1 }, pv2);
+    try std.testing.expectEqual(Vec2{ 1, 1 }, pv3);
+    try std.testing.expectEqual(Vec3{ 1, 0, 0 }, u_basis);
+    try std.testing.expectEqual(Vec3{ 0, 0, 1 }, v_basis);
+    try std.testing.expectEqual(Vec3{ 0, -1, 0 }, basis_cross);
+    try std.testing.expectEqual(-1, bdot);
+    try std.testing.expectEqual(-8, winding_sum);
+    try std.testing.expectEqual(-1, plane_handedness_factor);
+    try std.testing.expectEqual(8, effective_winding_sign);
+    try std.testing.expectEqual(false, revert);
 }

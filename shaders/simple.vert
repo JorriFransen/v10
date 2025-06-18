@@ -23,6 +23,6 @@ void main () {
     if (c.r < 0) c.r = c.r * -0.1;
     if (c.g < 0) c.g = c.g * -0.1;
     if (c.b < 0) c.b = c.b * -0.1;
-    
+
     frag_color = c;
 }

@@ -62,12 +62,12 @@ fn run() !void {
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
 
-    // var arrow_model = try Model.load(&device, "res/t.obj");
-    var arrow_model = try Model.load(&device, "res/cube_t.obj");
-    // var arrow_model = try Model.load(&device, "res/test.obj");
+    // var arrow_model = try Model.load(&device, "res/test_obj/triangle.obj");
+    var arrow_model = try Model.load(&device, "res/test_obj/cube.obj");
     defer arrow_model.destroy();
 
-    var arrow_model_t = try Model.load(&device, "res/cube_t.obj");
+    // var arrow_model_t = try Model.load(&device, "res/test_obj/triangle_t.obj");
+    var arrow_model_t = try Model.load(&device, "res/test_obj/cube_t.obj");
     defer arrow_model_t.destroy();
 
     var entities_: [2]Entity = undefined;
