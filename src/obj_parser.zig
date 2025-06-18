@@ -3,19 +3,21 @@ const log = std.log.scoped(.obj_parser);
 const gfx = @import("gfx.zig");
 const mem = @import("memory.zig");
 const math = @import("math.zig");
+const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 const Arena = mem.Arena;
 const TempArena = mem.TempArena;
 const SplitIterator = std.mem.SplitIterator(u8, .scalar);
 const TokenIterator = std.mem.TokenIterator(u8, .scalar);
+const LinkedList = std.DoublyLinkedList;
 
 const Vec2 = @Vector(2, f32);
 const Vec3 = @Vector(3, f32);
 
 const assert = std.debug.assert;
 
-const EPS = 1e-6;
+const GEOM_EPS = 1e-6;
 
 pub const ParseFlags = packed struct(u8) {
     vertex_colors: bool = true,
@@ -33,6 +35,7 @@ pub const ParseOptions = struct {
 pub const ObjParseError = error{
     Syntax,
     OutOfMemory,
+    TriangulationFailed,
 };
 
 pub const Object = struct {
@@ -196,7 +199,81 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     log.debug("need_triangulation: {}\n", .{need_triangulation});
 
     if (need_triangulation) {
-        assert(false);
+        var triangle_face_count: usize = 0;
+        for (face_array.items) |face| {
+            assert(face.indices.len >= 3);
+            triangle_face_count += face.indices.len - 2;
+        }
+
+        const triangle_count = triangle_face_count * 3;
+        _ = triangle_count;
+
+        var fta = TempArena.init(ta.arena);
+
+        for (face_array.items, 0..) |face, i| {
+            assert(face.indices.len >= 3);
+
+            // Find the face normal
+            const v0 = vertex_array.items[face.indices[0].vertex];
+            const v1 = vertex_array.items[face.indices[1].vertex];
+            const v2 = vertex_array.items[face.indices[2].vertex];
+            const face_normal_ = cross(v1 - v0, v2 - v0);
+            const fn_mag_sq = dot(face_normal_, face_normal_);
+            if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
+            const face_normal = normalize(face_normal_);
+
+            log.debug("face[{}].normal: {}", .{ i, face_normal });
+
+            const nx = @abs(face_normal[0]);
+            const ny = @abs(face_normal[1]);
+            const nz = @abs(face_normal[2]);
+
+            const Mask = struct {
+                u: usize,
+                v: usize,
+                s: f32,
+            };
+
+            // Third element is sign of projection
+            const mask: Mask =
+                if (nx >= ny and nx >= nz)
+                    .{ .u = 1, .v = 2, .s = if (face_normal[0] > 0) 1 else -1 }
+                else if (ny >= nx and ny >= nz)
+                    .{ .u = 0, .v = 2, .s = if (face_normal[1] > 0) 1 else -1 }
+                else
+                    .{ .u = 0, .v = 1, .s = if (face_normal[2] > 0) 1 else -1 };
+
+            log.debug("Plane mask: {}", .{mask});
+
+            const ProjectedVertex = struct {
+                pos: Vec2,
+                idx: Index,
+                node: LinkedList.Node = .{},
+            };
+
+            fta.release();
+            const projected_vertices_mem = try fta.allocator().alloc(ProjectedVertex, face.indices.len);
+            var vertex_list: LinkedList = .{};
+
+            for (face.indices, projected_vertices_mem) |idx, *pv| {
+                const v = vertex_array.items[idx.vertex];
+                const p: Vec2 = .{ v[mask.u], v[mask.v] * mask.s };
+
+                pv.* = .{ .pos = p, .idx = idx };
+
+                // TODO: Don't append duplicates
+                // TODO: Remove collinear intermidate vertices
+                vertex_list.append(&pv.node);
+            }
+
+            var it = vertex_list.first;
+            while (it) |node| : (it = node.next) {
+                const pv: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+                log.debug("Projected vertex: pos: {}, idx: {}", .{ pv.pos, pv.idx });
+            }
+        }
+
+        unreachable;
     }
 
     return .{
@@ -209,7 +286,6 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         .objects = obj_array.items,
     };
 }
-
 inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
     const v0 = tc - ta;
     const v1 = tb - ta;
@@ -221,39 +297,49 @@ inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
     const dot11 = dot(Vec2, v1, v1);
     const dot12 = dot(Vec2, v1, v2);
 
+    const DENOM_EPS = 1e-9;
     const denom = dot00 * dot11 - dot01 * dot01;
+    if (@abs(denom) < DENOM_EPS) {
+        log.warn("Found degenerate triangle in 'inTriangle({}, {}, {}, {})'", .{ p, ta, tb, tc });
+        return false;
+    }
+
     const u = (dot11 * dot02 - dot01 * dot12) / denom;
     const v = (dot00 * dot12 - dot01 * dot02) / denom;
 
-    return u > EPS and v > EPS and (u + v) < (1 - EPS);
+    return u > GEOM_EPS and v > GEOM_EPS and (u + v) < (1 - GEOM_EPS);
 }
 
-inline fn cross(comptime V: type, a: V, b: V) switch (@typeInfo(V).vector.len) {
-    else => @compileError("Invalid vector length"),
-    3 => V,
-    2 => @typeInfo(V).vector.child,
-} {
-    switch (@typeInfo(V).vector.len) {
-        else => @compileError("Invalid vector length"),
-        3 => return @bitCast(math.Vec3.cross(@bitCast(a), @bitCast(b))),
-        2 => return (a[0] * b[1]) - (a[1] * b[0]),
-    }
+inline fn cross(a: Vec3, b: Vec3) Vec3 {
+    const v1 = Vec3{ a[1], a[2], a[0] };
+    const v2 = Vec3{ b[2], b[0], b[1] };
+    const v3 = Vec3{ a[2], a[0], a[1] };
+    const v4 = Vec3{ b[1], b[2], b[0] };
+    return (v1 * v2) - (v3 * v4);
 }
 
-inline fn dot(comptime V: type, a: V, b: V) @typeInfo(V).vector.child {
-    switch (@typeInfo(V).vector.len) {
-        else => @compileError("Invalid vector length"),
-        2 => return @bitCast(math.Vec2.dot(@bitCast(a), @bitCast(b))),
-        3 => return @bitCast(math.Vec3.dot(@bitCast(a), @bitCast(b))),
-    }
+inline fn cross2d(a: Vec2, b: Vec2) f32 {
+    return (a[0] * b[1]) - (a[1] * b[0]);
 }
 
-inline fn normalize(comptime V: type, v: V) V {
-    switch (@typeInfo(V).vector.len) {
-        else => @compileError("Invalid vector length"),
-        2 => return @bitCast(math.Vec2.normalized(@bitCast(v))),
-        3 => return @bitCast(math.Vec3.normalized(@bitCast(v))),
-    }
+inline fn perp_dot(a: Vec2, b: Vec2, c: Vec2) f32 {
+    return cross2d(b - a, c - a);
+}
+
+inline fn convex(a: Vec2, b: Vec2, c: Vec2) bool {
+    const pd = perp_dot(a, b, c);
+    if (pd > GEOM_EPS) return true;
+    return false;
+}
+
+inline fn dot(a: anytype, b: anytype) @typeInfo(@TypeOf(a)).vector.child {
+    assert(@TypeOf(a) == @TypeOf(b));
+    return @reduce(.Add, a * b);
+}
+
+inline fn normalize(v: anytype) @TypeOf(v) {
+    const one_over_len = 1.0 / @sqrt(@reduce(.Add, v * v));
+    return v * @as(@TypeOf(v), @splat(one_over_len));
 }
 
 fn findFaceIndexCount(str: []const u8) usize {

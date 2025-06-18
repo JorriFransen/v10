@@ -63,7 +63,7 @@ fn run() !void {
     defer simple_render_system.destroy();
 
     // var arrow_model = try Model.load(&device, "res/t.obj");
-    var arrow_model = try Model.load(&device, "res/cube_t.obj");
+    var arrow_model = try Model.load(&device, "res/cube.obj");
     // var arrow_model = try Model.load(&device, "res/test.obj");
     defer arrow_model.destroy();
 
