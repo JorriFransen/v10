@@ -113,15 +113,15 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
 
-    var vertex_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
-    var normal_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_normals);
-    var uv_array = try std.ArrayListUnmanaged(@Vector(2, f32)).initCapacity(allocator, num_uvs);
-    var obj_array = try std.ArrayListUnmanaged(Object).initCapacity(allocator, num_objects);
+    var vertices = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
+    var normals = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_normals);
+    var texcoords = try std.ArrayListUnmanaged(@Vector(2, f32)).initCapacity(allocator, num_uvs);
+    var objects = try std.ArrayListUnmanaged(Object).initCapacity(allocator, num_objects);
 
-    var colors_array: std.ArrayListUnmanaged(Vec3) = undefined;
+    var colors: std.ArrayListUnmanaged(Vec3) = undefined;
     var parse_vector_fn = &parseVector;
     if (options.flags.vertex_colors) {
-        colors_array = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
+        colors = try std.ArrayListUnmanaged(Vec3).initCapacity(allocator, num_verts);
         parse_vector_fn = parseVectorAndColor;
     }
 
@@ -129,8 +129,8 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     defer ta.release();
 
     const face_alloc = if (need_triangulation) ta.allocator() else allocator;
-    var face_array = try std.ArrayListUnmanaged(Face).initCapacity(face_alloc, num_faces);
-    var index_array = try std.ArrayListUnmanaged(Index).initCapacity(face_alloc, num_indices);
+    var faces = try std.ArrayListUnmanaged(Face).initCapacity(face_alloc, num_faces);
+    var indices = try std.ArrayListUnmanaged(Index).initCapacity(face_alloc, num_indices);
 
     var current_object: ?*Object = null;
     var obj_face_offset: usize = 0;
@@ -144,21 +144,21 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         const field = field_it.next() orelse return error.Syntax;
 
         if (eq(field, "v")) {
-            parse_vector_fn(&field_it, &vertex_array, &colors_array);
+            parse_vector_fn(&field_it, &vertices, &colors);
         } else if (eq(field, "vn")) {
-            normal_array.appendAssumeCapacity(parseVec3(&field_it));
+            normals.appendAssumeCapacity(parseVec3(&field_it));
         } else if (eq(field, "vt")) {
-            uv_array.appendAssumeCapacity(parseVec2(&field_it));
+            texcoords.appendAssumeCapacity(parseVec2(&field_it));
         } else if (eq(field, "f")) {
-            const face = try parseFace(field_it.rest(), @intCast(vertex_array.items.len), num_uvs, @intCast(normal_array.items.len), &index_array);
-            face_array.appendAssumeCapacity(face);
+            const face = try parseFace(field_it.rest(), @intCast(vertices.items.len), num_uvs, @intCast(normals.items.len), &indices);
+            faces.appendAssumeCapacity(face);
         } else if (eq(field, "o")) {
             if (current_object) |obj| {
-                obj.faces = face_array.items[obj_face_offset..face_array.items.len];
+                obj.faces = faces.items[obj_face_offset..faces.items.len];
             }
-            obj_face_offset = face_array.items.len;
+            obj_face_offset = faces.items.len;
 
-            const obj = obj_array.addOneAssumeCapacity();
+            const obj = objects.addOneAssumeCapacity();
             obj.name = field_it.rest();
             current_object = obj;
         } else if (eq(field, "s")) {
@@ -174,20 +174,20 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
     if (current_object) |obj| {
-        obj.faces = face_array.items[obj_face_offset..face_array.items.len];
+        obj.faces = faces.items[obj_face_offset..faces.items.len];
     }
 
-    assert(vertex_array.items.len == num_verts);
-    if (options.flags.vertex_colors) assert(colors_array.items.len == num_verts);
-    assert(uv_array.items.len == num_uvs);
-    assert(normal_array.items.len == num_normals);
-    assert(index_array.items.len == num_indices);
-    assert(face_array.items.len == num_faces);
-    assert(obj_array.items.len == num_objects);
+    assert(vertices.items.len == num_verts);
+    if (options.flags.vertex_colors) assert(colors.items.len == num_verts);
+    assert(texcoords.items.len == num_uvs);
+    assert(normals.items.len == num_normals);
+    assert(indices.items.len == num_indices);
+    assert(faces.items.len == num_faces);
+    assert(objects.items.len == num_objects);
 
     // log.debug("\n\n", .{});
     //
-    // for (vertex_array.items, 0..) |v, i| log.debug("vertex_array.items[{}]: {}", .{ i, v });
+    for (vertices.items, 0..) |v, i| log.debug("vertices.items[{}]: {}", .{ i, v });
     // for (uv_array.items, 0..) |v, i| log.debug("uv_array.items[{}]: {}", .{ i, v });
     // for (normal_array.items, 0..) |v, i| log.debug("normal_array.items[{}]: {}", .{ i, v });
     // for (index_array.items, 0..) |v, i| log.debug("index_array.items[{}]: {}", .{ i, v.vertex });
@@ -200,23 +200,23 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
 
     if (need_triangulation) {
         var triangle_face_count: usize = 0;
-        for (face_array.items) |face| {
+        for (faces.items) |face| {
             assert(face.indices.len >= 3);
             triangle_face_count += face.indices.len - 2;
         }
 
-        const triangle_count = triangle_face_count * 3;
-        _ = triangle_count;
+        var new_faces = try std.ArrayListUnmanaged(Face).initCapacity(allocator, triangle_face_count);
+        var new_indices = try std.ArrayListUnmanaged(Index).initCapacity(allocator, triangle_face_count * 3);
 
         var fta = TempArena.init(ta.arena);
 
-        for (face_array.items, 0..) |face, i| {
+        for (faces.items, 0..) |face, i| {
             assert(face.indices.len >= 3);
 
             // Find the face normal
-            const v0 = vertex_array.items[face.indices[0].vertex];
-            const v1 = vertex_array.items[face.indices[1].vertex];
-            const v2 = vertex_array.items[face.indices[2].vertex];
+            const v0 = vertices.items[face.indices[0].vertex];
+            const v1 = vertices.items[face.indices[1].vertex];
+            const v2 = vertices.items[face.indices[2].vertex];
             const face_normal_ = cross(v1 - v0, v2 - v0);
             const fn_mag_sq = dot(face_normal_, face_normal_);
             if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
@@ -256,7 +256,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
             var vertex_list: LinkedList = .{};
 
             for (face.indices, projected_vertices_mem) |idx, *pv| {
-                const v = vertex_array.items[idx.vertex];
+                const v = vertices.items[idx.vertex];
                 const p: Vec2 = .{ v[mask.u], v[mask.v] * mask.s };
 
                 pv.* = .{ .pos = p, .idx = idx };
@@ -266,24 +266,55 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
                 vertex_list.append(&pv.node);
             }
 
-            var it = vertex_list.first;
-            while (it) |node| : (it = node.next) {
-                const pv: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
-                log.debug("Projected vertex: pos: {}, idx: {}", .{ pv.pos, pv.idx });
+            {
+                var it = vertex_list.first;
+                while (it) |node| : (it = node.next) {
+                    const pv: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+                    log.debug("Projected vertex: pos: {}, idx: {}", .{ pv.pos, pv.idx });
+                }
             }
+
+            var num_vertices = face.indices.len;
+            var it = vertex_list.first;
+
+            _ = new_faces.getLastOrNull();
+            _ = new_indices.getLastOrNull();
+            while (num_vertices > 3) {
+                const node = it.?;
+                const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.prev orelse vertex_list.last.?));
+                const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+                const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.next orelse vertex_list.first.?));
+
+                // const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+                // const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.next orelse vertex_list.first.?));
+                // const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", cur.node.next orelse vertex_list.first.?));
+
+                if (!convex(prev.pos, cur.pos, next.pos)) {
+                    it = node.next orelse vertex_list.first;
+                    log.debug("not convex vi: {}", .{cur.idx.vertex});
+                    continue;
+                }
+
+                log.debug("convex vi: {}", .{cur.idx.vertex});
+
+                // it = node.next;
+                num_vertices -= 1;
+            }
+
+            unreachable; // TODO: Add last face
         }
 
         unreachable;
     }
 
     return .{
-        .vertices = vertex_array.items,
-        .colors = colors_array.items,
-        .normals = normal_array.items,
-        .texcoords = uv_array.items,
-        .indices = index_array.items,
-        .faces = face_array.items,
-        .objects = obj_array.items,
+        .vertices = vertices.items,
+        .colors = colors.items,
+        .normals = normals.items,
+        .texcoords = texcoords.items,
+        .indices = indices.items,
+        .faces = faces.items,
+        .objects = objects.items,
     };
 }
 inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
@@ -323,11 +354,12 @@ inline fn cross2d(a: Vec2, b: Vec2) f32 {
 }
 
 inline fn perp_dot(a: Vec2, b: Vec2, c: Vec2) f32 {
-    return cross2d(b - a, c - a);
+    return cross2d(a - b, c - b);
 }
 
 inline fn convex(a: Vec2, b: Vec2, c: Vec2) bool {
     const pd = perp_dot(a, b, c);
+    log.debug("convex pd: {}", .{pd});
     if (pd > GEOM_EPS) return true;
     return false;
 }
