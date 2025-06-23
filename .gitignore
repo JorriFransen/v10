@@ -3,3 +3,4 @@ zig-out/
 .vscode/
 
 .nvim.lua
+.lldbinit

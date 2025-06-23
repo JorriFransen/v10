@@ -191,19 +191,6 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     assert(faces.items.len == num_faces);
     assert(objects.items.len == num_objects);
 
-    // log.debug("\n\n", .{});
-    //
-    // for (vertices.items, 0..) |v, i| log.debug("vertices.items[{}]: {}", .{ i, v });
-    // for (uv_array.items, 0..) |v, i| log.debug("uv_array.items[{}]: {}", .{ i, v });
-    // for (normal_array.items, 0..) |v, i| log.debug("normal_array.items[{}]: {}", .{ i, v });
-    // for (indices.items, 0..) |v, i| log.debug("indices.items[{}]: {}", .{ i, v });
-    // for (face_array.items, 0..) |v, i| log.debug("face_array.items[{}]: {}", .{ i, v });
-    // for (obj_array.items, 0..) |v, i| log.debug("obj_array.items[{}]: {}", .{ i, v });
-    //
-    // log.debug("\n\n", .{});
-
-    log.debug("need_triangulation: {}\n", .{need_triangulation});
-
     if (need_triangulation) {
         var triangle_face_count: usize = 0;
         for (faces.items) |face| {
@@ -216,20 +203,24 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         var new_faces = try std.ArrayListUnmanaged(Face).initCapacity(allocator, triangle_face_count);
         var new_indices = try std.ArrayListUnmanaged(Index).initCapacity(allocator, triangle_face_count * 3);
 
-        for (faces.items, 0..) |face, i| {
+        for (faces.items, 0..) |face, fi| {
             assert(face.indices.len >= 3);
 
-            // Find the face normal
-            const v0 = vertices.items[face.indices[0].vertex];
-            const v1 = vertices.items[face.indices[1].vertex];
-            const v2 = vertices.items[face.indices[2].vertex];
-            const face_normal_ = cross(v1 - v0, v2 - v0);
-            const fn_mag_sq = dot(face_normal_, face_normal_);
-            if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
-            const face_normal = normalize(face_normal_);
+            var normal_sum = Vec3{ 0, 0, 0 };
+            for (0..face.indices.len) |i| {
+                const p_cur_idx = face.indices[i].vertex;
+                const p_next_idx = face.indices[(i + 1) % face.indices.len].vertex;
 
-            log.debug("\n", .{});
-            log.debug("face[{}].normal: {}", .{ i, face_normal });
+                const p_cur = vertices.items[p_cur_idx];
+                const p_next = vertices.items[p_next_idx];
+
+                normal_sum[0] += (p_cur[1] * p_next[2]) - (p_cur[2] * p_next[1]); // X component
+                normal_sum[1] += (p_cur[2] * p_next[0]) - (p_cur[0] * p_next[2]); // Y component
+                normal_sum[2] += (p_cur[0] * p_next[1]) - (p_cur[1] * p_next[0]); // Z component
+            }
+            const fn_mag_sq = dot(normal_sum, normal_sum);
+            if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
+            const face_normal = normalize(normal_sum);
 
             const nx = @abs(face_normal[0]);
             const ny = @abs(face_normal[1]);
@@ -249,8 +240,6 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
                     .{ .u = 0, .v = 2, .s = if (face_normal[1] > 0) 1 else -1 }
                 else
                     .{ .u = 0, .v = 1, .s = if (face_normal[2] > 0) 1 else -1 };
-
-            log.debug("Plane mask: {}", .{mask});
 
             var u_basis = Vec3{ 0, 0, 0 };
             var v_basis = Vec3{ 0, 0, 0 };
@@ -276,14 +265,6 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
             }
 
             {
-                var it = vertex_list.first;
-                while (it) |node| : (it = node.next) {
-                    const pv: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
-                    log.debug("Projected vertex: pos: {}, idx: {}", .{ pv.pos, pv.idx });
-                }
-            }
-
-            {
                 // TODO: Abstract to function so we can merge this code with test code.
                 var winding_sum: f32 = 0.0; // Determines (c)cw (cw is reversed to ccw later)
                 var current_node = vertex_list.first;
@@ -298,20 +279,17 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
                     current_node = node.next;
                 }
 
-                log.debug("Original Winding sum for face {}: {}", .{ i, winding_sum });
-                log.debug("Plane handedness factor for face {}: {}", .{ i, plane_handedness_factor });
-
                 if (winding_sum < -GEOM_EPS) {
-                    log.debug("Face {} effective winding is negative. Reversing winding order for consistent PD.", .{i});
+                    // log.debug("Face {} effective winding is negative. Reversing winding order for consistent PD.", .{fi});
                     var temp_list: LinkedList = .{};
                     while (vertex_list.pop()) |node| {
                         temp_list.append(node);
                     }
                     vertex_list = temp_list;
                 } else if (winding_sum > GEOM_EPS) {
-                    log.debug("Face {} effective winding is positive. No reversal needed.", .{i});
+                    // log.debug("Face {} effective winding is positive. No reversal needed.", .{fi});
                 } else {
-                    log.warn("Face {} has a near-zero effective winding sum. Skipping triangulation (likely degenerate).", .{i});
+                    log.warn("Face {} has a near-zero effective winding sum. Skipping triangulation (likely degenerate).", .{fi});
                     continue;
                 }
             }
@@ -319,41 +297,30 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
             var num_vertices = face.indices.len;
             var it = vertex_list.first;
 
-            while (num_vertices > 3) {
+            clip_loop: while (num_vertices > 3) {
                 const node = it.?;
                 const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.prev orelse vertex_list.last.?));
                 const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
                 const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.next orelse vertex_list.first.?));
 
-                log.debug("vi (cur): {}", .{cur.idx.vertex});
-                log.debug("Checking for ear with vertices: {}, {}, {}", .{ vertices.items[prev.idx.vertex], vertices.items[cur.idx.vertex], vertices.items[next.idx.vertex] });
-                log.debug("\tprojected: {}, {}, {}", .{ prev.pos, cur.pos, next.pos });
-
                 if (!convex(prev.pos, cur.pos, next.pos)) {
                     it = node.next orelse vertex_list.first;
-                    log.debug("not convex vi: {}", .{cur.idx.vertex});
                     continue;
                 }
-
-                log.debug("convex vi: {}", .{cur.idx.vertex});
 
                 var c_it = next.node.next orelse vertex_list.first;
                 while (c_it) |c_node| {
                     if (c_node == &prev.node) break;
 
                     const c: *ProjectedVertex = @alignCast(@fieldParentPtr("node", c_node));
-                    log.debug("Checking collision with {}", .{c});
 
                     if (inTriangle(c.pos, prev.pos, cur.pos, next.pos)) {
-                        log.debug("Collision with {}, vi: {}", .{ c, cur.idx.vertex });
                         it = node.next orelse vertex_list.first;
-                        break;
+                        continue :clip_loop;
                     }
 
                     c_it = c_node.next orelse vertex_list.first;
                 }
-
-                log.debug("Passed collision tests with vi: {}", .{cur.idx.vertex});
 
                 // Found ear
                 const new_triangle: [3]Index = if (plane_handedness_factor > 0)
@@ -365,7 +332,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
                 new_indices.appendSliceAssumeCapacity(&new_triangle);
                 new_faces.appendAssumeCapacity(.{ .indices = new_indices.items[start_idx .. start_idx + 3] });
 
-                it = node.prev orelse vertex_list.first;
+                it = &next.node;
                 vertex_list.remove(&cur.node);
 
                 num_vertices -= 1;
@@ -374,7 +341,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
             assert(num_vertices == 3);
             const n0 = vertex_list.first.?;
             const n1 = n0.next.?;
-            const n2 = vertex_list.last.?;
+            const n2 = n1.next.?;
             assert(n1.next == n2);
             const lv0: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n0));
             const lv1: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n1));
@@ -442,11 +409,8 @@ inline fn cross2d(a: Vec2, b: Vec2) f32 {
 inline fn convex(prev: Vec2, cur: Vec2, next: Vec2) bool {
     const vec_in = cur - prev;
     const vec_out = next - cur;
-    log.debug("convex cur_to_prev: {}", .{vec_in});
-    log.debug("convex cur_to_next: {}", .{vec_out});
     const pd = cross2d(vec_in, vec_out);
 
-    log.debug("convex pd: {}", .{pd});
     if (pd > -GEOM_EPS) return true;
     return false;
 }
