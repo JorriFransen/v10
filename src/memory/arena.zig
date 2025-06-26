@@ -260,12 +260,14 @@ pub const Arena = struct {
     }
 
     pub fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = alignment;
         _ = ret_addr;
 
         const this: *Arena = @ptrCast(@alignCast(ctx));
 
-        if (@as(?[*]const u8, @ptrCast(this.last_allocation)) == memory.ptr) {
+        if (new_len == memory.len) {
+            assert(std.mem.isAligned(@intFromPtr(memory.ptr), alignment.toByteUnits()));
+            return memory.ptr;
+        } else if (@as(?[*]const u8, @ptrCast(this.last_allocation)) == memory.ptr) {
             assert(memory.len == this.last_size);
 
             const diff = new_len - memory.len;

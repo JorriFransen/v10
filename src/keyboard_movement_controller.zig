@@ -49,7 +49,7 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *E
     const sy = @sin(yaw);
     const forward = Vec3.new(sy, 0, cy);
     const right = Vec3.new(cy, 0, -sy);
-    const up = Vec3.new(0, -1, 0);
+    const up = Vec3.new(0, 1, 0);
 
     var mdir = Vec3{};
     if (glfw.getKey(window, this.keys.move_left) == glfw.c.GLFW_PRESS) mdir = mdir.add(right.negate());
