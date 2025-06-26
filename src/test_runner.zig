@@ -125,15 +125,18 @@ const Printer = struct {
     }
 
     fn status(self: Printer, s: Status, comptime format: []const u8, args: anytype) void {
-        const color = switch (s) {
-            .pass => "\x1b[32m",
-            .fail => "\x1b[31m",
-            .skip => "\x1b[33m",
-            else => "",
-        };
         const out = self.out;
 
-        if (options.color) out.writeAll(color) catch @panic("writeAll failed?!");
+        if (options.color) {
+            const color = switch (s) {
+                .pass => "\x1b[32m",
+                .fail => "\x1b[31m",
+                .skip => "\x1b[33m",
+                else => "",
+            };
+
+            out.writeAll(color) catch @panic("writeAll failed?!");
+        }
 
         std.fmt.format(out, format, args) catch @panic("std.fmt.format failed?!");
 

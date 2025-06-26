@@ -4,9 +4,13 @@ const builtin = @import("builtin");
 
 const LazyPath = std.Build.LazyPath;
 
+const force_llvm = false;
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const use_llvm = if (target.result.os.tag == .windows) true else force_llvm;
 
     const clap = b.dependency("clap", .{});
     const vulkan = b.dependency("vulkan", .{
@@ -37,7 +41,7 @@ pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{
         .name = "v10game",
         .root_module = main_module,
-        .use_llvm = if (target.result.os.tag == .windows) true else false,
+        .use_llvm = use_llvm,
     });
     exe.linkLibrary(glfw_lib);
     exe.root_module.addRPathSpecial("$ORIGIN/../lib");
@@ -64,7 +68,7 @@ pub fn build(b: *std.Build) !void {
 
     const test_options = b.addOptions();
     const test_color = b.option(bool, "color", "Enable colored test output") orelse true;
-    const test_full_name = b.option(bool, "full_name", "Print full test names") orelse false;
+    const test_full_name = b.option(bool, "full_name", "Print full test names") orelse true;
     test_options.addOption(bool, "color", test_color);
     test_options.addOption(bool, "full_name", test_full_name);
 
@@ -77,7 +81,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
-        .use_llvm = if (target.result.os.tag == .windows) true else false,
+        .use_llvm = use_llvm,
     });
     test_exe.root_module.addOptions("options", test_options);
     const run_tests = b.addRunArtifact(test_exe);
