@@ -8,13 +8,13 @@ const wlog = std.log.scoped(.window);
 pub const PfnRefreshCallback = ?*const fn (this: *@This()) void;
 pub const PfnResizeCallback = ?*const fn (this: *@This(), width: i32, height: i32) void;
 
-width: i32,
-height: i32,
-framebuffer_resized: bool,
-name: []const u8,
-window: glfw.Window,
-refresh_callback: PfnRefreshCallback,
-resize_callback: PfnResizeCallback,
+width: i32 = undefined,
+height: i32 = undefined,
+framebuffer_resized: bool = false,
+name: []const u8 = "",
+window: glfw.Window = null,
+refresh_callback: PfnRefreshCallback = null,
+resize_callback: PfnResizeCallback = null,
 
 pub const InitOptions = struct {
     platform: glfw.Platform = .ANY,

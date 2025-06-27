@@ -25,8 +25,8 @@ const debug_messenger_create_info = vk.DebugUtilsMessengerCreateInfoEXT{
     .p_user_data = null,
 };
 
-system: *gfx.System,
-window: *const Window,
+system: *gfx.System = undefined,
+window: *const Window = undefined,
 vki: vk.InstanceProxy = undefined,
 debug_messenger: vk.DebugUtilsMessengerEXT = .null_handle,
 surface: vk.SurfaceKHR = .null_handle,

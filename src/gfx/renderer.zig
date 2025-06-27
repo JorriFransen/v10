@@ -9,9 +9,9 @@ const Swapchain = gfx.Swapchain;
 
 const assert = std.debug.assert;
 
-window: *Window,
-device: *Device,
-swapchain: Swapchain,
+window: *Window = undefined,
+device: *Device = undefined,
+swapchain: Swapchain = .{},
 command_buffers: []vk.CommandBuffer = &.{},
 current_image_index: u32 = 0,
 current_frame_index: usize = 0,

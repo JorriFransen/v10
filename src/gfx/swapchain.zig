@@ -11,8 +11,8 @@ const assert = std.debug.assert;
 
 pub const MAX_FRAMES_IN_FLIGHT = 2;
 
-device: *Device,
-window_extent: vk.Extent2D,
+device: *Device = undefined,
+window_extent: vk.Extent2D = undefined,
 
 swapchain: vk.SwapchainKHR = undefined,
 image_format: vk.Format = undefined,

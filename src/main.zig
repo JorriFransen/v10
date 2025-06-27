@@ -28,14 +28,14 @@ pub fn main() !void {
     std.log.debug("Clean exit", .{});
 }
 
-var window: Window = undefined;
-var device: Device = undefined;
-var renderer: Renderer = undefined;
-var simple_render_system: SimpleRenderSystem = undefined;
+var window: Window = .{};
+var device: Device = .{};
+var renderer: Renderer = .{};
+var simple_render_system: SimpleRenderSystem = .{};
 var camera: Camera = .{};
 var kb_move_controller: KBMoveController = .{};
 
-var camera_entity: Entity = undefined;
+var camera_entity: Entity = .{};
 var cube: *Entity = undefined;
 var entities: []Entity = &.{};
 

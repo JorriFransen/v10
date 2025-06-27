@@ -12,9 +12,9 @@ const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 const Mat4 = math.Mat4;
 
-device: *Device,
-layout: vk.PipelineLayout,
-pipeline: Pipeline,
+device: *Device = undefined,
+layout: vk.PipelineLayout = .null_handle,
+pipeline: Pipeline = .{},
 
 const PushConstantData = extern struct {
     transform: Mat4,
