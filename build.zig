@@ -2,6 +2,8 @@ const std = @import("std");
 const log = std.log.scoped(.v10_build);
 const builtin = @import("builtin");
 
+const LazyPath = std.Build.LazyPath;
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -17,7 +19,9 @@ pub fn build(b: *std.Build) !void {
         .wayland = true,
         .target = target,
         .optimize = optimize,
+        .shared = true,
     });
+    const glfw_lib = glfw.artifact("glfw");
     const glfw_module = glfw.module("glfw");
     glfw_module.addImport("vulkan", vulkan_module);
 
@@ -35,6 +39,10 @@ pub fn build(b: *std.Build) !void {
         .root_module = main_module,
         // .use_llvm = true,
     });
+    exe.linkLibrary(glfw_lib);
+    exe.root_module.addRPathSpecial("$ORIGIN/../lib");
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(glfw_lib.getEmittedBin(), .lib, glfw_lib.major_only_filename orelse glfw_lib.out_lib_filename).step);
+
     b.installArtifact(exe);
 
     std.fs.cwd().makeDir("res") catch |e| switch (e) {
@@ -76,9 +84,9 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&run_tests.step);
 
     const clean_step = b.step("clean", "Clean shaders and zig-out directory");
-    clean_step.dependOn(&b.addRemoveDirTree(std.Build.LazyPath{ .cwd_relative = b.install_path }).step);
+    clean_step.dependOn(&b.addRemoveDirTree(LazyPath{ .cwd_relative = b.install_path }).step);
     if (builtin.os.tag != .windows) {
-        clean_step.dependOn(&b.addRemoveDirTree(std.Build.LazyPath{ .cwd_relative = b.cache_root.path.? }).step);
+        clean_step.dependOn(&b.addRemoveDirTree(LazyPath{ .cwd_relative = b.cache_root.path.? }).step);
     }
 }
 
