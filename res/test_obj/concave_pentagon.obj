@@ -1,0 +1,9 @@
+# Concave Pentagon (House with a notch) - CCW Order
+v 0.0 0.0 0.0   # P1 (Bottom-Left)
+v 1.0 0.0 0.0   # P2 (Bottom-Right)
+v 0.8 0.5 0.0   # P3 (Inner Concave Point)
+v 1.0 1.0 0.0   # P4 (Top-Right)
+v 0.0 1.0 0.0   # P5 (Top-Left)
+vn 0 0 1
+
+f 1//1 2//1 3//1 4//1 5//1

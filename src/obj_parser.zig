@@ -28,19 +28,6 @@ inline fn parseInt(comptime T: type, str: []const u8) !T {
 
 const GEOM_EPS = 1e-6;
 
-pub const ParseFlags = packed struct(u8) {
-    vertex_colors: bool = true,
-    __reserved__: u7 = 0,
-};
-
-pub const ParseOptions = struct {
-    /// Contents of an obj file.
-    buffer: []const u8,
-    /// Filename or other identifier used in error messages.
-    name: []const u8 = "",
-    flags: ParseFlags = .{},
-};
-
 pub const ObjParseError = error{
     InvalidCharacter,
     InvalidIndex,
@@ -74,10 +61,17 @@ const Model = struct {
     objects: []const Object = &.{},
 };
 
-const ProjectedVertex = struct {
-    pos: Vec2,
-    idx: Index,
-    node: LinkedList.Node = .{},
+pub const ParseFlags = packed struct(u8) {
+    vertex_colors: bool = true,
+    __reserved__: u7 = 0,
+};
+
+pub const ParseOptions = struct {
+    /// Contents of an obj file.
+    buffer: []const u8,
+    /// Filename or other identifier used in error messages.
+    name: []const u8 = "",
+    flags: ParseFlags = .{},
 };
 
 pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
@@ -327,6 +321,12 @@ inline fn stripRight(str: []const u8) []const u8 {
     return str[0..end];
 }
 
+const ProjectedVertex = struct {
+    pos: Vec2,
+    idx: Index,
+    node: LinkedList.Node = .{},
+};
+
 fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
     var triangle_face_count: usize = 0;
     for (model.faces) |face| {
@@ -411,16 +411,24 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
             log.warn("Face {} has a near-zero effective winding sum. Skipping triangulation (likely degenerate).", .{fi});
             continue;
         };
-        log.debug("ccw: {}", .{ccw});
 
         var num_vertices = face.indices.len;
         var it = if (ccw) vertex_list.first else vertex_list.last;
 
         clip_loop: while (num_vertices > 3) {
             const node = it.?;
-            const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.prev orelse vertex_list.last.? else node.next orelse vertex_list.first.?));
+            // const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.prev orelse vertex_list.last.? else node.next orelse vertex_list.first.?));
+            // const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
+            // const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.next orelse vertex_list.first.? else node.prev orelse vertex_list.last.?));
+
+            var prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.prev orelse vertex_list.last.?));
             const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
-            const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.next orelse vertex_list.first.? else node.prev orelse vertex_list.last.?));
+            var next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.next orelse vertex_list.first.?));
+            if (!ccw) {
+                const tmp = prev;
+                prev = next;
+                next = tmp;
+            }
 
             if (!convex(prev.pos, cur.pos, next.pos)) {
                 it = if (ccw) node.next orelse vertex_list.first else node.prev orelse vertex_list.last;
@@ -725,6 +733,7 @@ test "empty buffer" {
 }
 
 test "invalid float" {
+    // TODO:[test_temp_alloc_init] Can we do this in the runner?
     mem.initTemp();
     defer mem.deinitTemp();
 
@@ -733,4 +742,73 @@ test "invalid float" {
     const result = parse(ta.allocator(), .{ .buffer = "o test \nv 1.0 xxx 1.0", .name = "testbuffer" });
 
     try std.testing.expectError(error.InvalidCharacter, result);
+}
+
+test "parse (semantic comparison)" {
+    // todo:[test_temp_alloc_init] Can we do this in the runner?
+    mem.initTemp();
+    defer mem.deinitTemp();
+
+    const ExpectedModelData = struct {
+        vertex_count: usize,
+        normal_count: usize,
+        texcoord_count: usize,
+        face_count: usize,
+        object_count: usize,
+    };
+
+    const test_path = "res/test_obj";
+
+    const expected_data = struct {
+        pub const cube_t = ExpectedModelData{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 };
+        pub const concave_pentagon_t = ExpectedModelData{ .vertex_count = 5, .normal_count = 1, .texcoord_count = 0, .face_count = 3, .object_count = 1 };
+        pub const funky_plane_3d_t = ExpectedModelData{ .vertex_count = 20, .normal_count = 18, .texcoord_count = 10, .face_count = 36, .object_count = 1 };
+        pub const concave_quad_t = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
+        pub const projection_winding_flip_t = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
+        pub const collinear_t = ExpectedModelData{ .vertex_count = 6, .normal_count = 1, .texcoord_count = 0, .face_count = 4, .object_count = 1 };
+        pub const funky_plane_t = ExpectedModelData{ .vertex_count = 10, .normal_count = 1, .texcoord_count = 10, .face_count = 8, .object_count = 1 };
+        pub const c_t = ExpectedModelData{ .vertex_count = 8, .normal_count = 1, .texcoord_count = 0, .face_count = 6, .object_count = 1 };
+        pub const triangle_t = ExpectedModelData{ .vertex_count = 3, .normal_count = 1, .texcoord_count = 1, .face_count = 1, .object_count = 1 };
+        pub const arrow_t = ExpectedModelData{ .vertex_count = 25, .normal_count = 12, .texcoord_count = 34, .face_count = 46, .object_count = 1 };
+    };
+
+    const tests = blk: {
+        const info = @typeInfo(expected_data);
+        assert(info == .@"struct");
+
+        var result: [info.@"struct".decls.len]struct {
+            file_path: []const u8,
+            content: []const u8,
+            expected: ExpectedModelData,
+        } = undefined;
+
+        inline for (info.@"struct".decls, &result) |decl, *r| {
+            assert(!std.mem.endsWith(u8, decl.name, ".obj"));
+
+            const file_name = std.fmt.comptimePrint("{s}.obj", .{decl.name});
+            const file_path = std.fmt.comptimePrint("{s}{c}{s}", .{ test_path, std.fs.path.sep, file_name });
+            r.* = .{
+                .file_path = file_path,
+                .content = @embedFile(file_path),
+                .expected = @field(expected_data, decl.name),
+            };
+        }
+
+        break :blk result;
+    };
+
+    var ta = mem.get_temp();
+    defer ta.release();
+
+    for (tests) |t| {
+        log.debug("testing: {s}:", .{t.file_path});
+
+        const model = try parse(ta.allocator(), .{ .name = t.file_path, .buffer = t.content });
+
+        try std.testing.expectEqual(t.expected.vertex_count, model.vertices.len);
+        try std.testing.expectEqual(t.expected.normal_count, model.normals.len);
+        try std.testing.expectEqual(t.expected.texcoord_count, model.texcoords.len);
+        try std.testing.expectEqual(t.expected.face_count, model.faces.len);
+        try std.testing.expectEqual(t.expected.object_count, model.objects.len);
+    }
 }

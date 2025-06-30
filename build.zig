@@ -53,7 +53,12 @@ pub fn build(b: *std.Build) !void {
         error.PathAlreadyExists => {}, // ok,
         else => return e,
     };
-    b.installDirectory(.{ .source_dir = b.path("res"), .install_dir = .bin, .install_subdir = "res" });
+    b.installDirectory(.{
+        .source_dir = b.path("res"),
+        .install_dir = .bin,
+        .install_subdir = "res",
+        .exclude_extensions = &.{ "blend", "blend1" },
+    });
 
     const run_exe = b.addRunArtifact(exe);
     run_exe.step.dependOn(b.getInstallStep());
@@ -87,6 +92,7 @@ pub fn build(b: *std.Build) !void {
     const run_tests = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);
+    try anonymousImportDir(b, test_exe.root_module, "res/test_obj/");
 
     const clean_step = b.step("clean", "Clean shaders and zig-out directory");
     clean_step.dependOn(&b.addRemoveDirTree(LazyPath{ .cwd_relative = b.install_path }).step);
@@ -134,5 +140,19 @@ fn installDynamicLib(b: *std.Build, target: *const std.Build.ResolvedTarget, lib
     } else {
         const install_name = lib.major_only_filename orelse lib.out_filename;
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(lib.getEmittedBin(), .lib, install_name).step);
+    }
+}
+
+/// Add anonymous imports to module for each file in the directory specified by dir_name
+fn anonymousImportDir(b: *std.Build, module: *std.Build.Module, dir_name: []const u8) !void {
+    var dir = try std.fs.cwd().openDir(dir_name, .{ .iterate = true });
+    defer dir.close();
+
+    var walker = try dir.walk(b.allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        const rel_path = b.pathJoin(&.{ dir_name, entry.path });
+        module.addAnonymousImport(rel_path, .{ .root_source_file = b.path(rel_path) });
     }
 }
