@@ -37,11 +37,11 @@ pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{
         .name = "v10game",
         .root_module = main_module,
-        // .use_llvm = true,
+        .use_llvm = if (target.result.os.tag == .windows) true else false,
     });
     exe.linkLibrary(glfw_lib);
     exe.root_module.addRPathSpecial("$ORIGIN/../lib");
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(glfw_lib.getEmittedBin(), .lib, glfw_lib.major_only_filename orelse glfw_lib.out_lib_filename).step);
+    installDynamicLib(b, &target, glfw_lib);
 
     b.installArtifact(exe);
 
@@ -77,6 +77,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
+        .use_llvm = if (target.result.os.tag == .windows) true else false,
     });
     test_exe.root_module.addOptions("options", test_options);
     const run_tests = b.addRunArtifact(test_exe);
@@ -120,4 +121,14 @@ fn addShaderStep(b: *std.Build) !*std.Build.Step {
     shaders_step.dependOn(&shader_install_dir.step);
 
     return shaders_step;
+}
+
+fn installDynamicLib(b: *std.Build, target: *const std.Build.ResolvedTarget, lib: *std.Build.Step.Compile) void {
+    if (target.result.os.tag == .windows) {
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(lib.getEmittedBin(), .lib, lib.out_lib_filename).step);
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(lib.getEmittedBin(), .bin, lib.out_filename).step);
+    } else {
+        const install_name = lib.major_only_filename orelse lib.out_filename;
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(lib.getEmittedBin(), .lib, install_name).step);
+    }
 }
