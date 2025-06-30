@@ -342,6 +342,7 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
     for (model.faces, 0..) |face, fi| {
         assert(face.indices.len >= 3);
 
+        // Calculate face normal
         var normal_sum = Vec3{ 0, 0, 0 };
         for (0..face.indices.len) |i| {
             const p_cur_idx = face.indices[i].vertex;
@@ -367,7 +368,7 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
             v: usize,
         };
 
-        // Third element is sign of projection
+        // Selection mask for 3d->2d based on face normal
         const mask: Mask =
             if (nx >= ny and nx >= nz)
                 .{ .u = 1, .v = 2 }
@@ -388,6 +389,7 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
         const projected_vertices_mem = try fta.allocator().alloc(ProjectedVertex, face.indices.len);
         var vertex_list: LinkedList = .{};
 
+        // Project 3d vertices to 2d using mask
         for (face.indices, projected_vertices_mem) |idx, *pv| {
             const v = model.vertices[idx.vertex];
             const p: Vec2 = .{ v[mask.u], v[mask.v] };
@@ -399,47 +401,44 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
             vertex_list.append(&pv.node);
         }
 
+        // The 2d projection might cause the winding order to change, revert the order of the projection in this case
         const winding_sum = shoelaceSum(vertex_list);
-        if (winding_sum < -GEOM_EPS) {
-            // log.debug("Face {} effective winding is negative. Reversing winding order for consistent PD.", .{fi});
-            var temp_list: LinkedList = .{};
-            while (vertex_list.pop()) |node| {
-                temp_list.append(node);
-            }
-            vertex_list = temp_list;
-        } else if (winding_sum > GEOM_EPS) {
-            // log.debug("Face {} effective winding is positive. No reversal needed.", .{fi});
-        } else {
+        const ccw = if (winding_sum > GEOM_EPS)
+            true
+        else if (winding_sum < -GEOM_EPS)
+            false
+        else {
             log.warn("Face {} has a near-zero effective winding sum. Skipping triangulation (likely degenerate).", .{fi});
             continue;
-        }
+        };
+        log.debug("ccw: {}", .{ccw});
 
         var num_vertices = face.indices.len;
-        var it = vertex_list.first;
+        var it = if (ccw) vertex_list.first else vertex_list.last;
 
         clip_loop: while (num_vertices > 3) {
             const node = it.?;
-            const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.prev orelse vertex_list.last.?));
+            const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.prev orelse vertex_list.last.? else node.next orelse vertex_list.first.?));
             const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
-            const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.next orelse vertex_list.first.?));
+            const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.next orelse vertex_list.first.? else node.prev orelse vertex_list.last.?));
 
             if (!convex(prev.pos, cur.pos, next.pos)) {
-                it = node.next orelse vertex_list.first;
+                it = if (ccw) node.next orelse vertex_list.first else node.prev orelse vertex_list.last;
                 continue;
             }
 
-            var c_it = next.node.next orelse vertex_list.first;
+            var c_it = if (ccw) next.node.next orelse vertex_list.first else next.node.prev orelse vertex_list.last;
             while (c_it) |c_node| {
                 if (c_node == &prev.node) break;
 
                 const c: *ProjectedVertex = @alignCast(@fieldParentPtr("node", c_node));
 
                 if (inTriangle(c.pos, prev.pos, cur.pos, next.pos)) {
-                    it = node.next orelse vertex_list.first;
+                    it = if (ccw) node.next orelse vertex_list.first else node.prev orelse vertex_list.last;
                     continue :clip_loop;
                 }
 
-                c_it = c_node.next orelse vertex_list.first;
+                c_it = if (ccw) c_node.next orelse vertex_list.first else c_node.prev orelse vertex_list.last;
             }
 
             // Found ear
@@ -452,17 +451,28 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
             new_indices.appendSliceAssumeCapacity(&new_triangle);
             new_faces.appendAssumeCapacity(.{ .indices = new_indices.items[start_idx .. start_idx + 3] });
 
-            it = &next.node;
+            it = if (ccw) &next.node else &prev.node;
             vertex_list.remove(&cur.node);
 
             num_vertices -= 1;
         }
 
         assert(num_vertices == 3);
-        const n0 = vertex_list.first.?;
-        const n1 = n0.next.?;
-        const n2 = n1.next.?;
-        assert(n1.next == n2);
+        var n0: *LinkedList.Node = undefined;
+        var n1: *LinkedList.Node = undefined;
+        var n2: *LinkedList.Node = undefined;
+
+        if (ccw) {
+            n0 = vertex_list.first.?;
+            n1 = n0.next.?;
+            n2 = n1.next.?;
+            assert(n1.next == n2);
+        } else {
+            n0 = vertex_list.last.?;
+            n1 = n0.prev.?;
+            n2 = n1.prev.?;
+            assert(n1.prev == n2);
+        }
         const lv0: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n0));
         const lv1: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n1));
         const lv2: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n2));
@@ -625,7 +635,6 @@ test "handedness normalization" {
         v: usize,
     };
 
-    // Third element is sign of projection
     const mask: Mask =
         if (nx >= ny and nx >= nz)
             .{ .u = 1, .v = 2 }
