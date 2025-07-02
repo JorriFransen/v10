@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(exe);
 
-    std.fs.cwd().makeDir("res") catch |e| switch (e) {
+    std.fs.cwd().makeDir("res") catch |e| switch (e) { // Create emtpy res folder if it does not exist, to avoid errors when installing
         error.PathAlreadyExists => {}, // ok,
         else => return e,
     };
