@@ -19,7 +19,7 @@ pub const Arena = struct {
 
     flags: Flags = .{},
 
-    last_allocation: ?*anyopaque,
+    last_allocation: ?[*]u8,
     last_size: usize,
 
     pub const Flags = packed struct(u8) {
@@ -264,12 +264,13 @@ pub const Arena = struct {
 
         const this: *Arena = @ptrCast(@alignCast(ctx));
 
-        if (new_len == memory.len) {
+        if (new_len <= memory.len) {
+            // When smallor or equal, just return the same slice
             assert(std.mem.isAligned(@intFromPtr(memory.ptr), alignment.toByteUnits()));
             return memory.ptr;
-        } else if (@as(?[*]const u8, @ptrCast(this.last_allocation)) == memory.ptr) {
-            assert(memory.len == this.last_size);
-
+        } else if (this.last_allocation == memory.ptr) {
+            // When bigger, grow if last allocation
+            assert(this.last_size == memory.len);
             const diff = new_len - memory.len;
             if (this.used + diff > this.data.len) {
                 this.grow(this.used + diff) catch return null;
@@ -280,7 +281,7 @@ pub const Arena = struct {
 
             return @ptrCast(this.last_allocation);
         } else {
-            assert(new_len > memory.len); // Otherwise this should be fine?
+            assert(false);
             return null;
         }
     }

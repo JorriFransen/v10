@@ -329,8 +329,11 @@ const ProjectedVertex = struct {
 
 fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
     var triangle_face_count: usize = 0;
-    for (model.faces) |face| {
-        assert(face.indices.len >= 3);
+    for (model.faces, 0..) |face, i| {
+        if (face.indices.len < 3) {
+            log.warn("Skipping degenerate face (index): {}", .{i});
+            continue;
+        }
         triangle_face_count += face.indices.len - 2;
     }
 
@@ -340,7 +343,10 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
     var new_indices = try std.ArrayListUnmanaged(Index).initCapacity(allocator, triangle_face_count * 3);
 
     for (model.faces, 0..) |face, fi| {
-        assert(face.indices.len >= 3);
+        if (face.indices.len < 3) {
+            log.warn("Skipping degenerate face (index): {}", .{fi});
+            continue;
+        }
 
         // Calculate face normal
         var normal_sum = Vec3{ 0, 0, 0 };
@@ -390,15 +396,85 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
         var vertex_list: LinkedList = .{};
 
         // Project 3d vertices to 2d using mask
-        for (face.indices, projected_vertices_mem) |idx, *pv| {
+        // Project the first 3d vertex to 2d
+        const first_idx = face.indices[0];
+        const first_v = model.vertices[first_idx.vertex];
+        const first_pv = &projected_vertices_mem[0];
+        first_pv.* = .{
+            .pos = .{ first_v[mask.u], first_v[mask.v] },
+            .idx = first_idx,
+        };
+        vertex_list.append(&first_pv.node);
+
+        // Remaining vertices, check for duplicates
+        var num_vertices: usize = 1;
+        for (face.indices[1..], projected_vertices_mem[1..]) |idx, *pv| {
             const v = model.vertices[idx.vertex];
             const p: Vec2 = .{ v[mask.u], v[mask.v] };
 
-            pv.* = .{ .pos = p, .idx = idx };
+            const last: *ProjectedVertex = @alignCast(@fieldParentPtr("node", vertex_list.last.?));
 
-            // TODO: Don't append duplicates
-            // TODO: Remove collinear intermidate vertices
-            vertex_list.append(&pv.node);
+            // Compare square distance to avoid duplicates
+            const diff = p - last.pos;
+            if (dot(diff, diff) >= GEOM_EPS * GEOM_EPS) {
+
+                // If collinear, 'replace' the last point with the current one
+                var add = true;
+                if (last.node.prev) |second_to_last_node| {
+                    const second_to_last: *ProjectedVertex = @alignCast(@fieldParentPtr("node", second_to_last_node));
+                    if (collinear(second_to_last.pos, last.pos, p)) {
+                        add = false;
+                        last.pos = p;
+                        last.idx = idx;
+                    }
+                }
+
+                if (add) {
+                    pv.* = .{ .pos = p, .idx = idx };
+                    vertex_list.append(&pv.node);
+                    num_vertices += 1;
+                }
+            }
+        }
+
+        if (num_vertices < 3) {
+            log.warn("Skipping degenerate face after projection (index): {}", .{fi});
+            continue;
+        }
+        { // check (last-1), last, first for collinearity
+            const l: *ProjectedVertex = @alignCast(@fieldParentPtr("node", vertex_list.last.?));
+            const ll: *ProjectedVertex = @alignCast(@fieldParentPtr("node", l.node.prev.?));
+            const f: *ProjectedVertex = @alignCast(@fieldParentPtr("node", vertex_list.first.?));
+            if (collinear(ll.pos, l.pos, f.pos)) {
+                vertex_list.remove(&l.node);
+                num_vertices -= 1;
+            }
+        }
+        if (num_vertices < 3) {
+            log.warn("Skipping degenerate face after projection (index): {}", .{fi});
+            continue;
+        }
+        { // check last, first, second for collinearity
+            const l: *ProjectedVertex = @alignCast(@fieldParentPtr("node", vertex_list.last.?));
+            const f: *ProjectedVertex = @alignCast(@fieldParentPtr("node", vertex_list.first.?));
+            const s: *ProjectedVertex = @alignCast(@fieldParentPtr("node", f.node.next.?));
+            if (collinear(l.pos, f.pos, s.pos)) {
+                vertex_list.remove(&f.node);
+                num_vertices -= 1;
+            }
+        }
+
+        // Remove last if duplicate of first
+        const first: *ProjectedVertex = @alignCast(@fieldParentPtr("node", vertex_list.first.?));
+        const last: *ProjectedVertex = @alignCast(@fieldParentPtr("node", vertex_list.last.?));
+        const diff = first.pos - last.pos;
+        if (dot(diff, diff) < GEOM_EPS * GEOM_EPS) {
+            vertex_list.remove(&last.node);
+            num_vertices -= 1;
+        }
+        if (num_vertices < 3) {
+            log.warn("Skipping degenerate face after projection (index): {}", .{fi});
+            continue;
         }
 
         // The 2d projection might cause the winding order to change, revert the order of the projection in this case
@@ -412,15 +488,10 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
             continue;
         };
 
-        var num_vertices = face.indices.len;
         var it = if (ccw) vertex_list.first else vertex_list.last;
 
         clip_loop: while (num_vertices > 3) {
             const node = it.?;
-            // const prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.prev orelse vertex_list.last.? else node.next orelse vertex_list.first.?));
-            // const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
-            // const next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", if (ccw) node.next orelse vertex_list.first.? else node.prev orelse vertex_list.last.?));
-
             var prev: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.prev orelse vertex_list.last.?));
             const cur: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node));
             var next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", node.next orelse vertex_list.first.?));
@@ -474,12 +545,12 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
             n0 = vertex_list.first.?;
             n1 = n0.next.?;
             n2 = n1.next.?;
-            assert(n1.next == n2);
+            assert(vertex_list.last == n2);
         } else {
             n0 = vertex_list.last.?;
             n1 = n0.prev.?;
             n2 = n1.prev.?;
-            assert(n1.prev == n2);
+            assert(vertex_list.first == n2);
         }
         const lv0: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n0));
         const lv1: *ProjectedVertex = @alignCast(@fieldParentPtr("node", n1));
@@ -508,7 +579,7 @@ inline fn shoelaceSum(vertices: LinkedList) f32 {
         const pv_next_node = node.next orelse vertices.first.?;
         const pv_next: *ProjectedVertex = @alignCast(@fieldParentPtr("node", pv_next_node));
 
-        shoelace_sum += (pv_cur.pos[0] * pv_next.pos[1]) - (pv_next.pos[0] * pv_cur.pos[1]);
+        shoelace_sum += cross2d(pv_cur.pos, pv_next.pos);
         current_node = node.next;
     }
 
@@ -551,12 +622,19 @@ inline fn cross2d(a: Vec2, b: Vec2) f32 {
     return (a[0] * b[1]) - (a[1] * b[0]);
 }
 
+inline fn collinear(a: Vec2, b: Vec2, c: Vec2) bool {
+    const vec_in = b - a;
+    const vec_out = c - b;
+    const double_signed_area = cross2d(vec_in, vec_out);
+    return @abs(double_signed_area) < GEOM_EPS;
+}
+
 inline fn convex(prev: Vec2, cur: Vec2, next: Vec2) bool {
     const vec_in = cur - prev;
     const vec_out = next - cur;
-    const pd = cross2d(vec_in, vec_out);
+    const double_signed_area = cross2d(vec_in, vec_out);
 
-    if (pd > -GEOM_EPS) return true;
+    if (double_signed_area > -GEOM_EPS) return true;
     return false;
 }
 
@@ -566,9 +644,10 @@ inline fn dot(a: anytype, b: anytype) @typeInfo(@TypeOf(a)).vector.child {
 }
 
 inline fn normalize(v: anytype) @TypeOf(v) {
-    const one_over_len = 1.0 / @sqrt(@reduce(.Add, v * v));
+    const one_over_len = 1.0 / @sqrt(dot(v, v));
     return v * @as(@TypeOf(v), @splat(one_over_len));
 }
+
 test "cross2d" {
     const pv0 = Vec2{ 0, 0 };
     const pv1 = Vec2{ 1, 0 };
@@ -745,6 +824,7 @@ test "invalid float" {
 }
 
 test "parse (semantic comparison)" {
+
     // todo:[test_temp_alloc_init] Can we do this in the runner?
     mem.initTemp();
     defer mem.deinitTemp();

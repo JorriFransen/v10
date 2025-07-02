@@ -67,10 +67,10 @@ fn run() !void {
     // var arrow_model = try Model.load(&device, "res/test_obj/funky_plane.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/c.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/funky_plane_3d.obj");
-    var arrow_model = try Model.load(&device, "res/test_obj/arrow.obj");
+    // var arrow_model = try Model.load(&device, "res/test_obj/arrow.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/concave_quad.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/concave_pentagon.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/collinear.obj");
+    var arrow_model = try Model.load(&device, "res/test_obj/collinear.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/projection_winding_flip.obj");
     defer arrow_model.destroy();
 
@@ -79,10 +79,10 @@ fn run() !void {
     // var arrow_model_t = try Model.load(&device, "res/test_obj/funky_plane_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/c_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/funky_plane_3d_t.obj");
-    var arrow_model_t = try Model.load(&device, "res/test_obj/arrow_t.obj");
+    // var arrow_model_t = try Model.load(&device, "res/test_obj/arrow_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/concave_quad_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/concave_pentagon_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/collinear_t.obj");
+    var arrow_model_t = try Model.load(&device, "res/test_obj/collinear_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/projection_winding_flip_t.obj");
     defer arrow_model_t.destroy();
 
