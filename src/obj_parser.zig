@@ -506,13 +506,25 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
                 continue;
             }
 
+            // Edges for same-side triangle test
+            const ab = cur.pos - prev.pos;
+            const bc = next.pos - cur.pos;
+            const ca = prev.pos - next.pos;
+
             var c_it = if (ccw) next.node.next orelse vertex_list.first else next.node.prev orelse vertex_list.last;
             while (c_it) |c_node| {
                 if (c_node == &prev.node) break;
 
                 const c: *ProjectedVertex = @alignCast(@fieldParentPtr("node", c_node));
+                const ap = c.pos - prev.pos;
+                const bp = c.pos - cur.pos;
+                const cp = c.pos - next.pos;
 
-                if (inTriangle(c.pos, prev.pos, cur.pos, next.pos)) {
+                const c1 = cross2d(ab, ap);
+                const c2 = cross2d(bc, bp);
+                const c3 = cross2d(ca, cp);
+
+                if (c1 > GEOM_EPS and c2 > GEOM_EPS and c3 > GEOM_EPS) {
                     it = if (ccw) node.next orelse vertex_list.first else node.prev orelse vertex_list.last;
                     continue :clip_loop;
                 }

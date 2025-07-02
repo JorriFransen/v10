@@ -63,14 +63,14 @@ fn run() !void {
     defer simple_render_system.destroy();
 
     // var arrow_model = try Model.load(&device, "res/test_obj/triangle.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/cube.obj");
+    var arrow_model = try Model.load(&device, "res/test_obj/cube.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/funky_plane.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/c.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/funky_plane_3d.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/arrow.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/concave_quad.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/concave_pentagon.obj");
-    var arrow_model = try Model.load(&device, "res/test_obj/collinear.obj");
+    // var arrow_model = try Model.load(&device, "res/test_obj/collinear.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/projection_winding_flip.obj");
     defer arrow_model.destroy();
 
