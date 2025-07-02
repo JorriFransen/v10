@@ -63,11 +63,11 @@ fn run() !void {
     defer simple_render_system.destroy();
 
     // var arrow_model = try Model.load(&device, "res/test_obj/triangle.obj");
-    var arrow_model = try Model.load(&device, "res/test_obj/cube.obj");
+    // var arrow_model = try Model.load(&device, "res/test_obj/cube.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/funky_plane.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/c.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/funky_plane_3d.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/arrow.obj");
+    var arrow_model = try Model.load(&device, "res/test_obj/arrow.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/concave_quad.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/concave_pentagon.obj");
     // var arrow_model = try Model.load(&device, "res/test_obj/collinear.obj");
@@ -79,10 +79,10 @@ fn run() !void {
     // var arrow_model_t = try Model.load(&device, "res/test_obj/funky_plane_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/c_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/funky_plane_3d_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/arrow_t.obj");
+    var arrow_model_t = try Model.load(&device, "res/test_obj/arrow_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/concave_quad_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/concave_pentagon_t.obj");
-    var arrow_model_t = try Model.load(&device, "res/test_obj/collinear_t.obj");
+    // var arrow_model_t = try Model.load(&device, "res/test_obj/collinear_t.obj");
     // var arrow_model_t = try Model.load(&device, "res/test_obj/projection_winding_flip_t.obj");
     defer arrow_model_t.destroy();
 
@@ -128,11 +128,6 @@ fn run() !void {
 
 fn updateEntities(dt: f32) void {
     kb_move_controller.moveInPlaneXZ(&window, dt, &camera_entity);
-
-    // const rot_speed = 1;
-    // const ctf = &cube.transform;
-    // ctf.rotation.y = @mod(ctf.rotation.y + dt * rot_speed, std.math.tau);
-    // ctf.rotation.x = @mod(ctf.rotation.x + dt * rot_speed * 0.5, std.math.tau);
 }
 
 fn drawFrame() !void {

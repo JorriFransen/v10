@@ -16,13 +16,12 @@ void main () {
     vec4 pos = push.transform * vec4(position, 1);
     gl_Position = pos;
 
+    frag_color = normal * 0.5 + 0.5;
 
-    // frag_color = color;
-
-    vec3 c = normal;
-    if (c.r < 0) c.r = c.r * -0.1;
-    if (c.g < 0) c.g = c.g * -0.1;
-    if (c.b < 0) c.b = c.b * -0.1;
-
-    frag_color = c;
+    // vec3 c = normal;
+    // if (c.r < 0) c.r = c.r * -0.1;
+    // if (c.g < 0) c.g = c.g * -0.1;
+    // if (c.b < 0) c.b = c.b * -0.1;
+    //
+    // frag_color = c;
 }

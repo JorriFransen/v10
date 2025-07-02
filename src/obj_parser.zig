@@ -343,11 +343,6 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
     var new_indices = try std.ArrayListUnmanaged(Index).initCapacity(allocator, triangle_face_count * 3);
 
     for (model.faces, 0..) |face, fi| {
-        if (face.indices.len < 3) {
-            log.warn("Skipping degenerate face (index): {}", .{fi});
-            continue;
-        }
-
         // Calculate face normal
         var normal_sum = Vec3{ 0, 0, 0 };
         for (0..face.indices.len) |i| {
@@ -520,11 +515,10 @@ fn triangulate(model: *Model, allocator: Allocator, temp: TempArena) !void {
                 const bp = c.pos - cur.pos;
                 const cp = c.pos - next.pos;
 
-                const c1 = cross2d(ab, ap);
-                const c2 = cross2d(bc, bp);
-                const c3 = cross2d(ca, cp);
-
-                if (c1 > GEOM_EPS and c2 > GEOM_EPS and c3 > GEOM_EPS) {
+                if (cross2d(ab, ap) > GEOM_EPS and
+                    cross2d(bc, bp) > GEOM_EPS and
+                    cross2d(ca, cp) > GEOM_EPS)
+                {
                     it = if (ccw) node.next orelse vertex_list.first else node.prev orelse vertex_list.last;
                     continue :clip_loop;
                 }

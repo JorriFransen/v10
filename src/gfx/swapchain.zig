@@ -1,13 +1,13 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const mem = @import("../memory.zig");
-const vklog = std.log.scoped(.vulkan);
+const log = std.log.scoped(.swapchain);
 const gfx = @import("../gfx.zig");
+const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
-const assert = std.debug.assert;
 
 pub const MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -151,11 +151,11 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         );
 
     const surface_format = this.chooseSwapSurfaceFormat(swapchain_support.formats);
-    vklog.info("Using surface format: {}", .{surface_format});
+    log.info("Using surface format: {}", .{surface_format});
     const present_mode = this.chooseSwapPresentMode(swapchain_support.present_modes);
-    vklog.info("Using present mode: {s}", .{@tagName(present_mode)});
+    log.info("Using present mode: {s}", .{@tagName(present_mode)});
     const extent = this.chooseSwapExtent(swapchain_support.capabilities);
-    vklog.info("Swapchain extent: {}", .{extent});
+    log.info("Swapchain extent: {}", .{extent});
 
     var image_count = swapchain_support.capabilities.min_image_count + 1;
     if (swapchain_support.capabilities.max_image_count > 0 and
@@ -164,7 +164,7 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         image_count = swapchain_support.capabilities.max_image_count;
     }
 
-    vklog.info("Swapchain image count: {}", .{image_count});
+    log.info("Swapchain image count: {}", .{image_count});
 
     const indices = this.device.device_info.queue_family_indices;
     const queue_indices = .{ indices.graphics_family.?, indices.present_family.? };
@@ -409,6 +409,8 @@ fn chooseSwapSurfaceFormat(this: *@This(), formats: []vk.SurfaceFormatKHR) vk.Su
             return format;
     }
 
+    log.warn("Preferred swapchain surface format not found, using first available", .{});
+
     return formats[0];
 }
 
@@ -424,7 +426,7 @@ fn chooseSwapPresentMode(this: *@This(), pmodes: []vk.PresentModeKHR) vk.Present
     _ = this;
     assert(pmodes.len > 0);
 
-    for (pmodes) |pm| vklog.debug("Available present mode: {?s}({})", .{ tagName(pm), @intFromEnum(pm) });
+    for (pmodes) |pm| log.debug("Available present mode: {?s}({})", .{ tagName(pm), @intFromEnum(pm) });
     var result = vk.PresentModeKHR.fifo_khr;
 
     for (pmodes) |present_mode| {
