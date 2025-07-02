@@ -587,27 +587,18 @@ inline fn shoelaceSum(vertices: LinkedList) f32 {
 }
 
 inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
-    const v0 = tc - ta;
-    const v1 = tb - ta;
-    const v2 = p - ta;
+    const ab = tb - ta;
+    const bc = tc - tb;
+    const ca = ta - tc;
+    const ap = p - ta;
+    const bp = p - tb;
+    const cp = p - tc;
 
-    const dot00 = dot(v0, v0);
-    const dot01 = dot(v0, v1);
-    const dot02 = dot(v0, v2);
-    const dot11 = dot(v1, v1);
-    const dot12 = dot(v1, v2);
+    const c1 = cross2d(ab, ap);
+    const c2 = cross2d(bc, bp);
+    const c3 = cross2d(ca, cp);
 
-    const DENOM_EPS = 1e-9;
-    const denom = dot00 * dot11 - dot01 * dot01;
-    if (@abs(denom) < DENOM_EPS) {
-        log.warn("Found degenerate triangle in 'inTriangle({}, {}, {}, {})'", .{ p, ta, tb, tc });
-        return false;
-    }
-
-    const u = (dot11 * dot02 - dot01 * dot12) / denom;
-    const v = (dot00 * dot12 - dot01 * dot02) / denom;
-
-    return u > GEOM_EPS and v > GEOM_EPS and (u + v) < (1 - GEOM_EPS);
+    return c1 > GEOM_EPS and c2 > GEOM_EPS and c3 > GEOM_EPS;
 }
 
 inline fn cross(a: Vec3, b: Vec3) Vec3 {
