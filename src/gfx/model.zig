@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
-const mem = @import("../memory.zig");
+const mem = @import("memory");
 const resource = @import("../resource.zig");
 const obj_parser = @import("../obj_parser.zig");
 

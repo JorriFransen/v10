@@ -29,6 +29,12 @@ pub fn build(b: *std.Build) !void {
     const glfw_module = glfw.module("glfw");
     glfw_module.addImport("vulkan", vulkan_module);
 
+    const memory_module = b.addModule("memory", .{
+        .root_source_file = b.path("src/memory.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const main_module = b.addModule("main", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -37,6 +43,7 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("clap", clap.module("clap"));
     main_module.addImport("glfw", glfw_module);
     main_module.addImport("vulkan", vulkan_module);
+    main_module.addImport("memory", memory_module);
 
     const exe = b.addExecutable(.{
         .name = "v10game",
@@ -88,10 +95,11 @@ pub fn build(b: *std.Build) !void {
         .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
         .use_llvm = use_llvm,
     });
-    test_exe.root_module.addOptions("options", test_options);
     const run_tests = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);
+    test_exe.root_module.addOptions("options", test_options);
+    test_exe.root_module.addImport("memory", memory_module);
     try anonymousImportDir(b, test_exe.root_module, "res/test_obj/");
 
     const clean_step = b.step("clean", "Clean shaders and zig-out directory");

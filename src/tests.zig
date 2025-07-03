@@ -1,6 +1,6 @@
 const t = @import("std").testing;
 
-pub const memory = @import("memory.zig");
+pub const memory = @import("memory");
 pub const math = @import("math.zig");
 pub const obj_parser = @import("obj_parser.zig");
 

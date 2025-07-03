@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vklog = std.log.scoped(.vulkan);
 const glfw = @import("glfw");
-const mem = @import("../memory.zig");
+const mem = @import("memory");
 const gfx = @import("../gfx.zig");
 const vk = gfx.vk;
 

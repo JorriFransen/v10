@@ -1,6 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const mem = @import("../memory.zig");
+const mem = @import("memory");
 const log = std.log.scoped(.swapchain);
 const gfx = @import("../gfx.zig");
 const assert = std.debug.assert;

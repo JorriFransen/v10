@@ -1,7 +1,7 @@
 const std = @import("std");
 const gfx = @import("../gfx.zig");
 const vk = @import("vulkan");
-const mem = @import("../memory.zig");
+const mem = @import("memory");
 const vklog = std.log.scoped(.vulkan);
 
 const Device = gfx.Device;

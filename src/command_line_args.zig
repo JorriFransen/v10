@@ -1,5 +1,5 @@
 const std = @import("std");
-const mem = @import("memory.zig");
+const mem = @import("memory");
 const clap = @import("clap");
 const glfw = @import("glfw");
 

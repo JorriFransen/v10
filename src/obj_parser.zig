@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const log = std.log.scoped(.obj_parser);
 const gfx = @import("gfx.zig");
 const math = @import("math.zig");
-const mem = @import("memory.zig");
+const mem = @import("memory");
 
 const Allocator = std.mem.Allocator;
 const LinkedList = std.DoublyLinkedList;
