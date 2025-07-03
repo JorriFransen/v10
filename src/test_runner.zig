@@ -11,6 +11,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("options");
+const mem = @import("memory");
 
 const BORDER = "=" ** 80;
 
@@ -45,6 +46,9 @@ pub fn main() !void {
     const filter = getenvOwned(alloc, "TEST_FILTER");
     defer if (filter) |f| alloc.free(f);
 
+    try mem.init();
+    defer mem.deinit();
+
     const printer = Printer.init();
     if (options.color)
         printer.fmt("\r\x1b[0K", .{}); // beginning of line and clear to end of line
@@ -68,6 +72,8 @@ pub fn main() !void {
 
         printer.fmt("Testing \"{s}\": ", .{name});
         const result = t.func();
+
+        mem.resetTemp();
 
         if (std.testing.allocator_instance.deinit() == .leak) {
             leak += 1;

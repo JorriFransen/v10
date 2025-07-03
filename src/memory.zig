@@ -91,3 +91,11 @@ pub fn get_scratch(conflict: *Arena) TempArena {
 
     return TempArena.init(use);
 }
+
+/// Resets all temp/scratch arenas
+pub fn resetTemp() void {
+    assert(temp_initialized);
+
+    temp_arena_a.reset();
+    temp_arena_b.reset();
+}

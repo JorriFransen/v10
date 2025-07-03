@@ -792,9 +792,6 @@ fn err(comptime fmt: []const u8, args: anytype) void {
 }
 
 test "empty buffer" {
-    mem.initTemp();
-    defer mem.deinitTemp();
-
     var ta = mem.get_temp();
 
     const result: Model = try parse(ta.allocator(), .{ .buffer = "", .name = "testbuffer" });
@@ -809,10 +806,6 @@ test "empty buffer" {
 }
 
 test "invalid float" {
-    // TODO:[test_temp_alloc_init] Can we do this in the runner?
-    mem.initTemp();
-    defer mem.deinitTemp();
-
     var ta = mem.get_temp();
 
     const result = parse(ta.allocator(), .{ .buffer = "o test \nv 1.0 xxx 1.0", .name = "testbuffer" });
@@ -821,11 +814,6 @@ test "invalid float" {
 }
 
 test "parse (semantic comparison)" {
-
-    // todo:[test_temp_alloc_init] Can we do this in the runner?
-    mem.initTemp();
-    defer mem.deinitTemp();
-
     const ExpectedModelData = struct {
         vertex_count: usize,
         normal_count: usize,
