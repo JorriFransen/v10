@@ -1,9 +1,8 @@
-const t = @import("std").testing;
-
-pub const memory = @import("memory");
-pub const math = @import("math.zig");
-pub const obj_parser = @import("obj_parser.zig");
+pub const std = @import("std");
+const t = std.testing;
 
 comptime {
-    t.refAllDeclsRecursive(@This());
+    t.refAllDecls(@import("memory"));
+    t.refAllDecls(@import("math.zig"));
+    t.refAllDecls(@import("obj_parser.zig"));
 }

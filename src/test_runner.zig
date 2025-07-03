@@ -13,6 +13,10 @@ const builtin = @import("builtin");
 const options = @import("options");
 const mem = @import("memory");
 
+pub const std_options = std.Options{
+    .log_level = @enumFromInt(@intFromEnum(options.test_log_level)),
+};
+
 const BORDER = "=" ** 80;
 
 const Status = enum {
@@ -50,7 +54,7 @@ pub fn main() !void {
     defer mem.deinit();
 
     const printer = Printer.init();
-    if (options.color)
+    if (options.test_color)
         printer.fmt("\r\x1b[0K", .{}); // beginning of line and clear to end of line
 
     var pass: usize = 0;
@@ -68,7 +72,7 @@ pub fn main() !void {
             }
         }
 
-        const name = if (options.full_name) t.name else (if (std.mem.lastIndexOf(u8, t.name, ".")) |idx| t.name[idx + 1 ..] else t.name);
+        const name = if (options.test_full_name) t.name else (if (std.mem.lastIndexOf(u8, t.name, ".")) |idx| t.name[idx + 1 ..] else t.name);
 
         printer.fmt("Testing \"{s}\": ", .{name});
         const result = t.func();
@@ -133,7 +137,7 @@ const Printer = struct {
     fn status(self: Printer, s: Status, comptime format: []const u8, args: anytype) void {
         const out = self.out;
 
-        if (options.color) {
+        if (options.test_color) {
             const color = switch (s) {
                 .pass => "\x1b[32m",
                 .fail => "\x1b[31m",
@@ -146,6 +150,6 @@ const Printer = struct {
 
         std.fmt.format(out, format, args) catch @panic("std.fmt.format failed?!");
 
-        if (options.color) self.fmt("\x1b[0m", .{});
+        if (options.test_color) self.fmt("\x1b[0m", .{});
     }
 };

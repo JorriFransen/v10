@@ -79,10 +79,12 @@ pub fn build(b: *std.Build) !void {
     exe.step.dependOn(shader_step);
 
     const test_options = b.addOptions();
-    const test_color = b.option(bool, "color", "Enable colored test output") orelse true;
-    const test_full_name = b.option(bool, "full_name", "Print full test names") orelse true;
-    test_options.addOption(bool, "color", test_color);
-    test_options.addOption(bool, "full_name", test_full_name);
+    const test_log_level = b.option(std.log.Level, "test_log_level", "Minimum log level filter") orelse .err;
+    const test_color = b.option(bool, "test_color", "Enable colored test output") orelse true;
+    const test_full_name = b.option(bool, "test_full_name", "Print full test names") orelse true;
+    test_options.addOption(std.log.Level, "test_log_level", test_log_level);
+    test_options.addOption(bool, "test_color", test_color);
+    test_options.addOption(bool, "test_full_name", test_full_name);
 
     const test_exe = b.addTest(.{
         .root_module = b.createModule(.{
@@ -95,6 +97,7 @@ pub fn build(b: *std.Build) !void {
         .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
         .use_llvm = use_llvm,
     });
+    // b.installArtifact(test_exe);
     const run_tests = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);
