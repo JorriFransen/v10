@@ -1,5 +1,5 @@
+o projection_winding_flip
 # KEEP IN MIND THAT THIS FACE POINTS AWAY FROM THE CAMERA
-
 # Square that faces AWAY from the camera (-Z normal), projects CW
 v 0.0 0.0 0.0
 v 1.0 0.0 0.0

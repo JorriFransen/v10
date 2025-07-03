@@ -838,15 +838,25 @@ test "parse (semantic comparison)" {
 
     const expected_data = struct {
         pub const cube_t = ExpectedModelData{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 };
+        pub const cube = ExpectedModelData{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 };
         pub const concave_pentagon_t = ExpectedModelData{ .vertex_count = 5, .normal_count = 1, .texcoord_count = 0, .face_count = 3, .object_count = 1 };
+        pub const concave_pentagon = ExpectedModelData{ .vertex_count = 5, .normal_count = 1, .texcoord_count = 0, .face_count = 3, .object_count = 1 };
         pub const funky_plane_3d_t = ExpectedModelData{ .vertex_count = 20, .normal_count = 18, .texcoord_count = 10, .face_count = 36, .object_count = 1 };
+        pub const funky_plane_3d = ExpectedModelData{ .vertex_count = 20, .normal_count = 18, .texcoord_count = 10, .face_count = 35, .object_count = 1 };
         pub const concave_quad_t = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
+        pub const concave_quad = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
         pub const projection_winding_flip_t = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
+        pub const projection_winding_flip = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
         pub const collinear_t = ExpectedModelData{ .vertex_count = 6, .normal_count = 1, .texcoord_count = 0, .face_count = 4, .object_count = 1 };
+        pub const collinear = ExpectedModelData{ .vertex_count = 6, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
         pub const funky_plane_t = ExpectedModelData{ .vertex_count = 10, .normal_count = 1, .texcoord_count = 10, .face_count = 8, .object_count = 1 };
+        pub const funky_plane = ExpectedModelData{ .vertex_count = 10, .normal_count = 1, .texcoord_count = 10, .face_count = 8, .object_count = 1 };
         pub const c_t = ExpectedModelData{ .vertex_count = 8, .normal_count = 1, .texcoord_count = 0, .face_count = 6, .object_count = 1 };
+        pub const c = ExpectedModelData{ .vertex_count = 8, .normal_count = 1, .texcoord_count = 0, .face_count = 4, .object_count = 1 };
         pub const triangle_t = ExpectedModelData{ .vertex_count = 3, .normal_count = 1, .texcoord_count = 1, .face_count = 1, .object_count = 1 };
+        pub const triangle = ExpectedModelData{ .vertex_count = 3, .normal_count = 1, .texcoord_count = 1, .face_count = 1, .object_count = 1 };
         pub const arrow_t = ExpectedModelData{ .vertex_count = 25, .normal_count = 12, .texcoord_count = 34, .face_count = 46, .object_count = 1 };
+        pub const arrow = ExpectedModelData{ .vertex_count = 25, .normal_count = 12, .texcoord_count = 34, .face_count = 46, .object_count = 1 };
     };
 
     const tests = blk: {
