@@ -26,11 +26,11 @@ index_buffer_memory: vk.DeviceMemory = .null_handle,
 index_count: u32 = 0,
 index_type: vk.IndexType = .none_khr,
 
-pub const Vertex = struct {
+pub const Vertex = extern struct {
     position: Vec3,
-    color: Vec3,
-    normal: Vec3,
-    texcoord: Vec2,
+    color: Vec3 = Vec3.scalar(1),
+    normal: Vec3 = .{},
+    texcoord: Vec2 = .{},
 
     const field_count = @typeInfo(Vertex).@"struct".fields.len;
     pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(Vertex), .input_rate = .vertex };
@@ -88,57 +88,56 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
             const mn = model.normals;
             const mt = model.texcoords;
 
-            var vertices = try ta.allocator().alloc(Vertex, model.indices.len);
+            const MapContext = struct {
+                pub inline fn hash(_: @This(), v: Vertex) u64 {
+                    return std.hash.Wyhash.hash(0, &raw(v));
+                }
+                pub inline fn eql(_: @This(), va: Vertex, vb: Vertex) bool {
+                    return std.mem.eql(u8, &raw(va), &raw(vb));
+                }
+                pub inline fn raw(v: Vertex) [@sizeOf(Vertex)]u8 {
+                    return @bitCast(v);
+                }
+            };
 
-            var face_count: usize = 0;
+            var unique_vertices = std.HashMap(Vertex, u32, MapContext, std.hash_map.default_max_load_percentage).init(ta.allocator());
+            defer unique_vertices.deinit();
 
             const white = Vec3.scalar(1);
+            var vertices = try ta.allocator().alloc(Vertex, model.indices.len);
+            var indices = try ta.allocator().alloc(u32, model.indices.len);
+            var face_count: usize = 0;
+            var vertex_count: u32 = 0;
 
             // TODO: Fix triangulation to update faces/indices on objects
-            for (model.faces, 0..) |face, i| {
+            for (model.faces, 0..) |face, fi| {
                 face_count += 1;
+
                 assert(face.indices.len == 3);
-                const idx0 = face.indices[0];
-                const idx1 = face.indices[1];
-                const idx2 = face.indices[2];
+                inline for (face.indices[0..3], 0..) |idx, vi| {
+                    var v = Vec3.v(mv[idx.vertex]);
+                    var n: Vec3 = if (idx.normal < mn.len) Vec3.v(mn[idx.normal]) else .{};
+                    const c: Vec3 = if (idx.vertex < mc.len) Vec3.v(mc[idx.vertex]) else white;
+                    const t: Vec2 = if (idx.texcoord < mt.len) Vec2.v(mt[idx.texcoord]) else .{};
 
-                var v0 = Vec3.v(mv[idx0.vertex]);
-                var v1 = Vec3.v(mv[idx1.vertex]);
-                var v2 = Vec3.v(mv[idx2.vertex]);
+                    // Transform from the default blender export coordinate system to v10
+                    v.z = -v.z;
+                    n.z = -n.z;
 
-                var n0: Vec3 = if (idx0.normal < mn.len) Vec3.v(mn[idx0.normal]) else .{};
-                var n1: Vec3 = if (idx1.normal < mn.len) Vec3.v(mn[idx1.normal]) else .{};
-                var n2: Vec3 = if (idx2.normal < mn.len) Vec3.v(mn[idx2.normal]) else .{};
+                    const vertex = Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
+                    if (!unique_vertices.contains(vertex)) {
+                        try unique_vertices.put(vertex, vertex_count);
+                        vertices[vertex_count] = vertex;
+                        vertex_count += 1;
+                    }
 
-                // Transform from the default blender export coordinate system to v10
-                v0.z = -v0.z;
-                v1.z = -v1.z;
-                v2.z = -v2.z;
-                n0.z = -n0.z;
-                n1.z = -n1.z;
-                n2.z = -n2.z;
-
-                const c0 = if (idx0.vertex < mc.len) Vec3.v(mc[idx0.vertex]) else white;
-                const c1 = if (idx1.vertex < mc.len) Vec3.v(mc[idx1.vertex]) else white;
-                const c2 = if (idx2.vertex < mc.len) Vec3.v(mc[idx2.vertex]) else white;
-
-                const t0: Vec2 = if (idx0.texcoord < mt.len) Vec2.v(mt[idx0.texcoord]) else .{};
-                const t1: Vec2 = if (idx1.texcoord < mt.len) Vec2.v(mt[idx1.texcoord]) else .{};
-                const t2: Vec2 = if (idx2.texcoord < mt.len) Vec2.v(mt[idx2.texcoord]) else .{};
-
-                const triangle = [3]Vertex{
-                    .{ .position = v0, .color = c0, .normal = n0, .texcoord = t0 },
-                    .{ .position = v1, .color = c1, .normal = n1, .texcoord = t1 },
-                    .{ .position = v2, .color = c2, .normal = n2, .texcoord = t2 },
-                };
-
-                const vi = i * 3;
-                @memcpy(vertices[vi .. vi + 3], &triangle);
+                    indices[(fi * 3) + vi] = unique_vertices.get(vertex).?;
+                }
             }
 
             assert(model.faces.len == face_count);
 
-            return try create(device, build(vertices));
+            return try create(device, buildIndexed(vertices, indices));
         },
     }
 }
@@ -151,21 +150,28 @@ pub fn build(vertices: []const Vertex) Builder(void) {
     return .{ .vertices = vertices };
 }
 
-pub fn buildIndexed(vertices: []const Vertex, indices: anytype) blk: {
-    const err_fmt = "indices must be a single item non const pointer to an array (slice) of u32, u16 or u8. Found: '{}'";
+pub fn buildIndexed(vertices: []const Vertex, indices: anytype) blk_returntype: {
+    // @compileLog(std.fmt.comptimePrint("@TypeOf(indices): -->{}<--", .{@TypeOf(indices)}));
+    const err_fmt = "indices must be a slice of u32, u16 or u8. Found: '{}'";
     const err_args = .{@TypeOf(indices)};
 
     const ptr_info = @typeInfo(@TypeOf(indices));
     if (ptr_info != .pointer) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
-    if (ptr_info.pointer.size != .one) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+    const ChildType = switch (ptr_info.pointer.size) {
+        .one => blk: {
+            const array_info = @typeInfo(ptr_info.pointer.child);
+            if (array_info != .array) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+            break :blk array_info.array.child;
+        },
+        .slice => ptr_info.pointer.child,
+        .many, .c => @compileError(std.fmt.comptimePrint(err_fmt, err_args)),
+    };
 
-    const array_info = @typeInfo(ptr_info.pointer.child);
-    if (array_info != .array) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+    const child_info = @typeInfo(ChildType);
 
-    const child_info = @typeInfo(array_info.array.child);
-    if (child_info != .int or !validIndexType(array_info.array.child)) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
+    if (child_info != .int or !validIndexType(ChildType)) @compileError(std.fmt.comptimePrint(err_fmt, err_args));
 
-    break :blk Builder(array_info.array.child);
+    break :blk_returntype Builder(ChildType);
 } {
     return .{ .vertices = vertices, .indices = indices };
 }
