@@ -175,21 +175,21 @@ fn createCubeModel(offset: Vec3) !Model {
 
         // Right face (yellow)
         .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
         .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = yellow },
         .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
+        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = yellow },
+        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
+        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = yellow },
 
-        // Top face (orange, y axis points down)
+        // Bottom face (orange)
         .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
         .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = orange },
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = orange },
         .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
+        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
+        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
+        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = orange },
 
-        // Bottom face (red)
+        // Top face (red)
         .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
         .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
         .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = red },
@@ -197,15 +197,15 @@ fn createCubeModel(offset: Vec3) !Model {
         .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = red },
         .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
 
-        // Nose face (blue)
+        // Tail face (blue)
         .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
         .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = blue },
         .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
+        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
+        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
+        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = blue },
 
-        // Tail face (green)
+        // Nose face (green)
         .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = green },
         .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = green },
         .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = green },
@@ -242,25 +242,25 @@ fn createCubeModelIndexed(offset: Vec3) !Model {
         .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = yellow },
         .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = yellow },
 
-        // Top face (orange, y axis points down)
+        // Bottom face (orange)
         .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
         .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
         .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = orange },
         .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = orange },
 
-        // Bottom face (red)
+        // Top face (red)
         .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
         .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
         .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = red },
         .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = red },
 
-        // Nose face (blue)
+        // Tail face (blue)
         .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
         .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
         .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = blue },
         .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = blue },
 
-        // Tail face (green)
+        // Nose face (green)
         .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = green },
         .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = green },
         .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = green },
@@ -273,10 +273,10 @@ fn createCubeModelIndexed(offset: Vec3) !Model {
 
     const indices = [_]u8{
         0,  1,  2,  0,  3,  1,
-        4,  5,  6,  4,  7,  5,
-        8,  9,  10, 8,  11, 9,
+        4,  6,  5,  4,  5,  7,
+        8,  10, 9,  8,  9,  11,
         12, 13, 14, 12, 15, 13,
-        16, 17, 18, 16, 19, 17,
+        16, 18, 17, 16, 17, 19,
         20, 21, 22, 20, 23, 21,
     };
 
