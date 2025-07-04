@@ -824,8 +824,7 @@ test "parse (semantic comparison)" {
         object_count: usize,
     };
 
-    const test_path = "res/test_obj";
-
+    const test_path = std.fmt.comptimePrint("{s}{c}{s}", .{ "res", std.fs.path.sep, "test_obj" });
     const expected_data = struct {
         pub const cube_t = ExpectedModelData{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 };
         pub const cube = ExpectedModelData{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 };

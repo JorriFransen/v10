@@ -103,7 +103,9 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&run_tests.step);
     test_exe.root_module.addOptions("options", test_options);
     test_exe.root_module.addImport("memory", memory_module);
-    try anonymousImportDir(b, test_exe.root_module, "res/test_obj/");
+
+    // Use path join for consistency, this path is also used in the import name so it needs to match everywhere
+    try anonymousImportDir(b, test_exe.root_module, b.pathJoin(&.{ "res", "test_obj" }));
 
     const clean_step = b.step("clean", "Clean shaders and zig-out directory");
     clean_step.dependOn(&b.addRemoveDirTree(LazyPath{ .cwd_relative = b.install_path }).step);
