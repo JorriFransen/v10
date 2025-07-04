@@ -29,12 +29,14 @@ inline fn parseInt(comptime T: type, str: []const u8) !T {
 const GEOM_EPS = 1e-6;
 
 pub const ObjParseError = error{
-    InvalidCharacter,
     InvalidIndex,
-    OutOfMemory,
-    Overflow,
     TriangulationFailed,
-};
+} ||
+    std.mem.Allocator.Error ||
+    std.fmt.ParseIntError ||
+    ParseVectorError;
+
+pub const ParseVectorError = error{InvalidColor} || std.fmt.ParseFloatError;
 
 pub const Object = struct {
     name: []const u8 = "",
@@ -127,8 +129,6 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         }
     }
 
-    var parse_vector_fn = &parseVector;
-
     var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
     defer ta.release();
     const face_alloc = if (need_triangulation) ta.allocator() else allocator;
@@ -140,7 +140,6 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         .objects = try allocator.alloc(Object, num_objects),
         .colors = blk: {
             if (options.flags.vertex_colors) {
-                parse_vector_fn = parseVectorAndColor;
                 break :blk try allocator.alloc(Vec3, num_verts);
             } else break :blk &.{};
         },
@@ -152,7 +151,8 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     var normals = std.ArrayListUnmanaged(Vec3).initBuffer(@constCast(result.normals));
     var texcoords = std.ArrayListUnmanaged(Vec2).initBuffer(@constCast(result.texcoords));
     var objects = std.ArrayListUnmanaged(Object).initBuffer(@constCast(result.objects));
-    var colors = std.ArrayListUnmanaged(Vec3).initBuffer(@constCast(result.colors));
+    var colors_ = std.ArrayListUnmanaged(Vec3).initBuffer(@constCast(result.colors));
+    const colors: ?*@TypeOf(colors_) = if (options.flags.vertex_colors) &colors_ else null;
     var faces = std.ArrayListUnmanaged(Face).initBuffer(@constCast(result.faces));
     var indices = std.ArrayListUnmanaged(Index).initBuffer(@constCast(result.indices));
 
@@ -170,7 +170,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         const field = field_it.next() orelse continue;
 
         if (eq(field, "v")) {
-            try parse_vector_fn(&field_it, &vertices, &colors);
+            try parseVectorAndOptionalColor(&field_it, &vertices, colors);
         } else if (eq(field, "vn")) {
             normals.appendAssumeCapacity(try parseVec3(&field_it));
         } else if (eq(field, "vt")) {
@@ -205,7 +205,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     }
 
     assert(vertices.items.len == num_verts);
-    if (options.flags.vertex_colors) assert(colors.items.len <= num_verts);
+    if (options.flags.vertex_colors) assert(colors.?.items.len == num_verts);
     assert(texcoords.items.len == num_texcoords);
     assert(normals.items.len == num_normals);
     assert(indices.items.len == num_indices);
@@ -274,18 +274,20 @@ fn parseFace(str: []const u8, num_verts: u32, num_texcoords: u32, num_normals: u
     return r;
 }
 
-fn parseVector(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(Vec3), colors: *std.ArrayListUnmanaged(Vec3)) !void {
-    _ = colors;
-    vertices.appendAssumeCapacity(try parseVec3(field_it));
-}
-
-fn parseVectorAndColor(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(Vec3), colors: *std.ArrayListUnmanaged(Vec3)) !void {
+inline fn parseVectorAndOptionalColor(field_it: *TokenIterator, vertices: *std.ArrayListUnmanaged(Vec3), colors_opt: ?*std.ArrayListUnmanaged(Vec3)) ParseVectorError!void {
     vertices.appendAssumeCapacity(try parseVec3(field_it));
 
-    if (field_it.peek()) |n| {
-        if (!std.mem.startsWith(u8, n, "#")) {
-            colors.appendAssumeCapacity(if (field_it.rest().len == 0) .{ 1, 1, 1 } else try parseVec3(field_it));
-        }
+    if (colors_opt) |colors| {
+        const white = Vec3{ 1, 1, 1 };
+        const color = blk: {
+            const rest = stripRight(field_it.rest());
+            if (rest.len > 0 and !std.mem.startsWith(u8, rest, "#")) {
+                if (rest.len < 5) return error.InvalidColor;
+                break :blk parseVec3(field_it) catch return error.InvalidColor;
+            } else break :blk white;
+        };
+
+        colors.appendAssumeCapacity(color);
     }
 }
 
