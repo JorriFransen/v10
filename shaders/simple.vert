@@ -16,7 +16,7 @@ void main () {
     vec4 pos = push.transform * vec4(position, 1);
     gl_Position = pos;
 
-    // frag_color = normal * 0.5 + 0.5;
+    frag_color = normal * 0.5 + 0.5;
 
-    frag_color = color;
+    // frag_color = color;
 }

@@ -109,29 +109,34 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
             var face_count: usize = 0;
             var vertex_count: u32 = 0;
 
-            // TODO: Fix triangulation to update faces/indices on objects
-            for (model.faces, 0..) |face, fi| {
-                face_count += 1;
+            for (model.objects) |obj| {
+                for (obj.faces, 0..) |face, fi| {
+                    face_count += 1;
 
-                assert(face.indices.len == 3);
-                inline for (face.indices[0..3], 0..) |idx, vi| {
-                    var v = Vec3.v(mv[idx.vertex]);
-                    var n: Vec3 = if (idx.normal < mn.len) Vec3.v(mn[idx.normal]) else .{};
-                    const c: Vec3 = if (idx.vertex < mc.len) Vec3.v(mc[idx.vertex]) else white;
-                    const t: Vec2 = if (idx.texcoord < mt.len) Vec2.v(mt[idx.texcoord]) else .{};
+                    assert(face.indices.len == 3);
+                    inline for (face.indices[0..3], 0..) |idx, vi| {
+                        var v = Vec3.v(mv[idx.vertex]);
 
-                    // Transform from the default blender export coordinate system to v10
-                    v.z = -v.z;
-                    n.z = -n.z;
+                        // Transform from the default blender export coordinate system to v10
+                        v.z = -v.z;
 
-                    const vertex = Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
-                    if (!unique_vertices.contains(vertex)) {
-                        try unique_vertices.put(vertex, vertex_count);
-                        vertices[vertex_count] = vertex;
-                        vertex_count += 1;
+                        var n: Vec3 = if (idx.normal < mn.len) Vec3.v(mn[idx.normal]) else .{};
+
+                        // Transform from the default blender export coordinate system to v10
+                        n.z = -n.z;
+
+                        const c: Vec3 = if (idx.vertex < mc.len) Vec3.v(mc[idx.vertex]) else white;
+                        const t: Vec2 = if (idx.texcoord < mt.len) Vec2.v(mt[idx.texcoord]) else .{};
+
+                        const vertex = Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
+                        if (!unique_vertices.contains(vertex)) {
+                            try unique_vertices.put(vertex, vertex_count);
+                            vertices[vertex_count] = vertex;
+                            vertex_count += 1;
+                        }
+
+                        indices[(fi * 3) + vi] = unique_vertices.get(vertex).?;
                     }
-
-                    indices[(fi * 3) + vi] = unique_vertices.get(vertex).?;
                 }
             }
 
