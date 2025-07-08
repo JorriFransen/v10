@@ -32,8 +32,8 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *E
     var rot = Vec3{};
     if (glfw.getKey(window, this.keys.look_right) == glfw.c.GLFW_PRESS) rot.y += 1;
     if (glfw.getKey(window, this.keys.look_left) == glfw.c.GLFW_PRESS) rot.y -= 1;
-    if (glfw.getKey(window, this.keys.look_up) == glfw.c.GLFW_PRESS) rot.x += 1;
-    if (glfw.getKey(window, this.keys.look_down) == glfw.c.GLFW_PRESS) rot.x -= 1;
+    if (glfw.getKey(window, this.keys.look_up) == glfw.c.GLFW_PRESS) rot.x -= 1;
+    if (glfw.getKey(window, this.keys.look_down) == glfw.c.GLFW_PRESS) rot.x += 1;
 
     if (rot.dot(rot) > epsilon) {
         const trot = &entity.transform.rotation;
