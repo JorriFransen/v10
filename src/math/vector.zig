@@ -11,17 +11,60 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         2 => return extern struct {
             pub const V = @Vector(N, ET);
             pub const T = ET;
+            const F = VecFunctionsMixin(N, T, @This());
             x: T = 0,
             y: T = 0,
-            pub fn new(x: T, y: T) @This() {
+            pub inline fn new(x: T, y: T) @This() {
                 return @bitCast(V{ x, y });
             }
-            pub usingnamespace VecFunctionsMixin(N, T, @This());
+            pub inline fn v(vec: V) @This() {
+                return F.v(vec);
+            }
+            pub inline fn vector(vec: @This()) V {
+                return F.vector(vec);
+            }
+            pub inline fn scalar(s: T) @This() {
+                return F.scalar(s);
+            }
+            pub inline fn length(vec: @This()) T {
+                return F.length(vec);
+            }
+            pub inline fn normalized(vec: @This()) @This() {
+                return F.normalized(vec);
+            }
+            pub inline fn negate(vec: @This()) @This() {
+                return F.negate(vec);
+            }
+            pub inline fn add(a: @This(), b: @This()) @This() {
+                return F.add(a, b);
+            }
+            pub inline fn sub(a: @This(), b: @This()) @This() {
+                return F.sub(a, b);
+            }
+            pub inline fn mul(a: @This(), b: @This()) @This() {
+                return F.mul(a, b);
+            }
+            pub inline fn div(a: @This(), b: @This()) @This() {
+                return F.div(a, b);
+            }
+            pub inline fn mul_scalar(vec: @This(), s: T) @This() {
+                return F.mul_scalar(vec, s);
+            }
+            pub inline fn div_scalar(vec: @This(), s: T) @This() {
+                return F.div_scalar(vec, s);
+            }
+            pub inline fn cross(a: @This(), b: @This()) @This() {
+                return F.cross(a, b);
+            }
+            pub inline fn dot(a: @This(), b: @This()) T {
+                return F.dot(a, b);
+            }
         },
 
         3 => return extern struct {
             pub const V = @Vector(N, ET);
             pub const T = ET;
+            const F = VecFunctionsMixin(N, T, @This());
             x: T = 0,
             y: T = 0,
             z: T = 0,
@@ -34,12 +77,54 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub fn toVector4(this: @This()) Vec(4, T) {
                 return .{ .x = this.x, .y = this.y, .z = this.z, .w = 0 };
             }
-            pub usingnamespace VecFunctionsMixin(N, T, @This());
+            pub inline fn v(vec: V) @This() {
+                return F.v(vec);
+            }
+            pub inline fn vector(vec: @This()) V {
+                return F.vector(vec);
+            }
+            pub inline fn scalar(s: T) @This() {
+                return F.scalar(s);
+            }
+            pub inline fn length(vec: @This()) T {
+                return F.length(vec);
+            }
+            pub inline fn normalized(vec: @This()) @This() {
+                return F.normalized(vec);
+            }
+            pub inline fn negate(vec: @This()) @This() {
+                return F.negate(vec);
+            }
+            pub inline fn add(a: @This(), b: @This()) @This() {
+                return F.add(a, b);
+            }
+            pub inline fn sub(a: @This(), b: @This()) @This() {
+                return F.sub(a, b);
+            }
+            pub inline fn mul(a: @This(), b: @This()) @This() {
+                return F.mul(a, b);
+            }
+            pub inline fn div(a: @This(), b: @This()) @This() {
+                return F.div(a, b);
+            }
+            pub inline fn mul_scalar(vec: @This(), s: T) @This() {
+                return F.mul_scalar(vec, s);
+            }
+            pub inline fn div_scalar(vec: @This(), s: T) @This() {
+                return F.div_scalar(vec, s);
+            }
+            pub inline fn cross(a: @This(), b: @This()) @This() {
+                return F.cross(a, b);
+            }
+            pub inline fn dot(a: @This(), b: @This()) T {
+                return F.dot(a, b);
+            }
         },
 
         4 => return extern struct {
             pub const V = @Vector(N, ET);
             pub const T = ET;
+            const F = VecFunctionsMixin(N, T, @This());
             x: T = 0,
             y: T = 0,
             z: T = 0,
@@ -50,7 +135,48 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub fn xyz(this: @This()) Vec(3, T) {
                 return .{ .x = this.x, .y = this.y, .z = this.z };
             }
-            pub usingnamespace VecFunctionsMixin(N, T, @This());
+            pub inline fn v(vec: V) @This() {
+                return F.v(vec);
+            }
+            pub inline fn vector(vec: @This()) V {
+                return F.vector(vec);
+            }
+            pub inline fn scalar(s: T) @This() {
+                return F.scalar(s);
+            }
+            pub inline fn length(vec: @This()) T {
+                return F.length(vec);
+            }
+            pub inline fn normalized(vec: @This()) @This() {
+                return F.normalized(vec);
+            }
+            pub inline fn negate(vec: @This()) @This() {
+                return F.negate(vec);
+            }
+            pub inline fn add(a: @This(), b: @This()) @This() {
+                return F.add(a, b);
+            }
+            pub inline fn sub(a: @This(), b: @This()) @This() {
+                return F.sub(a, b);
+            }
+            pub inline fn mul(a: @This(), b: @This()) @This() {
+                return F.mul(a, b);
+            }
+            pub inline fn div(a: @This(), b: @This()) @This() {
+                return F.div(a, b);
+            }
+            pub inline fn mul_scalar(vec: @This(), s: T) @This() {
+                return F.mul_scalar(vec, s);
+            }
+            pub inline fn div_scalar(vec: @This(), s: T) @This() {
+                return F.div_scalar(vec, s);
+            }
+            pub inline fn cross(a: @This(), b: @This()) @This() {
+                return F.cross(a, b);
+            }
+            pub inline fn dot(a: @This(), b: @This()) T {
+                return F.dot(a, b);
+            }
         },
     }
 }
