@@ -4,13 +4,13 @@ const builtin = @import("builtin");
 
 const LazyPath = std.Build.LazyPath;
 
-const force_llvm = false;
+const debugging = false;
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const use_llvm = if (target.result.os.tag == .windows) true else force_llvm;
+    const use_llvm = if (target.result.os.tag == .windows) true else debugging;
 
     const clap = b.dependency("clap", .{});
     const vulkan = b.dependency("vulkan", .{
@@ -97,7 +97,7 @@ pub fn build(b: *std.Build) !void {
         .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
         .use_llvm = use_llvm,
     });
-    // b.installArtifact(test_exe);
+    if (debugging) b.installArtifact(test_exe);
     const run_tests = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);

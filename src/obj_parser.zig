@@ -39,7 +39,7 @@ pub const ParseVectorError = error{InvalidColor} || std.fmt.ParseFloatError;
 
 pub const Object = struct {
     name: []const u8 = "",
-    faces: []const Face,
+    faces: []const Face = &.{},
 };
 
 pub const Face = struct {
@@ -85,7 +85,6 @@ const ModelBuilder = struct {
     objects: []Object = &.{},
 };
 
-// TODO: Implicit first object if not present
 pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     const buffer = options.buffer;
 
@@ -123,6 +122,10 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
 
             num_indices += face_indices;
             num_faces += 1;
+
+            if (num_objects < 1) {
+                num_objects += 1;
+            }
         } else if (eq(field, "o")) {
             num_objects += 1;
         } else if (eq(field, "s")) {
@@ -188,6 +191,12 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         } else if (eq(field, "f")) {
             const face = try parseFace(field_it.rest(), @intCast(vertices.items.len), num_texcoords, @intCast(normals.items.len), &indices);
             faces.appendAssumeCapacity(face);
+
+            if (current_object == null) {
+                const implicit_obj = objects.addOneAssumeCapacity();
+                implicit_obj.* = .{};
+                current_object = implicit_obj;
+            }
         } else if (eq(field, "o")) {
             if (current_object) |obj| {
                 obj.faces = faces.items[obj_face_offset..];
@@ -195,7 +204,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
             obj_face_offset = faces.items.len;
 
             const obj = objects.addOneAssumeCapacity();
-            obj.name = field_it.rest();
+            obj.name = try allocCopy(u8, allocator, field_it.rest());
             current_object = obj;
         } else if (eq(field, "s")) {
             // ok, skip
@@ -239,6 +248,12 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
         .faces = result.faces,
         .objects = result.objects,
     };
+}
+
+inline fn allocCopy(comptime T: type, allocator: Allocator, data: []const T) ![]const T {
+    const result = try allocator.alloc(T, data.len);
+    @memcpy(result, data);
+    return result;
 }
 
 fn findFaceIndexCount(str: []const u8) usize {
@@ -828,6 +843,75 @@ test "invalid float" {
     const result = parse(ta.allocator(), .{ .buffer = "o test \nv 1.0 xxx 1.0", .name = "testbuffer" });
 
     try std.testing.expectError(error.InvalidCharacter, result);
+}
+
+// If no 'o' lines are present, the parser should assign all vertecis (etc) to a default object
+test "implicit object" {
+    var ta = mem.get_temp();
+
+    const result = try parse(ta.allocator(), .{
+        .name = "defaultobject",
+        .buffer =
+        \\v -0.500000 0.000000 0.000000
+        \\v 0.500000 0.000000 0.000000
+        \\v 0.000000 0.500000 0.000000
+        \\vn -0.0000 -0.0000 1.0000
+        \\vt 0.000000 0.000000
+        \\f 1/1/1 2/1/1 3/1/1
+        ,
+    });
+
+    try std.testing.expectEqual(1, result.objects.len);
+    const obj = result.objects[0];
+    try std.testing.expectEqual(result.faces.len, obj.faces.len);
+    try std.testing.expectEqualSlices(Face, result.faces, obj.faces);
+}
+
+// Some faces (and vertices etc.) might occur before the first object
+test "implicit and explicit object" {
+    var ta = mem.get_temp();
+
+    const result = try parse(ta.allocator(), .{
+        .name = "defaultobject",
+        .buffer =
+        \\v -0.500000 0.000000 0.000000
+        \\v 0.500000 0.000000 0.000000
+        \\v 0.000000 0.500000 0.000000
+        \\vn -0.0000 -0.0000 1.0000
+        \\vt 0.000000 0.000000
+        \\f 1/1/1 2/1/1 3/1/1
+        \\o Triangle
+        \\v 0.500000 0.000000 0.000000
+        \\v 1.500000 0.000000 0.000000
+        \\v 1.000000 0.500000 0.000000
+        \\vn -0.0000 -0.0000 1.0000
+        \\vt 0.000000 0.000000
+        \\f 4/2/2 5/2/2 6/2/2
+        ,
+    });
+
+    try std.testing.expectEqual(2, result.objects.len);
+    try std.testing.expectEqual(6, result.vertices.len);
+    try std.testing.expectEqual(2, result.normals.len);
+    try std.testing.expectEqual(2, result.texcoords.len);
+
+    const implicit_obj = result.objects[0];
+    try std.testing.expectEqual(1, implicit_obj.faces.len);
+    try std.testing.expectEqualSlices(u8, "", implicit_obj.name);
+    try std.testing.expectEqualSlices(Face, result.faces[0..1], implicit_obj.faces);
+    try std.testing.expectEqualSlices(Index, result.indices[0..3], implicit_obj.faces[0].indices);
+    try std.testing.expectEqual(Index{ .vertex = 0, .normal = 0, .texcoord = 0 }, result.indices[0]);
+    try std.testing.expectEqual(Index{ .vertex = 1, .normal = 0, .texcoord = 0 }, result.indices[1]);
+    try std.testing.expectEqual(Index{ .vertex = 2, .normal = 0, .texcoord = 0 }, result.indices[2]);
+
+    const explicit_obj = result.objects[1];
+    try std.testing.expectEqual(1, explicit_obj.faces.len);
+    try std.testing.expectEqualSlices(u8, "Triangle", explicit_obj.name);
+    try std.testing.expectEqualSlices(Face, result.faces[1..], explicit_obj.faces);
+    try std.testing.expectEqualSlices(Index, result.indices[3..], explicit_obj.faces[0].indices);
+    try std.testing.expectEqual(Index{ .vertex = 3, .normal = 1, .texcoord = 1 }, result.indices[3]);
+    try std.testing.expectEqual(Index{ .vertex = 4, .normal = 1, .texcoord = 1 }, result.indices[4]);
+    try std.testing.expectEqual(Index{ .vertex = 5, .normal = 1, .texcoord = 1 }, result.indices[5]);
 }
 
 test "parse (semantic comparison)" {
