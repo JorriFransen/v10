@@ -922,72 +922,97 @@ test "parse (semantic comparison)" {
         face_count: usize,
         object_count: usize,
     };
-
-    const test_path = std.fmt.comptimePrint("{s}{c}{s}", .{ "res", std.fs.path.sep, "test_obj" });
-    // TODO: Walk the test path and warn about missing tests?
-
-    const expected_data = struct {
-        pub const cube_t = ExpectedModelData{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 };
-        pub const cube = ExpectedModelData{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 };
-        pub const concave_pentagon_t = ExpectedModelData{ .vertex_count = 5, .normal_count = 1, .texcoord_count = 0, .face_count = 3, .object_count = 1 };
-        pub const concave_pentagon = ExpectedModelData{ .vertex_count = 5, .normal_count = 1, .texcoord_count = 0, .face_count = 3, .object_count = 1 };
-        pub const problematic_face_t = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 4, .face_count = 2, .object_count = 1 };
-        pub const problematic_face = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 4, .face_count = 2, .object_count = 1 };
-        pub const funky_plane_3d_t = ExpectedModelData{ .vertex_count = 20, .normal_count = 18, .texcoord_count = 10, .face_count = 36, .object_count = 1 };
-        pub const funky_plane_3d = ExpectedModelData{ .vertex_count = 20, .normal_count = 18, .texcoord_count = 10, .face_count = 35, .object_count = 1 };
-        pub const concave_quad_t = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
-        pub const concave_quad = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
-        pub const projection_winding_flip_t = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
-        pub const projection_winding_flip = ExpectedModelData{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
-        pub const collinear_t = ExpectedModelData{ .vertex_count = 6, .normal_count = 1, .texcoord_count = 0, .face_count = 4, .object_count = 1 };
-        pub const collinear = ExpectedModelData{ .vertex_count = 6, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 };
-        pub const funky_plane_t = ExpectedModelData{ .vertex_count = 10, .normal_count = 1, .texcoord_count = 10, .face_count = 8, .object_count = 1 };
-        pub const funky_plane = ExpectedModelData{ .vertex_count = 10, .normal_count = 1, .texcoord_count = 10, .face_count = 8, .object_count = 1 };
-        pub const c_t = ExpectedModelData{ .vertex_count = 8, .normal_count = 1, .texcoord_count = 0, .face_count = 6, .object_count = 1 };
-        pub const c = ExpectedModelData{ .vertex_count = 8, .normal_count = 1, .texcoord_count = 0, .face_count = 4, .object_count = 1 };
-        pub const triangle_t = ExpectedModelData{ .vertex_count = 3, .normal_count = 1, .texcoord_count = 1, .face_count = 1, .object_count = 1 };
-        pub const triangle = ExpectedModelData{ .vertex_count = 3, .normal_count = 1, .texcoord_count = 1, .face_count = 1, .object_count = 1 };
-        pub const arrow_t = ExpectedModelData{ .vertex_count = 25, .normal_count = 12, .texcoord_count = 34, .face_count = 46, .object_count = 1 };
-        pub const arrow = ExpectedModelData{ .vertex_count = 25, .normal_count = 12, .texcoord_count = 34, .face_count = 46, .object_count = 1 };
-    };
-
-    const tests = blk: {
-        const info = @typeInfo(expected_data);
-        assert(info == .@"struct");
-
-        var result: [info.@"struct".decls.len]struct {
-            file_path: []const u8,
-            content: []const u8,
-            expected: ExpectedModelData,
-        } = undefined;
-
-        inline for (info.@"struct".decls, &result) |decl, *r| {
-            assert(!std.mem.endsWith(u8, decl.name, ".obj"));
-
-            const file_name = std.fmt.comptimePrint("{s}.obj", .{decl.name});
-            const file_path = std.fmt.comptimePrint("{s}{c}{s}", .{ test_path, std.fs.path.sep, file_name });
-            r.* = .{
-                .file_path = file_path,
-                .content = @embedFile(file_path),
-                .expected = @field(expected_data, decl.name),
-            };
-        }
-
-        break :blk result;
+    const Test = struct {
+        full_path: []const u8,
+        content: []const u8,
+        expected: ExpectedModelData,
     };
 
     var ta = mem.get_temp();
     defer ta.release();
 
-    for (tests) |t| {
-        log.debug("testing: {s}:", .{t.file_path});
+    const test_path = std.fmt.comptimePrint("{s}{c}{s}", .{ "res", std.fs.path.sep, "test_obj" });
 
-        const model = try parse(ta.allocator(), .{ .name = t.file_path, .buffer = t.content });
+    const addTest = struct {
+        pub fn f(comptime name: @Type(.enum_literal), expected: ExpectedModelData) Test {
+            const file_name = std.fmt.comptimePrint("{s}.obj", .{@tagName(name)});
+            const full_path = std.fmt.comptimePrint("{s}{c}{s}", .{ test_path, std.fs.path.sep, file_name });
+
+            return .{
+                .full_path = full_path,
+                .content = @embedFile(full_path),
+                .expected = expected,
+            };
+        }
+    }.f;
+
+    const tests = [_]Test{
+        addTest(.cube_t, .{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 }),
+        addTest(.cube, .{ .vertex_count = 8, .normal_count = 6, .texcoord_count = 14, .face_count = 12, .object_count = 1 }),
+        addTest(.concave_pentagon_t, .{ .vertex_count = 5, .normal_count = 1, .texcoord_count = 0, .face_count = 3, .object_count = 1 }),
+        addTest(.concave_pentagon, .{ .vertex_count = 5, .normal_count = 1, .texcoord_count = 0, .face_count = 3, .object_count = 1 }),
+        addTest(.problematic_face_t, .{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 4, .face_count = 2, .object_count = 1 }),
+        addTest(.problematic_face, .{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 4, .face_count = 2, .object_count = 1 }),
+        addTest(.funky_plane_3d_t, .{ .vertex_count = 20, .normal_count = 18, .texcoord_count = 10, .face_count = 36, .object_count = 1 }),
+        addTest(.funky_plane_3d, .{ .vertex_count = 20, .normal_count = 18, .texcoord_count = 10, .face_count = 35, .object_count = 1 }),
+        addTest(.concave_quad_t, .{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 }),
+        addTest(.concave_quad, .{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 }),
+        addTest(.projection_winding_flip_t, .{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 }),
+        addTest(.projection_winding_flip, .{ .vertex_count = 4, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 }),
+        addTest(.collinear_t, .{ .vertex_count = 6, .normal_count = 1, .texcoord_count = 0, .face_count = 4, .object_count = 1 }),
+        addTest(.collinear, .{ .vertex_count = 6, .normal_count = 1, .texcoord_count = 0, .face_count = 2, .object_count = 1 }),
+        addTest(.funky_plane_t, .{ .vertex_count = 10, .normal_count = 1, .texcoord_count = 10, .face_count = 8, .object_count = 1 }),
+        addTest(.funky_plane, .{ .vertex_count = 10, .normal_count = 1, .texcoord_count = 10, .face_count = 8, .object_count = 1 }),
+        addTest(.c_t, .{ .vertex_count = 8, .normal_count = 1, .texcoord_count = 0, .face_count = 6, .object_count = 1 }),
+        addTest(.c, .{ .vertex_count = 8, .normal_count = 1, .texcoord_count = 0, .face_count = 4, .object_count = 1 }),
+        addTest(.triangle_t, .{ .vertex_count = 3, .normal_count = 1, .texcoord_count = 1, .face_count = 1, .object_count = 1 }),
+        addTest(.triangle, .{ .vertex_count = 3, .normal_count = 1, .texcoord_count = 1, .face_count = 1, .object_count = 1 }),
+        addTest(.arrow_t, .{ .vertex_count = 25, .normal_count = 12, .texcoord_count = 34, .face_count = 46, .object_count = 1 }),
+        addTest(.arrow, .{ .vertex_count = 25, .normal_count = 12, .texcoord_count = 34, .face_count = 46, .object_count = 1 }),
+    };
+
+    for (tests) |t| {
+        log.debug("testing: {s}:", .{t.full_path});
+
+        const model = try parse(ta.allocator(), .{ .name = t.full_path, .buffer = t.content });
 
         try std.testing.expectEqual(t.expected.vertex_count, model.vertices.len);
         try std.testing.expectEqual(t.expected.normal_count, model.normals.len);
         try std.testing.expectEqual(t.expected.texcoord_count, model.texcoords.len);
         try std.testing.expectEqual(t.expected.face_count, model.faces.len);
         try std.testing.expectEqual(t.expected.object_count, model.objects.len);
+    }
+
+    // Ensure no OBJ files have been overlooked by testing.
+    var gpad = std.heap.DebugAllocator(.{}).init;
+    const gpa = gpad.allocator();
+
+    var test_dir = try std.fs.cwd().openDir(test_path, .{ .iterate = true });
+    defer test_dir.close();
+    var walker = try test_dir.walk(gpa);
+    defer walker.deinit();
+
+    var untested_files = false;
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".obj")) continue;
+
+        const entry_path = try std.fs.path.join(gpa, &.{ test_path, entry.basename });
+
+        var found = false;
+        for (tests) |t| {
+            if (std.mem.eql(u8, t.full_path, entry_path)) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            log.err("Untested file: '{s}'", .{entry_path});
+            untested_files = true;
+        }
+    }
+
+    if (untested_files) {
+        return error.UntestedOBJFile;
     }
 }

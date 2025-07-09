@@ -165,6 +165,7 @@ fn anonymousImportDir(b: *std.Build, module: *std.Build.Module, dir_name: []cons
     defer walker.deinit();
 
     while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
         const rel_path = b.pathJoin(&.{ dir_name, entry.path });
         module.addAnonymousImport(rel_path, .{ .root_source_file = b.path(rel_path) });
     }
