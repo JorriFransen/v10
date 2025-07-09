@@ -108,13 +108,14 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
             var indices = try ta.allocator().alloc(u32, model.indices.len);
             var face_count: usize = 0;
             var vertex_count: u32 = 0;
+            var index_count: usize = 0;
 
             for (model.objects) |obj| {
-                for (obj.faces, 0..) |face, fi| {
+                for (obj.faces) |face| {
                     face_count += 1;
 
                     assert(face.indices.len == 3);
-                    inline for (face.indices[0..3], 0..) |idx, vi| {
+                    inline for (face.indices[0..3]) |idx| {
                         var v = Vec3.v(mv[idx.vertex]);
 
                         // Transform from the default blender export coordinate system to v10
@@ -135,7 +136,9 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
                             vertex_count += 1;
                         }
 
-                        indices[(fi * 3) + vi] = unique_vertices.get(vertex).?;
+                        const vidx = unique_vertices.get(vertex).?;
+                        indices[index_count] = vidx;
+                        index_count += 1;
                     }
                 }
             }
