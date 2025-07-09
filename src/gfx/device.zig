@@ -169,7 +169,6 @@ fn createInstance(this: *@This()) !void {
         .api_version = @bitCast(vk.features.version_1_2.version),
     };
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -226,7 +225,6 @@ fn pickPhysicalDevice(this: *@This()) !void {
 
     vklog.debug("{} physical devices found", .{device_count});
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -281,7 +279,6 @@ fn pickPhysicalDevice(this: *@This()) !void {
 fn createLogicalDevice(this: *@This()) !void {
     const indices = &this.device_info.queue_family_indices;
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -344,7 +341,6 @@ fn checkValidationLayerSupport(this: *@This()) !bool {
         return error.vkEnumerateInstanceLayerPropertiesFailed;
     }
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -410,7 +406,6 @@ fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0
     }
     vklog.debug("available_extensions: {}", .{extension_count});
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -459,7 +454,6 @@ fn findQueueFamilies(this: *@This(), device: vk.PhysicalDevice) !QueueFamilyIndi
     this.vki.getPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
     vklog.debug("Queue family count: {}", .{family_count});
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -490,7 +484,6 @@ fn checkDeviceExtensionSupport(this: *@This(), device: vk.PhysicalDevice) !bool 
     }
     vklog.debug("Device has {} extensions", .{extension_count});
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 

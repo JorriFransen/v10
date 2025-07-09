@@ -155,7 +155,6 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
 
     const vkd = device.device;
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 

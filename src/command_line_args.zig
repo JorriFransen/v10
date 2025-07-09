@@ -52,7 +52,6 @@ fn parseCommandLine() !ClapOptions {
         }
     }.f;
 
-    // TODO: CLEANUP: Temp allocator
     var tmp = mem.get_temp();
     defer tmp.release();
 
