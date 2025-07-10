@@ -1,17 +1,16 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const log = std.log.scoped(.obj_parser);
-const gfx = @import("gfx.zig");
-const math = @import("math.zig");
 const mem = @import("memory");
+const math = @import("math.zig");
 
 const Allocator = std.mem.Allocator;
-const SplitIterator = std.mem.SplitIterator(u8, .scalar);
 const TokenIterator = std.mem.TokenIterator(u8, .scalar);
-const Arena = mem.Arena;
 const TempArena = mem.TempArena;
 const Vec2 = @Vector(2, f32);
 const Vec3 = @Vector(3, f32);
+
+const geo_eps = math.GeometricEpsilon;
 
 const assert = std.debug.assert;
 inline fn eq(a: []const u8, b: []const u8) bool {
@@ -25,17 +24,10 @@ inline fn parseInt(comptime T: type, str: []const u8) !T {
     return std.fmt.parseInt(T, str, 10);
 }
 
-const GEOM_EPS = 1e-6;
-
-pub const ObjParseError = error{
-    InvalidIndex,
-    TriangulationFailed,
-} ||
-    std.mem.Allocator.Error ||
-    std.fmt.ParseIntError ||
-    ParseVectorError;
-
-pub const ParseVectorError = error{InvalidColor} || std.fmt.ParseFloatError;
+const ProjectedVertex = struct {
+    pos: Vec2,
+    idx: Index,
+};
 
 pub const Object = struct {
     name: []const u8 = "",
@@ -74,6 +66,16 @@ pub const ParseOptions = struct {
     name: []const u8 = "",
     flags: ParseFlags = .{},
 };
+
+pub const ObjParseError = error{
+    InvalidIndex,
+    TriangulationFailed,
+} ||
+    std.mem.Allocator.Error ||
+    std.fmt.ParseIntError ||
+    ParseVectorError;
+
+pub const ParseVectorError = error{InvalidColor} || std.fmt.ParseFloatError;
 
 const ModelBuilder = struct {
     vertices: []Vec3,
@@ -356,11 +358,6 @@ inline fn stripRight(str: []const u8) []const u8 {
     return str[0..end];
 }
 
-const ProjectedVertex = struct {
-    pos: Vec2,
-    idx: Index,
-};
-
 fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
     var triangle_face_count: usize = 0;
     for (model.faces, 0..) |face, i| {
@@ -396,7 +393,7 @@ fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
                 normal_sum[2] += (p_cur[0] * p_next[1]) - (p_cur[1] * p_next[0]); // Z component
             }
             const fn_mag_sq = dot(normal_sum, normal_sum);
-            if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
+            if (fn_mag_sq < geo_eps * geo_eps) return error.TriangulationFailed;
             const face_normal = normalize(normal_sum);
 
             const nx = @abs(face_normal[0]);
@@ -451,7 +448,7 @@ fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
 
                 // Compare square distance to avoid duplicates
                 const diff = p - last.pos;
-                if (dot(diff, diff) >= GEOM_EPS * GEOM_EPS) {
+                if (dot(diff, diff) >= geo_eps * geo_eps) {
 
                     // If collinear, 'replace' the last point with the current one
                     const add: bool = add_blk: {
@@ -505,7 +502,7 @@ fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
             const first = &projected_vertices[rem_idx.items[0]];
             const last = &projected_vertices[rem_idx.items[rem_idx.items.len - 1]];
             const diff = first.pos - last.pos;
-            if (dot(diff, diff) < GEOM_EPS * GEOM_EPS) {
+            if (dot(diff, diff) < geo_eps * geo_eps) {
                 _ = rem_idx.orderedRemove(rem_idx.items.len - 1);
                 triangle_face_count -= 1;
             }
@@ -518,9 +515,9 @@ fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
             // projected_vertices = projected_vertices[rem_idx.items[0] .. rem_idx.items[0] + rem_idx.items.len];
             const winding_sum = shoelaceSum(projected_vertices[rem_idx.items[0] .. rem_idx.items[0] + rem_idx.items.len]);
 
-            const ccw = if (winding_sum > GEOM_EPS)
+            const ccw = if (winding_sum > geo_eps)
                 true
-            else if (winding_sum < -GEOM_EPS)
+            else if (winding_sum < -geo_eps)
                 false
             else {
                 log.warn("Face {} has a near-zero effective winding sum. Skipping triangulation (likely degenerate).", .{fi});
@@ -548,7 +545,7 @@ fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
 
                 // Convex check
                 const double_signed_area = cross2d(ab, bc);
-                if (double_signed_area <= -GEOM_EPS) {
+                if (double_signed_area <= -geo_eps) {
                     i = if (ccw) next_idx else prev_idx;
                     continue;
                 }
@@ -565,9 +562,9 @@ fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
                     const bp = c.pos - cur.pos;
                     const cp = c.pos - next.pos;
 
-                    if (cross2d(ab, ap) > GEOM_EPS and
-                        cross2d(bc, bp) > GEOM_EPS and
-                        cross2d(ca, cp) > GEOM_EPS)
+                    if (cross2d(ab, ap) > geo_eps and
+                        cross2d(bc, bp) > geo_eps and
+                        cross2d(ca, cp) > geo_eps)
                     {
                         // Collision!
                         i = if (ccw) next_idx else prev_idx;
@@ -652,7 +649,7 @@ inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
     const c2 = cross2d(bc, bp);
     const c3 = cross2d(ca, cp);
 
-    return c1 > GEOM_EPS and c2 > GEOM_EPS and c3 > GEOM_EPS;
+    return c1 > geo_eps and c2 > geo_eps and c3 > geo_eps;
 }
 
 inline fn cross(a: Vec3, b: Vec3) Vec3 {
@@ -671,7 +668,7 @@ inline fn collinear(a: Vec2, b: Vec2, c: Vec2) bool {
     const vec_in = b - a;
     const vec_out = c - b;
     const double_signed_area = cross2d(vec_in, vec_out);
-    return @abs(double_signed_area) < GEOM_EPS;
+    return @abs(double_signed_area) < geo_eps;
 }
 
 inline fn dot(a: anytype, b: anytype) @typeInfo(@TypeOf(a)).vector.child {
@@ -722,7 +719,7 @@ test "convex" {
     const pv2 = Vec2{ 1, 1 };
 
     const double_signed_area = cross2d(pv1 - pv0, pv2 - pv1);
-    const convex = !(double_signed_area <= -GEOM_EPS);
+    const convex = !(double_signed_area <= -geo_eps);
     try std.testing.expectEqual(true, convex);
 }
 
@@ -744,7 +741,7 @@ test "handedness normalization" {
     }
 
     const fn_mag_sq = dot(normal_sum, normal_sum);
-    if (fn_mag_sq < GEOM_EPS * GEOM_EPS) return error.TriangulationFailed;
+    if (fn_mag_sq < geo_eps * geo_eps) return error.TriangulationFailed;
     const face_normal = normalize(normal_sum);
     const nx = @abs(face_normal[0]);
     const ny = @abs(face_normal[1]);
@@ -790,9 +787,9 @@ test "handedness normalization" {
     const winding_sum = shoelaceSum(&vertices);
     const effective_winding_sign = winding_sum * plane_handedness_factor;
 
-    const revert = if (effective_winding_sign < -GEOM_EPS)
+    const revert = if (effective_winding_sign < -geo_eps)
         true
-    else if (effective_winding_sign > GEOM_EPS)
+    else if (effective_winding_sign > geo_eps)
         false
     else {
         return error.NearZeroWindingSumDegenerate;

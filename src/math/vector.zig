@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const math = @import("../math.zig");
+
 pub const Vec2f32 = Vec(2, f32);
 pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
@@ -58,6 +60,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             }
             pub inline fn dot(a: @This(), b: @This()) T {
                 return F.dot(a, b);
+            }
+            pub inline fn eql_eps(a: @This(), b: @This()) bool {
+                return F.eql_eps(a, b);
             }
         },
 
@@ -119,6 +124,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn dot(a: @This(), b: @This()) T {
                 return F.dot(a, b);
             }
+            pub inline fn eql_eps(a: @This(), b: @This()) bool {
+                return F.eql_eps(a, b);
+            }
         },
 
         4 => return extern struct {
@@ -176,6 +184,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             }
             pub inline fn dot(a: @This(), b: @This()) T {
                 return F.dot(a, b);
+            }
+            pub inline fn eql_eps(a: @This(), b: @This()) bool {
+                return F.eql_eps(a, b);
             }
         },
     }
@@ -251,5 +262,59 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         pub inline fn dot(a: Base, b: Base) T {
             return @reduce(.Add, a.vector() * b.vector());
         }
+
+        pub inline fn eql_eps(a: Base, b: Base) bool {
+            const va = vector(a);
+            const vb = vector(b);
+            const abs_diff = @abs(va - vb);
+            const eps = epsV(V, va, vb);
+            const lte_mask = abs_diff <= eps;
+            return @reduce(.And, lte_mask);
+        }
     };
+}
+
+pub inline fn epsV(comptime V: type, e: V, a: V) V {
+    const T = @typeInfo(V).vector.child;
+
+    const abs_eps: V = @splat(std.math.floatEps(T) * 4);
+    const e_eps = epsAtV(V, e);
+    const a_eps = epsAtV(V, a);
+
+    const max_abs_e = @select(T, abs_eps > e_eps, abs_eps, e_eps);
+    return @select(T, max_abs_e > a_eps, max_abs_e, a_eps);
+}
+
+pub inline fn epsAtV(comptime V: type, v: V) V {
+    const T = @typeInfo(V).vector.child;
+    const N = @typeInfo(V).vector.len;
+    const U_vec: type = @Vector(N, @Type(.{ .int = .{ .signedness = .unsigned, .bits = @typeInfo(T).float.bits } }));
+
+    const u_vec: U_vec = @bitCast(v);
+
+    const one_vec: U_vec = @splat(1);
+    const u_xor_one_vec = u_vec ^ one_vec;
+
+    const y_vec: V = @bitCast(u_xor_one_vec);
+    return @abs(v - y_vec);
+}
+
+test "eql_eps function" {
+    const vec1 = Vec4f32.new(1.0, 2.0, 3.0, 4.0);
+    const vec2 = Vec4f32.new(1.0 + 1e-8, 2.0 - 1e-8, 3.0 + 1e-9, 4.0 - 1e-9); // Within typical f32 epsilon
+    const vec3 = Vec4f32.new(1.0 + 1e-5, 2.0, 3.0, 4.0); // Larger than typical f32 epsilon
+
+    // Should be approximately equal
+    try std.testing.expect(vec1.eql_eps(vec2));
+
+    // Should NOT be approximately equal
+    try std.testing.expect(!vec1.eql_eps(vec3));
+
+    // Testing near-zero values
+    const zero_vec = Vec4f32.new(0.0, 0.0, 0.0, 0.0);
+    const tiny_vec = Vec4f32.new(std.math.floatEps(f32) / 2, 0.0, 0.0, 0.0);
+    const not_tiny_vec = Vec4f32.new(std.math.floatEps(f32) * 5, 0.0, 0.0, 0.0);
+
+    try std.testing.expect(zero_vec.eql_eps(tiny_vec));
+    try std.testing.expect(!zero_vec.eql_eps(not_tiny_vec));
 }

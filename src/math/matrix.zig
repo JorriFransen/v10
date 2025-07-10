@@ -266,7 +266,7 @@ pub fn Mat(comptime cols: usize, comptime rows: usize, comptime Type: type) type
 
         pub inline fn perspective(fov_y: T, aspect: T, near: T, far: T) @This() {
             comptime std.debug.assert(C == 4 and R == 4);
-            std.debug.assert(@abs(aspect - std.math.floatEps(T)) > 0.0);
+            std.debug.assert(@abs(aspect - (std.math.floatEps(T) * 4)) > 0.0);
 
             var a_nom = aspect;
             var a_denom: T = 1;
@@ -605,8 +605,10 @@ fn expectApproxEqualMatrix(M: type, expected: M, actual: M) !void {
     var diff_index: usize = 0;
 
     const diff = ve - va;
+    const eps = math.vector.epsV(M.V, ve, va);
+
     for (0..@typeInfo(M.V).vector.len) |i| {
-        if (@abs(diff[i]) >= math.FLOAT_EPSILON) {
+        if (@abs(diff[i]) >= eps[i]) {
             match = false;
             diff_index = i;
             break;
@@ -652,7 +654,8 @@ fn MatrixDiffer(M: type) type {
                 if (start) try writer.print("[ ", .{});
 
                 const avalue = self.actual.data[i];
-                const diff = @abs(evalue - avalue) >= math.FLOAT_EPSILON;
+
+                const diff = @abs(evalue - avalue) >= math.eps(M.T, evalue, avalue);
 
                 if (diff) try self.ttyconf.setColor(writer, .red);
                 try writer.print("{d: >14.6}", .{evalue});

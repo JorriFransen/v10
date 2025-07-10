@@ -68,6 +68,7 @@ pub fn load(device: *Device, name: []const u8) LoadGpuModelError!GpuModel {
     // const model_file = try resource.load(ta.allocator(), name);
     // const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_resource = model_file });
     return create(device, buildIndexed(cpu_model.vertices, cpu_model.indices));
+    // return create(device, build(cpu_model.vertices));
 }
 
 inline fn validIndexType(T: type) bool {

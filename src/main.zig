@@ -37,7 +37,7 @@ var kb_move_controller: KBMoveController = .{};
 
 var camera_entity: Entity = .{};
 var entities: []Entity = &.{};
-var arrow: *Entity = undefined;
+var entity: *Entity = undefined;
 var arrow_t: *Entity = undefined;
 
 fn run() !void {
@@ -62,49 +62,24 @@ fn run() !void {
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
 
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/triangle.obj");
-    var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/cube.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/funky_plane.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/c.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/funky_plane_3d.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/arrow.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/concave_quad.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/concave_pentagon.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/collinear.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/projection_winding_flip.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/semantic_test_obj/problematic_face.obj");
-    // var arrow_model = try createCubeModelIndexed(.{});
-    defer arrow_model.destroy();
+    var smooth_vase = try GpuModel.load(&device, "res/obj/smooth_vase.obj");
+    defer smooth_vase.destroy();
 
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/triangle_t.obj");
-    var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/cube_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/funky_plane_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/c_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/funky_plane_3d_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/arrow_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/concave_quad_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/concave_pentagon_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/collinear_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/projection_winding_flip_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/semantic_test_obj/problematic_face_t.obj");
-    defer arrow_model_t.destroy();
+    var flat_vase = try GpuModel.load(&device, "res/obj/flat_vase.obj");
+    defer flat_vase.destroy();
 
-    var entities_: [2]Entity = undefined;
+    var entities_: [1]Entity = undefined;
     for (&entities_) |*e| e.* = Entity.new();
     entities = &entities_;
 
-    arrow = &entities[0];
-    arrow.model = &arrow_model;
-    arrow.transform.translation = .{ .z = 2.5, .y = 0.2 };
-    arrow.transform.scale = Vec3.scalar(0.5);
+    entity = &entities[0];
+    entity.model = &smooth_vase;
+    entity.transform.translation = .{ .z = 2.5 };
+    entity.transform.scale = Vec3.scalar(3);
+    entity.transform.scale = entity.transform.scale.mul(Vec3.new(1, -1, -1));
 
     camera_entity = Entity.new();
     camera_entity.transform.translation = .{ .z = 0 };
-
-    arrow_t = &entities[1];
-    arrow_t.model = &arrow_model_t;
-    arrow_t.transform.translation = .{ .z = 2.5, .y = -1.2 };
-    arrow_t.transform.scale = Vec3.scalar(0.5);
 
     const aspect = renderer.swapchain.extentSwapchainRatio();
     camera.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 100);

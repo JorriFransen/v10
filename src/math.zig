@@ -1,13 +1,20 @@
 const std = @import("std");
 
+pub const GeometricEpsilon = 1e-6;
+
+pub inline fn eps(comptime T: type, e: T, a: T) T {
+    return @max(
+        std.math.floatEps(T) * 4,
+        std.math.floatEpsAt(T, e),
+        std.math.floatEpsAt(T, a),
+    );
+}
+
 pub const vector = @import("math/vector.zig");
 pub const matrix = @import("math/matrix.zig");
 
 pub const Vec = vector.Vec;
 pub const Mat = matrix.Mat;
-
-pub const FORCE_DEPTH_ZERO_TO_ONE = true;
-pub const FLOAT_EPSILON = 0.00001;
 
 pub const degrees = std.math.radiansToDegrees;
 pub const radians = std.math.degreesToRadians;

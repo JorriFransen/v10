@@ -110,13 +110,13 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
             const MapContext = struct {
                 const Vertex = GpuModel.Vertex;
                 pub inline fn hash(_: @This(), v: Vertex) u64 {
-                    return std.hash.Wyhash.hash(0, &raw(v));
+                    return std.hash.Wyhash.hash(0, &@as([@sizeOf(Vertex)]u8, @bitCast(v)));
                 }
                 pub inline fn eql(_: @This(), va: Vertex, vb: Vertex) bool {
-                    return std.mem.eql(u8, &raw(va), &raw(vb));
-                }
-                pub inline fn raw(v: Vertex) [@sizeOf(Vertex)]u8 {
-                    return @bitCast(v);
+                    return va.position.eql_eps(vb.position) and
+                        va.color.eql_eps(vb.color) and
+                        va.normal.eql_eps(vb.normal) and
+                        va.texcoord.eql_eps(vb.texcoord);
                 }
             };
 
