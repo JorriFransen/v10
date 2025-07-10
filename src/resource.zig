@@ -124,7 +124,6 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
             defer unique_vertices.deinit();
 
             const white = Vec3.scalar(1);
-            var vertices = try allocator.alloc(GpuModel.Vertex, obj_model.indices.len);
             var indices = try allocator.alloc(u32, obj_model.indices.len);
             var face_count: usize = 0;
             var vertex_count: u32 = 0;
@@ -152,7 +151,6 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
                         const vertex = GpuModel.Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
                         if (!unique_vertices.contains(vertex)) {
                             try unique_vertices.put(vertex, vertex_count);
-                            vertices[vertex_count] = vertex;
                             vertex_count += 1;
                         }
 
@@ -164,6 +162,18 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
             }
 
             assert(obj_model.faces.len == face_count);
+            assert(obj_model.indices.len == index_count);
+            assert(obj_model.vertices.len <= vertex_count);
+            assert(obj_model.indices.len >= vertex_count);
+
+            var vertices = try allocator.alloc(GpuModel.Vertex, unique_vertices.count());
+            var it = unique_vertices.iterator();
+            while (it.next()) |entry| {
+                vertices[entry.value_ptr.*] = entry.key_ptr.*;
+            }
+
+            assert(indices.len == index_count);
+            assert(vertices.len == vertex_count);
             return .{ .vertices = vertices, .indices = indices };
         },
     }

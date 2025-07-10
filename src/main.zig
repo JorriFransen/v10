@@ -63,10 +63,10 @@ fn run() !void {
     defer simple_render_system.destroy();
 
     // var arrow_model = try GpuModel.load(&device, "res/test_obj/triangle.obj");
-    // var arrow_model = try GpuModel.load(&device, "res/test_obj/cube.obj");
+    var arrow_model = try GpuModel.load(&device, "res/test_obj/cube.obj");
     // var arrow_model = try GpuModel.load(&device, "res/test_obj/funky_plane.obj");
     // var arrow_model = try GpuModel.load(&device, "res/test_obj/c.obj");
-    var arrow_model = try GpuModel.load(&device, "res/test_obj/funky_plane_3d.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/funky_plane_3d.obj");
     // var arrow_model = try GpuModel.load(&device, "res/test_obj/arrow.obj");
     // var arrow_model = try GpuModel.load(&device, "res/test_obj/concave_quad.obj");
     // var arrow_model = try GpuModel.load(&device, "res/test_obj/concave_pentagon.obj");
@@ -77,10 +77,10 @@ fn run() !void {
     defer arrow_model.destroy();
 
     // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/triangle_t.obj");
-    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/cube_t.obj");
+    var arrow_model_t = try GpuModel.load(&device, "res/test_obj/cube_t.obj");
     // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/funky_plane_t.obj");
     // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/c_t.obj");
-    var arrow_model_t = try GpuModel.load(&device, "res/test_obj/funky_plane_3d_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/funky_plane_3d_t.obj");
     // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/arrow_t.obj");
     // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/concave_quad_t.obj");
     // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/concave_pentagon_t.obj");
