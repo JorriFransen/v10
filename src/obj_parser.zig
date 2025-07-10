@@ -955,7 +955,8 @@ test "parse (semantic comparison)" {
     var ta = mem.get_temp();
     defer ta.release();
 
-    const test_path = std.fmt.comptimePrint("{s}{c}{s}", .{ "res", std.fs.path.sep, "test_obj" });
+    // TODO: Pass this path via options from build.zig
+    const test_path = std.fmt.comptimePrint("{s}{c}{s}", .{ "res", std.fs.path.sep, "semantic_test_obj" });
 
     const addTest = struct {
         pub fn f(comptime name: @Type(.enum_literal), expected: ExpectedModelData) Test {
