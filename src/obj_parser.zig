@@ -864,6 +864,30 @@ test "implicit object" {
     try std.testing.expectEqual(1, result.objects.len);
     const obj = result.objects[0];
     try std.testing.expectEqual(result.faces.len, obj.faces.len);
+    try std.testing.expectEqualSlices(u8, "", obj.name);
+    try std.testing.expectEqualSlices(Face, result.faces, obj.faces);
+}
+
+test "first object name" {
+    var ta = mem.get_temp();
+
+    const result = try parse(ta.allocator(), .{
+        .name = "defaultobject",
+        .buffer =
+        \\o Triangle
+        \\v -0.500000 0.000000 0.000000
+        \\v 0.500000 0.000000 0.000000
+        \\v 0.000000 0.500000 0.000000
+        \\vn -0.0000 -0.0000 1.0000
+        \\vt 0.000000 0.000000
+        \\f 1/1/1 2/1/1 3/1/1
+        ,
+    });
+
+    try std.testing.expectEqual(1, result.objects.len);
+    const obj = result.objects[0];
+    try std.testing.expectEqual(result.faces.len, obj.faces.len);
+    try std.testing.expectEqualSlices(u8, "Triangle", obj.name);
     try std.testing.expectEqualSlices(Face, result.faces, obj.faces);
 }
 
