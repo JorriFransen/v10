@@ -8,7 +8,7 @@ const Instant = std.time.Instant;
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
 const Device = gfx.Device;
-const Model = gfx.Model;
+const GpuModel = gfx.GpuModel;
 const Camera = gfx.Camera;
 const SimpleRenderSystem = gfx.SimpleRenderSystem;
 const Entity = @import("entity.zig");
@@ -62,31 +62,31 @@ fn run() !void {
     try simple_render_system.init(&device, renderer.swapchain.render_pass);
     defer simple_render_system.destroy();
 
-    // var arrow_model = try Model.load(&device, "res/test_obj/triangle.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/cube.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/funky_plane.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/c.obj");
-    var arrow_model = try Model.load(&device, "res/test_obj/funky_plane_3d.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/arrow.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/concave_quad.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/concave_pentagon.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/collinear.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/projection_winding_flip.obj");
-    // var arrow_model = try Model.load(&device, "res/test_obj/problematic_face.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/triangle.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/cube.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/funky_plane.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/c.obj");
+    var arrow_model = try GpuModel.load(&device, "res/test_obj/funky_plane_3d.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/arrow.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/concave_quad.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/concave_pentagon.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/collinear.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/projection_winding_flip.obj");
+    // var arrow_model = try GpuModel.load(&device, "res/test_obj/problematic_face.obj");
     // var arrow_model = try createCubeModelIndexed(.{});
     defer arrow_model.destroy();
 
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/triangle_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/cube_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/funky_plane_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/c_t.obj");
-    var arrow_model_t = try Model.load(&device, "res/test_obj/funky_plane_3d_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/arrow_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/concave_quad_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/concave_pentagon_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/collinear_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/projection_winding_flip_t.obj");
-    // var arrow_model_t = try Model.load(&device, "res/test_obj/problematic_face_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/triangle_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/cube_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/funky_plane_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/c_t.obj");
+    var arrow_model_t = try GpuModel.load(&device, "res/test_obj/funky_plane_3d_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/arrow_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/concave_quad_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/concave_pentagon_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/collinear_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/projection_winding_flip_t.obj");
+    // var arrow_model_t = try GpuModel.load(&device, "res/test_obj/problematic_face_t.obj");
     defer arrow_model_t.destroy();
 
     var entities_: [2]Entity = undefined;
@@ -159,7 +159,7 @@ fn refreshCallback(_: *Window) void {
     drawFrame() catch unreachable;
 }
 
-fn createCubeModel(offset: Vec3) !Model {
+fn createCubeModel(offset: Vec3) !GpuModel {
     const white = Vec3.scalar(1);
     const yellow = Vec3.new(0.8, 0.8, 0.1);
     const orange = Vec3.new(0.9, 0.6, 0.1);
@@ -167,7 +167,7 @@ fn createCubeModel(offset: Vec3) !Model {
     const green = Vec3.new(0.1, 0.8, 0.1);
     const red = Vec3.new(0.8, 0.1, 0.1);
 
-    var vertices = [_]Model.Vertex{
+    var vertices = [_]GpuModel.Vertex{
         // Left face (white);
         .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = white },
         .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = white },
@@ -221,10 +221,10 @@ fn createCubeModel(offset: Vec3) !Model {
         vertex.position = vertex.position.add(offset);
     }
 
-    return try Model.create(&device, Model.build(&vertices));
+    return try GpuModel.create(&device, GpuModel.build(&vertices));
 }
 
-fn createCubeModelIndexed(offset: Vec3) !Model {
+fn createCubeModelIndexed(offset: Vec3) !GpuModel {
     const white = Vec3.scalar(1);
     const yellow = Vec3.new(0.8, 0.8, 0.1);
     const orange = Vec3.new(0.9, 0.6, 0.1);
@@ -232,7 +232,7 @@ fn createCubeModelIndexed(offset: Vec3) !Model {
     const green = Vec3.new(0.1, 0.8, 0.1);
     const red = Vec3.new(0.8, 0.1, 0.1);
 
-    var vertices = [_]Model.Vertex{
+    var vertices = [_]GpuModel.Vertex{
         // Left face (white);
         .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = white },
         .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = white },
@@ -283,5 +283,5 @@ fn createCubeModelIndexed(offset: Vec3) !Model {
         20, 21, 22, 20, 23, 21,
     };
 
-    return try Model.create(&device, Model.buildIndexed(&vertices, &indices));
+    return try GpuModel.create(&device, GpuModel.buildIndexed(&vertices, &indices));
 }

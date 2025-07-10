@@ -5,7 +5,7 @@ const mem = @import("memory");
 const vklog = std.log.scoped(.vulkan);
 
 const Device = gfx.Device;
-const Model = gfx.Model;
+const Model = gfx.GpuModel;
 const Allocator = std.mem.Allocator;
 
 const assert = std.debug.assert;

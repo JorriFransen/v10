@@ -9,7 +9,7 @@ const obj_parser = @import("../obj_parser.zig");
 const log = std.log.scoped(.model);
 
 const Device = gfx.Device;
-const Model = @This();
+const GpuModel = @This();
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -56,98 +56,18 @@ pub const Vertex = extern struct {
     };
 };
 
-pub const LoadModelError = error{UnsupportedFileType} ||
-    resource.LoadResourceError ||
-    obj_parser.ObjParseError ||
-    CreateModelError;
+pub const LoadGpuModelError =
+    CreateModelError ||
+    resource.LoadModelError;
 
-// TODO: Move this to resource.zig
-pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
+pub fn load(device: *Device, name: []const u8) LoadGpuModelError!GpuModel {
     var ta = mem.get_temp();
     defer ta.release();
 
-    const model_res = try resource.load(ta.allocator(), name);
-    const model_file = switch (model_res) {
-        .model_file => model_res.model_file,
-    };
-
-    switch (model_file.kind) {
-        // else => return error.UnsupportedFileType,
-        .obj => {
-            var mta = mem.get_scratch(ta.arena);
-            defer mta.release();
-
-            const model = try obj_parser.parse(mta.allocator(), .{
-                .buffer = model_file.data,
-                .name = name,
-            });
-            ta.release(); // Free content
-
-            const mv = model.vertices;
-            const mc = model.colors;
-            const mn = model.normals;
-            const mt = model.texcoords;
-
-            const MapContext = struct {
-                pub inline fn hash(_: @This(), v: Vertex) u64 {
-                    return std.hash.Wyhash.hash(0, &raw(v));
-                }
-                pub inline fn eql(_: @This(), va: Vertex, vb: Vertex) bool {
-                    return std.mem.eql(u8, &raw(va), &raw(vb));
-                }
-                pub inline fn raw(v: Vertex) [@sizeOf(Vertex)]u8 {
-                    return @bitCast(v);
-                }
-            };
-
-            var unique_vertices = std.HashMap(Vertex, u32, MapContext, std.hash_map.default_max_load_percentage).init(ta.allocator());
-            defer unique_vertices.deinit();
-
-            const white = Vec3.scalar(1);
-            var vertices = try ta.allocator().alloc(Vertex, model.indices.len);
-            var indices = try ta.allocator().alloc(u32, model.indices.len);
-            var face_count: usize = 0;
-            var vertex_count: u32 = 0;
-            var index_count: usize = 0;
-
-            for (model.objects) |obj| {
-                for (obj.faces) |face| {
-                    face_count += 1;
-
-                    assert(face.indices.len == 3);
-                    inline for (face.indices[0..3]) |idx| {
-                        var v = Vec3.v(mv[idx.vertex]);
-
-                        // Transform from the default blender export coordinate system to v10
-                        v.z = -v.z;
-
-                        var n: Vec3 = if (idx.normal < mn.len) Vec3.v(mn[idx.normal]) else .{};
-
-                        // Transform from the default blender export coordinate system to v10
-                        n.z = -n.z;
-
-                        const c: Vec3 = if (idx.vertex < mc.len) Vec3.v(mc[idx.vertex]) else white;
-                        const t: Vec2 = if (idx.texcoord < mt.len) Vec2.v(mt[idx.texcoord]) else .{};
-
-                        const vertex = Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
-                        if (!unique_vertices.contains(vertex)) {
-                            try unique_vertices.put(vertex, vertex_count);
-                            vertices[vertex_count] = vertex;
-                            vertex_count += 1;
-                        }
-
-                        const vidx = unique_vertices.get(vertex).?;
-                        indices[index_count] = vidx;
-                        index_count += 1;
-                    }
-                }
-            }
-
-            assert(model.faces.len == face_count);
-
-            return try create(device, buildIndexed(vertices, indices));
-        },
-    }
+    const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_identifier = name });
+    // const model_file = try resource.load(ta.allocator(), name);
+    // const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_resource = model_file });
+    return create(device, buildIndexed(cpu_model.vertices, cpu_model.indices));
 }
 
 inline fn validIndexType(T: type) bool {
@@ -197,13 +117,13 @@ pub const CreateModelError = error{
     VulkanMapMemory,
 };
 
-pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
+pub fn create(device: *Device, builder: anytype) CreateModelError!GpuModel {
     const IndexType = @TypeOf(builder).IndexType;
     assert(builder.vertices.len >= 3);
 
     const vkd = device.device;
 
-    var this = Model{
+    var this = GpuModel{
         .device = device,
         .vertex_count = @intCast(builder.vertices.len),
     };
@@ -284,7 +204,7 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
     return this;
 }
 
-pub fn destroy(this: *Model) void {
+pub fn destroy(this: *GpuModel) void {
     const vkd = this.device.device;
 
     vkd.destroyBuffer(this.vertex_buffer, null);
@@ -296,7 +216,7 @@ pub fn destroy(this: *Model) void {
     }
 }
 
-pub fn bind(this: *const Model, command_buffer: vk.CommandBuffer) void {
+pub fn bind(this: *const GpuModel, command_buffer: vk.CommandBuffer) void {
     const vkd = this.device.device;
     const offsets = [_]vk.DeviceSize{0};
 
@@ -308,7 +228,7 @@ pub fn bind(this: *const Model, command_buffer: vk.CommandBuffer) void {
     }
 }
 
-pub fn draw(this: *const Model, command_buffer: vk.CommandBuffer) void {
+pub fn draw(this: *const GpuModel, command_buffer: vk.CommandBuffer) void {
     const vkd = this.device.device;
 
     if (this.index_type != .none_khr) {
