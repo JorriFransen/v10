@@ -137,6 +137,7 @@ fn drawFrame() !void {
         renderer.beginRenderpass(cb);
 
         simple_render_system_3d.drawEntities(cb, entities, &camera);
+        simple_render_system_2d.drawTriangle(cb);
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
