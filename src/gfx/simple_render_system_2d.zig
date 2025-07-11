@@ -9,6 +9,8 @@ const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 
+const assert = std.debug.assert;
+
 device: *Device = undefined,
 layout: vk.PipelineLayout = .null_handle,
 pipeline: Pipeline = .{},
@@ -73,4 +75,10 @@ fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
     pipeline_config.vertex_attribute_descriptions = &Vertex.attribute_descriptions;
 
     return try Pipeline.create(this.device, "shaders/simple_2d.vert.spv", "shaders/simple_2d.frag.spv", pipeline_config);
+}
+
+pub fn drawTriangle(this: *@This(), cb: vk.CommandBufferProxy) void {
+    cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
+    // assert(false); // TODO: Vertex buffer (create, upload, bind here).
+    this.device.device.cmdDraw(cb.handle, 3, 1, 0, 0);
 }
