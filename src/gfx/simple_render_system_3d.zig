@@ -7,6 +7,7 @@ const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Camera = gfx.Camera;
 const Entity = @import("../entity.zig");
+const GpuModel = @import("gpu_model.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -33,14 +34,6 @@ pub fn destroy(this: *@This()) void {
     this.pipeline.destroy();
 }
 
-fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
-    var pipeline_config = Pipeline.ConfigInfo.default();
-    pipeline_config.render_pass = render_pass;
-    pipeline_config.pipeline_layout = this.layout;
-
-    return try Pipeline.create(this.device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
-}
-
 fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
     const push_constant_range = vk.PushConstantRange{
         .offset = 0,
@@ -56,6 +49,17 @@ fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
     };
 
     return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
+}
+
+fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
+    var pipeline_config = Pipeline.ConfigInfo.default3d();
+    pipeline_config.render_pass = render_pass;
+    pipeline_config.pipeline_layout = this.layout;
+
+    pipeline_config.vertex_binding_descriptions = &.{GpuModel.Vertex.binding_description};
+    pipeline_config.vertex_attribute_descriptions = &GpuModel.Vertex.attribute_descriptions;
+
+    return try Pipeline.create(this.device, "shaders/simple.vert.spv", "shaders/simple.frag.spv", pipeline_config);
 }
 
 pub fn drawEntities(this: *@This(), cb: vk.CommandBufferProxy, entities: []const Entity, camera: *const Camera) void {
