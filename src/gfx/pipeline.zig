@@ -5,7 +5,6 @@ const mem = @import("memory");
 const vklog = std.log.scoped(.vulkan);
 
 const Device = gfx.Device;
-const Model = gfx.GpuModel;
 const Allocator = std.mem.Allocator;
 
 const assert = std.debug.assert;
@@ -17,6 +16,8 @@ vert_shader_module: vk.ShaderModule = .null_handle,
 frag_shader_module: vk.ShaderModule = .null_handle,
 
 pub const ConfigInfo = struct {
+    const default_dynamic_state_enables = [_]vk.DynamicState{ .viewport, .scissor };
+
     viewport_info: vk.PipelineViewportStateCreateInfo = .{},
     input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo = undefined,
     rasterization_info: vk.PipelineRasterizationStateCreateInfo = undefined,
@@ -30,7 +31,10 @@ pub const ConfigInfo = struct {
     render_pass: vk.RenderPass = .null_handle,
     sub_pass: u32 = 0,
 
-    pub fn default() @This() {
+    vertex_binding_descriptions: []const vk.VertexInputBindingDescription = &.{},
+    vertex_attribute_descriptions: []const vk.VertexInputAttributeDescription = &.{},
+
+    pub fn default2d() @This() {
         const viewport_info = vk.PipelineViewportStateCreateInfo{
             .viewport_count = 1,
             .p_viewports = null,
@@ -116,7 +120,91 @@ pub const ConfigInfo = struct {
         };
     }
 
-    const default_dynamic_state_enables = [_]vk.DynamicState{ .viewport, .scissor };
+    pub fn default3d() @This() {
+        const viewport_info = vk.PipelineViewportStateCreateInfo{
+            .viewport_count = 1,
+            .p_viewports = null,
+            .scissor_count = 1,
+            .p_scissors = null,
+        };
+
+        const input_assembly_info = vk.PipelineInputAssemblyStateCreateInfo{
+            .topology = .triangle_list,
+            .primitive_restart_enable = vk.FALSE,
+        };
+
+        const rasterization_info = vk.PipelineRasterizationStateCreateInfo{
+            .depth_clamp_enable = vk.FALSE,
+            .rasterizer_discard_enable = vk.FALSE,
+            .polygon_mode = .fill,
+            .line_width = 1,
+            .cull_mode = .{ .back_bit = true },
+            .front_face = .counter_clockwise,
+            .depth_bias_enable = vk.FALSE,
+            .depth_bias_constant_factor = 0,
+            .depth_bias_clamp = 0,
+            .depth_bias_slope_factor = 0,
+        };
+
+        const multisample_info = vk.PipelineMultisampleStateCreateInfo{
+            .sample_shading_enable = vk.FALSE,
+            .rasterization_samples = .{ .@"1_bit" = true },
+            .min_sample_shading = 1,
+            .p_sample_mask = null,
+            .alpha_to_coverage_enable = vk.FALSE,
+            .alpha_to_one_enable = vk.FALSE,
+        };
+
+        const color_blend_attachment = vk.PipelineColorBlendAttachmentState{
+            .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
+            .blend_enable = vk.FALSE,
+            .src_color_blend_factor = .one,
+            .dst_color_blend_factor = .one,
+            .color_blend_op = .add,
+            .src_alpha_blend_factor = .one,
+            .dst_alpha_blend_factor = .one,
+            .alpha_blend_op = .add,
+        };
+
+        const color_blend_info = vk.PipelineColorBlendStateCreateInfo{
+            .logic_op_enable = vk.FALSE,
+            .logic_op = .copy,
+            .attachment_count = 1,
+            .p_attachments = @ptrCast(&color_blend_attachment),
+            .blend_constants = .{ 0, 0, 0, 0 },
+        };
+
+        const depth_stencil_info = vk.PipelineDepthStencilStateCreateInfo{
+            .depth_test_enable = vk.TRUE,
+            .depth_write_enable = vk.TRUE,
+            .depth_compare_op = .less,
+            .depth_bounds_test_enable = vk.FALSE,
+            .min_depth_bounds = 0,
+            .max_depth_bounds = 1,
+            .stencil_test_enable = vk.FALSE,
+            .front = std.mem.zeroInit(vk.StencilOpState, .{}),
+            .back = std.mem.zeroInit(vk.StencilOpState, .{}),
+        };
+
+        const dynamic_state_enables: []vk.DynamicState = @constCast(&default_dynamic_state_enables);
+        const dynamic_state_info = vk.PipelineDynamicStateCreateInfo{
+            .dynamic_state_count = dynamic_state_enables.len,
+            .p_dynamic_states = dynamic_state_enables.ptr,
+            .flags = .{},
+        };
+
+        return .{
+            .viewport_info = viewport_info,
+            .input_assembly_info = input_assembly_info,
+            .rasterization_info = rasterization_info,
+            .multisample_info = multisample_info,
+            .color_blend_attachment = color_blend_attachment,
+            .color_blend_info = color_blend_info,
+            .depth_stencil_info = depth_stencil_info,
+            .dynamic_state_enables = dynamic_state_enables,
+            .dynamic_state_info = dynamic_state_info,
+        };
+    }
 };
 
 const ReadFileAllocError = error{
@@ -194,14 +282,14 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
         },
     };
 
-    const binding_descriptions = Model.Vertex.binding_description;
-    const attribute_descriptions = Model.Vertex.attribute_descriptions;
+    assert(config.vertex_binding_descriptions.len >= 1);
+    assert(config.vertex_attribute_descriptions.len >= 1);
 
     const vertex_input_info = vk.PipelineVertexInputStateCreateInfo{
         .vertex_binding_description_count = 1,
-        .p_vertex_binding_descriptions = @ptrCast(&binding_descriptions),
-        .vertex_attribute_description_count = attribute_descriptions.len,
-        .p_vertex_attribute_descriptions = @ptrCast(&attribute_descriptions),
+        .p_vertex_binding_descriptions = config.vertex_binding_descriptions.ptr,
+        .vertex_attribute_description_count = @intCast(config.vertex_attribute_descriptions.len),
+        .p_vertex_attribute_descriptions = config.vertex_attribute_descriptions.ptr,
     };
 
     const pipeline_info = vk.GraphicsPipelineCreateInfo{

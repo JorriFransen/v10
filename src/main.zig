@@ -11,7 +11,8 @@ const Renderer = gfx.Renderer;
 const Device = gfx.Device;
 const GpuModel = gfx.GpuModel;
 const Camera = gfx.Camera;
-const SimpleRenderSystem = gfx.SimpleRenderSystem;
+const SimpleRenderSystem2D = gfx.SimpleRenderSystem2D;
+const SimpleRenderSystem3D = gfx.SimpleRenderSystem3D;
 const Entity = @import("entity.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
@@ -50,7 +51,8 @@ pub fn main() !void {
 var window: Window = .{};
 var device: Device = .{};
 var renderer: Renderer = .{};
-var simple_render_system: SimpleRenderSystem = .{};
+var simple_render_system_3d: SimpleRenderSystem3D = .{};
+var simple_render_system_2d: SimpleRenderSystem2D = .{};
 var camera: Camera = .{};
 var kb_move_controller: KBMoveController = .{};
 
@@ -78,8 +80,11 @@ fn run() !void {
     try renderer.init(&window, &device);
     defer renderer.destroy();
 
-    try simple_render_system.init(&device, renderer.swapchain.render_pass);
-    defer simple_render_system.destroy();
+    try simple_render_system_3d.init(&device, renderer.swapchain.render_pass);
+    defer simple_render_system_3d.destroy();
+
+    try simple_render_system_2d.init(&device, renderer.swapchain.render_pass);
+    defer simple_render_system_2d.destroy();
 
     var smooth_vase = try GpuModel.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.destroy();
@@ -131,7 +136,7 @@ fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
-        simple_render_system.drawEntities(cb, entities, &camera);
+        simple_render_system_3d.drawEntities(cb, entities, &camera);
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
