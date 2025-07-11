@@ -129,17 +129,26 @@ pub fn build(b: *std.Build) !void {
 }
 
 fn addShaderStep(b: *std.Build) !*std.Build.Step {
-    const shaders = [_][]const u8{
-        "shaders/simple.vert",
-        "shaders/simple.frag",
-    };
+    const shader_dir_path = "shaders";
+    var shader_dir = try std.fs.cwd().openDir(shader_dir_path, .{ .iterate = true });
+    defer shader_dir.close();
+
+    var shader_dir_walker = try shader_dir.walk(b.allocator);
+    defer shader_dir_walker.deinit();
+
+    var shaders = std.ArrayList([]const u8).init(b.allocator);
+    defer shaders.deinit();
+
+    while (try shader_dir_walker.next()) |entry| {
+        try shaders.append(b.pathJoin(&.{ shader_dir_path, entry.path }));
+    }
 
     const shaders_step = b.step("shaders", "compile shaders");
     const wf = b.addWriteFiles();
     wf.step.name = "WriteFile shaders";
     shaders_step.dependOn(&wf.step);
 
-    for (shaders) |path| {
+    for (shaders.items) |path| {
         const spv_name = b.fmt("{s}.spv", .{path});
 
         const compile_step = b.addSystemCommand(&.{"glslc"});
