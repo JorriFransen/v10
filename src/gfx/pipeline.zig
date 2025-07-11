@@ -52,7 +52,7 @@ pub const ConfigInfo = struct {
             .rasterizer_discard_enable = vk.FALSE,
             .polygon_mode = .fill,
             .line_width = 1,
-            .cull_mode = .{ .back_bit = true },
+            .cull_mode = .{ .back_bit = false },
             .front_face = .counter_clockwise,
             .depth_bias_enable = vk.FALSE,
             .depth_bias_constant_factor = 0,
@@ -71,12 +71,12 @@ pub const ConfigInfo = struct {
 
         const color_blend_attachment = vk.PipelineColorBlendAttachmentState{
             .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
-            .blend_enable = vk.FALSE,
-            .src_color_blend_factor = .one,
-            .dst_color_blend_factor = .one,
+            .blend_enable = vk.TRUE,
+            .src_color_blend_factor = .src_alpha,
+            .dst_color_blend_factor = .one_minus_src_alpha,
             .color_blend_op = .add,
             .src_alpha_blend_factor = .one,
-            .dst_alpha_blend_factor = .one,
+            .dst_alpha_blend_factor = .zero,
             .alpha_blend_op = .add,
         };
 
@@ -89,8 +89,8 @@ pub const ConfigInfo = struct {
         };
 
         const depth_stencil_info = vk.PipelineDepthStencilStateCreateInfo{
-            .depth_test_enable = vk.TRUE,
-            .depth_write_enable = vk.TRUE,
+            .depth_test_enable = vk.FALSE,
+            .depth_write_enable = vk.FALSE,
             .depth_compare_op = .less,
             .depth_bounds_test_enable = vk.FALSE,
             .min_depth_bounds = 0,
