@@ -32,6 +32,7 @@ pub const Vertex = extern struct {
     normal: Vec3 = .{},
     texcoord: Vec2 = .{},
 
+    // TODO: Make this external to enable reuse on different vertex structs
     const field_count = @typeInfo(Vertex).@"struct".fields.len;
     pub const binding_description = vk.VertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(Vertex), .input_rate = .vertex };
     pub const attribute_descriptions: [field_count]vk.VertexInputAttributeDescription = blk: {
