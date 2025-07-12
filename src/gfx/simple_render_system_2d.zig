@@ -31,6 +31,7 @@ vertex_staging_buffer_mapped: []Vertex = undefined,
 
 pub const Vertex = extern struct {
     pos: Vec2,
+    color: Vec4,
 
     // TODO: Make this external to enable reuse on different vertex structs
     const field_count = @typeInfo(Vertex).@"struct".fields.len;
@@ -57,8 +58,16 @@ pub const Vertex = extern struct {
     };
 };
 
-pub const DrawCommand = union(enum) {
-    triangle: struct { p1: Vec2, p2: Vec2, p3: Vec2 },
+pub const DrawOptions = struct {
+    color: Vec4 = Vec4.scalar(1),
+};
+
+pub const DrawCommand = struct {
+    options: DrawOptions,
+
+    data: union(enum) {
+        triangle: struct { p1: Vec2, p2: Vec2, p3: Vec2 },
+    },
 };
 
 pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
@@ -140,13 +149,13 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
     var vertex_count: usize = 0;
 
     for (this.commands.items) |command| {
-        switch (command) {
+        switch (command.data) {
             .triangle => |t| {
                 assert(vertex_count + 3 <= buf.len);
                 const verts = [3]Vertex{
-                    .{ .pos = t.p1 },
-                    .{ .pos = t.p2 },
-                    .{ .pos = t.p3 },
+                    .{ .pos = t.p1, .color = command.options.color },
+                    .{ .pos = t.p2, .color = command.options.color },
+                    .{ .pos = t.p3, .color = command.options.color },
                 };
                 @memcpy(buf[vertex_count .. vertex_count + 3], &verts);
                 vertex_count += 3;
@@ -161,6 +170,8 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
     cb.draw(@intCast(vertex_count), 1, 0, 0);
 }
 
-pub fn drawTriangle(this: *@This(), p1: Vec2, p2: Vec2, p3: Vec2) void {
-    this.commands.append(.{ .triangle = .{ .p1 = p1, .p2 = p2, .p3 = p3 } }) catch @panic("Command memory full");
+pub fn drawTriangle(this: *@This(), p1: Vec2, p2: Vec2, p3: Vec2, options: DrawOptions) void {
+    this.commands.append(.{ .options = options, .data = .{
+        .triangle = .{ .p1 = p1, .p2 = p2, .p3 = p3 },
+    } }) catch @panic("Command memory full");
 }
