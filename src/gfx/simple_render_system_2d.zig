@@ -67,6 +67,7 @@ pub const DrawCommand = struct {
 
     data: union(enum) {
         triangle: struct { p1: Vec2, p2: Vec2, p3: Vec2 },
+        quad: struct { pos: Vec2, size: Vec2 },
     },
 };
 
@@ -149,16 +150,35 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
     var vertex_count: usize = 0;
 
     for (this.commands.items) |command| {
+        const color = command.options.color;
+
         switch (command.data) {
             .triangle => |t| {
                 assert(vertex_count + 3 <= buf.len);
                 const verts = [3]Vertex{
-                    .{ .pos = t.p1, .color = command.options.color },
-                    .{ .pos = t.p2, .color = command.options.color },
-                    .{ .pos = t.p3, .color = command.options.color },
+                    .{ .pos = t.p1, .color = color },
+                    .{ .pos = t.p2, .color = color },
+                    .{ .pos = t.p3, .color = color },
                 };
                 @memcpy(buf[vertex_count .. vertex_count + 3], &verts);
                 vertex_count += 3;
+            },
+            .quad => |q| {
+                assert(vertex_count + 6 <= buf.len);
+                const p1 = q.pos;
+                const p2 = p1.add(Vec2{ .x = q.size.x });
+                const p3 = p1.add(q.size);
+                const p4 = p1.add(Vec2{ .y = q.size.y });
+                const verts = [6]Vertex{
+                    .{ .pos = p1, .color = color },
+                    .{ .pos = p2, .color = color },
+                    .{ .pos = p3, .color = color },
+                    .{ .pos = p1, .color = color },
+                    .{ .pos = p3, .color = color },
+                    .{ .pos = p4, .color = color },
+                };
+                @memcpy(buf[vertex_count .. vertex_count + 6], &verts);
+                vertex_count += 6;
             },
         }
     }
@@ -173,5 +193,11 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
 pub fn drawTriangle(this: *@This(), p1: Vec2, p2: Vec2, p3: Vec2, options: DrawOptions) void {
     this.commands.append(.{ .options = options, .data = .{
         .triangle = .{ .p1 = p1, .p2 = p2, .p3 = p3 },
+    } }) catch @panic("Command memory full");
+}
+
+pub fn drawQuad(this: *@This(), pos: Vec2, size: Vec2, options: DrawOptions) void {
+    this.commands.append(.{ .options = options, .data = .{
+        .quad = .{ .pos = pos, .size = size },
     } }) catch @panic("Command memory full");
 }
