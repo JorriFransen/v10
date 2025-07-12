@@ -16,6 +16,7 @@ const SimpleRenderSystem3D = gfx.SimpleRenderSystem3D;
 const Entity = @import("entity.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
+const Vec4 = math.Vec4;
 const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
@@ -140,8 +141,8 @@ fn drawFrame() !void {
 
         d2d.beginDrawing();
         {
-            d2d.drawTriangle(Vec2.new(-0.5, 0), Vec2.new(0, -0.5), Vec2.new(0.5, 0));
-            d2d.drawTriangle(Vec2.new(-0.9, 0.9), Vec2.new(-0.9, 0.8), Vec2.new(-0.8, 0.9));
+            d2d.drawTriangle(Vec2.new(-0.5, 0), Vec2.new(0, -0.5), Vec2.new(0.5, 0), .{ .color = Vec4.new(1, 0, 0, 0.4) });
+            d2d.drawTriangle(Vec2.new(-0.9, 0.9), Vec2.new(-0.9, 0.8), Vec2.new(-0.8, 0.9), .{ .color = Vec4.new(0, 1, 0, 1) });
         }
         d2d.endDrawing(cb);
 
@@ -163,131 +164,4 @@ fn resizeCallback(_: *Window, _: i32, _: i32) void {
 
 fn refreshCallback(_: *Window) void {
     drawFrame() catch unreachable;
-}
-
-fn createCubeModel(offset: Vec3) !GpuModel {
-    const white = Vec3.scalar(1);
-    const yellow = Vec3.new(0.8, 0.8, 0.1);
-    const orange = Vec3.new(0.9, 0.6, 0.1);
-    const blue = Vec3.new(0.1, 0.1, 0.8);
-    const green = Vec3.new(0.1, 0.8, 0.1);
-    const red = Vec3.new(0.8, 0.1, 0.1);
-
-    var vertices = [_]GpuModel.Vertex{
-        // Left face (white);
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = white },
-
-        // Right face (yellow)
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = yellow },
-
-        // Bottom face (orange)
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = orange },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = orange },
-
-        // Top face (red)
-        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
-        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = red },
-        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = red },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
-
-        // Tail face (blue)
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = blue },
-
-        // Nose face (green)
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = green },
-    };
-
-    for (&vertices) |*vertex| {
-        vertex.position = vertex.position.add(offset);
-    }
-
-    return try GpuModel.create(&device, GpuModel.build(&vertices));
-}
-
-fn createCubeModelIndexed(offset: Vec3) !GpuModel {
-    const white = Vec3.scalar(1);
-    const yellow = Vec3.new(0.8, 0.8, 0.1);
-    const orange = Vec3.new(0.9, 0.6, 0.1);
-    const blue = Vec3.new(0.1, 0.1, 0.8);
-    const green = Vec3.new(0.1, 0.8, 0.1);
-    const red = Vec3.new(0.8, 0.1, 0.1);
-
-    var vertices = [_]GpuModel.Vertex{
-        // Left face (white);
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = white },
-        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = white },
-
-        // Right face (yellow)
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = yellow },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = yellow },
-
-        // Bottom face (orange)
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = orange },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = orange },
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = orange },
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = orange },
-
-        // Top face (red)
-        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = red },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = red },
-        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = red },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = red },
-
-        // Tail face (blue)
-        .{ .position = Vec3.new(-0.5, -0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(0.5, 0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(-0.5, 0.5, 0.5), .color = blue },
-        .{ .position = Vec3.new(0.5, -0.5, 0.5), .color = blue },
-
-        // Nose face (green)
-        .{ .position = Vec3.new(-0.5, -0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(0.5, 0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(-0.5, 0.5, -0.5), .color = green },
-        .{ .position = Vec3.new(0.5, -0.5, -0.5), .color = green },
-    };
-
-    for (&vertices) |*vertex| {
-        vertex.position = vertex.position.add(offset);
-    }
-
-    const indices = [_]u8{
-        0,  1,  2,  0,  3,  1,
-        4,  6,  5,  4,  5,  7,
-        8,  10, 9,  8,  9,  11,
-        12, 13, 14, 12, 15, 13,
-        16, 18, 17, 16, 17, 19,
-        20, 21, 22, 20, 23, 21,
-    };
-
-    return try GpuModel.create(&device, GpuModel.buildIndexed(&vertices, &indices));
 }
