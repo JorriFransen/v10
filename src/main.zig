@@ -143,6 +143,8 @@ fn drawFrame() !void {
         {
             d2d.drawTriangle(Vec2.new(-0.5, 0), Vec2.new(0, -0.5), Vec2.new(0.5, 0), .{ .color = Vec4.new(1, 0, 0, 0.4) });
             d2d.drawTriangle(Vec2.new(-0.9, 0.9), Vec2.new(-0.9, 0.8), Vec2.new(-0.8, 0.9), .{ .color = Vec4.new(0, 1, 0, 1) });
+
+            d2d.drawQuad(Vec2.new(-0.95, -0.95), Vec2.scalar(0.2), .{ .color = Vec4.new(0, 0, 1, 1) });
         }
         d2d.endDrawing(cb);
 
