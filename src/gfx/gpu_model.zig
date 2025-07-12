@@ -218,24 +218,21 @@ pub fn destroy(this: *GpuModel) void {
     }
 }
 
-pub fn bind(this: *const GpuModel, command_buffer: vk.CommandBuffer) void {
-    const vkd = this.device.device;
+pub fn bind(this: *const GpuModel, cb: vk.CommandBufferProxy) void {
     const offsets = [_]vk.DeviceSize{0};
 
     const vertex_buffers = [_]vk.Buffer{this.vertex_buffer};
-    vkd.cmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffers, &offsets);
+    cb.bindVertexBuffers(0, 1, &vertex_buffers, &offsets);
 
     if (this.index_type != .none_khr) {
-        vkd.cmdBindIndexBuffer(command_buffer, this.index_buffer, 0, this.index_type);
+        cb.bindIndexBuffer(this.index_buffer, 0, this.index_type);
     }
 }
 
-pub fn draw(this: *const GpuModel, command_buffer: vk.CommandBuffer) void {
-    const vkd = this.device.device;
-
+pub fn draw(this: *const GpuModel, cb: vk.CommandBufferProxy) void {
     if (this.index_type != .none_khr) {
-        vkd.cmdDrawIndexed(command_buffer, this.index_count, 1, 0, 0, 0);
+        cb.drawIndexed(this.index_count, 1, 0, 0, 0);
     } else {
-        vkd.cmdDraw(command_buffer, this.vertex_count, 1, 0, 0);
+        cb.draw(this.vertex_count, 1, 0, 0);
     }
 }

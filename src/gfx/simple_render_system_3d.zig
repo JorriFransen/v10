@@ -76,8 +76,8 @@ pub fn drawEntities(this: *@This(), cb: vk.CommandBufferProxy, entities: []const
         cb.pushConstants(this.layout, .{ .vertex_bit = true, .fragment_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
         if (entity.model) |model| {
-            model.bind(cb.handle);
-            model.draw(cb.handle);
+            model.bind(cb);
+            model.draw(cb);
         }
     }
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
+const mem = @import("memory");
 
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
@@ -11,12 +12,25 @@ const Vec4 = math.Vec4;
 
 const assert = std.debug.assert;
 
+const arena_cap = mem.MiB * 10;
+const buffer_init_cap = mem.MiB * 2;
+
 device: *Device = undefined,
 layout: vk.PipelineLayout = .null_handle,
 pipeline: Pipeline = .{},
 
+arena: mem.Arena = undefined,
+commands: std.ArrayList(DrawCommand) = undefined,
+
+vertex_buffer_size: vk.DeviceSize = 0,
+vertex_buffer: vk.Buffer = .null_handle,
+vertex_buffer_memory: vk.DeviceMemory = .null_handle,
+vertex_staging_buffer: vk.Buffer = .null_handle,
+vertex_staging_buffer_memory: vk.DeviceMemory = .null_handle,
+vertex_staging_buffer_mapped: []Vertex = undefined,
+
 pub const Vertex = extern struct {
-    pos: Vec3,
+    pos: Vec2,
 
     // TODO: Make this external to enable reuse on different vertex structs
     const field_count = @typeInfo(Vertex).@"struct".fields.len;
@@ -43,16 +57,56 @@ pub const Vertex = extern struct {
     };
 };
 
+pub const DrawCommand = union(enum) {
+    triangle: struct { p1: Vec2, p2: Vec2, p3: Vec2 },
+};
+
 pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
     this.device = device;
 
     this.layout = try this.createPipelineLayout();
     this.pipeline = try this.createPipeline(render_pass);
+
+    this.arena = try mem.Arena.init(.{ .virtual = .{ .reserved_capacity = arena_cap } });
+    this.commands = std.ArrayList(DrawCommand).init(this.arena.allocator());
+
+    const vertex_count = buffer_init_cap / @sizeOf(Vertex);
+    this.vertex_buffer_size = @sizeOf(Vertex) * vertex_count;
+
+    this.vertex_buffer = device.createBuffer(
+        this.vertex_buffer_size,
+        .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
+        .{ .device_local_bit = true },
+        &this.vertex_buffer_memory,
+    ) catch return error.VulkanUnexpected;
+
+    this.vertex_staging_buffer = device.createBuffer(
+        this.vertex_buffer_size,
+        .{ .transfer_src_bit = true },
+        .{ .host_visible_bit = true, .host_coherent_bit = true },
+        &this.vertex_staging_buffer_memory,
+    ) catch return error.VulkanUnexpected;
+
+    const vertex_data_opt = device.device.mapMemory(this.vertex_staging_buffer_memory, 0, this.vertex_buffer_size, .{}) catch return error.VulkanMapMemory;
+    const vertex_data = vertex_data_opt orelse return error.VulkanMapMemory;
+
+    const vertices_mapped: [*]Vertex = @ptrCast(@alignCast(vertex_data));
+    this.vertex_staging_buffer_mapped = vertices_mapped[0..vertex_count];
 }
 
 pub fn destroy(this: *@This()) void {
-    this.device.device.destroyPipelineLayout(this.layout, null);
+    const vkd = this.device.device;
+
+    vkd.destroyPipelineLayout(this.layout, null);
     this.pipeline.destroy();
+
+    this.arena.deinit();
+
+    vkd.destroyBuffer(this.vertex_buffer, null);
+    vkd.freeMemory(this.vertex_buffer_memory, null);
+    vkd.unmapMemory(this.vertex_staging_buffer_memory);
+    vkd.destroyBuffer(this.vertex_staging_buffer, null);
+    vkd.freeMemory(this.vertex_staging_buffer_memory, null);
 }
 
 fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
@@ -77,8 +131,36 @@ fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
     return try Pipeline.create(this.device, "shaders/simple_2d.vert.spv", "shaders/simple_2d.frag.spv", pipeline_config);
 }
 
-pub fn drawTriangle(this: *@This(), cb: vk.CommandBufferProxy) void {
+pub fn beginDrawing(this: *@This()) void {
+    this.commands.clearRetainingCapacity();
+}
+
+pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
+    const buf = this.vertex_staging_buffer_mapped;
+    var vertex_count: usize = 0;
+
+    for (this.commands.items) |command| {
+        switch (command) {
+            .triangle => |t| {
+                assert(vertex_count + 3 <= buf.len);
+                const verts = [3]Vertex{
+                    .{ .pos = t.p1 },
+                    .{ .pos = t.p2 },
+                    .{ .pos = t.p3 },
+                };
+                @memcpy(buf[vertex_count .. vertex_count + 3], &verts);
+                vertex_count += 3;
+            },
+        }
+    }
+
+    this.device.copyBuffer(this.vertex_staging_buffer, this.vertex_buffer, this.vertex_buffer_size);
+
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
-    // assert(false); // TODO: Vertex buffer (create, upload, bind here).
-    this.device.device.cmdDraw(cb.handle, 3, 1, 0, 0);
+    cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
+    cb.draw(@intCast(vertex_count), 1, 0, 0);
+}
+
+pub fn drawTriangle(this: *@This(), p1: Vec2, p2: Vec2, p3: Vec2) void {
+    this.commands.append(.{ .triangle = .{ .p1 = p1, .p2 = p2, .p3 = p3 } }) catch @panic("Command memory full");
 }

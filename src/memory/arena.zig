@@ -32,7 +32,7 @@ pub const Arena = struct {
     pub const InitOptions = union(enum) {
         pub const Virtual = struct {
             flags: Flags = .{ .rvas = true },
-            reserved_capacity: usize = max_cap,
+            reserved_capacity: usize = mem.GiB,
             initial_commit: usize = page_size_min,
         };
 

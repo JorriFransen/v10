@@ -51,8 +51,8 @@ pub fn main() !void {
 var window: Window = .{};
 var device: Device = .{};
 var renderer: Renderer = .{};
-var simple_render_system_3d: SimpleRenderSystem3D = .{};
-var simple_render_system_2d: SimpleRenderSystem2D = .{};
+var d3d: SimpleRenderSystem3D = .{};
+var d2d: SimpleRenderSystem2D = .{};
 var camera: Camera = .{};
 var kb_move_controller: KBMoveController = .{};
 
@@ -80,11 +80,11 @@ fn run() !void {
     try renderer.init(&window, &device);
     defer renderer.destroy();
 
-    try simple_render_system_3d.init(&device, renderer.swapchain.render_pass);
-    defer simple_render_system_3d.destroy();
+    try d3d.init(&device, renderer.swapchain.render_pass);
+    defer d3d.destroy();
 
-    try simple_render_system_2d.init(&device, renderer.swapchain.render_pass);
-    defer simple_render_system_2d.destroy();
+    try d2d.init(&device, renderer.swapchain.render_pass);
+    defer d2d.destroy();
 
     var smooth_vase = try GpuModel.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.destroy();
@@ -136,8 +136,14 @@ fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
-        simple_render_system_3d.drawEntities(cb, entities, &camera);
-        simple_render_system_2d.drawTriangle(cb);
+        d3d.drawEntities(cb, entities, &camera);
+
+        d2d.beginDrawing();
+        {
+            d2d.drawTriangle(Vec2.new(-0.5, 0), Vec2.new(0, -0.5), Vec2.new(0.5, 0));
+            d2d.drawTriangle(Vec2.new(-0.9, 0.9), Vec2.new(-0.9, 0.8), Vec2.new(-0.8, 0.9));
+        }
+        d2d.endDrawing(cb);
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
