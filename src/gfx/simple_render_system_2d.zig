@@ -14,6 +14,7 @@ const assert = std.debug.assert;
 
 const arena_cap = mem.MiB * 10;
 const buffer_init_cap = mem.MiB * 2;
+const Index = u32;
 
 device: *Device = undefined,
 layout: vk.PipelineLayout = .null_handle,
@@ -28,6 +29,13 @@ vertex_buffer_memory: vk.DeviceMemory = .null_handle,
 vertex_staging_buffer: vk.Buffer = .null_handle,
 vertex_staging_buffer_memory: vk.DeviceMemory = .null_handle,
 vertex_staging_buffer_mapped: []Vertex = undefined,
+
+index_buffer_size: vk.DeviceSize = 0,
+index_buffer: vk.Buffer = .null_handle,
+index_buffer_memory: vk.DeviceMemory = .null_handle,
+index_staging_buffer: vk.Buffer = .null_handle,
+index_staging_buffer_memory: vk.DeviceMemory = .null_handle,
+index_staging_buffer_mapped: []Index = undefined,
 
 pub const Vertex = extern struct {
     pos: Vec2,
@@ -102,6 +110,29 @@ pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
 
     const vertices_mapped: [*]Vertex = @ptrCast(@alignCast(vertex_data));
     this.vertex_staging_buffer_mapped = vertices_mapped[0..vertex_count];
+
+    const index_count = buffer_init_cap / @sizeOf(Index);
+    this.index_buffer_size = @sizeOf(Index) * index_count;
+
+    this.index_buffer = device.createBuffer(
+        this.index_buffer_size,
+        .{ .transfer_dst_bit = true, .index_buffer_bit = true },
+        .{ .device_local_bit = true },
+        &this.index_buffer_memory,
+    ) catch return error.VulkanUnexpected;
+
+    this.index_staging_buffer = device.createBuffer(
+        this.index_buffer_size,
+        .{ .transfer_src_bit = true },
+        .{ .host_visible_bit = true, .host_coherent_bit = true },
+        &this.index_staging_buffer_memory,
+    ) catch return error.VulkanUnexpected;
+
+    const index_data_opt = device.device.mapMemory(this.index_staging_buffer_memory, 0, this.index_buffer_size, .{}) catch return error.VulkanMapMemory;
+    const index_data = index_data_opt orelse return error.VulkanMapMemory;
+
+    const indices_mapped: [*]Index = @ptrCast(@alignCast(index_data));
+    this.index_staging_buffer_mapped = indices_mapped[0..index_count];
 }
 
 pub fn destroy(this: *@This()) void {
@@ -117,6 +148,12 @@ pub fn destroy(this: *@This()) void {
     vkd.unmapMemory(this.vertex_staging_buffer_memory);
     vkd.destroyBuffer(this.vertex_staging_buffer, null);
     vkd.freeMemory(this.vertex_staging_buffer_memory, null);
+
+    vkd.destroyBuffer(this.index_buffer, null);
+    vkd.freeMemory(this.index_buffer_memory, null);
+    vkd.unmapMemory(this.index_staging_buffer_memory);
+    vkd.destroyBuffer(this.index_staging_buffer, null);
+    vkd.freeMemory(this.index_staging_buffer_memory, null);
 }
 
 fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
@@ -146,48 +183,74 @@ pub fn beginDrawing(this: *@This()) void {
 }
 
 pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
-    const buf = this.vertex_staging_buffer_mapped;
+    const vbuf = this.vertex_staging_buffer_mapped;
+    const ibuf = this.index_staging_buffer_mapped;
+
     var vertex_count: usize = 0;
+    var index_count: usize = 0;
 
     for (this.commands.items) |command| {
         const color = command.options.color;
 
         switch (command.data) {
             .triangle => |t| {
-                assert(vertex_count + 3 <= buf.len);
                 const verts = [3]Vertex{
                     .{ .pos = t.p1, .color = color },
                     .{ .pos = t.p2, .color = color },
                     .{ .pos = t.p3, .color = color },
                 };
-                @memcpy(buf[vertex_count .. vertex_count + 3], &verts);
-                vertex_count += 3;
+
+                const fi: Index = @intCast(vertex_count);
+                const indices = [3]Index{ fi, fi + 1, fi + 2 };
+
+                assert(vertex_count + verts.len <= vbuf.len);
+                assert(index_count + indices.len <= ibuf.len);
+
+                @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
+                @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                vertex_count += verts.len;
+                index_count += indices.len;
             },
             .quad => |q| {
-                assert(vertex_count + 6 <= buf.len);
-                const p1 = q.pos;
-                const p2 = p1.add(Vec2{ .x = q.size.x });
-                const p3 = p1.add(q.size);
-                const p4 = p1.add(Vec2{ .y = q.size.y });
-                const verts = [6]Vertex{
-                    .{ .pos = p1, .color = color },
-                    .{ .pos = p2, .color = color },
-                    .{ .pos = p3, .color = color },
-                    .{ .pos = p1, .color = color },
-                    .{ .pos = p3, .color = color },
-                    .{ .pos = p4, .color = color },
+                const verts = [4]Vertex{
+                    .{ .pos = q.pos, .color = color },
+                    .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color },
+                    .{ .pos = q.pos.add(q.size), .color = color },
+                    .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color },
                 };
-                @memcpy(buf[vertex_count .. vertex_count + 6], &verts);
-                vertex_count += 6;
+
+                const fi: Index = @intCast(vertex_count);
+                const indices = [6]Index{
+                    fi, fi + 1, fi + 2,
+                    fi, fi + 2, fi + 3,
+                };
+
+                assert(vertex_count + verts.len <= vbuf.len);
+                assert(index_count + indices.len <= ibuf.len);
+
+                @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
+                @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                vertex_count += verts.len;
+                index_count += indices.len;
             },
         }
     }
 
     this.device.copyBuffer(this.vertex_staging_buffer, this.vertex_buffer, this.vertex_buffer_size);
+    this.device.copyBuffer(this.index_staging_buffer, this.index_buffer, this.index_buffer_size);
 
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
     cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
-    cb.draw(@intCast(vertex_count), 1, 0, 0);
+    const index_type = comptime switch (Index) {
+        else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
+        u8 => .uint8_khr,
+        u16 => .uint16,
+        u32 => .uint32,
+    };
+    cb.bindIndexBuffer(this.index_buffer, 0, index_type);
+    cb.drawIndexed(@intCast(index_count), 1, 0, 0, 0);
 }
 
 pub fn drawTriangle(this: *@This(), p1: Vec2, p2: Vec2, p3: Vec2, options: DrawOptions) void {
