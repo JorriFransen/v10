@@ -9,7 +9,7 @@ const obj_parser = @import("../obj_parser.zig");
 const log = std.log.scoped(.model);
 
 const Device = gfx.Device;
-const GpuModel = @This();
+const Model = @This();
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -57,11 +57,11 @@ pub const Vertex = extern struct {
     };
 };
 
-pub const LoadGpuModelError =
+pub const LoadModelError =
     CreateModelError ||
     resource.LoadModelError;
 
-pub fn load(device: *Device, name: []const u8) LoadGpuModelError!GpuModel {
+pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     var ta = mem.get_temp();
     defer ta.release();
 
@@ -119,13 +119,13 @@ pub const CreateModelError = error{
     VulkanMapMemory,
 };
 
-pub fn create(device: *Device, builder: anytype) CreateModelError!GpuModel {
+pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
     const IndexType = @TypeOf(builder).IndexType;
     assert(builder.vertices.len >= 3);
 
     const vkd = device.device;
 
-    var this = GpuModel{
+    var this = Model{
         .device = device,
         .vertex_count = @intCast(builder.vertices.len),
     };
@@ -206,7 +206,7 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!GpuModel {
     return this;
 }
 
-pub fn destroy(this: *GpuModel) void {
+pub fn destroy(this: *Model) void {
     const vkd = this.device.device;
 
     vkd.destroyBuffer(this.vertex_buffer, null);
@@ -218,7 +218,7 @@ pub fn destroy(this: *GpuModel) void {
     }
 }
 
-pub fn bind(this: *const GpuModel, cb: vk.CommandBufferProxy) void {
+pub fn bind(this: *const Model, cb: vk.CommandBufferProxy) void {
     const offsets = [_]vk.DeviceSize{0};
 
     const vertex_buffers = [_]vk.Buffer{this.vertex_buffer};
@@ -229,7 +229,7 @@ pub fn bind(this: *const GpuModel, cb: vk.CommandBufferProxy) void {
     }
 }
 
-pub fn draw(this: *const GpuModel, cb: vk.CommandBufferProxy) void {
+pub fn draw(this: *const Model, cb: vk.CommandBufferProxy) void {
     if (this.index_type != .none_khr) {
         cb.drawIndexed(this.index_count, 1, 0, 0, 0);
     } else {
