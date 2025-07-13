@@ -4,13 +4,18 @@ const mem = @import("memory");
 const obj_parser = @import("obj_parser.zig");
 const math = @import("math.zig");
 
-const GpuModel = @import("gfx/gpu_model.zig");
+const Model = @import("gfx/model.zig");
 const Allocator = std.mem.Allocator;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 
 const assert = std.debug.assert;
+
+pub const CpuModel = struct {
+    vertices: []Model.Vertex,
+    indices: []u32,
+};
 
 pub const ResourceData = union(enum) {
     model_file: struct {
@@ -22,10 +27,7 @@ pub const ResourceData = union(enum) {
         name: []const u8,
         data: []const u8,
     },
-    cpu_model: struct {
-        vertices: []GpuModel.Vertex,
-        indices: []u32,
-    },
+    cpu_model: CpuModel,
 };
 
 pub const LoadResourceError = error{
@@ -73,7 +75,7 @@ pub const LoadCpuModelOptions = union(enum) {
     from_resource: ResourceData,
 };
 
-pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadModelError!@FieldType(ResourceData, "cpu_model") {
+pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadModelError!CpuModel {
     var ta = mem.get_scratch(@alignCast(@ptrCast(allocator.ptr)));
     defer ta.release();
 
@@ -108,7 +110,7 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
             const mt = obj_model.texcoords;
 
             const MapContext = struct {
-                const Vertex = GpuModel.Vertex;
+                const Vertex = Model.Vertex;
                 pub inline fn hash(_: @This(), v: Vertex) u64 {
                     return std.hash.Wyhash.hash(0, &@as([@sizeOf(Vertex)]u8, @bitCast(v)));
                 }
@@ -120,7 +122,7 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
                 }
             };
 
-            var unique_vertices = std.HashMap(GpuModel.Vertex, u32, MapContext, std.hash_map.default_max_load_percentage).init(ta.allocator());
+            var unique_vertices = std.HashMap(Model.Vertex, u32, MapContext, std.hash_map.default_max_load_percentage).init(ta.allocator());
             defer unique_vertices.deinit();
 
             const white = Vec3.scalar(1);
@@ -148,7 +150,7 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
                         const c: Vec3 = if (idx.vertex < mc.len) Vec3.v(mc[idx.vertex]) else white;
                         const t: Vec2 = if (idx.texcoord < mt.len) Vec2.v(mt[idx.texcoord]) else .{};
 
-                        const vertex = GpuModel.Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
+                        const vertex = Model.Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
                         if (!unique_vertices.contains(vertex)) {
                             try unique_vertices.put(vertex, vertex_count);
                             vertex_count += 1;
@@ -166,7 +168,7 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
             assert(obj_model.vertices.len <= vertex_count);
             assert(obj_model.indices.len >= vertex_count);
 
-            var vertices = try allocator.alloc(GpuModel.Vertex, unique_vertices.count());
+            var vertices = try allocator.alloc(Model.Vertex, unique_vertices.count());
             var it = unique_vertices.iterator();
             while (it.next()) |entry| {
                 vertices[entry.value_ptr.*] = entry.key_ptr.*;
