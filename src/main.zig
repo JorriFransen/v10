@@ -11,6 +11,7 @@ const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
 const Device = gfx.Device;
 const Model = gfx.Model;
+const Texture = gfx.Texture;
 const Camera = gfx.Camera;
 const SimpleRenderSystem2D = gfx.SimpleRenderSystem2D;
 const SimpleRenderSystem3D = gfx.SimpleRenderSystem3D;
@@ -67,13 +68,6 @@ fn run() !void {
     const width = 1920;
     const height = 1080;
 
-    var img_x: c_int = undefined;
-    var img_y: c_int = undefined;
-    var img_c: c_int = undefined;
-    const img_opt = stb.stbi_load("res/textures/test.png", &img_x, &img_y, &img_c, 0);
-    const img = img_opt orelse @panic("Failed to load image");
-    stb.stbi_image_free(img);
-
     try window.init(width, height, "v10game", .{
         .platform = cli_options.glfw_platform,
         .refresh_callback = refreshCallback,
@@ -94,6 +88,9 @@ fn run() !void {
 
     try d2d.init(&device, renderer.swapchain.render_pass);
     defer d2d.destroy();
+
+    var texture = try Texture.load(&device, "res/textures/test.png");
+    defer texture.destroy();
 
     var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.destroy();

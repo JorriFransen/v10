@@ -2,9 +2,9 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="63.999996"
-   height="63.999996"
-   viewBox="0 0 16.933332 16.933332"
+   width="128"
+   height="128"
+   viewBox="0 0 33.866666 33.866666"
    version="1.1"
    id="svg1"
    inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
@@ -27,8 +27,8 @@
      inkscape:deskcolor="#505050"
      inkscape:document-units="mm"
      inkscape:zoom="1.7282548"
-     inkscape:cx="283.52301"
-     inkscape:cy="188.05098"
+     inkscape:cx="283.81232"
+     inkscape:cy="257.48518"
      inkscape:window-width="2226"
      inkscape:window-height="1179"
      inkscape:window-x="0"
@@ -47,28 +47,28 @@
        id="rect1"
        width="16.933332"
        height="16.933332"
-       x="0"
-       y="0" />
+       x="16.933332"
+       y="16.933332" />
     <rect
        style="fill:#0000ff;fill-opacity:1;stroke-width:0.070059"
        id="rect1-1"
        width="16.933332"
        height="16.933332"
-       x="0"
-       y="16.933332" />
+       x="16.933332"
+       y="33.866665" />
     <rect
        style="fill:#00ff00;fill-opacity:1;stroke-width:0.0700591"
        id="rect1-3"
        width="16.933332"
        height="16.933332"
-       x="16.933332"
-       y="0" />
+       x="33.866665"
+       y="16.933332" />
     <rect
        style="fill:#d6660a;fill-opacity:1;stroke-width:0.070059"
        id="rect1-3-3"
        width="16.933332"
        height="16.933332"
-       x="16.933332"
-       y="16.933332" />
+       x="33.866665"
+       y="33.866665" />
   </g>
 </svg>

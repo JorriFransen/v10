@@ -3,18 +3,25 @@ const log = std.log.scoped(.Resource);
 const mem = @import("memory");
 const obj_parser = @import("obj_parser.zig");
 const math = @import("math.zig");
+const stb = @import("stb/stb.zig");
 
 const Model = @import("gfx/model.zig");
 const Allocator = std.mem.Allocator;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
+const Vec2U = math.Vec(2, u32);
 
 const assert = std.debug.assert;
 
 pub const CpuModel = struct {
     vertices: []Model.Vertex,
     indices: []u32,
+};
+
+pub const CpuTexture = struct {
+    size: Vec2U,
+    data: []const u8,
 };
 
 pub const ResourceData = union(enum) {
@@ -28,6 +35,11 @@ pub const ResourceData = union(enum) {
         data: []const u8,
     },
     cpu_model: CpuModel,
+
+    texture_file: struct {
+        name: []const u8,
+        data: []const u8,
+    },
 };
 
 pub const LoadResourceError = error{
@@ -58,24 +70,26 @@ pub fn load(allocator: Allocator, identifier: []const u8) LoadResourceError!Reso
     file_buf[read_size] = 0;
     file_buf = file_buf[0..file_size];
 
-    const kind = if (std.mem.endsWith(u8, identifier, ".obj"))
-        .obj
+    const result: ResourceData = if (std.mem.endsWith(u8, identifier, ".obj"))
+        .{ .model_file = .{ .kind = .obj, .name = identifier, .data = file_buf } }
+    else if (std.mem.endsWith(u8, identifier, ".png"))
+        .{ .texture_file = .{ .name = identifier, .data = file_buf } }
     else
         return error.UnsupportedFileExtension;
 
-    return .{ .model_file = .{ .kind = kind, .name = identifier, .data = file_buf } };
+    return result;
 }
+
+pub const LoadOptions = union(enum) {
+    from_identifier: []const u8,
+    from_resource: ResourceData,
+};
 
 pub const LoadModelError = error{UnsupportedFileType} ||
     LoadResourceError ||
     obj_parser.ObjParseError;
 
-pub const LoadCpuModelOptions = union(enum) {
-    from_identifier: []const u8,
-    from_resource: ResourceData,
-};
-
-pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadModelError!CpuModel {
+pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!CpuModel {
     var ta = mem.get_scratch(@alignCast(@ptrCast(allocator.ptr)));
     defer ta.release();
 
@@ -179,4 +193,32 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadCpuModelOptions) LoadMode
             return .{ .vertices = vertices, .indices = indices };
         },
     }
+}
+
+pub const LoadTextureError = error{StbError} || LoadResourceError;
+
+pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureError!CpuTexture {
+    _ = allocator;
+    assert(options == .from_resource);
+    const texture_file = tfb: switch (options) {
+        .from_identifier => unreachable,
+        .from_resource => |res| switch (res) {
+            else => return error.UnexpectedResourceKind,
+            .texture_file => |tf| break :tfb tf,
+        },
+    };
+
+    var x: c_int = undefined;
+    var y: c_int = undefined;
+    var c: c_int = undefined;
+    // TODO: Use passed in allocator
+    const data_opt = stb.stbi_load_from_memory(texture_file.data.ptr, @intCast(texture_file.data.len), &x, &y, &c, 0);
+    const data = data_opt orelse return error.StbError;
+
+    const len: usize = @intCast(x * y * c);
+
+    return .{
+        .size = Vec2U.new(@intCast(x), @intCast(y)),
+        .data = data[0..len],
+    };
 }
