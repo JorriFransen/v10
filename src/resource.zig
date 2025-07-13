@@ -216,6 +216,7 @@ pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureErr
     const data = data_opt orelse return error.StbError;
 
     const len: usize = @intCast(x * y * c);
+    log.debug("Cpu texture len: {}", .{len});
 
     return .{
         .size = Vec2U.new(@intCast(x), @intCast(y)),

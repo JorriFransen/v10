@@ -20,9 +20,9 @@ pub fn load(device: *Device, name: []const u8) !Texture {
 
     // TODO: Test this by passing identifier instead of file
     const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_resource = texture_file });
-    // _ = cpu_texture;
+    _ = cpu_texture;
 
-    std.log.debug("cpu_tex: {}", .{cpu_texture});
+    // std.log.debug("cpu_tex: {}", .{cpu_texture});
 
     unreachable;
 }
