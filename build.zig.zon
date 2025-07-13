@@ -2,8 +2,8 @@
     .name = .v10,
     .version = "0.0.1",
     .fingerprint = 0x4fb9faee53eadd66,
-    .minimum_zig_version = "0.15.0-dev.769+4d7980645",
-    
+    .minimum_zig_version = "0.15.0-dev.1023+f551c7c58",
+
     .paths = .{
         "src/",
         "build.zig",
@@ -12,21 +12,26 @@
 
     .dependencies = .{
         .clap = .{
-            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
-            .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
+            // .path = "../zig-clap",
+            // .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
+            // .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
+
+            .url = "https://github.com/mrjbq7/zig-clap/archive/refs/heads/deprecated.zip",
+            .hash = "clap-0.10.0-oBajByflAQDwFzUCuASGq4YKYIKGrg2gXGyy60Qb50rF",
         },
         .glfw = .{
             // .path = "../glfw-zig-build",
             .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
-            .hash = "glfw_zig-3.4.0-qhyek1uePACAnFKvf_tVATydz_BsBbKXdkcslMSItw85",
+            .hash = "glfw_zig-3.4.0-qhyek82ePAAbLYJFrQh1oyM_VcXWOiC6bHddyTlecYhd",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.313.tar.gz",
             .hash = "N-V-__8AAPLT7gH4vgN7Xo6yZlOMrzllGbdvVxxhrwUvgI9r",
         },
         .vulkan = .{
-            .url = "https://github.com/Snektron/vulkan-zig/archive/9b4090c852760ce3210562f62ffaf301479c38ba.tar.gz",
-            .hash = "vulkan-0.0.0-r7Ytx2dUAwDhoUvuIqliqPUbyDZZi0bl_CQIwspUpHs_",
+            // .path = "../vulkan-zig",
+            .url = "https://github.com/JorriFransen/vulkan-zig/archive/refs/heads/jorrifransen/fixes.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx7BQAwA36RXtrympzLKOIzcaBso07HMhsY8TMBkM",
         },
     },
 }

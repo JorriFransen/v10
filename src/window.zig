@@ -85,14 +85,14 @@ pub fn getExtent(this: *const @This()) vk.Extent2D {
     return .{ .width = @intCast(this.width), .height = @intCast(this.height) };
 }
 
-pub fn framebufferResizeCallback(glfw_window: glfw.Window, width: c_int, height: c_int) callconv(.C) void {
+pub fn framebufferResizeCallback(glfw_window: glfw.Window, width: c_int, height: c_int) callconv(.c) void {
     const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
     window.framebuffer_resized = true;
     window.width = width;
     window.height = height;
 }
 
-fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: glfw.Action, mods: c_int) callconv(.C) void {
+fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: glfw.Action, mods: c_int) callconv(.c) void {
     _ = scancode;
     _ = mods;
 
@@ -104,12 +104,12 @@ fn keyCallback(glfw_window: glfw.Window, key: c_int, scancode: c_int, action: gl
     }
 }
 
-fn refreshCallback(glfw_window: glfw.Window) callconv(.C) void {
+fn refreshCallback(glfw_window: glfw.Window) callconv(.c) void {
     const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
     if (window.refresh_callback) |cb| cb(window);
 }
 
-fn resizeCallback(glfw_window: glfw.Window, width: c_int, height: c_int) callconv(.C) void {
+fn resizeCallback(glfw_window: glfw.Window, width: c_int, height: c_int) callconv(.c) void {
     const window: *@This() = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
     if (window.resize_callback) |cb| cb(window, width, height);
 }

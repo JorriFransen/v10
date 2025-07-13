@@ -92,8 +92,6 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         }),
-        .target = target,
-        .optimize = optimize,
         .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
         .use_llvm = use_llvm,
     });

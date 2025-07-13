@@ -31,7 +31,7 @@ pub fn parse() void {
 fn parseCommandLine() !ClapOptions {
     const printErr = struct {
         pub fn f(comptime fmt: []const u8, args: anytype) void {
-            const w = std.io.getStdErr().writer();
+            const w = std.fs.File.stderr().deprecatedWriter();
             w.print(fmt, args) catch {};
             w.print("\n", .{}) catch {};
         }
@@ -78,13 +78,13 @@ fn parseCommandLine() !ClapOptions {
             error.DoesntTakeValue => printErr("Argument '{s}{s}', doesn't take value", msg_args),
         }
 
-        usage(std.io.getStdErr().writer(), exe_name);
+        usage(std.fs.File.stderr().deprecatedWriter(), exe_name);
         return error.InvalidCommandLine;
     };
     defer result.deinit();
 
     if (result.args.help != 0) {
-        help(std.io.getStdOut().writer(), exe_name);
+        help(std.fs.File.stdout().deprecatedWriter(), exe_name);
     }
 
     const default = ClapOptions{};
