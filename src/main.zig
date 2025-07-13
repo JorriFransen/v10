@@ -19,6 +19,8 @@ const Vec4 = math.Vec4;
 const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
+const stb = @import("stb/stb.zig");
+
 pub fn main() !void {
     try mem.init();
 
@@ -46,6 +48,14 @@ var arrow_t: *Entity = undefined;
 fn run() !void {
     const width = 1920;
     const height = 1080;
+
+    var img_x: c_int = undefined;
+    var img_y: c_int = undefined;
+    var img_c: c_int = undefined;
+    const img_opt = stb.stbi_load("res/textures/test.png", &img_x, &img_y, &img_c, 0);
+    const img = img_opt orelse @panic("Failed to load image");
+    std.log.debug("Loaded texture: {}, {}, c: {}", .{ img_x, img_y, img_c });
+    stb.stbi_image_free(img);
 
     try window.init(width, height, "v10game", .{
         .platform = cla.clap_options.glfw_platform,
