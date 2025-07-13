@@ -620,7 +620,6 @@ fn expectApproxEqualMatrix(M: type, expected: M, actual: M) !void {
     testprint("matrices differ. first difference occurs at index {d}\n", .{diff_index});
 
     const stderr = std.fs.File.stderr();
-
     var differ = MatrixDiffer(M).init(expected, actual, stderr);
 
     testprint("\n============ expected this output: ============= \n", .{});
