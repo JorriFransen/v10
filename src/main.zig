@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = @import("memory");
 const gfx = @import("gfx.zig");
 const math = @import("math.zig");
+const stb = @import("stb/stb.zig");
 const clip = @import("cli_parse");
 const glfw = @import("glfw");
 
@@ -65,6 +66,14 @@ var arrow_t: *Entity = undefined;
 fn run() !void {
     const width = 1920;
     const height = 1080;
+
+    var img_x: c_int = undefined;
+    var img_y: c_int = undefined;
+    var img_c: c_int = undefined;
+    const img_opt = stb.stbi_load("res/textures/test.png", &img_x, &img_y, &img_c, 0);
+    const img = img_opt orelse @panic("Failed to load image");
+    std.log.debug("Loaded texture: {}, {}, c: {}", .{ img_x, img_y, img_c });
+    stb.stbi_image_free(img);
 
     try window.init(width, height, "v10game", .{
         .platform = cli_options.glfw_platform,

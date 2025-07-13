@@ -52,6 +52,9 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("vulkan", vulkan_module);
     main_module.addImport("memory", memory_module);
 
+    main_module.addCSourceFile(.{ .file = b.path("src/stb/implementation.c") });
+    main_module.addIncludePath(b.path("src"));
+
     const exe = b.addExecutable(.{
         .name = "v10game",
         .root_module = main_module,
