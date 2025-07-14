@@ -195,10 +195,9 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
     }
 }
 
-pub const LoadTextureError = error{StbError} || LoadResourceError;
+pub const LoadTextureError = stb.image.Error || LoadResourceError;
 
 pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureError!CpuTexture {
-    _ = allocator;
     assert(options == .from_resource);
     const texture_file = tfb: switch (options) {
         .from_identifier => unreachable,
@@ -208,18 +207,10 @@ pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureErr
         },
     };
 
-    var x: c_int = undefined;
-    var y: c_int = undefined;
-    var c: c_int = undefined;
-    // TODO: Use passed in allocator
-    const data_opt = stb.stbi_load_from_memory(texture_file.data.ptr, @intCast(texture_file.data.len), &x, &y, &c, 0);
-    const data = data_opt orelse return error.StbError;
-
-    const len: usize = @intCast(x * y * c);
-    log.debug("Cpu texture len: {}", .{len});
+    const texture = try stb.image.loadFromMemory(allocator, texture_file.data, 0);
 
     return .{
-        .size = Vec2U.new(@intCast(x), @intCast(y)),
-        .data = data[0..len],
+        .size = Vec2U.new(texture.x, texture.y),
+        .data = texture.data,
     };
 }
