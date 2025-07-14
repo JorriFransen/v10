@@ -24,10 +24,7 @@ pub fn load(device: *Device, name: []const u8) !Texture {
 
     // std.log.debug("cpu_tex: {}", .{cpu_texture});
 
-    unreachable;
+    return .{};
 }
 
-pub fn destroy(this: *@This()) void {
-    _ = this;
-    assert(false);
-}
+pub fn destroy(_: *@This()) void {}
