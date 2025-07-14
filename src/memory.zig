@@ -12,6 +12,7 @@ pub const assert = std.debug.assert;
 
 pub var common_arena: Arena = undefined;
 pub var swapchain_arena: Arena = undefined;
+pub var stb_arena: Arena = undefined;
 
 threadlocal var temp_initialized = false;
 threadlocal var temp_arena_a: Arena = undefined;
@@ -21,6 +22,7 @@ threadlocal var temp_arena_next: *Arena = undefined;
 pub fn init() !void {
     common_arena = try Arena.init(.{ .virtual = .{} });
     swapchain_arena = try Arena.init(.{ .virtual = .{} });
+    stb_arena = try Arena.init(.{ .virtual = .{} });
 
     initTemp();
 }
@@ -30,6 +32,7 @@ pub fn deinit() !void {
 
     common_arena.deinit();
     swapchain_arena.deinit();
+    stb_arena.deinit();
 }
 
 /// Must be called on each thread using temp/scratch arenas
