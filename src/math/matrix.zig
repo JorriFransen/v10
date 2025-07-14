@@ -619,23 +619,18 @@ fn expectApproxEqualMatrix(M: type, expected: M, actual: M) !void {
 
     testprint("matrices differ. first difference occurs at index {d}\n", .{diff_index});
 
-    const stderr = std.io.getStdErr();
-    const ttyconf = std.io.tty.detectConfig(stderr);
+    const stderr = std.fs.File.stderr();
 
-    var differ = MatrixDiffer(M){
-        .expected = expected,
-        .actual = actual,
-        .ttyconf = ttyconf,
-    };
+    var differ = MatrixDiffer(M).init(expected, actual, stderr);
 
     testprint("\n============ expected this output: ============= \n", .{});
-    differ.write(stderr.writer()) catch {};
+    differ.write() catch {};
 
     differ.expected = actual;
     differ.actual = expected;
 
     testprint("\n============= instead found this: ============== \n", .{});
-    differ.write(stderr.writer()) catch {};
+    differ.write() catch {};
 
     return error.TestExpectedApproxEqAbs;
 }
@@ -645,8 +640,20 @@ fn MatrixDiffer(M: type) type {
         expected: M,
         actual: M,
         ttyconf: std.io.tty.Config,
+        writer: std.fs.File.DeprecatedWriter,
 
-        pub fn write(self: @This(), writer: anytype) !void {
+        pub fn init(expected: M, actual: M, out: std.fs.File) @This() {
+            return .{
+                .expected = expected,
+                .actual = actual,
+                .ttyconf = std.io.tty.detectConfig(out),
+                .writer = out.deprecatedWriter(),
+            };
+        }
+
+        pub fn write(self: @This()) !void {
+            var awriter = self.writer.adaptToNewApi();
+            var writer = &awriter.derp_writer;
             try writer.print("\n", .{});
             for (self.expected.data, 0..) |evalue, i| {
                 const end = i % M.C;
@@ -657,9 +664,9 @@ fn MatrixDiffer(M: type) type {
 
                 const diff = @abs(evalue - avalue) >= math.eps(M.T, evalue, avalue);
 
-                if (diff) try self.ttyconf.setColor(writer, .red);
+                if (diff) try self.ttyconf.setColor(&awriter.new_interface, .red);
                 try writer.print("{d: >14.6}", .{evalue});
-                if (diff) try self.ttyconf.setColor(writer, .reset);
+                if (diff) try self.ttyconf.setColor(&awriter.new_interface, .reset);
 
                 if (end == M.C - 1) {
                     try writer.print(" ]\n", .{});
