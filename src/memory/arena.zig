@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.arena);
 const builtin = @import("builtin");
 const mem = @import("../memory.zig");
 const posix = std.posix;
@@ -164,10 +165,6 @@ pub const Arena = struct {
         };
     }
 
-    pub fn reset(this: *Arena) void {
-        this.used = 0;
-    }
-
     fn grow(this: *Arena, min_cap: usize) ArenaError!void {
         if (!this.flags.rvas) return error.CantGrow;
 
@@ -209,16 +206,13 @@ pub const Arena = struct {
         this.data = base_ptr[0..new_cap];
     }
 
-    pub fn alloc(ctx: *anyopaque, n: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
-        _ = ret_addr;
-        const this: *Arena = @ptrCast(@alignCast(ctx));
-
+    pub fn rawAlloc(this: *@This(), size: usize, alignment: Alignment) ?[*]u8 {
         if (builtin.mode == .Debug) {
-            if (!this.flags.@"align") assert(alignment == .@"1");
+            if (!this.flags.@"align") assert(alignment.toByteUnits() == @alignOf(usize));
         }
 
         const ptr_align = alignment.toByteUnits();
-        const aligned_size = if (this.flags.@"align") n + ptr_align - 1 else n;
+        const aligned_size = if (this.flags.@"align") size + ptr_align - 1 else size;
         const available = this.data[this.used..];
 
         if (aligned_size > available.len) {
@@ -228,7 +222,7 @@ pub const Arena = struct {
         }
 
         const unaligned_addr: usize = @intFromPtr(available.ptr);
-        var total_size = n;
+        var total_size = size;
 
         const result: ?[*]u8 = @ptrFromInt(blk: {
             if (this.flags.@"align") {
@@ -245,33 +239,21 @@ pub const Arena = struct {
         return result;
     }
 
-    pub fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
-        _ = ctx;
-        _ = memory;
-        _ = alignment;
-        _ = new_len;
-        _ = ret_addr;
-
-        if (builtin.mode == .Debug) {
-            @panic("Invalid resize on memory allocated by arena");
-        }
-
-        return false;
+    pub fn rawResize(this: *@This(), memory: []u8, alignment: Alignment, new_size: usize) bool {
+        const result = rawRemap(this, memory, alignment, new_size);
+        if (result) |r| assert(r == memory.ptr);
+        return result != null;
     }
 
-    pub fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ret_addr;
-
-        const this: *Arena = @ptrCast(@alignCast(ctx));
-
-        if (new_len <= memory.len) {
+    pub fn rawRemap(this: *@This(), memory: []u8, alignment: Alignment, new_size: usize) ?[*]u8 {
+        if (new_size <= memory.len) {
             // When smallor or equal, just return the same slice
             assert(std.mem.isAligned(@intFromPtr(memory.ptr), alignment.toByteUnits()));
             return memory.ptr;
         } else if (this.last_allocation == memory.ptr) {
             // When bigger, grow if last allocation
             assert(this.last_size == memory.len);
-            const diff = new_len - memory.len;
+            const diff = new_size - memory.len;
             if (this.used + diff > this.data.len) {
                 this.grow(this.used + diff) catch return null;
             }
@@ -286,11 +268,7 @@ pub const Arena = struct {
         }
     }
 
-    pub fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
-        _ = ret_addr;
-
-        const this: *Arena = @ptrCast(@alignCast(ctx));
-
+    pub fn rawFree(this: *@This(), memory: []u8, alignment: Alignment) void {
         if (@as(?[*]u8, @ptrCast(this.last_allocation)) == memory.ptr) {
             assert(alignment == .@"8");
             assert(std.mem.Alignment.check(alignment, @intFromPtr(memory.ptr)));
@@ -302,7 +280,31 @@ pub const Arena = struct {
             //nop
         }
     }
+
+    pub fn reset(this: *Arena) void {
+        this.used = 0;
+    }
 };
+
+fn alloc(ctx: *anyopaque, size: usize, alignment: Alignment, _: usize) ?[*]u8 {
+    const this: *Arena = @ptrCast(@alignCast(ctx));
+    return this.rawAlloc(size, alignment);
+}
+
+fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_size: usize, _: usize) bool {
+    const this: *Arena = @ptrCast(@alignCast(ctx));
+    return this.rawResize(memory, alignment, new_size);
+}
+
+fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_size: usize, _: usize) ?[*]u8 {
+    const this: *Arena = @ptrCast(@alignCast(ctx));
+    return this.rawRemap(memory, alignment, new_size);
+}
+
+fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, _: usize) void {
+    const this: *Arena = @ptrCast(@alignCast(ctx));
+    return this.rawFree(memory, alignment);
+}
 
 pub const TempArena = struct {
     arena: *Arena,
