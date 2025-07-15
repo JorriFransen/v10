@@ -53,7 +53,7 @@ pub fn init(this: *@This(), device: *Device, options: SwapchainOptions) !void {
 }
 
 pub fn destroy(this: *@This(), destroy_sync_objects: bool) void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     if (destroy_sync_objects) {
         for (this.image_available_semaphores) |ias| vkd.destroySemaphore(ias, null);
@@ -129,7 +129,7 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
 }
 
 fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocator) !void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     const swapchain_support = &this.device.device_info.swapchain_support;
     swapchain_support.capabilities =
@@ -196,7 +196,7 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
 fn createImageViews(this: *@This(), allocator: Allocator) !void {
     assert(this.images.len > 0);
 
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     assert(this.image_views.len == 0);
     this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
@@ -221,7 +221,7 @@ fn createImageViews(this: *@This(), allocator: Allocator) !void {
 }
 
 fn createRenderPass(this: *@This()) !void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     const color_attachment = vk.AttachmentDescription{
         .format = this.image_format,
@@ -288,7 +288,7 @@ fn createRenderPass(this: *@This()) !void {
 }
 
 fn createDepthResources(this: *@This(), allocator: Allocator) !void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     assert(this.depth_images.len == 0);
     assert(this.depth_image_memories.len == 0);
@@ -336,7 +336,7 @@ fn createDepthResources(this: *@This(), allocator: Allocator) !void {
 }
 
 fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     assert(this.framebuffers.len == 0);
     this.framebuffers = try allocator.alloc(vk.Framebuffer, this.images.len);
@@ -358,7 +358,7 @@ fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
 }
 
 fn createSyncObjects(this: *@This(), allocator: Allocator) !void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     const semaphore_info = vk.SemaphoreCreateInfo{};
     const fence_info = vk.FenceCreateInfo{ .flags = .{ .signaled_bit = true } };
