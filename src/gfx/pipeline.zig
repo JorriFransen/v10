@@ -241,7 +241,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     assert(config.pipeline_layout != .null_handle);
     assert(config.render_pass != .null_handle);
 
-    const vkd = device.device;
+    const vkd = &device.device;
 
     var tmp = mem.get_temp();
     defer tmp.release();
@@ -318,7 +318,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
 }
 
 pub fn destroy(this: *@This()) void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     vkd.destroyShaderModule(this.vert_shader_module, null);
     vkd.destroyShaderModule(this.frag_shader_module, null);
@@ -327,7 +327,7 @@ pub fn destroy(this: *@This()) void {
 }
 
 fn createShaderModule(this: *@This(), code: []const u8) !vk.ShaderModule {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     const create_info = vk.ShaderModuleCreateInfo{
         .code_size = code.len,
