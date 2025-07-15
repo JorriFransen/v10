@@ -136,7 +136,7 @@ pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
 }
 
 pub fn destroy(this: *@This()) void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     vkd.destroyPipelineLayout(this.layout, null);
     this.pipeline.destroy();
@@ -238,9 +238,12 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
         }
     }
 
-    this.device.copyBuffer(this.vertex_staging_buffer, this.vertex_buffer, this.vertex_buffer_size);
-    this.device.copyBuffer(this.index_staging_buffer, this.index_buffer, this.index_buffer_size);
-
+    // TODO: Consistent command buffer for this?
+    const ccb = this.device.beginSingleTimeCommands();
+    this.device.copyBuffer(&ccb, this.vertex_staging_buffer, this.vertex_buffer, this.vertex_buffer_size);
+    this.device.copyBuffer(&ccb, this.index_staging_buffer, this.index_buffer, this.index_buffer_size);
+    this.device.endSingleTimeCommands(ccb);
+    //
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
     cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
     const index_type = comptime switch (Index) {

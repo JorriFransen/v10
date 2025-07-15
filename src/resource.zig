@@ -95,8 +95,7 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
 
     const model_file = mfb: switch (options) {
         .from_identifier => |identifier| {
-            const model_file_res = try load(ta.allocator(), identifier);
-            switch (model_file_res) {
+            switch (try load(ta.allocator(), identifier)) {
                 else => return error.UnexpectedResourceKind,
                 .model_file => |mf| break :mfb mf,
             }
@@ -116,7 +115,7 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
                 .buffer = model_file.data,
                 .name = model_file.name,
             });
-            ta.release(); // Free content
+            ta.release(); // Free model file
 
             const mv = obj_model.vertices;
             const mc = obj_model.colors;
@@ -198,16 +197,24 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
 pub const LoadTextureError = stb.image.Error || LoadResourceError;
 
 pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureError!CpuTexture {
-    assert(options == .from_resource);
+    var ta = mem.get_scratch(@alignCast(@ptrCast(allocator.ptr)));
+    defer ta.release();
+
     const texture_file = tfb: switch (options) {
-        .from_identifier => unreachable,
+        .from_identifier => |identifier| {
+            switch (try load(ta.allocator(), identifier)) {
+                else => return error.UnexpectedResourceKind,
+                .texture_file => |tf| break :tfb tf,
+            }
+        },
         .from_resource => |res| switch (res) {
             else => return error.UnexpectedResourceKind,
             .texture_file => |tf| break :tfb tf,
         },
     };
 
-    const texture = try stb.image.loadFromMemory(allocator, texture_file.data, 0);
+    const texture = try stb.image.loadFromMemory(allocator, texture_file.data);
+    ta.release(); // Free texture file
 
     return .{
         .size = Vec2U.new(texture.x, texture.y),
