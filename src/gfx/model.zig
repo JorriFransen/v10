@@ -16,7 +16,6 @@ const Vec4 = math.Vec4;
 
 const assert = std.debug.assert;
 
-device: *Device,
 vertex_buffer: vk.Buffer = .null_handle,
 vertex_buffer_memory: vk.DeviceMemory = .null_handle,
 vertex_count: u32 = 0,
@@ -72,6 +71,18 @@ pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     // return create(device, build(cpu_model.vertices));
 }
 
+pub fn deinit(this: *Model, device: *Device) void {
+    const vkd = &device.device;
+
+    vkd.destroyBuffer(this.vertex_buffer, null);
+    vkd.freeMemory(this.vertex_buffer_memory, null);
+
+    if (this.index_type != .none_khr) {
+        vkd.destroyBuffer(this.index_buffer, null);
+        vkd.freeMemory(this.index_buffer_memory, null);
+    }
+}
+
 inline fn validIndexType(T: type) bool {
     return T == u32 or T == u16 or T == u8;
 }
@@ -123,10 +134,9 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
     const IndexType = @TypeOf(builder).IndexType;
     assert(builder.vertices.len >= 3);
 
-    const vkd = device.device;
+    const vkd = &device.device;
 
     var this = Model{
-        .device = device,
         .vertex_count = @intCast(builder.vertices.len),
     };
 
@@ -158,7 +168,11 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
         &this.vertex_buffer_memory,
     ) catch return error.VulkanUnexpected;
 
-    device.copyBuffer(vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
+    const cb = device.beginSingleTimeCommands();
+    device.copyBuffer(&cb, vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
+
+    var index_staging_buffer: vk.Buffer = .null_handle;
+    var index_staging_buffer_memory: vk.DeviceMemory = .null_handle;
 
     if (builder.indices) |indices| {
         assert(indices.len >= 3);
@@ -172,17 +186,12 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
         };
 
         const index_buffer_size: vk.DeviceSize = @sizeOf(IndexType) * indices.len;
-        var index_staging_buffer_memory: vk.DeviceMemory = .null_handle;
-        const index_staging_buffer = device.createBuffer(
+        index_staging_buffer = device.createBuffer(
             index_buffer_size,
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
             &index_staging_buffer_memory,
         ) catch return error.VulkanUnexpected;
-        defer {
-            vkd.destroyBuffer(index_staging_buffer, null);
-            vkd.freeMemory(index_staging_buffer_memory, null);
-        }
 
         const index_data_opt = vkd.mapMemory(index_staging_buffer_memory, 0, index_buffer_size, .{}) catch return error.VulkanMapMemory;
         const index_data = index_data_opt orelse return error.VulkanMapMemory;
@@ -198,24 +207,18 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
             &this.index_buffer_memory,
         ) catch return error.VulkanUnexpected;
 
-        device.copyBuffer(index_staging_buffer, this.index_buffer, index_buffer_size);
+        device.copyBuffer(&cb, index_staging_buffer, this.index_buffer, index_buffer_size);
     } else {
         assert(IndexType == void);
     }
 
-    return this;
-}
-
-pub fn destroy(this: *Model) void {
-    const vkd = this.device.device;
-
-    vkd.destroyBuffer(this.vertex_buffer, null);
-    vkd.freeMemory(this.vertex_buffer_memory, null);
-
-    if (this.index_type != .none_khr) {
-        vkd.destroyBuffer(this.index_buffer, null);
-        vkd.freeMemory(this.index_buffer_memory, null);
+    device.endSingleTimeCommands(cb);
+    if (builder.indices != null) {
+        vkd.destroyBuffer(index_staging_buffer, null);
+        vkd.freeMemory(index_staging_buffer_memory, null);
     }
+
+    return this;
 }
 
 pub fn bind(this: *const Model, cb: vk.CommandBufferProxy) void {

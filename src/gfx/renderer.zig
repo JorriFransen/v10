@@ -30,7 +30,7 @@ pub fn destroy(this: *@This()) void {
 }
 
 pub fn createCommandBuffers(this: *@This()) !void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     assert(this.command_buffers.len == 0);
     this.command_buffers = try mem.common_arena.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
@@ -45,7 +45,7 @@ pub fn createCommandBuffers(this: *@This()) !void {
 }
 
 pub fn freeCommandBuffers(this: *@This()) void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
     vkd.freeCommandBuffers(this.device.command_pool, @intCast(this.command_buffers.len), this.command_buffers.ptr);
 }
 
@@ -134,7 +134,7 @@ pub fn endRenderPass(_: *@This(), cb: vk.CommandBufferProxy) void {
 }
 
 pub fn recreateSwapchain(this: *@This()) !void {
-    const vkd = this.device.device;
+    const vkd = &this.device.device;
 
     var extent = this.window.getExtent();
     while (extent.width == 0 or extent.height == 0) {

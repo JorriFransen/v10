@@ -90,13 +90,13 @@ fn run() !void {
     defer d2d.destroy();
 
     var texture = try Texture.load(&device, "res/textures/test.png");
-    defer texture.destroy();
+    defer texture.deinit(&device);
 
     var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
-    defer smooth_vase.destroy();
+    defer smooth_vase.deinit(&device);
 
     var flat_vase = try Model.load(&device, "res/obj/flat_vase.obj");
-    defer flat_vase.destroy();
+    defer flat_vase.deinit(&device);
 
     var entities_: [1]Entity = undefined;
     for (&entities_) |*e| e.* = Entity.new();

@@ -12,6 +12,8 @@ const assert = std.debug.assert;
 var current_temp: mem.TempArena = undefined;
 
 pub const image = struct {
+    pub const rgb_alpha = c_stbi.STBI_rgb_alpha;
+
     pub const Texture = struct {
         x: u32,
         y: u32,
@@ -24,14 +26,14 @@ pub const image = struct {
         OutOfMemory,
     };
 
-    pub fn load(allocator: Allocator, path: []const u8, desired_channels: u32) Error!Texture {
+    pub fn load(allocator: Allocator, path: []const u8) Error!Texture {
         current_temp = mem.TempArena.init(&mem.stb_arena);
         defer current_temp.release();
 
         var x: c_int = undefined;
         var y: c_int = undefined;
         var c: c_int = undefined;
-        const data_opt = stbi_load(path, &x, &y, &c, @intCast(desired_channels));
+        const data_opt = stbi_load(path, &x, &y, &c, rgb_alpha);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
 
         const len = @as(usize, @intCast(x * y * c));
@@ -48,14 +50,14 @@ pub const image = struct {
         };
     }
 
-    pub fn loadFromMemory(allocator: Allocator, buffer: []const u8, desired_channels: u32) Error!Texture {
+    pub fn loadFromMemory(allocator: Allocator, buffer: []const u8) Error!Texture {
         current_temp = mem.TempArena.init(&mem.stb_arena);
         defer current_temp.release();
 
         var x: c_int = undefined;
         var y: c_int = undefined;
         var c: c_int = undefined;
-        const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &c, @intCast(desired_channels));
+        const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &c, rgb_alpha);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
 
         const len = @as(usize, @intCast(x * y * c));
