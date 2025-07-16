@@ -34,7 +34,12 @@ device_info: DeviceInfo = undefined,
 device: vk.DeviceProxy = undefined,
 graphics_queue: vk.QueueProxy = undefined,
 present_queue: vk.QueueProxy = undefined,
-command_pool: vk.CommandPool = undefined,
+command_pool: vk.CommandPool = .null_handle,
+
+// TODO: Move this to renderer?
+descriptor_pool: vk.DescriptorPool = .null_handle,
+sampler: vk.Sampler = .null_handle,
+sampler_layout: vk.DescriptorSetLayout = .null_handle,
 
 pub const DeviceInfo = struct {
     name: []const u8,
@@ -54,10 +59,10 @@ pub const DeviceInfo = struct {
         return result;
     }
 
-    pub fn destroy(this: *@This(), allocator: Allocator) void {
+    pub fn deinit(this: *@This(), allocator: Allocator) void {
         allocator.destroy(this);
         allocator.free(this.name);
-        this.swapchain_support.destroy(allocator);
+        this.swapchain_support.deinit(allocator);
     }
 };
 
@@ -117,7 +122,7 @@ pub const SwapchainSupportDetails = struct {
         return result;
     }
 
-    pub fn destroy(this: @This(), allocator: Allocator) void {
+    pub fn deinit(this: @This(), allocator: Allocator) void {
         if (this.formats.len > 0) allocator.free(this.formats);
         if (this.present_modes.len > 0) allocator.free(this.present_modes);
     }
@@ -136,12 +141,20 @@ pub fn create(system: *gfx.System, window: *const Window) !@This() {
     try this.createLogicalDevice();
     try this.createCommandPool();
 
+    try this.createSamplerDescriptorSetLayout();
+    try this.createTextureSampler();
+    try this.createDescriptorPool();
+
     return this;
 }
 
 pub fn destroy(this: *@This()) void {
     const device = this.device;
     const vki = this.vki;
+
+    device.destroyDescriptorSetLayout(this.sampler_layout, null);
+    device.destroySampler(this.sampler, null);
+    device.destroyDescriptorPool(this.descriptor_pool, null);
 
     device.destroyCommandPool(this.command_pool, null);
     device.destroyDevice(null);
@@ -331,6 +344,62 @@ fn createCommandPool(this: *@This()) !void {
     };
 
     this.command_pool = try this.device.createCommandPool(&pool_create_info, null);
+}
+
+fn createSamplerDescriptorSetLayout(this: *@This()) !void {
+    const sampler_layout_binding = vk.DescriptorSetLayoutBinding{
+        .binding = 0,
+        .descriptor_count = 1,
+        .descriptor_type = .combined_image_sampler,
+        .p_immutable_samplers = null,
+        .stage_flags = .{ .fragment_bit = true },
+    };
+
+    const layout_info = vk.DescriptorSetLayoutCreateInfo{
+        .binding_count = 1,
+        .p_bindings = @ptrCast(&sampler_layout_binding),
+    };
+
+    this.sampler_layout = try this.device.createDescriptorSetLayout(&layout_info, null);
+}
+
+const CreateTextureSamplerError = vk.DeviceProxy.CreateSamplerError;
+fn createTextureSampler(this: *@This()) CreateTextureSamplerError!void {
+    const sampler_info = vk.SamplerCreateInfo{
+        .mag_filter = .linear,
+        .min_filter = .linear,
+        .address_mode_u = .repeat,
+        .address_mode_v = .repeat,
+        .address_mode_w = .repeat,
+        .anisotropy_enable = vk.TRUE,
+        .max_anisotropy = this.device_info.properties.limits.max_sampler_anisotropy,
+        .border_color = .int_opaque_black,
+        .unnormalized_coordinates = vk.FALSE,
+        .compare_enable = vk.FALSE,
+        .compare_op = .always,
+        .mipmap_mode = .linear,
+        .mip_lod_bias = 0,
+        .min_lod = 0,
+        .max_lod = 0,
+    };
+
+    this.sampler = try this.device.createSampler(&sampler_info, null);
+}
+
+const CreateDescriptorPoolError = vk.DeviceProxy.CreateDescriptorPoolError;
+fn createDescriptorPool(this: *@This()) CreateDescriptorPoolError!void {
+    const pool_sizes = [_]vk.DescriptorPoolSize{.{
+        .type = .combined_image_sampler,
+        .descriptor_count = 1,
+    }};
+
+    const pool_info = vk.DescriptorPoolCreateInfo{
+        .pool_size_count = @intCast(pool_sizes.len),
+        .p_pool_sizes = &pool_sizes,
+        .max_sets = 16,
+    };
+
+    this.descriptor_pool = try this.device.createDescriptorPool(&pool_info, null);
 }
 
 fn checkValidationLayerSupport(this: *@This()) !bool {
@@ -606,6 +675,26 @@ pub fn createImageWithInfo(this: *@This(), image_info: *const vk.ImageCreateInfo
     return result;
 }
 
+pub const CreateImageViewError = vk.DeviceWrapper.CreateImageViewError;
+
+pub fn createImageView(this: *@This(), image: vk.Image, format: vk.Format) CreateImageViewError!vk.ImageView {
+    const view_info = vk.ImageViewCreateInfo{
+        .image = image,
+        .view_type = .@"2d",
+        .format = format,
+        .subresource_range = .{
+            .aspect_mask = .{ .color_bit = true },
+            .base_mip_level = 0,
+            .level_count = 1,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        },
+        .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+    };
+
+    return this.device.createImageView(&view_info, null);
+}
+
 pub fn findMemoryType(this: *@This(), type_filter: u32, properties: vk.MemoryPropertyFlags) u32 {
     const props = this.vki.getPhysicalDeviceMemoryProperties(this.device_info.physical_device);
     for (0..props.memory_type_count) |i| {
@@ -638,7 +727,7 @@ pub fn createBuffer(this: *@This(), size: vk.DeviceSize, usage: vk.BufferUsageFl
     return buffer;
 }
 
-pub fn copyBuffer(_: *@This(), cb: *const vk.CommandBufferProxy, src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) void {
+pub fn copyBuffer(_: *@This(), cb: vk.CommandBufferProxy, src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) void {
     const copy_region = vk.BufferCopy{
         .src_offset = 0,
         .dst_offset = 0,
@@ -648,7 +737,7 @@ pub fn copyBuffer(_: *@This(), cb: *const vk.CommandBufferProxy, src: vk.Buffer,
     cb.copyBuffer(src, dst, 1, @ptrCast(&copy_region));
 }
 
-pub fn transitionImageLayout(_: *@This(), cb: *const vk.CommandBufferProxy, image: vk.Image, format: vk.Format, old_layout: vk.ImageLayout, new_layout: vk.ImageLayout) void {
+pub fn transitionImageLayout(_: *@This(), cb: vk.CommandBufferProxy, image: vk.Image, format: vk.Format, old_layout: vk.ImageLayout, new_layout: vk.ImageLayout) void {
     const opts: struct {
         src_access_mask: vk.AccessFlags,
         dst_access_mask: vk.AccessFlags,
@@ -689,7 +778,7 @@ pub fn transitionImageLayout(_: *@This(), cb: *const vk.CommandBufferProxy, imag
     _ = format;
 }
 
-pub fn copyBufferToImage(_: *@This(), cb: *const vk.CommandBufferProxy, buffer: vk.Buffer, image: vk.Image, width: u32, height: u32) void {
+pub fn copyBufferToImage(_: *@This(), cb: vk.CommandBufferProxy, buffer: vk.Buffer, image: vk.Image, width: u32, height: u32) void {
     const region = vk.BufferImageCopy{
         .buffer_offset = 0,
         .buffer_row_length = 0,
