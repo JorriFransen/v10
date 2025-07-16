@@ -64,6 +64,9 @@ var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 var arrow_t: *Entity = undefined;
 
+var texture: Texture = undefined;
+var texture_f: Texture = undefined;
+
 fn run() !void {
     const width = 1920;
     const height = 1080;
@@ -89,8 +92,11 @@ fn run() !void {
     try d2d.init(&device, renderer.swapchain.render_pass);
     defer d2d.destroy();
 
-    var texture = try Texture.load(&device, "res/textures/test.png");
+    texture = try Texture.load(&device, "res/textures/test.png");
     defer texture.deinit(&device);
+
+    texture_f = try Texture.load(&device, "res/textures/test_flip.png");
+    defer texture_f.deinit(&device);
 
     var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.deinit(&device);
@@ -146,10 +152,12 @@ fn drawFrame() !void {
 
         d2d.beginDrawing();
         {
-            d2d.drawTriangle(Vec2.new(-0.5, 0), Vec2.new(0, -0.5), Vec2.new(0.5, 0), .{ .color = Vec4.new(1, 0, 0, 0.4) });
-            d2d.drawTriangle(Vec2.new(-0.9, 0.9), Vec2.new(-0.9, 0.8), Vec2.new(-0.8, 0.9), .{ .color = Vec4.new(0, 1, 0, 1) });
-
-            d2d.drawQuad(Vec2.new(-0.95, -0.95), Vec2.scalar(0.2), .{ .color = Vec4.new(0, 0, 1, 1) });
+            d2d.drawQuad(Vec2.new(-0.55, -0.95), Vec2.scalar(0.2), .{ .texture = &texture });
+            d2d.drawQuad(Vec2.new(-0.95, -0.95), Vec2.scalar(0.2), .{});
+            d2d.drawQuad(Vec2.new(-0.55, -0.65), Vec2.scalar(0.2), .{ .texture = &texture_f });
+            d2d.drawQuad(Vec2.new(-0.55, 0.65), Vec2.scalar(0.2), .{ .texture = &texture_f });
+            d2d.drawQuad(Vec2.new(-0.95, -0.65), Vec2.scalar(0.2), .{});
+            d2d.drawQuad(Vec2.new(-0.55, -0.05), Vec2.scalar(0.2), .{ .texture = &texture });
         }
         d2d.endDrawing(cb);
 
