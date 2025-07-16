@@ -196,27 +196,11 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
 fn createImageViews(this: *@This(), allocator: Allocator) !void {
     assert(this.images.len > 0);
 
-    const vkd = &this.device.device;
-
     assert(this.image_views.len == 0);
     this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
 
     for (this.images, this.image_views) |image, *view| {
-        const view_info = vk.ImageViewCreateInfo{
-            .image = image,
-            .view_type = .@"2d",
-            .format = this.image_format,
-            .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
-                .base_mip_level = 0,
-                .level_count = 1,
-                .base_array_layer = 0,
-                .layer_count = 1,
-            },
-            .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
-        };
-
-        view.* = try vkd.createImageView(&view_info, null);
+        view.* = try this.device.createImageView(image, this.image_format);
     }
 }
 

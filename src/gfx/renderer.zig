@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.@"vk/renderer");
 const mem = @import("memory");
 const gfx = @import("../gfx.zig");
 const vk = @import("vulkan");

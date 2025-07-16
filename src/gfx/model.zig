@@ -169,7 +169,7 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
     ) catch return error.VulkanUnexpected;
 
     const cb = device.beginSingleTimeCommands();
-    device.copyBuffer(&cb, vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
+    device.copyBuffer(cb, vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
 
     var index_staging_buffer: vk.Buffer = .null_handle;
     var index_staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -207,7 +207,7 @@ pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
             &this.index_buffer_memory,
         ) catch return error.VulkanUnexpected;
 
-        device.copyBuffer(&cb, index_staging_buffer, this.index_buffer, index_buffer_size);
+        device.copyBuffer(cb, index_staging_buffer, this.index_buffer, index_buffer_size);
     } else {
         assert(IndexType == void);
     }

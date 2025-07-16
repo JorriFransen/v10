@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.r2d);
 const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
@@ -6,15 +7,17 @@ const mem = @import("memory");
 
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
+const Texture = gfx.Texture;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
+const Index = u32;
 
 const assert = std.debug.assert;
 
 const arena_cap = mem.MiB * 10;
 const buffer_init_cap = mem.MiB * 2;
-const Index = u32;
+const white = Vec4.scalar(1);
 
 device: *Device = undefined,
 layout: vk.PipelineLayout = .null_handle,
@@ -37,9 +40,12 @@ index_staging_buffer: vk.Buffer = .null_handle,
 index_staging_buffer_memory: vk.DeviceMemory = .null_handle,
 index_staging_buffer_mapped: []Index = undefined,
 
+default_white_texture: Texture = undefined,
+
 pub const Vertex = extern struct {
     pos: Vec2,
-    color: Vec4,
+    color: Vec4 = Vec4.scalar(1),
+    uv: Vec2 = Vec2.scalar(0),
 
     // TODO: Make this external to enable reuse on different vertex structs
     const field_count = @typeInfo(Vertex).@"struct".fields.len;
@@ -67,14 +73,16 @@ pub const Vertex = extern struct {
 };
 
 pub const DrawOptions = struct {
-    color: Vec4 = Vec4.scalar(1),
+    /// This color overrides the per-vertex color
+    color: ?Vec4 = Vec4.scalar(1),
+    texture: ?*const Texture = null,
 };
 
 pub const DrawCommand = struct {
     options: DrawOptions,
 
     data: union(enum) {
-        triangle: struct { p1: Vec2, p2: Vec2, p3: Vec2 },
+        triangle: [3]Vertex,
         quad: struct { pos: Vec2, size: Vec2 },
     },
 };
@@ -82,7 +90,7 @@ pub const DrawCommand = struct {
 pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
     this.device = device;
 
-    this.layout = try this.createPipelineLayout();
+    this.layout = try this.createPipelineLayout(device);
     this.pipeline = try this.createPipeline(render_pass);
 
     this.arena = try mem.Arena.init(.{ .virtual = .{ .reserved_capacity = arena_cap } });
@@ -133,6 +141,8 @@ pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
 
     const indices_mapped: [*]Index = @ptrCast(@alignCast(index_data));
     this.index_staging_buffer_mapped = indices_mapped[0..index_count];
+
+    this.default_white_texture = try Texture.initDefaultWhite(device);
 }
 
 pub fn destroy(this: *@This()) void {
@@ -154,12 +164,16 @@ pub fn destroy(this: *@This()) void {
     vkd.unmapMemory(this.index_staging_buffer_memory);
     vkd.destroyBuffer(this.index_staging_buffer, null);
     vkd.freeMemory(this.index_staging_buffer_memory, null);
+
+    this.default_white_texture.deinit(this.device);
 }
 
-fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
+fn createPipelineLayout(this: *@This(), device: *Device) !vk.PipelineLayout {
+    const descriptor_set_layout = device.sampler_layout;
+
     const pipeline_layout_info = vk.PipelineLayoutCreateInfo{
-        .set_layout_count = 0,
-        .p_set_layouts = null,
+        .set_layout_count = 1,
+        .p_set_layouts = @ptrCast(&descriptor_set_layout),
         .push_constant_range_count = 0,
         .p_push_constant_ranges = null,
     };
@@ -183,41 +197,84 @@ pub fn beginDrawing(this: *@This()) void {
 }
 
 pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
+    if (this.commands.items.len < 1) return;
+
+    std.mem.sort(DrawCommand, this.commands.items, this, struct {
+        fn f(ctx: @TypeOf(this), l: DrawCommand, r: DrawCommand) bool {
+            const default = ctx.default_white_texture.descriptor_set;
+            const l_tex_set = if (l.options.texture) |t| t.descriptor_set else default;
+            const r_tex_set = if (r.options.texture) |t| t.descriptor_set else default;
+            return @intFromEnum(l_tex_set) < @intFromEnum(r_tex_set);
+        }
+    }.f);
+
+    cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
+    cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
+    const index_type = comptime switch (Index) {
+        else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
+        u8 => .uint8_khr,
+        u16 => .uint16,
+        u32 => .uint32,
+    };
+    cb.bindIndexBuffer(this.index_buffer, 0, index_type);
+
     const vbuf = this.vertex_staging_buffer_mapped;
     const ibuf = this.index_staging_buffer_mapped;
 
     var vertex_count: usize = 0;
     var index_count: usize = 0;
 
-    for (this.commands.items) |command| {
-        const color = command.options.color;
+    var batch_index_count: u32 = 0;
+    var batch_index_offset: u32 = 0;
+
+    var current_texture: *const Texture =
+        this.commands.items[0].options.texture orelse
+        &this.default_white_texture;
+
+    current_texture.bind(cb, this.layout);
+
+    for (this.commands.items) |*command| {
+        const options = &command.options;
+        const command_texture = options.texture orelse &this.default_white_texture;
+
+        if (current_texture != command_texture) {
+            if (batch_index_count > 0) {
+                cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
+            }
+
+            current_texture = command_texture;
+            current_texture.bind(cb, this.layout);
+            batch_index_offset = @intCast(index_count);
+            batch_index_count = 0;
+        }
 
         switch (command.data) {
-            .triangle => |t| {
-                const verts = [3]Vertex{
-                    .{ .pos = t.p1, .color = color },
-                    .{ .pos = t.p2, .color = color },
-                    .{ .pos = t.p3, .color = color },
-                };
+            .triangle => |*t| {
+                if (options.color) |color| {
+                    inline for (t) |*e| e.color = color;
+                }
 
                 const fi: Index = @intCast(vertex_count);
                 const indices = [3]Index{ fi, fi + 1, fi + 2 };
 
-                assert(vertex_count + verts.len <= vbuf.len);
+                assert(vertex_count + t.len <= vbuf.len);
                 assert(index_count + indices.len <= ibuf.len);
 
-                @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
+                @memcpy(vbuf[vertex_count .. vertex_count + t.len], t);
                 @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
 
-                vertex_count += verts.len;
+                vertex_count += t.len;
                 index_count += indices.len;
+                batch_index_count += indices.len;
             },
             .quad => |q| {
+                const color = options.color orelse white;
+
                 const verts = [4]Vertex{
-                    .{ .pos = q.pos, .color = color },
-                    .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color },
-                    .{ .pos = q.pos.add(q.size), .color = color },
-                    .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color },
+                    .{ .pos = q.pos, .color = color, .uv = Vec2.new(0, 0) },
+                    .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color, .uv = Vec2.new(1, 0) },
+                    .{ .pos = q.pos.add(q.size), .color = color, .uv = Vec2.new(1, 1) },
+                    .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color, .uv = Vec2.new(0, 1) },
                 };
 
                 const fi: Index = @intCast(vertex_count);
@@ -234,32 +291,25 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
 
                 vertex_count += verts.len;
                 index_count += indices.len;
+                batch_index_count += indices.len;
             },
         }
     }
 
+    cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 1);
+
     // TODO: Consistent command buffer for this?
     const ccb = this.device.beginSingleTimeCommands();
-    this.device.copyBuffer(&ccb, this.vertex_staging_buffer, this.vertex_buffer, this.vertex_buffer_size);
-    this.device.copyBuffer(&ccb, this.index_staging_buffer, this.index_buffer, this.index_buffer_size);
+    this.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, this.vertex_buffer_size);
+    this.device.copyBuffer(ccb, this.index_staging_buffer, this.index_buffer, this.index_buffer_size);
     this.device.endSingleTimeCommands(ccb);
-    //
-    cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
-    cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
-    const index_type = comptime switch (Index) {
-        else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
-        u8 => .uint8_khr,
-        u16 => .uint16,
-        u32 => .uint32,
-    };
-    cb.bindIndexBuffer(this.index_buffer, 0, index_type);
-    cb.drawIndexed(@intCast(index_count), 1, 0, 0, 0);
 }
 
-pub fn drawTriangle(this: *@This(), p1: Vec2, p2: Vec2, p3: Vec2, options: DrawOptions) void {
-    this.commands.append(.{ .options = options, .data = .{
-        .triangle = .{ .p1 = p1, .p2 = p2, .p3 = p3 },
-    } }) catch @panic("Command memory full");
+pub fn drawTriangle(this: *@This(), vertices: [3]Vertex, options: DrawOptions) void {
+    this.commands.append(.{
+        .options = options,
+        .data = .{ .triangle = vertices },
+    }) catch @panic("Command memory full");
 }
 
 pub fn drawQuad(this: *@This(), pos: Vec2, size: Vec2, options: DrawOptions) void {
