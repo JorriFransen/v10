@@ -50,7 +50,10 @@ pub fn freeCommandBuffers(this: *@This()) void {
 }
 
 pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
-    const result = try this.swapchain.acquireNextImage(&this.current_image_index);
+    if (try this.device.device.waitForFences(1, @ptrCast(&this.swapchain.in_flight_fences[this.current_frame_index]), vk.TRUE, std.math.maxInt(u64)) != .success) {
+        return error.VkWaitForFencesFailed;
+    }
+    const result = try this.swapchain.acquireNextImage(&this.current_image_index, this.current_frame_index);
 
     if (result == .error_out_of_date_khr) {
         try this.recreateSwapchain();
@@ -60,6 +63,14 @@ pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
     if (result != .success and result != .suboptimal_khr) {
         return error.swapchainAcquireNextImageFailed;
     }
+
+    if (this.swapchain.images_in_flight[this.current_image_index] != .null_handle) {
+        if (try this.device.device.waitForFences(1, @ptrCast(&this.swapchain.images_in_flight[this.current_image_index]), vk.TRUE, std.math.maxInt(u64)) != .success) {
+            return error.VkWaitForFencesFailed;
+        }
+    }
+
+    try this.device.device.resetFences(1, @ptrCast(&this.swapchain.in_flight_fences[this.current_frame_index]));
 
     const cb = vk.CommandBufferProxy.init(this.command_buffers[this.current_frame_index], this.device.device.wrapper);
 
@@ -72,7 +83,7 @@ pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
 pub fn endFrame(this: *@This(), cb: vk.CommandBufferProxy) !void {
     try cb.endCommandBuffer();
 
-    const result = try this.swapchain.submitCommandBuffers(cb.handle, &this.current_image_index);
+    const result = try this.swapchain.submitCommandBuffers(cb.handle, &this.current_image_index, this.current_frame_index);
     if (result == .error_out_of_date_khr or result == .suboptimal_khr or this.window.framebuffer_resized) {
         this.window.framebuffer_resized = false;
         try this.recreateSwapchain();

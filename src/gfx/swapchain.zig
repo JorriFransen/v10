@@ -31,7 +31,6 @@ image_available_semaphores: []vk.Semaphore = &.{},
 render_finished_semaphores: []vk.Semaphore = &.{},
 in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
-current_frame: usize = 0,
 
 pub const SwapchainOptions = struct {
     extent: vk.Extent2D,
@@ -75,15 +74,11 @@ pub fn destroy(this: *@This(), destroy_sync_objects: bool) void {
     vkd.destroySwapchainKHR(this.swapchain, null);
 }
 
-pub fn acquireNextImage(this: *@This(), image_index: *u32) !vk.Result {
-    const vkd = this.device.device;
-
-    if (try vkd.waitForFences(1, @ptrCast(&this.in_flight_fences[this.current_frame]), vk.TRUE, std.math.maxInt(u64)) != .success) {
-        return error.vkWaitForFencesFailed;
-    }
+pub fn acquireNextImage(this: *@This(), image_index: *u32, current_frame_index: usize) !vk.Result {
+    const vkd = &this.device.device;
 
     const R = vk.DeviceWrapper.AcquireNextImageKHRResult;
-    const result = vkd.acquireNextImageKHR(this.swapchain, std.math.maxInt(u64), this.image_available_semaphores[this.current_frame], .null_handle) catch |err| switch (err) {
+    const result = vkd.acquireNextImageKHR(this.swapchain, std.math.maxInt(u64), this.image_available_semaphores[current_frame_index], .null_handle) catch |err| switch (err) {
         error.OutOfDateKHR => R{ .result = .error_out_of_date_khr, .image_index = image_index.* },
         else => return err,
     };
@@ -92,18 +87,11 @@ pub fn acquireNextImage(this: *@This(), image_index: *u32) !vk.Result {
     return result.result;
 }
 
-pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_index: *u32) !vk.Result {
-    const vkd = this.device.device;
+// TODO: Does image_index still need to be a pointer here?
+pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_index: *u32, frame_index: usize) !vk.Result {
+    const vkd = &this.device.device;
 
-    if (this.images_in_flight[image_index.*] != .null_handle) {
-        if (try vkd.waitForFences(1, @ptrCast(&this.images_in_flight[image_index.*]), vk.TRUE, std.math.maxInt(u64)) != .success) {
-            return error.vkWaitForFencesFailed;
-        }
-    }
-
-    this.images_in_flight[image_index.*] = this.in_flight_fences[this.current_frame];
-
-    const wait_semaphores = [_]vk.Semaphore{this.image_available_semaphores[this.current_frame]};
+    const wait_semaphores = [_]vk.Semaphore{this.image_available_semaphores[frame_index]};
     const wait_stage = vk.PipelineStageFlags{ .color_attachment_output_bit = true };
     const signal_semaphores = [_]vk.Semaphore{this.render_finished_semaphores[image_index.*]};
 
@@ -118,9 +106,11 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
         .p_signal_semaphores = &signal_semaphores,
     };
 
-    try vkd.resetFences(1, @ptrCast(&this.in_flight_fences[this.current_frame]));
+    try vkd.resetFences(1, @ptrCast(&this.in_flight_fences[frame_index]));
 
-    try this.device.graphics_queue.submit(1, @ptrCast(&submit_info), this.in_flight_fences[this.current_frame]);
+    try this.device.graphics_queue.submit(1, @ptrCast(&submit_info), this.in_flight_fences[frame_index]);
+
+    this.images_in_flight[image_index.*] = this.in_flight_fences[frame_index];
 
     const present_info = vk.PresentInfoKHR{
         .wait_semaphore_count = @intCast(signal_semaphores.len),
@@ -134,8 +124,6 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
         error.OutOfDateKHR => vk.Result.error_out_of_date_khr,
         else => return err,
     };
-
-    this.current_frame = (this.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
     return result;
 }
