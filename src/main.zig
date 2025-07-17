@@ -112,7 +112,7 @@ fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
-        simple_render_system.drawEntities(&cb, entities, &camera);
+        simple_render_system.drawEntities(cb, entities, &camera);
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);

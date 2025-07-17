@@ -58,7 +58,7 @@ fn createPipelineLayout(this: *@This()) !vk.PipelineLayout {
     return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
 }
 
-pub fn drawEntities(this: *@This(), cb: *const vk.CommandBufferProxy, entities: []const Entity, camera: *const Camera) void {
+pub fn drawEntities(this: *@This(), cb: vk.CommandBufferProxy, entities: []const Entity, camera: *const Camera) void {
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
 
     const projection_view = camera.projection_matrix.mul(camera.view_matrix);
