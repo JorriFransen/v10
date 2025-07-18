@@ -199,14 +199,14 @@ pub fn beginDrawing(this: *@This()) void {
 pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
     if (this.commands.items.len < 1) return;
 
-    std.mem.sort(DrawCommand, this.commands.items, this, struct {
-        fn f(ctx: @TypeOf(this), l: DrawCommand, r: DrawCommand) bool {
-            const default = ctx.default_white_texture.descriptor_set;
-            const l_tex_set = if (l.options.texture) |t| t.descriptor_set else default;
-            const r_tex_set = if (r.options.texture) |t| t.descriptor_set else default;
-            return @intFromEnum(l_tex_set) < @intFromEnum(r_tex_set);
-        }
-    }.f);
+    // std.mem.sort(DrawCommand, this.commands.items, this, struct {
+    //     fn f(ctx: @TypeOf(this), l: DrawCommand, r: DrawCommand) bool {
+    //         const default = ctx.default_white_texture.descriptor_set;
+    //         const l_tex_set = if (l.options.texture) |t| t.descriptor_set else default;
+    //         const r_tex_set = if (r.options.texture) |t| t.descriptor_set else default;
+    //         return @intFromEnum(l_tex_set) < @intFromEnum(r_tex_set);
+    //     }
+    // }.f);
 
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
     cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
@@ -305,15 +305,18 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
     this.device.endSingleTimeCommands(ccb);
 }
 
+inline fn pushCommand(this: *@This(), cmd: DrawCommand) void {
+    this.commands.append(cmd) catch @panic("Command memory full");
+}
+
 pub fn drawTriangle(this: *@This(), vertices: [3]Vertex, options: DrawOptions) void {
-    this.commands.append(.{
-        .options = options,
-        .data = .{ .triangle = vertices },
-    }) catch @panic("Command memory full");
+    this.pushCommand(.{ .options = options, .data = .{
+        .triangle = vertices,
+    } });
 }
 
 pub fn drawQuad(this: *@This(), pos: Vec2, size: Vec2, options: DrawOptions) void {
-    this.commands.append(.{ .options = options, .data = .{
+    this.pushCommand(.{ .options = options, .data = .{
         .quad = .{ .pos = pos, .size = size },
-    } }) catch @panic("Command memory full");
+    } });
 }
