@@ -4,9 +4,12 @@ const glfw = @import("glfw");
 const vk = @import("vulkan");
 
 // TODO: This should be handled by glfw in the furture?
-const c = @cImport({
-    @cInclude("fontconfig/fontconfig.h");
-});
+const c = if (builtin.os.tag == .windows)
+    struct {}
+else
+    @cImport({
+        @cInclude("fontconfig/fontconfig.h");
+    });
 
 const wlog = std.log.scoped(.window);
 
@@ -37,7 +40,7 @@ pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8, options: InitOpt
 
     glfw.windowHintString(glfw.WAYLAND_APP_ID, name);
 
-    _ = c.FcInit();
+    if (builtin.os.tag != .windows) _ = c.FcInit();
     const handle = glfw.createWindow(w, h, name, null, null);
 
     glfw.setWindowUserPointer(handle, this);
@@ -66,7 +69,7 @@ pub fn init(this: *@This(), w: i32, h: i32, name: [:0]const u8, options: InitOpt
 
 pub fn destroy(this: *@This()) void {
     glfw.destroyWindow(this.window);
-    c.FcFini();
+    if (builtin.os.tag != .windows) c.FcFini();
     glfw.terminate();
 }
 

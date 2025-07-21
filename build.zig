@@ -51,8 +51,10 @@ pub fn build(b: *std.Build) !void {
         .use_llvm = use_llvm,
     });
 
-    // TODO: This should be handled by glfw in the future?
-    exe.linkSystemLibrary("fontconfig");
+    if (target.result.os.tag != .windows) {
+        // TODO: This should be handled by glfw in the future?
+        exe.linkSystemLibrary("fontconfig");
+    }
 
     exe.linkLibrary(glfw_lib);
 
