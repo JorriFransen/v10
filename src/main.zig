@@ -20,6 +20,7 @@ const KBMoveController = @import("keyboard_movement_controller.zig");
 pub fn main() !void {
     try mem.init();
 
+    // TODO: Remove clap dependency
     cla.parse();
     try run();
 

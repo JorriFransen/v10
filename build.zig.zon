@@ -21,8 +21,9 @@
         },
         .glfw = .{
             // .path = "../glfw-zig-build",
+
             .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
-            .hash = "glfw_zig-3.4.0-qhyek82ePAAbLYJFrQh1oyM_VcXWOiC6bHddyTlecYhd",
+            .hash = "glfw_zig-3.4.0-qhyek8eqPABichVZGqprM8Cw65_gEo4p-G4dKlbcGQJz",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.313.tar.gz",
@@ -30,8 +31,9 @@
         },
         .vulkan = .{
             // .path = "../vulkan-zig",
-            .url = "https://github.com/JorriFransen/vulkan-zig/archive/refs/heads/jorrifransen/fixes.tar.gz",
-            .hash = "vulkan-0.0.0-r7Ytx7BQAwA36RXtrympzLKOIzcaBso07HMhsY8TMBkM",
+
+            .url = "https://github.com/Snektron/vulkan-zig/archive/refs/heads/master.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx5w-AwB0hzckD1mPHma0VgtiJ2DHj5dvgzWVwk2e",
         },
     },
 }
