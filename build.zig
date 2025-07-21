@@ -50,6 +50,10 @@ pub fn build(b: *std.Build) !void {
         .root_module = main_module,
         .use_llvm = use_llvm,
     });
+
+    // TODO: This should be handled by glfw in the future?
+    exe.linkSystemLibrary("fontconfig");
+
     exe.linkLibrary(glfw_lib);
     exe.root_module.addRPathSpecial("$ORIGIN/../lib");
     installDynamicLib(b, &target, glfw_lib);
