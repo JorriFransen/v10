@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) !void {
         .wayland = true,
         .target = target,
         .optimize = optimize,
-        .shared = true,
+        // .shared = true,
     });
     const glfw_lib = glfw.artifact("glfw");
     const glfw_module = glfw.module("glfw");
@@ -55,8 +55,6 @@ pub fn build(b: *std.Build) !void {
     exe.linkSystemLibrary("fontconfig");
 
     exe.linkLibrary(glfw_lib);
-    exe.root_module.addRPathSpecial("$ORIGIN/../lib");
-    installDynamicLib(b, &target, glfw_lib);
 
     b.installArtifact(exe);
 
