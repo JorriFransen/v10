@@ -19,6 +19,9 @@
             .url = "https://github.com/mrjbq7/zig-clap/archive/refs/heads/deprecated.tar.gz",
             .hash = "clap-0.10.0-oBajByflAQDwFzUCuASGq4YKYIKGrg2gXGyy60Qb50rF",
         },
+        .glfw = .{
+            .path = "deps/glfw-3.4",
+        },
         .glfw_zig = .{
             .url = "https://github.com/JorriFransen/glfw-zig/archive/refs/heads/main.tar.gz",
             .hash = "glfw_zig-3.4.0-8Jnxllk4AAD3SVMFJREJi32FcGMxBt7-zEOcRTkEvcV-",

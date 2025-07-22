@@ -1,0 +1,9 @@
+
+deps/glfw/
+ - Removed .github
+ - Removed .editorconfig
+ - Removed .mailmap
+ - Removed CMake/
+ - Removed CMakeLists.txt
+ - Removed examples/
+ - Removed docs/

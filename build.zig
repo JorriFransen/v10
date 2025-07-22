@@ -18,15 +18,16 @@ pub fn build(b: *std.Build) !void {
         .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
     });
     const vulkan_module = vulkan.module("vulkan-zig");
-    const glfw = b.dependency("glfw_zig", .{
+    const glfw_zig = b.dependency("glfw_zig", .{
         .x11 = true,
         .wayland = true,
         .target = target,
         .optimize = optimize,
+        .glfw = b.dependency("glfw", .{}).path(""),
         // .shared = true,
     });
-    const glfw_lib = glfw.artifact("glfw");
-    const glfw_module = glfw.module("glfw");
+    const glfw_lib = glfw_zig.artifact("glfw");
+    const glfw_module = glfw_zig.module("glfw");
     glfw_module.addImport("vulkan", vulkan_module);
 
     const memory_module = b.addModule("memory", .{
