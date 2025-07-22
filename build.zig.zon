@@ -16,14 +16,12 @@
             // .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
             // .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
 
-            .url = "https://github.com/mrjbq7/zig-clap/archive/refs/heads/deprecated.zip",
+            .url = "https://github.com/mrjbq7/zig-clap/archive/refs/heads/deprecated.tar.gz",
             .hash = "clap-0.10.0-oBajByflAQDwFzUCuASGq4YKYIKGrg2gXGyy60Qb50rF",
         },
-        .glfw = .{
-            // .path = "../glfw-zig-build",
-
-            .url = "https://github.com/JorriFransen/glfw-zig-build/archive/refs/heads/3.4-zig.tar.gz",
-            .hash = "glfw_zig-3.4.0-qhyek8eqPABichVZGqprM8Cw65_gEo4p-G4dKlbcGQJz",
+        .glfw_zig = .{
+            .url = "https://github.com/JorriFransen/glfw-zig/archive/refs/heads/main.tar.gz",
+            .hash = "glfw_zig-3.4.0-8Jnxllk4AAD3SVMFJREJi32FcGMxBt7-zEOcRTkEvcV-",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.313.tar.gz",

@@ -18,7 +18,7 @@ pub fn build(b: *std.Build) !void {
         .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
     });
     const vulkan_module = vulkan.module("vulkan-zig");
-    const glfw = b.dependency("glfw", .{
+    const glfw = b.dependency("glfw_zig", .{
         .x11 = true,
         .wayland = true,
         .target = target,
