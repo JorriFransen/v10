@@ -19,7 +19,13 @@
             .hash = "clap-0.10.0-oBajByflAQDwFzUCuASGq4YKYIKGrg2gXGyy60Qb50rF",
         },
         .glfw = .{ .path = "vendor/glfw-3.4" },
-        .glfw_zig = .{ .path = "vendor/glfw-zig" },
+        .glfw_zig = .{
+            // .path = "../glfw-zig",
+            // .path = "vendor/glfw-zig"
+
+            .url = "https://github.com/JorriFransen/glfw-zig/archive/refs/heads/main.tar.gz",
+            .hash = "glfw_zig-3.4.0-8JnxltU4AADiR7p5zUzBUdc_kuu3jkQMBVtGDDiz2xRV",
+        },
 
         // These should match glfw!
         .vulkan_headers = .{

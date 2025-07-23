@@ -86,7 +86,11 @@ pub fn waitEvents(_: *const @This()) void {
 }
 
 pub fn createWindowSurface(this: *const @This(), instance: vk.Instance, surface: *vk.SurfaceKHR) !void {
-    if (glfw.createWindowSurface(instance, this.window.?, null, surface) != .success) {
+    const instance_int: usize = @intFromEnum(instance);
+
+    const result_ = glfw.createWindowSurface(@ptrFromInt(instance_int), this.window.?, null, @ptrCast(surface));
+    const result: vk.Result = @enumFromInt(@intFromEnum(result_));
+    if (result != .success) {
         return error.glfwCreateWindowSurfaceFailed;
     }
 }

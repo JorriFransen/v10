@@ -27,8 +27,7 @@ pub fn build(b: *std.Build) !void {
         .wayland = true,
         .target = target,
         .optimize = optimize,
-        .vulkan_xml = vulkan_xml,
-        .glfw = b.dependency("glfw", .{}).path(""),
+        .glfw_source = b.dependency("glfw", .{}).path(""),
         // .shared = true,
     });
     const glfw_lib = glfw_zig.artifact("glfw");

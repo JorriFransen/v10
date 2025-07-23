@@ -17,8 +17,9 @@ pub const System = struct {
     vkd: vk.DeviceWrapper,
 
     pub fn init() !void {
+        const FnType = *const fn (vk.Instance, [*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction;
         system = .{
-            .vkb = vk.BaseWrapper.load(glfw.getInstanceProcAddress),
+            .vkb = vk.BaseWrapper.load(@as(FnType, @ptrCast(glfw.getInstanceProcAddress))),
             .vki = undefined,
             .vkd = undefined,
         };
