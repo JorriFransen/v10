@@ -12,7 +12,6 @@
 
     .dependencies = .{
         .clap = .{
-            // .path = "../zig-clap",
             // .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
             // .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
 
@@ -21,17 +20,16 @@
         },
         .glfw = .{ .path = "vendor/glfw-3.4" },
         .glfw_zig = .{
-            .path = "../glfw-zig",
-            // .url = "https://github.com/JorriFransen/glfw-zig/archive/refs/heads/main.tar.gz",
-            // .hash = "glfw_zig-3.4.0-8Jnxllk4AAD3SVMFJREJi32FcGMxBt7-zEOcRTkEvcV-",
+            .url = "https://github.com/JorriFransen/glfw-zig/archive/refs/heads/main.tar.gz",
+            .hash = "glfw_zig-3.4.0-8JnxllM8AAD1ZYdwk4_MNUxrYBeOSIzIVC1Ek9J81NbZ",
         },
+
+        // These should match glfw!
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.313.tar.gz",
             .hash = "N-V-__8AAPLT7gH4vgN7Xo6yZlOMrzllGbdvVxxhrwUvgI9r",
         },
         .vulkan = .{
-            // .path = "../vulkan-zig",
-
             .url = "https://github.com/Snektron/vulkan-zig/archive/refs/heads/master.tar.gz",
             .hash = "vulkan-0.0.0-r7Ytx5w-AwB0hzckD1mPHma0VgtiJ2DHj5dvgzWVwk2e",
         },

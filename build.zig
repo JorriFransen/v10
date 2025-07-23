@@ -13,22 +13,26 @@ pub fn build(b: *std.Build) !void {
     const use_llvm = if (target.result.os.tag == .windows) true else debugging;
 
     const clap = b.dependency("clap", .{});
+    const vulkan_headers = b.dependency("vulkan_headers", .{});
+    const vulkan_xml = vulkan_headers.path("registry/vk.xml");
     const vulkan = b.dependency("vulkan", .{
         .target = target,
-        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+        .registry = vulkan_xml,
     });
+
     const vulkan_module = vulkan.module("vulkan-zig");
+
     const glfw_zig = b.dependency("glfw_zig", .{
         .x11 = true,
         .wayland = true,
         .target = target,
         .optimize = optimize,
+        .vulkan_xml = vulkan_xml,
         .glfw = b.dependency("glfw", .{}).path(""),
         // .shared = true,
     });
     const glfw_lib = glfw_zig.artifact("glfw");
     const glfw_module = glfw_zig.module("glfw");
-    glfw_module.addImport("vulkan", vulkan_module);
 
     const memory_module = b.addModule("memory", .{
         .root_source_file = b.path("src/memory.zig"),
