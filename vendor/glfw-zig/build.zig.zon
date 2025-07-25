@@ -8,15 +8,6 @@
             .url = "https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz",
             .hash = "N-V-__8AAL40TADEbrysYHBl-UIZO4KiG4chP8pLDVDINGH4",
         },
-        .vulkan_headers = .{
-            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.313.tar.gz",
-            .hash = "N-V-__8AAPLT7gH4vgN7Xo6yZlOMrzllGbdvVxxhrwUvgI9r",
-            .lazy = true,
-        },
-        .vulkan = .{
-            .url = "https://github.com/Snektron/vulkan-zig/archive/refs/heads/master.tar.gz",
-            .hash = "vulkan-0.0.0-r7Ytx5w-AwB0hzckD1mPHma0VgtiJ2DHj5dvgzWVwk2e",
-        },
     },
     .paths = .{
         "build.zig",

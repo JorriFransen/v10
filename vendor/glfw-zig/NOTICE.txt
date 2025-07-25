@@ -1,0 +1,1 @@
+The 'src/glfw.zig' file is a zig translation of the 'include/GLFW/glfw3.h' file in the glfw repo.

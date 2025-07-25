@@ -7,8 +7,7 @@ const assert = std.debug.assert;
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const maybe_vulkan_xml = b.option(std.Build.LazyPath, "vulkan_xml", "Set the vulkan.xml for the generator to use");
-    const maybe_glfw_dep = b.option(std.Build.LazyPath, "glfw", "Set the path to the glfw source");
+    const maybe_glfw_dep = b.option(std.Build.LazyPath, "glfw_source", "Set the path to the glfw source");
 
     const shared = b.option(bool, "shared", "Build as shared library") orelse false;
     const use_x11 = b.option(bool, "x11", "Build with X11. (Linux only)") orelse true;
@@ -19,19 +18,6 @@ pub fn build(b: *std.Build) !void {
     const use_metal = b.option(bool, "metal", "Build with metal. (MacOs only)") orelse true;
 
     const glfw_source = GlfwSource.init(b, maybe_glfw_dep);
-
-    const vulkan_registry = if (maybe_vulkan_xml) |xml|
-        xml
-    else if (b.lazyDependency("vulkan_headers", .{})) |dep|
-        dep.path("registry/vk.xml")
-    else
-        b.path("");
-
-    const vulkan = b.dependency("vulkan", .{
-        .target = target,
-        .registry = vulkan_registry,
-    });
-    const vulkan_module = vulkan.module("vulkan-zig");
 
     const lib = b.addLibrary(.{
         .name = "glfw",
@@ -113,9 +99,6 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/glfw.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "vulkan", .module = vulkan_module },
-        },
     });
     glfw_mod.linkLibrary(lib);
 
