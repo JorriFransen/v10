@@ -39,16 +39,18 @@ fn parseCommandLine() !ClapOptions {
 
     const usage = struct {
         pub fn f(writer: anytype, exe_name: []const u8) void {
+            var adapter = writer.adaptToNewApi();
             writer.print("Usage: {s} ", .{exe_name}) catch {};
-            clap.usage(writer, clap.Help, &clap_params) catch {};
+            clap.usage(&adapter.new_interface, clap.Help, &clap_params) catch {};
             writer.print("\n", .{}) catch {};
         }
     }.f;
 
     const help = struct {
         pub fn f(writer: anytype, exe_name: []const u8) void {
+            var adapter = writer.adaptToNewApi();
             usage(writer, exe_name);
-            clap.help(writer, clap.Help, &clap_params, .{}) catch {};
+            clap.help(&adapter.new_interface, clap.Help, &clap_params, .{}) catch {};
         }
     }.f;
 

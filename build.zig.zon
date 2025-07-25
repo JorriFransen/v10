@@ -15,8 +15,8 @@
             // .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.10.0.tar.gz",
             // .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
 
-            .url = "https://github.com/mrjbq7/zig-clap/archive/refs/heads/deprecated.tar.gz",
-            .hash = "clap-0.10.0-oBajByflAQDwFzUCuASGq4YKYIKGrg2gXGyy60Qb50rF",
+            .url = "git+https://github.com/Hejsil/zig-clap.git#50be7bc7bfe5470bb90bb7c868b88f98078865a6",
+            .hash = "clap-0.10.0-oBajB43oAQCJM-H_eIjWNJAgFd1cFubnaVud5YS-t3f-",
         },
         .glfw = .{ .path = "vendor/glfw-3.4" },
         .glfw_zig = .{ .path = "vendor/glfw-zig" },
