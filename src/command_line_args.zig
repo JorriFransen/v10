@@ -4,7 +4,7 @@ const clap = @import("clap");
 const glfw = @import("glfw");
 
 const ClapOptions = struct {
-    glfw_platform: glfw.Platform = .ANY,
+    glfw_platform: glfw.Platform = .any,
     help: bool = false,
 };
 pub var clap_options: ClapOptions = undefined;

@@ -24,7 +24,7 @@
             // .path = "vendor/glfw-zig"
 
             .url = "https://github.com/JorriFransen/glfw-zig/archive/refs/heads/main.tar.gz",
-            .hash = "glfw_zig-3.4.0-8JnxltU4AADiR7p5zUzBUdc_kuu3jkQMBVtGDDiz2xRV",
+            .hash = "glfw_zig-3.4.0-8JnxlsoCBAD01DTKkqJWvIMfFpleSsaPZoJ4or5PUbml",
         },
 
         // These should match glfw!
