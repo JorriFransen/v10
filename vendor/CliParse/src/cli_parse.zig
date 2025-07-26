@@ -3,34 +3,74 @@ const log = std.log.scoped(.cli_parse);
 
 const Allocator = std.mem.Allocator;
 
-const CliParseError = error{};
+const Option = struct {
+    name: [:0]const u8,
+    short: ?u8,
 
-pub fn parse(comptime OptionStructType: type, allocator: Allocator) CliParseError!OptionStructType {
-    _ = allocator;
+    type: type,
+    value: union(enum) {
+        bool: bool,
+        int: i64,
+        uint: u64,
+        float: f32,
+        @"enum": u64,
+    },
+};
 
-    checkOptionsType(OptionStructType);
+pub fn option(default: anytype, name: [:0]const u8, short: ?u8) Option {
+    const ValueType = @TypeOf(default);
+    const ValueTypeInfo = @typeInfo(ValueType);
 
-    return .{};
+    const result = Option{
+        .name = name,
+        .short = short,
+        .type = ValueType,
+        .value = switch (ValueTypeInfo) {
+            else => @compileError(std.fmt.comptimePrint("Invalid option type '{s}'", .{@tagName(ValueTypeInfo)})),
+
+            .bool => .{ .bool = default },
+            .int => |int| if (int.signedness == .signed) .{ .int = default } else .{ .uint = default },
+            .float => .{ .float = default },
+            .@"enum" => .{ .@"enum" = @intFromEnum(default) },
+        },
+    };
+
+    return result;
 }
 
-fn checkOptionsType(comptime OptionStructType: type) void {
-    const info = @typeInfo(OptionStructType);
-    if (info != .@"struct") @compileError("OptionStructType must be a struct");
+pub fn OptionsStruct(comptime options: []const Option) type {
+    const fields: [options.len]std.builtin.Type.StructField = blk: {
+        var _fields: [options.len]std.builtin.Type.StructField = undefined;
+        inline for (options, &_fields) |opt, *field| {
+            field.* = .{
+                .name = opt.name,
+                .type = opt.type,
+                .alignment = @alignOf(opt.type),
+                .is_comptime = false,
 
-    const struct_info = info.@"struct";
-
-    inline for (struct_info.fields) |field| {
-        const field_info = @typeInfo(field.type);
-        switch (field_info) {
-            .@"enum" => {}, // ok
-            else => {
-                const err = std.fmt.comptimePrint("Invalid cli option type: '{s}' (for option: '{s}'), {s} not supported. Supported types are enum, bool, int, float.", .{
-                    @typeName(field.type),
-                    field.name,
-                    @tagName(field_info),
-                });
-                @compileError(err);
-            },
+                // TODO: Do this in fn option, store the default_value_ptr in the Option struct
+                .default_value_ptr = pblk: switch (opt.value) {
+                    .bool => |b| break :pblk &b,
+                    .int => |i| break :pblk &i,
+                    .uint => |u| break :pblk &u,
+                    .float => |f| break :pblk &f,
+                    .@"enum" => |e| break :pblk &e,
+                },
+            };
         }
-    }
+
+        break :blk _fields;
+    };
+
+    return @Type(.{ .@"struct" = .{
+        .layout = .auto,
+        .is_tuple = false,
+        .decls = &.{},
+        .fields = &fields,
+    } });
+}
+
+pub fn parse(comptime OptStruct: type, allocator: Allocator) OptStruct {
+    _ = allocator;
+    unreachable;
 }
