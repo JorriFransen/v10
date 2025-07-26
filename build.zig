@@ -12,7 +12,8 @@ pub fn build(b: *std.Build) !void {
 
     const use_llvm = if (target.result.os.tag == .windows) true else debugging;
 
-    const clap = b.dependency("clap", .{});
+    // const clap = b.dependency("clap", .{});
+    const cli_parse = b.dependency("CliParse", .{});
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_xml = vulkan_headers.path("registry/vk.xml");
     const vulkan = b.dependency("vulkan", .{
@@ -44,7 +45,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    main_module.addImport("clap", clap.module("clap"));
+    main_module.addImport("cli_parse", cli_parse.module("CliParse"));
     main_module.addImport("glfw", glfw_module);
     main_module.addImport("vulkan", vulkan_module);
     main_module.addImport("memory", memory_module);

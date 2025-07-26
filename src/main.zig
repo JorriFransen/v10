@@ -2,7 +2,7 @@ const std = @import("std");
 const mem = @import("memory");
 const gfx = @import("gfx.zig");
 const math = @import("math.zig");
-const cla = @import("command_line_args.zig");
+const clip = @import("cli_parse");
 
 const Instant = std.time.Instant;
 const Window = @import("window.zig");
@@ -17,11 +17,22 @@ const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
+pub const CliOptions = struct {
+    glfw_platform: @import("glfw").Platform = .any,
+    // test_str: []const u8,
+    // test_int: i32 = 44,
+    // test_float: f32 = 3.9,
+    // help: bool = false,
+};
+
+pub var cli_options: CliOptions = undefined;
+
 pub fn main() !void {
     try mem.init();
 
-    // TODO: Remove clap dependency
-    cla.parse();
+    cli_options = try clip.parse(CliOptions, mem.common_arena.allocator());
+    std.log.debug("Cli: {any}", .{cli_options});
+
     try run();
 
     try mem.deinit();
@@ -46,7 +57,7 @@ fn run() !void {
     const height = 1080;
 
     try window.init(width, height, "v10game", .{
-        .platform = cla.clap_options.glfw_platform,
+        .platform = cli_options.glfw_platform,
         .refresh_callback = refreshCallback,
         .resize_callback = resizeCallback,
     });
