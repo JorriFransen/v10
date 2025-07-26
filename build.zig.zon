@@ -5,9 +5,14 @@
     .minimum_zig_version = "0.15.0-dev.1023+f551c7c58",
 
     .paths = .{
-        "src/",
         "build.zig",
         "build.zig.zon",
+        "LICENSE.md",
+        "NOTICE.txt",
+        "res",
+        "shaders",
+        "src",
+        "vendor",
     },
 
     .dependencies = .{
