@@ -28,7 +28,7 @@ pub const CliOptions = struct {
 const CliOptionsType = clip.OptionsStruct(&.{
     clip.option(@import("glfw").Platform.any, "glfw_platform", 'p'),
     clip.option(@as(i32, -42), "test_int", 'i'),
-    clip.option(@as(u32, 42), "test_uint", 'u'),
+    clip.option(@as(u32, 42), "test_uint", null),
     clip.option(@as(f32, 4.2), "test_float", 'f'),
     clip.option(false, "help", 'h'),
 });
@@ -38,16 +38,10 @@ pub var cli_options: CliOptionsType = undefined;
 pub fn main() !void {
     try mem.init();
 
-    std.log.debug("field count: {}", .{@typeInfo(CliOptionsType).@"struct".fields.len});
-    inline for (@typeInfo(CliOptionsType).@"struct".fields) |field| {
-        std.log.debug("field: {s}: {} = {any},", .{ field.name, field.type, field.defaultValue() });
-    }
-    std.log.debug("decl count: {}", .{@typeInfo(CliOptionsType).@"struct".decls.len});
-    inline for (@typeInfo(CliOptionsType).@"struct".decls) |decl| {
-        std.log.debug("decl: {s}", .{decl.name});
-    }
+    var tmp = mem.get_temp();
+    cli_options = try clip.parse(CliOptionsType, mem.common_arena.allocator(), tmp.allocator());
+    tmp.release();
 
-    cli_options = clip.parse(CliOptionsType, mem.common_arena.allocator());
     std.log.debug("Cli: {any}", .{cli_options});
 
     try run();
@@ -74,7 +68,7 @@ fn run() !void {
     const height = 1080;
 
     try window.init(width, height, "v10game", .{
-        .platform = .any,
+        .platform = cli_options.glfw_platform,
         .refresh_callback = refreshCallback,
         .resize_callback = resizeCallback,
     });
