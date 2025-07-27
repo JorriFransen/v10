@@ -39,7 +39,9 @@ pub fn main() !void {
     try mem.init();
 
     var tmp = mem.get_temp();
-    cli_options = try clip.parse(CliOptionsType, mem.common_arena.allocator(), tmp.allocator());
+    cli_options = clip.parse(CliOptionsType, mem.common_arena.allocator(), tmp.allocator()) catch {
+        return;
+    };
     tmp.release();
 
     std.log.debug("Cli: {any}", .{cli_options});
