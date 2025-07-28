@@ -36,11 +36,8 @@ pub fn main() !void {
     cli_options = clip.parse(CliOptionsType, mem.common_arena.allocator(), tmp.allocator()) catch return;
     tmp.release();
 
-    std.log.debug("cli_options: {}", .{cli_options});
-    std.log.debug("cli_options.test_str: '{s}'", .{cli_options.test_str});
-
     if (cli_options.help) {
-        clip.usage(CliOptionsType);
+        try clip.usage(CliOptionsType, std.fs.File.stdout());
         return;
     }
 
