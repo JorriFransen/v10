@@ -3,6 +3,7 @@ const mem = @import("memory");
 const gfx = @import("gfx.zig");
 const math = @import("math.zig");
 const clip = @import("cli_parse");
+const glfw = @import("glfw");
 
 const Instant = std.time.Instant;
 const Window = @import("window.zig");
@@ -17,19 +18,12 @@ const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
-pub const CliOptions = struct {
-    glfw_platform: @import("glfw").Platform = .any,
-    // test_str: []const u8,
-    // test_int: i32 = 44,
-    // test_float: f32 = 3.9,
-    // help: bool = false,
-};
-
 const CliOptionsType = clip.OptionsStruct(&.{
-    clip.option(@import("glfw").Platform.any, "glfw_platform", 'p'),
+    clip.option(glfw.Platform.any, "glfw_platform", 'p'),
     clip.option(@as(i32, -42), "test_int", 'i'),
     clip.option(@as(u32, 42), "test_uint", null),
     clip.option(@as(f32, 4.2), "test_float", 'f'),
+    clip.option(@as([]const u8, "abc"), "test_str", 's'),
     clip.option(false, "help", 'h'),
 });
 
@@ -39,12 +33,13 @@ pub fn main() !void {
     try mem.init();
 
     var tmp = mem.get_temp();
-    cli_options = clip.parse(CliOptionsType, mem.common_arena.allocator(), tmp.allocator()) catch {
-        return;
-    };
+    cli_options = clip.parse(CliOptionsType, mem.common_arena.allocator(), tmp.allocator()) catch return;
     tmp.release();
 
-    std.log.debug("Cli: {any}", .{cli_options});
+    if (cli_options.help) {
+        clip.usage(CliOptionsType);
+        return;
+    }
 
     try run();
 
