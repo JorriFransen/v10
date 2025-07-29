@@ -46,6 +46,43 @@ pub fn option(default: anytype, name: [:0]const u8, short: ?u8) Option {
     return result;
 }
 
+/// // Example usage
+/// const OptionParser = clip.OptionParser(&.{
+///     clip.option(glfw.Platform.any, "glfw_platform", 'p'),
+///     clip.option(@as(i32, -42), "test_int", 'i'),
+///     clip.option(@as(u32, 42), "test_uint", null),
+///     clip.option(@as(f32, 4.2), "test_float", 'f'),
+///     clip.option(@as([]const u8, "abc"), "test_str", 's'),
+///     clip.option(false, "help", 'h'),
+/// });
+///
+/// const cli_options = OptionParser.parse(mem.common_arena.allocator(), tmp.allocator()) catch { try OptionParser.usage(std.fs.File.stderr());
+///     return; // Exit
+/// };
+/// tmp.release();
+///
+/// if (cli_options.help) {
+///     try OptionParser.usage(std.fs.File.stdout());
+///     return; // Exit
+/// }
+///
+/// // The type of cli_options looks like this:
+/// // struct {
+/// //     glfw_platform: glfw.Platform = any,
+/// //     test_int: i32 = -42,
+/// //     test_uint: u32 = 42,
+/// //     test_float: f32 = 4.2,
+/// //     test_str: []const u8 = "abc",
+/// //     help: bool = false,
+/// // };
+/// //
+/// // The parse function inititalizes the result to the default values, so any
+/// //  unset options will have their default value.
+/// // When specifying options by their long name (--option_name) a '=' between
+/// //  the name and value is mandatory.
+/// // When specifying options by their short name (-o) a '=' between the name
+/// // and value is optional. When the option is a boolean the value may be
+/// // omitted,in which case it will be set to the inverse of the default value.
 pub fn OptionParser(comptime options: []const Option) type {
     const Info = struct {
         fields: [options.len]std.builtin.Type.StructField,
