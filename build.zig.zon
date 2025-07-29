@@ -1,8 +1,8 @@
 .{
     .name = .v10,
-    .version = "0.0.1",
+    .version = "0.1.0",
     .fingerprint = 0x4fb9faee53eadd66,
-    .minimum_zig_version = "0.15.0-dev.1023+f551c7c58",
+    .minimum_zig_version = "0.15.0-dev.1274+147a85280",
 
     .paths = .{
         "build.zig",
@@ -23,7 +23,7 @@
             .url = "git+https://github.com/Hejsil/zig-clap.git#50be7bc7bfe5470bb90bb7c868b88f98078865a6",
             .hash = "clap-0.10.0-oBajB43oAQCJM-H_eIjWNJAgFd1cFubnaVud5YS-t3f-",
         },
-        .CliParse = .{ .path = "vendor/CliParse" },
+        .CliParse = .{ .path = "vendor/zig-CliParse" },
         .glfw = .{ .path = "vendor/glfw-3.4" },
         .glfw_zig = .{ .path = "vendor/glfw-zig" },
 
