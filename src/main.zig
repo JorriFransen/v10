@@ -18,7 +18,7 @@ const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
-const CliOptionsType = clip.OptionsStruct(&.{
+const OptionParser = clip.OptionParser(&.{
     clip.option(glfw.Platform.any, "glfw_platform", 'p'),
     clip.option(@as(i32, -42), "test_int", 'i'),
     clip.option(@as(u32, 42), "test_uint", null),
@@ -27,17 +27,20 @@ const CliOptionsType = clip.OptionsStruct(&.{
     clip.option(false, "help", 'h'),
 });
 
-pub var cli_options: CliOptionsType = undefined;
+pub var cli_options: OptionParser.Options = undefined;
 
 pub fn main() !void {
     try mem.init();
 
     var tmp = mem.get_temp();
-    cli_options = clip.parse(CliOptionsType, mem.common_arena.allocator(), tmp.allocator()) catch return;
+    cli_options = OptionParser.parse(mem.common_arena.allocator(), tmp.allocator()) catch {
+        try OptionParser.usage(std.fs.File.stderr());
+        return;
+    };
     tmp.release();
 
     if (cli_options.help) {
-        try clip.usage(CliOptionsType, std.fs.File.stdout());
+        try OptionParser.usage(std.fs.File.stdout());
         return;
     }
 
