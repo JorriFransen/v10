@@ -19,12 +19,12 @@ const Mat4 = math.Mat4;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
 const OptionParser = clip.OptionParser(&.{
-    clip.option(glfw.Platform.any, "glfw_platform", 'p'),
-    clip.option(@as(i32, -42), "test_int", 'i'),
-    clip.option(@as(u32, 42), "test_uint", null),
-    clip.option(@as(f32, 4.2), "test_float", 'f'),
-    clip.option(@as([]const u8, "abc"), "test_str", 's'),
-    clip.option(false, "help", 'h'),
+    clip.option(glfw.Platform.any, "glfw_platform", 'p', "Specify the platform hint for glfw.\n"),
+    clip.option(@as(i32, -42), "test_int", 'i', "test integer."),
+    clip.option(@as(u32, 42), "test_uint", null, null),
+    clip.option(@as(f32, 4.2), "test_float", 'f', "Some float."),
+    clip.option(@as([]const u8, "abc"), "test_str", 's', "\n"),
+    clip.option(false, "help", 'h', "Print this help message and exit.\n"),
 });
 
 pub var cli_options: OptionParser.Options = undefined;
