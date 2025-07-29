@@ -5,7 +5,6 @@ const Allocator = std.mem.Allocator;
 
 const assert = std.debug.assert;
 
-// TODO: Maybe these can be calculated when creating the OptionParser and stored on OptionParser?
 pub const max_name_length = 20;
 const max_type_length = 6;
 
@@ -149,7 +148,6 @@ pub fn OptionParser(comptime options: []const Option) type {
                         _ = tokens.eat(c[0..1]);
 
                         var field_name: ?[]const u8 = null;
-                        // TODO: Move this to the top of the loop below?
                         inline for (from_options) |o| {
                             if (short_name == o.short) {
                                 field_name = o.name;
@@ -176,10 +174,7 @@ pub fn OptionParser(comptime options: []const Option) type {
                     if (std.mem.eql(u8, field_name, o.name)) {
                         const field_type_info = @typeInfo(o.type);
 
-                        var parsed_eq = false;
-                        if (tokens.eat("=")) |_| {
-                            parsed_eq = true;
-                        }
+                        const parsed_eq = tokens.eat("=") != null;
 
                         if (field_type_info != .bool and !parsed_eq and !used_short) {
                             log.err("Expect '=' after option '--{s}'", .{o.name});
@@ -244,7 +239,6 @@ pub fn OptionParser(comptime options: []const Option) type {
                                 assert(ptr.child == u8);
                                 assert(ptr.is_const);
 
-                                // TODO: Check if we need to handle quotes on windows?
                                 const string = try allocator.alloc(u8, value_token.len);
                                 @memcpy(string, value_token);
 
