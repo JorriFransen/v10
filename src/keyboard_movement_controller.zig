@@ -3,7 +3,7 @@ const glfw = @import("glfw");
 const math = @import("math.zig");
 
 const Window = @import("window.zig");
-const Entity = @import("entity.zig");
+const Transform = @import("transform.zig");
 const Key = glfw.Key;
 const Vec3 = math.Vec3;
 
@@ -24,10 +24,10 @@ keys: KeyMappings = .{},
 move_speed: f32 = 3,
 look_speed: f32 = 1.5,
 
-pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *Entity) void {
+pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, transform: *Transform) void {
     const window = window_.handle;
 
-    const epsilon = std.math.floatEps(@TypeOf(entity.transform.rotation).T);
+    const epsilon = std.math.floatEps(@TypeOf(transform.rotation).T);
 
     var rot = Vec3{};
     if (glfw.getKey(window, this.keys.look_right) == .press) rot.y += 1;
@@ -36,7 +36,7 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *E
     if (glfw.getKey(window, this.keys.look_down) == .press) rot.x += 1;
 
     if (rot.dot(rot) > epsilon) {
-        const trot = &entity.transform.rotation;
+        const trot = &transform.rotation;
         trot.* = trot.add(rot.normalized().mul_scalar(dt * this.look_speed));
 
         // Limit pitch to about +/- 85 degrees
@@ -44,7 +44,7 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *E
         trot.y = @mod(trot.y, std.math.tau); // Avoid overflow
     }
 
-    const yaw = entity.transform.rotation.y;
+    const yaw = transform.rotation.y;
     const cy = @cos(yaw);
     const sy = @sin(yaw);
     const forward = Vec3.new(sy, 0, cy);
@@ -60,7 +60,7 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, entity: *E
     if (glfw.getKey(window, this.keys.move_down) == .press) mdir = mdir.add(up.negate());
 
     if (mdir.dot(mdir) > epsilon) {
-        const ttra = &entity.transform.translation;
+        const ttra = &transform.translation;
         ttra.* = ttra.add(mdir.normalized().mul_scalar(dt * this.move_speed));
         // std.log.debug("Cam pos: {}", .{ttra.*});
     }

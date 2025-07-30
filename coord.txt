@@ -1,7 +1,14 @@
 
-WORLDSPACE:
-    Right-handed
+3D worldspace:
+    Left-handed
     +X right
     +Y up
     +Z into screen
+
+2D (Screenspace):
+    Right-handed
+    +X right
+    +Y down
+    +Z into screen
+    
 
