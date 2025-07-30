@@ -5,6 +5,7 @@ const math = @import("../math.zig");
 pub const Vec2f32 = Vec(2, f32);
 pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
+pub const Mat4f32 = math.matrix.Mat4f32;
 
 pub fn Vec(comptime N: usize, comptime ET: type) type {
     switch (N) {
@@ -69,63 +70,85 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         3 => return extern struct {
             pub const V = @Vector(N, ET);
             pub const T = ET;
-            const F = VecFunctionsMixin(N, T, @This());
+            const Vec3 = @This();
+            const F = VecFunctionsMixin(N, T, Vec3);
+
             x: T = 0,
             y: T = 0,
             z: T = 0,
-            pub fn new(x: T, y: T, z: T) @This() {
+
+            pub fn new(x: T, y: T, z: T) Vec3 {
                 return @bitCast(V{ x, y, z });
             }
-            pub fn toPoint4(this: @This()) Vec(4, T) {
+            pub fn toPoint4(this: Vec3) Vec(4, T) {
                 return .{ .x = this.x, .y = this.y, .z = this.z, .w = 1 };
             }
-            pub fn toVector4(this: @This()) Vec(4, T) {
+            pub fn toVector4(this: Vec3) Vec(4, T) {
                 return .{ .x = this.x, .y = this.y, .z = this.z, .w = 0 };
             }
-            pub inline fn v(vec: V) @This() {
+            pub inline fn v(vec: V) Vec3 {
                 return F.v(vec);
             }
-            pub inline fn vector(vec: @This()) V {
+            pub inline fn vector(vec: Vec3) V {
                 return F.vector(vec);
             }
-            pub inline fn scalar(s: T) @This() {
+            pub inline fn scalar(s: T) Vec3 {
                 return F.scalar(s);
             }
-            pub inline fn length(vec: @This()) T {
+            pub inline fn length(vec: Vec3) T {
                 return F.length(vec);
             }
-            pub inline fn normalized(vec: @This()) @This() {
+            pub inline fn normalized(vec: Vec3) Vec3 {
                 return F.normalized(vec);
             }
-            pub inline fn negate(vec: @This()) @This() {
+            pub inline fn negate(vec: Vec3) Vec3 {
                 return F.negate(vec);
             }
-            pub inline fn add(a: @This(), b: @This()) @This() {
+            pub inline fn add(a: Vec3, b: Vec3) Vec3 {
                 return F.add(a, b);
             }
-            pub inline fn sub(a: @This(), b: @This()) @This() {
+            pub inline fn sub(a: Vec3, b: Vec3) Vec3 {
                 return F.sub(a, b);
             }
-            pub inline fn mul(a: @This(), b: @This()) @This() {
+            pub inline fn mul(a: Vec3, b: Vec3) Vec3 {
                 return F.mul(a, b);
             }
-            pub inline fn div(a: @This(), b: @This()) @This() {
+            pub inline fn div(a: Vec3, b: Vec3) Vec3 {
                 return F.div(a, b);
             }
-            pub inline fn mul_scalar(vec: @This(), s: T) @This() {
+            pub inline fn mul_scalar(vec: Vec3, s: T) Vec3 {
                 return F.mul_scalar(vec, s);
             }
-            pub inline fn div_scalar(vec: @This(), s: T) @This() {
+            pub inline fn div_scalar(vec: Vec3, s: T) Vec3 {
                 return F.div_scalar(vec, s);
             }
-            pub inline fn cross(a: @This(), b: @This()) @This() {
+            pub inline fn cross(a: Vec3, b: Vec3) Vec3 {
                 return F.cross(a, b);
             }
-            pub inline fn dot(a: @This(), b: @This()) T {
+            pub inline fn dot(a: Vec3, b: Vec3) T {
                 return F.dot(a, b);
             }
-            pub inline fn eql_eps(a: @This(), b: @This()) bool {
+            pub inline fn eql_eps(a: Vec3, b: Vec3) bool {
                 return F.eql_eps(a, b);
+            }
+
+            pub inline fn directionFromEuler(euler: Vec3) Vec3 {
+                // const rot = Mat4f32.rotation(euler.y, .{ .y = 1 }) // yaw
+                //     .rotate(euler.x, .{ .x = 1 }) // pitch
+                //     .rotate(euler.z, .{ .z = 1 }); // roll
+                // // mul_vec(.{.z=1}) // this vector is forward
+                // return rot.mul_vec(.{ .z = 1 }).xyz().normalized();
+
+                const cx = @cos(euler.x); // pitch
+                const sx = @sin(euler.x);
+                const cy = @cos(euler.y); // yaw
+                const sy = @sin(euler.y);
+
+                return Vec3.new(
+                    cx * sy, // X component of forward
+                    -sx, // Y component of forward
+                    cx * cy, // Z component of forward
+                ).normalized();
             }
         },
 

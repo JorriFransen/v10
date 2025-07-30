@@ -8,6 +8,7 @@ const resource = @import("../resource.zig");
 const Texture = @This();
 const Device = gfx.Device;
 
+const log = std.log.scoped(.gpu_texture);
 const assert = std.debug.assert;
 
 // TODO: Debugging, remove
@@ -18,6 +19,9 @@ image_memory: vk.DeviceMemory,
 image_view: vk.ImageView,
 descriptor_set: vk.DescriptorSet,
 
+width: u32,
+height: u32,
+
 // TODO: Define error
 pub fn load(device: *Device, name: []const u8) !Texture {
     var ta = mem.get_temp();
@@ -26,6 +30,7 @@ pub fn load(device: *Device, name: []const u8) !Texture {
     // const texture_file = try resource.load(ta.allocator(), name);
     // const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_resource = texture_file });
     const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_identifier = name });
+    log.info("Loaded cpu texture: '{s}' - {}x{}", .{ name, cpu_texture.size.x, cpu_texture.size.y });
 
     return try init(device, cpu_texture, name);
 }
@@ -89,6 +94,8 @@ pub fn init(device: *Device, cpu_texture: resource.CpuTexture, name: []const u8)
         .image_memory = image_mem,
         .image_view = image_view,
         .descriptor_set = descriptor_set,
+        .width = cpu_texture.size.x,
+        .height = cpu_texture.size.y,
     };
 }
 
@@ -106,7 +113,7 @@ fn createDescriptorSet(device: *Device, image_view: vk.ImageView) !vk.Descriptor
     const alloc_info = vk.DescriptorSetAllocateInfo{
         .descriptor_pool = device.descriptor_pool,
         .descriptor_set_count = 1,
-        .p_set_layouts = @ptrCast(&device.sampler_layout),
+        .p_set_layouts = @ptrCast(&device.linear_sampler_layout),
     };
 
     var result: vk.DescriptorSet = .null_handle;
@@ -115,7 +122,7 @@ fn createDescriptorSet(device: *Device, image_view: vk.ImageView) !vk.Descriptor
     const image_info = vk.DescriptorImageInfo{
         .image_layout = .shader_read_only_optimal,
         .image_view = image_view,
-        .sampler = device.sampler,
+        .sampler = device.linear_sampler,
     };
 
     const descriptor_writes = vk.WriteDescriptorSet{
@@ -144,5 +151,7 @@ pub fn initDefaultWhite(device: *Device) !Texture {
         .size = .{ .x = 1, .y = 1 },
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
+
+    log.debug("Default white!!!", .{});
     return init(device, cpu_texture, "default_white");
 }

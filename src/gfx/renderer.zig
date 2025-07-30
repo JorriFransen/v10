@@ -4,9 +4,11 @@ const mem = @import("memory");
 const gfx = @import("../gfx.zig");
 const vk = @import("vulkan");
 
+const Renderer = @This();
 const Window = @import("../window.zig");
 const Device = gfx.Device;
 const Swapchain = gfx.Swapchain;
+const PfnResizeCallback = *const fn (this: *const Renderer) void;
 
 const assert = std.debug.assert;
 
@@ -17,20 +19,23 @@ command_buffers: []vk.CommandBuffer = &.{},
 current_image_index: u32 = 0,
 current_frame_index: usize = 0,
 
-pub fn init(this: *@This(), window: *Window, device: *Device) !void {
+resize_callback: PfnResizeCallback = undefined,
+
+pub fn init(this: *Renderer, window: *Window, device: *Device, resize_callback: PfnResizeCallback) !void {
     this.window = window;
     this.device = device;
+    this.resize_callback = resize_callback;
 
     try this.swapchain.init(device, .{ .extent = window.getExtent() });
     try this.createCommandBuffers();
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn destroy(this: *Renderer) void {
     this.freeCommandBuffers();
     this.swapchain.destroy(true);
 }
 
-pub fn createCommandBuffers(this: *@This()) !void {
+pub fn createCommandBuffers(this: *Renderer) !void {
     const vkd = &this.device.device;
 
     assert(this.command_buffers.len == 0);
@@ -45,23 +50,23 @@ pub fn createCommandBuffers(this: *@This()) !void {
     try vkd.allocateCommandBuffers(&alloc_info, this.command_buffers.ptr);
 }
 
-pub fn freeCommandBuffers(this: *@This()) void {
+pub fn freeCommandBuffers(this: *Renderer) void {
     const vkd = &this.device.device;
     vkd.freeCommandBuffers(this.device.command_pool, @intCast(this.command_buffers.len), this.command_buffers.ptr);
 }
 
-pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
+pub fn beginFrame(this: *Renderer) !?vk.CommandBufferProxy {
     if (try this.device.device.waitForFences(1, @ptrCast(&this.swapchain.in_flight_fences[this.current_frame_index]), vk.TRUE, std.math.maxInt(u64)) != .success) {
         return error.VkWaitForFencesFailed;
     }
     const result = try this.swapchain.acquireNextImage(&this.current_image_index, this.current_frame_index);
 
-    if (result == .error_out_of_date_khr) {
+    if (result == .error_out_of_date_khr or result == .suboptimal_khr) {
         try this.recreateSwapchain();
         return null;
     }
 
-    if (result != .success and result != .suboptimal_khr) {
+    if (result != .success) {
         return error.swapchainAcquireNextImageFailed;
     }
 
@@ -81,11 +86,11 @@ pub fn beginFrame(this: *@This()) !?vk.CommandBufferProxy {
     return cb;
 }
 
-pub fn endFrame(this: *@This(), cb: vk.CommandBufferProxy) !void {
+pub fn endFrame(this: *Renderer, cb: vk.CommandBufferProxy) !void {
     try cb.endCommandBuffer();
 
     const result = try this.swapchain.submitCommandBuffers(cb.handle, &this.current_image_index, this.current_frame_index);
-    if (result == .error_out_of_date_khr or result == .suboptimal_khr or this.window.framebuffer_resized) {
+    if (this.window.framebuffer_resized or result == .error_out_of_date_khr or result == .suboptimal_khr) {
         this.window.framebuffer_resized = false;
         try this.recreateSwapchain();
         return;
@@ -96,7 +101,7 @@ pub fn endFrame(this: *@This(), cb: vk.CommandBufferProxy) !void {
     this.current_frame_index = @mod(this.current_frame_index + 1, Swapchain.MAX_FRAMES_IN_FLIGHT);
 }
 
-pub fn beginRenderpass(this: *@This(), cb: vk.CommandBufferProxy) void {
+pub fn beginRenderpass(this: *Renderer, cb: vk.CommandBufferProxy) void {
     const clear_values = [_]vk.ClearValue{
         .{ .color = .{ .float_32 = .{ 0.01, 0.01, 0.01, 1 } } },
         .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
@@ -130,12 +135,14 @@ pub fn beginRenderpass(this: *@This(), cb: vk.CommandBufferProxy) void {
     cb.setScissor(0, scissors.len, &scissors);
 }
 
-pub fn endRenderPass(_: *@This(), cb: vk.CommandBufferProxy) void {
+pub fn endRenderPass(_: *Renderer, cb: vk.CommandBufferProxy) void {
     cb.endRenderPass();
 }
 
-pub fn recreateSwapchain(this: *@This()) !void {
+pub fn recreateSwapchain(this: *Renderer) !void {
     const vkd = &this.device.device;
+
+    try vkd.deviceWaitIdle();
 
     var extent = this.window.getExtent();
     while (extent.width == 0 or extent.height == 0) {
@@ -147,8 +154,6 @@ pub fn recreateSwapchain(this: *@This()) !void {
             return;
         }
     }
-
-    try vkd.deviceWaitIdle();
 
     const old_chain = this.swapchain;
     var new_chain = this.swapchain;
@@ -188,4 +193,6 @@ pub fn recreateSwapchain(this: *@This()) !void {
     vkd.destroySwapchainKHR(old_chain.swapchain, null);
 
     this.swapchain = new_chain;
+
+    this.resize_callback(this);
 }

@@ -38,8 +38,8 @@ command_pool: vk.CommandPool = .null_handle,
 
 // TODO: Move this to renderer?
 descriptor_pool: vk.DescriptorPool = .null_handle,
-sampler: vk.Sampler = .null_handle,
-sampler_layout: vk.DescriptorSetLayout = .null_handle,
+linear_sampler: vk.Sampler = .null_handle,
+linear_sampler_layout: vk.DescriptorSetLayout = .null_handle,
 
 pub const DeviceInfo = struct {
     name: []const u8,
@@ -152,8 +152,8 @@ pub fn destroy(this: *@This()) void {
     const device = this.device;
     const vki = this.vki;
 
-    device.destroyDescriptorSetLayout(this.sampler_layout, null);
-    device.destroySampler(this.sampler, null);
+    device.destroyDescriptorSetLayout(this.linear_sampler_layout, null);
+    device.destroySampler(this.linear_sampler, null);
     device.destroyDescriptorPool(this.descriptor_pool, null);
 
     device.destroyCommandPool(this.command_pool, null);
@@ -360,7 +360,7 @@ fn createSamplerDescriptorSetLayout(this: *@This()) !void {
         .p_bindings = @ptrCast(&sampler_layout_binding),
     };
 
-    this.sampler_layout = try this.device.createDescriptorSetLayout(&layout_info, null);
+    this.linear_sampler_layout = try this.device.createDescriptorSetLayout(&layout_info, null);
 }
 
 const CreateTextureSamplerError = vk.DeviceProxy.CreateSamplerError;
@@ -368,9 +368,9 @@ fn createTextureSampler(this: *@This()) CreateTextureSamplerError!void {
     const sampler_info = vk.SamplerCreateInfo{
         .mag_filter = .linear,
         .min_filter = .linear,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+        .address_mode_w = .clamp_to_edge,
         .anisotropy_enable = vk.TRUE,
         .max_anisotropy = this.device_info.properties.limits.max_sampler_anisotropy,
         .border_color = .int_opaque_black,
@@ -383,7 +383,7 @@ fn createTextureSampler(this: *@This()) CreateTextureSamplerError!void {
         .max_lod = 0,
     };
 
-    this.sampler = try this.device.createSampler(&sampler_info, null);
+    this.linear_sampler = try this.device.createSampler(&sampler_info, null);
 }
 
 const CreateDescriptorPoolError = vk.DeviceProxy.CreateDescriptorPoolError;
@@ -396,9 +396,16 @@ fn createDescriptorPool(this: *@This()) CreateDescriptorPoolError!void {
     const pool_info = vk.DescriptorPoolCreateInfo{
         .pool_size_count = @intCast(pool_sizes.len),
         .p_pool_sizes = &pool_sizes,
-        .max_sets = 16,
+        .max_sets = 2,
     };
 
+    std.log.debug("Creating Descriptor Pool with:", .{});
+    std.log.debug("  max_sets: {}", .{pool_info.max_sets});
+    std.log.debug("  pool_size_count: {}", .{pool_info.pool_size_count});
+    if (pool_info.pool_size_count > 0) {
+        std.log.debug("  Pool Size 0 Type: {s}", .{@tagName(@as([*c]const vk.DescriptorPoolSize, @ptrCast(pool_info.p_pool_sizes))[0].type)});
+        std.log.debug("  Pool Size 0 Descriptor Count: {}", .{@as([*c]const vk.DescriptorPoolSize, @ptrCast(pool_info.p_pool_sizes))[0].descriptor_count});
+    }
     this.descriptor_pool = try this.device.createDescriptorPool(&pool_info, null);
 }
 

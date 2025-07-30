@@ -5,6 +5,8 @@ const vk = @import("vulkan");
 
 const Window = @This();
 
+const log = std.log.scoped(.window);
+
 // TODO: This should be handled by glfw in the furture?
 const c = if (builtin.os.tag == .windows)
     struct {}
@@ -15,24 +17,27 @@ else
 
 const wlog = std.log.scoped(.window);
 
-pub const PfnRefreshCallback = ?*const fn (this: *Window) void;
 pub const PfnResizeCallback = ?*const fn (this: *Window, width: i32, height: i32) void;
+pub const PfnFramebufferResizeCallback = ?*const fn (this: *Window) void;
 
+/// Framebuffer width in pixels
 width: i32 = undefined,
+/// Framebuffer height in pixels
 height: i32 = undefined,
+
 framebuffer_resized: bool = false,
 name: []const u8 = "",
 handle: *glfw.Window = undefined,
-refresh_callback: PfnRefreshCallback = null,
 resize_callback: PfnResizeCallback = null,
+framebuffer_resize_callback: PfnFramebufferResizeCallback = null,
 
 pub const InitOptions = struct {
     platform: glfw.Platform = .any,
-    refresh_callback: PfnRefreshCallback = null,
     resize_callback: PfnResizeCallback = null,
+    framebuffer_resize_callback: PfnFramebufferResizeCallback = null,
 };
 
-pub fn init(this: *Window, w: i32, h: i32, name: [:0]const u8, options: InitOptions) !void {
+pub fn init(this: *Window, logical_width: i32, logical_height: i32, name: [:0]const u8, options: InitOptions) !void {
     glfw.initHint(.platform, options.platform.initHint());
 
     if (glfw.init() != glfw.TRUE) return error.glfwInitFailed;
@@ -43,29 +48,31 @@ pub fn init(this: *Window, w: i32, h: i32, name: [:0]const u8, options: InitOpti
     glfw.windowHintString(.wayland_app_id, name);
 
     if (builtin.os.tag != .windows) _ = c.FcInit();
-    const handle = glfw.createWindow(w, h, name, null, null);
+    const handle = glfw.createWindow(logical_width, logical_height, name, null, null) orelse {
+        var msg: [*:0]const u8 = undefined;
+        const err = glfw.getError(&msg);
+        log.err("glfwCreateWindow failed with error: {s}", .{msg});
+        return err;
+    };
+
+    var fb_width: c_int = undefined;
+    var fb_height: c_int = undefined;
+    glfw.getFramebufferSize(handle, &fb_width, &fb_height);
 
     glfw.setWindowUserPointer(handle, this);
     _ = glfw.setFramebufferSizeCallback(handle, framebufferResizeCallback);
     _ = glfw.setKeyCallback(handle, keyCallback);
 
-    if (glfw.getPlatform() != .wayland) {
-        // The drawFrame() call in refreshCallback() makes window resizing laggy.
-        // This is meant to redraw during resize, to make resizing smoother, but wayland
-        //  doesn't have this problem to start with.
-        _ = glfw.setWindowRefreshCallback(handle, refreshCallback);
-    }
-
     _ = glfw.setWindowSizeCallback(handle, resizeCallback);
 
     this.* = .{
-        .width = w,
-        .height = h,
+        .width = fb_width,
+        .height = fb_height,
         .framebuffer_resized = false,
         .name = name,
         .handle = handle,
-        .refresh_callback = options.refresh_callback,
         .resize_callback = options.resize_callback,
+        .framebuffer_resize_callback = options.framebuffer_resize_callback,
     };
 }
 
@@ -102,9 +109,12 @@ pub fn getExtent(this: *const Window) vk.Extent2D {
 
 pub fn framebufferResizeCallback(glfw_window: *glfw.Window, width: c_int, height: c_int) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
+
     window.framebuffer_resized = true;
     window.width = width;
     window.height = height;
+
+    if (window.framebuffer_resize_callback) |cb| cb(window);
 }
 
 fn keyCallback(glfw_window: *glfw.Window, key: glfw.Key, scancode: c_int, action: glfw.Action, mods: glfw.Mod) callconv(.c) void {
@@ -126,5 +136,6 @@ fn refreshCallback(glfw_window: *glfw.Window) callconv(.c) void {
 
 fn resizeCallback(glfw_window: *glfw.Window, width: c_int, height: c_int) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
+
     if (window.resize_callback) |cb| cb(window, width, height);
 }

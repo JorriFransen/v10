@@ -125,7 +125,25 @@ pub const GamepadAxis = enum(c_int) {
     pub const last: c_int = glfw.GAMEPAD_AXIS_LAST;
 };
 
-pub const Error = enum(c_int) {
+pub const Error = error{
+    no_error,
+    not_initialized,
+    no_current_context,
+    invalid_enum,
+    invalid_value,
+    out_of_memory,
+    api_unavailable,
+    version_unavailable,
+    platform_error,
+    format_unavailable,
+    no_window_context,
+    cursor_unavailable,
+    feature_unavailable,
+    feature_unimplemented,
+    platform_unavailable,
+};
+
+pub const ErrorEnum = enum(c_int) {
     no_error = glfw.NO_ERROR,
     not_initialized = glfw.NOT_INITIALIZED,
     no_current_context = glfw.NO_CURRENT_CONTEXT,

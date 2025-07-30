@@ -63,7 +63,6 @@ fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
 }
 
 pub fn drawEntities(this: *@This(), cb: vk.CommandBufferProxy, entities: []const Entity, camera: *const Camera) void {
-    // TODO: Move this to beginRenderpass or beginframe?
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
 
     const projection_view = camera.projection_matrix.mul(camera.view_matrix);

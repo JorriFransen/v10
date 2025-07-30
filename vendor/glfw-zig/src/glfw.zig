@@ -31,6 +31,7 @@ pub const MouseButton = enums.MouseButton;
 pub const Joystick = enums.Joystick;
 pub const GamepadButton = enums.GamepadButton;
 pub const GamepadAxis = enums.GamepadAxis;
+pub const ErrorEnum = enums.ErrorEnum;
 pub const Error = enums.Error;
 pub const WindowHint = enums.WindowHint;
 pub const WindowHintValue = enums.WindowHintValue;
@@ -1208,7 +1209,7 @@ pub const DeallocateFun = *const fn (block: *anyopaque, user: *anyopaque) callco
 ///  @since Added in version 3.0.
 ///
 ///  @ingroup init
-pub const ErrorFun = *const fn (error_code: Error, description: [*:0]const u8) callconv(.c) void;
+pub const ErrorFun = *const fn (error_code: ErrorEnum, description: [*:0]const u8) callconv(.c) void;
 
 /// @brief The function pointer type for window position callbacks.
 ///
@@ -2018,7 +2019,27 @@ pub const getVersionString = f("glfwGetVersionString", fn () callconv(.c) [*:0]c
 ///  @since Added in version 3.3.
 ///
 ///  @ingroup init
-pub const getError = f("glfwGetError", fn (description: *[*:0]const u8) callconv(.c) Error);
+const glfwGetError = f("glfwGetError", fn (description: *[*:0]const u8) callconv(.c) ErrorEnum);
+pub fn getError(description: *[*:0]const u8) Error {
+    const code = glfwGetError(description);
+    switch (code) {
+        .no_error => return Error.no_error,
+        .not_initialized => return error.not_initialized,
+        .no_current_context => return error.no_current_context,
+        .invalid_enum => return error.invalid_enum,
+        .invalid_value => return error.invalid_value,
+        .out_of_memory => return error.out_of_memory,
+        .api_unavailable => return error.api_unavailable,
+        .version_unavailable => return error.version_unavailable,
+        .platform_error => return error.platform_error,
+        .format_unavailable => return error.format_unavailable,
+        .no_window_context => return error.no_window_context,
+        .cursor_unavailable => return error.cursor_unavailable,
+        .feature_unavailable => return error.feature_unavailable,
+        .feature_unimplemented => return error.feature_unimplemented,
+        .platform_unavailable => return error.platform_unavailable,
+    }
+}
 
 /// @brief Sets the error callback.
 ///
@@ -2774,7 +2795,7 @@ pub const windowHintString = f("glfwWindowHintString", fn (hint: WindowHint, val
 ///  @since Added in version 3.0.  Replaces `glfwOpenWindow`.
 ///
 ///  @ingroup window
-pub const createWindow = f("glfwCreateWindow", fn (width: c_int, height: c_int, title: [*:0]const u8, monitor: ?*Monitor, share: ?*Window) callconv(.c) *Window);
+pub const createWindow = f("glfwCreateWindow", fn (width: c_int, height: c_int, title: [*:0]const u8, monitor: ?*Monitor, share: ?*Window) callconv(.c) ?*Window);
 
 /// @brief Destroys the specified window and its context.
 ///
@@ -3189,7 +3210,7 @@ pub const setWindowSize = f("glfwSetWindowSize", fn (window: *Window, width: c_i
 ///  @since Added in version 3.0.
 ///
 ///  @ingroup window
-pub const getFrameBufferSize = f("glfwGetFrameBufferSize", fn (window: *Window, width: *c_int, height: *c_int) callconv(.c) void);
+pub const getFramebufferSize = f("glfwGetFramebufferSize", fn (window: *Window, width: *c_int, height: *c_int) callconv(.c) void);
 
 /// @brief Retrieves the size of the frame of the window.
 ///
