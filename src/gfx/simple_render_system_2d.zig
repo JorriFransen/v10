@@ -8,9 +8,11 @@ const mem = @import("memory");
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Texture = gfx.Texture;
+const Camera = gfx.Camera;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
+const Mat4 = math.Mat4;
 const Index = u32;
 
 const assert = std.debug.assert;
@@ -42,6 +44,9 @@ index_staging_buffer_mapped: []Index = undefined,
 
 default_white_texture: Texture = undefined,
 
+projection_matrix: Mat4 = .identity,
+view_matrix: Mat4 = .identity,
+
 pub const Vertex = extern struct {
     pos: Vec2,
     color: Vec4 = Vec4.scalar(1),
@@ -70,6 +75,11 @@ pub const Vertex = extern struct {
         }
         break :blk result;
     };
+};
+
+const PushConstantData = extern struct {
+    projection: Mat4,
+    view: Mat4,
 };
 
 pub const DrawOptions = struct {
@@ -169,13 +179,19 @@ pub fn destroy(this: *@This()) void {
 }
 
 fn createPipelineLayout(this: *@This(), device: *Device) !vk.PipelineLayout {
-    const descriptor_set_layout = device.sampler_layout;
+    const descriptor_set_layout = device.linear_sampler_layout;
+
+    const push_constant_ranges = [_]vk.PushConstantRange{.{
+        .offset = 0,
+        .size = @sizeOf(PushConstantData),
+        .stage_flags = .{ .vertex_bit = true },
+    }};
 
     const pipeline_layout_info = vk.PipelineLayoutCreateInfo{
         .set_layout_count = 1,
         .p_set_layouts = @ptrCast(&descriptor_set_layout),
-        .push_constant_range_count = 0,
-        .p_push_constant_ranges = null,
+        .push_constant_range_count = push_constant_ranges.len,
+        .p_push_constant_ranges = &push_constant_ranges,
     };
 
     return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
@@ -192,11 +208,14 @@ fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
     return try Pipeline.create(this.device, "shaders/simple_2d.vert.spv", "shaders/simple_2d.frag.spv", pipeline_config);
 }
 
-pub fn beginDrawing(this: *@This()) void {
+pub fn beginBatch(this: *@This(), camera: *const Camera) void {
+    this.projection_matrix = camera.projection_matrix;
+    this.view_matrix = camera.view_matrix;
+
     this.commands.clearRetainingCapacity();
 }
 
-pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
+pub fn endBatch(this: *@This(), cb: vk.CommandBufferProxy) void {
     if (this.commands.items.len < 1) return;
 
     // std.mem.sort(DrawCommand, this.commands.items, this, struct {
@@ -209,6 +228,14 @@ pub fn endDrawing(this: *@This(), cb: vk.CommandBufferProxy) void {
     // }.f);
 
     cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
+
+    const pcd = PushConstantData{
+        .projection = this.projection_matrix,
+        .view = this.view_matrix,
+    };
+
+    cb.pushConstants(this.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
+
     cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
     const index_type = comptime switch (Index) {
         else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
@@ -319,4 +346,12 @@ pub fn drawQuad(this: *@This(), pos: Vec2, size: Vec2, options: DrawOptions) voi
     this.pushCommand(.{ .options = options, .data = .{
         .quad = .{ .pos = pos, .size = size },
     } });
+}
+
+pub fn drawTexture(this: *@This(), texture: *const Texture, pos: Vec2) void {
+    const size = Vec2.new(@floatFromInt(texture.width), @floatFromInt(texture.height));
+    this.pushCommand(.{
+        .options = .{ .texture = texture, .color = white },
+        .data = .{ .quad = .{ .pos = pos, .size = size } },
+    });
 }
