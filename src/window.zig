@@ -48,6 +48,7 @@ pub fn init(this: *Window, logical_width: i32, logical_height: i32, name: [:0]co
     glfw.windowHintString(.wayland_app_id, name);
 
     if (builtin.os.tag != .windows) _ = c.FcInit();
+
     const handle = glfw.createWindow(logical_width, logical_height, name, null, null) orelse {
         var msg: [*:0]const u8 = undefined;
         const err = glfw.getError(&msg);
@@ -58,6 +59,8 @@ pub fn init(this: *Window, logical_width: i32, logical_height: i32, name: [:0]co
     var fb_width: c_int = undefined;
     var fb_height: c_int = undefined;
     glfw.getFramebufferSize(handle, &fb_width, &fb_height);
+
+    log.debug("Actual window size: {},{}", .{ fb_width, fb_height });
 
     glfw.setWindowUserPointer(handle, this);
     _ = glfw.setFramebufferSizeCallback(handle, framebufferResizeCallback);
@@ -92,6 +95,10 @@ pub fn pollEvents(_: *const Window) void {
 
 pub fn waitEvents(_: *const Window) void {
     glfw.waitEvents();
+}
+
+pub fn waitEventsTimeout(_: *const Window, timeout: f64) void {
+    glfw.waitEventsTimeout(timeout);
 }
 
 pub fn createWindowSurface(this: *const Window, instance: vk.Instance, surface: *vk.SurfaceKHR) !void {

@@ -152,6 +152,5 @@ pub fn initDefaultWhite(device: *Device) !Texture {
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
 
-    log.debug("Default white!!!", .{});
     return init(device, cpu_texture, "default_white");
 }

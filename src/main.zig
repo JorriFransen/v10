@@ -94,12 +94,11 @@ fn run() !void {
     try d2d.init(&device, renderer.swapchain.render_pass);
     defer d2d.destroy();
 
-    std.log.debug("Main textures", .{});
     test_texture = try Texture.load(&device, "res/textures/test.png");
     defer test_texture.deinit(&device);
 
-    // uv_test_texture = try Texture.load(&device, "res/textures/test.png");
-    // defer uv_test_texture.deinit(&device);
+    uv_test_texture = try Texture.load(&device, "res/textures/uvtest.png");
+    defer uv_test_texture.deinit(&device);
 
     var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.deinit(&device);
@@ -128,7 +127,7 @@ fn run() !void {
     var current_time = try Instant.now();
 
     while (!window.shouldClose()) {
-        window.pollEvents();
+        window.waitEventsTimeout(0);
 
         const new_time = try Instant.now();
         const dt_ns = new_time.since(current_time);
@@ -160,8 +159,9 @@ fn drawFrame() !void {
 
         d2d.beginBatch(&camera_2d);
         {
-            d2d.drawTexture(&test_texture, Vec2.scalar(100));
-            d2d.drawTexture(&test_texture, .{ .x = 800, .y = 100 });
+            d2d.drawTexture(&test_texture, Vec2.scalar(20));
+            d2d.drawTexture(&uv_test_texture, .{ .x = 532, .y = 20 });
+            // d2d.drawQuad(Vec2.scalar(1124), Vec2.scalar(100), .{ .color = Vec4.new(1, 0, 0, 1) });
         }
         d2d.endBatch(cb);
 
@@ -171,6 +171,7 @@ fn drawFrame() !void {
 }
 
 fn resizeCallback(r: *const Renderer) void {
+    std.log.debug("Resized to: {},{}", .{ r.window.width, r.window.height });
     const aspect = r.swapchain.extentSwapchainRatio();
 
     camera_3d.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
