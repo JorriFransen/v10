@@ -5,6 +5,7 @@ const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
 const mem = @import("memory");
 
+const RenderSystem2D = @This();
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Texture = gfx.Texture;
@@ -43,9 +44,6 @@ index_staging_buffer_memory: vk.DeviceMemory = .null_handle,
 index_staging_buffer_mapped: []Index = undefined,
 
 default_white_texture: Texture = undefined,
-
-projection_matrix: Mat4 = .identity,
-view_matrix: Mat4 = .identity,
 
 pub const Vertex = extern struct {
     pos: Vec2,
@@ -97,7 +95,7 @@ pub const DrawCommand = struct {
     },
 };
 
-pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
+pub fn init(this: *RenderSystem2D, device: *Device, render_pass: vk.RenderPass) !void {
     this.device = device;
 
     this.layout = try this.createPipelineLayout(device);
@@ -155,7 +153,7 @@ pub fn init(this: *@This(), device: *Device, render_pass: vk.RenderPass) !void {
     this.default_white_texture = try Texture.initDefaultWhite(device);
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn destroy(this: *RenderSystem2D) void {
     const vkd = &this.device.device;
 
     vkd.destroyPipelineLayout(this.layout, null);
@@ -178,7 +176,7 @@ pub fn destroy(this: *@This()) void {
     this.default_white_texture.deinit(this.device);
 }
 
-fn createPipelineLayout(this: *@This(), device: *Device) !vk.PipelineLayout {
+fn createPipelineLayout(this: *RenderSystem2D, device: *Device) !vk.PipelineLayout {
     const descriptor_set_layout = device.linear_sampler_layout;
 
     const push_constant_ranges = [_]vk.PushConstantRange{.{
@@ -197,7 +195,7 @@ fn createPipelineLayout(this: *@This(), device: *Device) !vk.PipelineLayout {
     return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
 }
 
-fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
+fn createPipeline(this: *RenderSystem2D, render_pass: vk.RenderPass) !Pipeline {
     var pipeline_config = Pipeline.ConfigInfo.default2d();
     pipeline_config.render_pass = render_pass;
     pipeline_config.pipeline_layout = this.layout;
@@ -208,150 +206,166 @@ fn createPipeline(this: *@This(), render_pass: vk.RenderPass) !Pipeline {
     return try Pipeline.create(this.device, "shaders/simple_2d.vert.spv", "shaders/simple_2d.frag.spv", pipeline_config);
 }
 
-pub fn beginBatch(this: *@This(), camera: *const Camera) void {
-    this.projection_matrix = camera.projection_matrix;
-    this.view_matrix = camera.view_matrix;
+pub fn beginBatch(this: *RenderSystem2D, cb: vk.CommandBufferProxy, camera: *const Camera, ppu: f32) Batch {
+    assert(ppu >= 1);
 
     this.commands.clearRetainingCapacity();
+
+    return .{
+        .ppu = ppu,
+        .camera = camera,
+        .system = this,
+        .command_buffer = cb,
+    };
 }
 
-pub fn endBatch(this: *@This(), cb: vk.CommandBufferProxy) void {
-    if (this.commands.items.len < 1) return;
+pub const Batch = struct {
+    ppu: f32,
+    camera: *const Camera,
+    system: *RenderSystem2D,
+    command_buffer: vk.CommandBufferProxy,
 
-    // std.mem.sort(DrawCommand, this.commands.items, this, struct {
-    //     fn f(ctx: @TypeOf(this), l: DrawCommand, r: DrawCommand) bool {
-    //         const default = ctx.default_white_texture.descriptor_set;
-    //         const l_tex_set = if (l.options.texture) |t| t.descriptor_set else default;
-    //         const r_tex_set = if (r.options.texture) |t| t.descriptor_set else default;
-    //         return @intFromEnum(l_tex_set) < @intFromEnum(r_tex_set);
-    //     }
-    // }.f);
-
-    cb.bindPipeline(.graphics, this.pipeline.graphics_pipeline);
-
-    const pcd = PushConstantData{
-        .projection = this.projection_matrix,
-        .view = this.view_matrix,
-    };
-
-    cb.pushConstants(this.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
-
-    cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
-    const index_type = comptime switch (Index) {
-        else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
-        u8 => .uint8_khr,
-        u16 => .uint16,
-        u32 => .uint32,
-    };
-    cb.bindIndexBuffer(this.index_buffer, 0, index_type);
-
-    const vbuf = this.vertex_staging_buffer_mapped;
-    const ibuf = this.index_staging_buffer_mapped;
-
-    var vertex_count: usize = 0;
-    var index_count: usize = 0;
-
-    var batch_index_count: u32 = 0;
-    var batch_index_offset: u32 = 0;
-
-    var current_texture: *const Texture =
-        this.commands.items[0].options.texture orelse
-        &this.default_white_texture;
-
-    current_texture.bind(cb, this.layout);
-
-    for (this.commands.items) |*command| {
-        const options = &command.options;
-        const command_texture = options.texture orelse &this.default_white_texture;
-
-        if (current_texture != command_texture) {
-            if (batch_index_count > 0) {
-                cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
-            }
-
-            current_texture = command_texture;
-            current_texture.bind(cb, this.layout);
-            batch_index_offset = @intCast(index_count);
-            batch_index_count = 0;
-        }
-
-        switch (command.data) {
-            .triangle => |*t| {
-                if (options.color) |color| {
-                    inline for (t) |*e| e.color = color;
-                }
-
-                const fi: Index = @intCast(vertex_count);
-                const indices = [3]Index{ fi, fi + 1, fi + 2 };
-
-                assert(vertex_count + t.len <= vbuf.len);
-                assert(index_count + indices.len <= ibuf.len);
-
-                @memcpy(vbuf[vertex_count .. vertex_count + t.len], t);
-                @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
-
-                vertex_count += t.len;
-                index_count += indices.len;
-                batch_index_count += indices.len;
-            },
-            .quad => |q| {
-                const color = options.color orelse white;
-
-                const verts = [4]Vertex{
-                    .{ .pos = q.pos, .color = color, .uv = Vec2.new(0, 0) },
-                    .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color, .uv = Vec2.new(1, 0) },
-                    .{ .pos = q.pos.add(q.size), .color = color, .uv = Vec2.new(1, 1) },
-                    .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color, .uv = Vec2.new(0, 1) },
-                };
-
-                const fi: Index = @intCast(vertex_count);
-                const indices = [6]Index{
-                    fi, fi + 1, fi + 2,
-                    fi, fi + 2, fi + 3,
-                };
-
-                assert(vertex_count + verts.len <= vbuf.len);
-                assert(index_count + indices.len <= ibuf.len);
-
-                @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
-                @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
-
-                vertex_count += verts.len;
-                index_count += indices.len;
-                batch_index_count += indices.len;
-            },
-        }
+    inline fn pushCommand(this: *const Batch, cmd: DrawCommand) void {
+        this.system.commands.append(cmd) catch @panic("Command memory full");
     }
 
-    cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 1);
+    pub fn drawTriangle(this: *const Batch, vertices: [3]Vertex, options: DrawOptions) void {
+        this.pushCommand(.{ .options = options, .data = .{
+            .triangle = vertices,
+        } });
+    }
 
-    // TODO: Consistent command buffer for this?
-    const ccb = this.device.beginSingleTimeCommands();
-    this.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, this.vertex_buffer_size);
-    this.device.copyBuffer(ccb, this.index_staging_buffer, this.index_buffer, this.index_buffer_size);
-    this.device.endSingleTimeCommands(ccb);
-}
+    pub fn drawQuad(this: *const Batch, pos: Vec2, size: Vec2, options: DrawOptions) void {
+        this.pushCommand(.{ .options = options, .data = .{
+            .quad = .{ .pos = pos, .size = size },
+        } });
+    }
 
-inline fn pushCommand(this: *@This(), cmd: DrawCommand) void {
-    this.commands.append(cmd) catch @panic("Command memory full");
-}
+    pub fn drawTexture(this: *const Batch, texture: *const Texture, pos: Vec2) void {
+        const size = Vec2.new(@floatFromInt(texture.width), @floatFromInt(texture.height));
+        this.pushCommand(.{
+            .options = .{ .texture = texture, .color = white },
+            .data = .{ .quad = .{ .pos = pos, .size = size.div_scalar(this.ppu) } },
+        });
+    }
 
-pub fn drawTriangle(this: *@This(), vertices: [3]Vertex, options: DrawOptions) void {
-    this.pushCommand(.{ .options = options, .data = .{
-        .triangle = vertices,
-    } });
-}
+    pub fn end(batch: *const Batch) void {
+        const system = batch.system;
+        const cb = batch.command_buffer;
 
-pub fn drawQuad(this: *@This(), pos: Vec2, size: Vec2, options: DrawOptions) void {
-    this.pushCommand(.{ .options = options, .data = .{
-        .quad = .{ .pos = pos, .size = size },
-    } });
-}
+        if (system.commands.items.len < 1) return;
 
-pub fn drawTexture(this: *@This(), texture: *const Texture, pos: Vec2) void {
-    const size = Vec2.new(@floatFromInt(texture.width), @floatFromInt(texture.height));
-    this.pushCommand(.{
-        .options = .{ .texture = texture, .color = white },
-        .data = .{ .quad = .{ .pos = pos, .size = size } },
-    });
-}
+        // std.mem.sort(DrawCommand, this.commands.items, this, struct {
+        //     fn f(ctx: @TypeOf(this), l: DrawCommand, r: DrawCommand) bool {
+        //         const default = ctx.default_white_texture.descriptor_set;
+        //         const l_tex_set = if (l.options.texture) |t| t.descriptor_set else default;
+        //         const r_tex_set = if (r.options.texture) |t| t.descriptor_set else default;
+        //         return @intFromEnum(l_tex_set) < @intFromEnum(r_tex_set);
+        //     }
+        // }.f);
+
+        cb.bindPipeline(.graphics, system.pipeline.graphics_pipeline);
+
+        const pcd = PushConstantData{
+            .projection = batch.camera.projection_matrix,
+            .view = batch.camera.view_matrix,
+        };
+
+        cb.pushConstants(system.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
+
+        cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{system.vertex_buffer}, &[_]vk.DeviceSize{0});
+        const index_type = comptime switch (Index) {
+            else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
+            u8 => .uint8_khr,
+            u16 => .uint16,
+            u32 => .uint32,
+        };
+        cb.bindIndexBuffer(system.index_buffer, 0, index_type);
+
+        const vbuf = system.vertex_staging_buffer_mapped;
+        const ibuf = system.index_staging_buffer_mapped;
+
+        var vertex_count: usize = 0;
+        var index_count: usize = 0;
+
+        var batch_index_count: u32 = 0;
+        var batch_index_offset: u32 = 0;
+
+        var current_texture: *const Texture =
+            system.commands.items[0].options.texture orelse
+            &system.default_white_texture;
+
+        current_texture.bind(cb, system.layout);
+
+        for (system.commands.items) |*command| {
+            const options = &command.options;
+            const command_texture = options.texture orelse &system.default_white_texture;
+
+            if (current_texture != command_texture) {
+                if (batch_index_count > 0) {
+                    cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
+                }
+
+                current_texture = command_texture;
+                current_texture.bind(cb, system.layout);
+                batch_index_offset = @intCast(index_count);
+                batch_index_count = 0;
+            }
+
+            switch (command.data) {
+                .triangle => |*t| {
+                    if (options.color) |color| {
+                        inline for (t) |*e| e.color = color;
+                    }
+
+                    const fi: Index = @intCast(vertex_count);
+                    const indices = [3]Index{ fi, fi + 1, fi + 2 };
+
+                    assert(vertex_count + t.len <= vbuf.len);
+                    assert(index_count + indices.len <= ibuf.len);
+
+                    @memcpy(vbuf[vertex_count .. vertex_count + t.len], t);
+                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                    vertex_count += t.len;
+                    index_count += indices.len;
+                    batch_index_count += indices.len;
+                },
+                .quad => |q| {
+                    const color = options.color orelse white;
+
+                    const verts = [4]Vertex{
+                        .{ .pos = q.pos, .color = color, .uv = Vec2.new(0, 0) },
+                        .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color, .uv = Vec2.new(1, 0) },
+                        .{ .pos = q.pos.add(q.size), .color = color, .uv = Vec2.new(1, 1) },
+                        .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color, .uv = Vec2.new(0, 1) },
+                    };
+
+                    const fi: Index = @intCast(vertex_count);
+                    const indices = [6]Index{
+                        fi, fi + 1, fi + 2,
+                        fi, fi + 2, fi + 3,
+                    };
+
+                    assert(vertex_count + verts.len <= vbuf.len);
+                    assert(index_count + indices.len <= ibuf.len);
+
+                    @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
+                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                    vertex_count += verts.len;
+                    index_count += indices.len;
+                    batch_index_count += indices.len;
+                },
+            }
+        }
+
+        cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 1);
+
+        // TODO: Consistent command buffer for this?
+        const ccb = system.device.beginSingleTimeCommands();
+        system.device.copyBuffer(ccb, system.vertex_staging_buffer, system.vertex_buffer, system.vertex_buffer_size);
+        system.device.copyBuffer(ccb, system.index_staging_buffer, system.index_buffer, system.index_buffer_size);
+        system.device.endSingleTimeCommands(ccb);
+    }
+};

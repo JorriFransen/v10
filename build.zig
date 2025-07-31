@@ -83,7 +83,7 @@ pub fn build(b: *std.Build) !void {
         .source_dir = b.path("res"),
         .install_dir = .bin,
         .install_subdir = "res",
-        .exclude_extensions = &.{ "gitignore", "blend", "blend1" },
+        .exclude_extensions = &.{ "gitignore", "blend", "blend1", "aseprite", "svg" },
     });
 
     const run_exe = b.addRunArtifact(exe);

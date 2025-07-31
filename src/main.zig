@@ -58,15 +58,26 @@ var device: Device = .{};
 var renderer: Renderer = .{};
 var d3d: SimpleRenderSystem3D = .{};
 var d2d: SimpleRenderSystem2D = .{};
+
+const camera_3d_fov_y = math.radians(50);
+const camera_3d_near_clip = 0.1;
+const camera_3d_far_clip = 100;
 var camera_3d: Camera = .{};
+var camera_3d_transform: Transform = .{};
+
+const camera_2d_near_clip = -50;
+const camera_2d_far_clip = 50;
+
+var camera_ui: Camera = .{};
+
+const camer_2d_ppu = 32;
+const camera_2d_zoom = 4;
 var camera_2d: Camera = .{};
+
 var kb_move_controller: KBMoveController = .{};
 
-var camera_3d_transform: Transform = .{};
-var camera_2d_transform: Transform = .{};
 var entities: []Entity = &.{};
 var entity: *Entity = undefined;
-var arrow_t: *Entity = undefined;
 
 var test_texture: Texture = undefined;
 var uv_test_texture: Texture = undefined;
@@ -94,7 +105,7 @@ fn run() !void {
     try d2d.init(&device, renderer.swapchain.render_pass);
     defer d2d.destroy();
 
-    test_texture = try Texture.load(&device, "res/textures/test.png");
+    test_texture = try Texture.load(&device, "res/textures/test_tile.png");
     defer test_texture.deinit(&device);
 
     uv_test_texture = try Texture.load(&device, "res/textures/uvtest.png");
@@ -119,10 +130,28 @@ fn run() !void {
     camera_3d_transform.translation = .{ .z = 0 };
 
     const aspect = renderer.swapchain.extentSwapchainRatio();
-    camera_3d.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 100);
+    camera_3d.setProjection(.{ .perspective = .{
+        .fov_y = camera_3d_fov_y,
+        .aspect = aspect,
+    } }, camera_3d_near_clip, camera_3d_far_clip);
 
-    camera_2d_transform.translation.z = -10;
-    camera_2d.setProjection(.{ .orthographic = .{ .l = 0, .r = @as(f32, @floatFromInt(window.width)), .t = 0, .b = @as(f32, @floatFromInt(window.height)) } }, -50, 50);
+    camera_ui.setProjection(.{ .orthographic = .{
+        .l = 0,
+        .r = @as(f32, @floatFromInt(window.width)),
+        .t = 0,
+        .b = @as(f32, @floatFromInt(window.height)),
+    } }, camera_2d_near_clip, camera_2d_far_clip);
+    camera_ui.setViewYXZ(Vec3.new(0, 0, camera_2d_near_clip), Vec3.scalar(0));
+
+    const ortho_height = @as(f32, @floatFromInt(window.height)) / (2 * camer_2d_ppu) / camera_2d_zoom;
+    const ortho_width = ortho_height * aspect;
+    camera_2d.setProjection(.{ .orthographic = .{
+        .l = -ortho_width,
+        .r = ortho_width,
+        .b = -ortho_height,
+        .t = ortho_height,
+    } }, camera_2d_near_clip, camera_2d_far_clip);
+    camera_2d.setViewYXZ(Vec3.new(0, 0, camera_2d_near_clip), Vec3.scalar(0));
 
     var current_time = try Instant.now();
 
@@ -136,8 +165,6 @@ fn run() !void {
 
         camera_3d.setViewYXZ(camera_3d_transform.translation, camera_3d_transform.rotation);
 
-        camera_2d.setViewYXZ(camera_2d_transform.translation, camera_2d_transform.rotation);
-
         updateEntities(dt);
         drawFrame() catch unreachable;
     }
@@ -146,24 +173,34 @@ fn run() !void {
 }
 
 fn updateEntities(dt: f32) void {
+    _ = dt;
     // kb_move_controller.moveInPlaneXZ(&window, dt, &camera_3d_transform);
 
-    kb_move_controller.moveInPlaneXZ(&window, dt, &camera_2d_transform);
+    // kb_move_controller.moveInPlaneXZ(&window, dt, &camera_2d_transform);
 }
 
 fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
         renderer.beginRenderpass(cb);
 
-        d3d.drawEntities(cb, entities, &camera_3d);
+        // d3d.drawEntities(cb, entities, &camera_3d);
 
-        d2d.beginBatch(&camera_2d);
+        const batch = d2d.beginBatch(cb, &camera_2d, camer_2d_ppu);
         {
-            d2d.drawTexture(&test_texture, Vec2.scalar(20));
-            d2d.drawTexture(&uv_test_texture, .{ .x = 532, .y = 20 });
-            // d2d.drawQuad(Vec2.scalar(1124), Vec2.scalar(100), .{ .color = Vec4.new(1, 0, 0, 1) });
+            batch.drawQuad(.{ .x = 0, .y = 0 }, Vec2.scalar(1), .{ .color = Vec4.new(1, 0, 0, 1) });
+            batch.drawQuad(.{ .x = 2, .y = 0 }, Vec2.scalar(1), .{ .texture = &test_texture });
+            // batch.drawQuad(.{ .x = 1, .y = 1 }, Vec2.scalar(2), .{ .texture = &test_texture });
+            // batch.drawTexture(&test_texture, Vec2.scalar(1));
         }
-        d2d.endBatch(cb);
+        batch.end();
+
+        const ui_batch = d2d.beginBatch(cb, &camera_ui, 1);
+        {
+            // ui_batch.drawTexture(&test_texture, Vec2.scalar(20));
+            // ui_batch.drawTexture(&uv_test_texture, .{ .x = 532, .y = 20 });
+            // ui_batch.drawQuad(Vec2.scalar(1124), Vec2.scalar(100), .{ .color = Vec4.new(1, 0, 0, 1) });
+        }
+        ui_batch.end();
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
@@ -171,23 +208,27 @@ fn drawFrame() !void {
 }
 
 fn resizeCallback(r: *const Renderer) void {
-    std.log.debug("Resized to: {},{}", .{ r.window.width, r.window.height });
     const aspect = r.swapchain.extentSwapchainRatio();
+    // std.log.debug("Resized to: {},{} - aspect: {}", .{ r.window.width, r.window.height, aspect });
 
-    camera_3d.setProjection(.{ .perspective = .{ .fov_y = math.radians(50), .aspect = aspect } }, 0.1, 10);
+    camera_3d.setProjection(.{ .perspective = .{
+        .fov_y = camera_3d_fov_y,
+        .aspect = aspect,
+    } }, camera_3d_near_clip, camera_3d_far_clip);
 
-    if (aspect >= 1) {
-        camera_2d.setProjection(.{ .orthographic = .{ .l = 0, .r = @as(f32, @floatFromInt(renderer.window.width)), .t = 0, .b = @as(f32, @floatFromInt(renderer.window.height)) } }, -50, 50);
-    } else {
-        camera_2d.setProjection(.{ .orthographic = .{ .l = 0, .r = @as(f32, @floatFromInt(renderer.window.width)), .t = 0, .b = @as(f32, @floatFromInt(renderer.window.height)) } }, -50, 50);
-    }
+    const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * camer_2d_ppu) / camera_2d_zoom;
+    const ortho_width = ortho_height * aspect;
+    camera_2d.setProjection(.{ .orthographic = .{
+        .l = -ortho_width,
+        .r = ortho_width,
+        .b = -ortho_height,
+        .t = ortho_height,
+    } }, camera_2d_near_clip, camera_2d_far_clip);
 
-    // std.log.debug("Resized: {},{}  --  swapchain_extent: {},{}  --  swapchain_window: {},{}", .{
-    //     renderer.window.width,
-    //     renderer.window.height,
-    //     r.swapchain.swapchain_extent.width,
-    //     r.swapchain.swapchain_extent.height,
-    //     r.swapchain.window_extent.width,
-    //     r.swapchain.window_extent.height,
-    // });
+    camera_ui.setProjection(.{ .orthographic = .{
+        .l = 0,
+        .r = @as(f32, @floatFromInt(renderer.window.width)),
+        .t = 0,
+        .b = @as(f32, @floatFromInt(renderer.window.height)),
+    } }, camera_2d_near_clip, camera_2d_far_clip);
 }
