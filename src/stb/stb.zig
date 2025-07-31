@@ -60,7 +60,7 @@ pub const image = struct {
         const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &c, rgb_alpha);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
 
-        const len = @as(usize, @intCast(x * y * c));
+        const len = @as(usize, @intCast(x * y * rgb_alpha));
         const data = try allocator.alloc(u8, len);
         @memcpy(data, stb_data[0..len]);
 
@@ -97,6 +97,7 @@ pub export fn stbiZigMalloc(size: usize) callconv(.c) ?*anyopaque {
         log.err("stbi arena malloc failure!", .{});
         return null;
     };
+
     const ptrs: []usize = @as([*]usize, @ptrCast(@alignCast(raw_ptr)))[0..2];
     ptrs[0] = size;
     return @ptrCast(&ptrs[1]);
@@ -113,11 +114,13 @@ pub export fn stbiZigRealloc(ptr: ?*anyopaque, new_size: usize) callconv(.c) ?*a
         const old_ptrs: []usize = @as([*]usize, @ptrCast(@alignCast(old_raw_start)))[0..2];
         const old_total_size = old_ptrs[0] + header_size;
         const old_memory: []u8 = @as([*]u8, @ptrCast(&old_ptrs[0]))[0..old_total_size];
-        assert(old_memory.ptr == @as([*]u8, @ptrCast(ptr)));
+
+        assert(&old_ptrs[1] == @as(*usize, @alignCast(@ptrCast(ptr))));
         const new_total_size = new_size + header_size;
 
         if (current_temp.arena.rawResize(old_memory, default_align, new_total_size)) {
             old_ptrs[0] = new_size;
+
             return ptr;
         } else {
             const new_ptr_opt = current_temp.arena.rawRemap(old_memory, default_align, new_total_size);
@@ -139,8 +142,8 @@ pub export fn stbiZigFree(ptr: ?*anyopaque) callconv(.c) void {
     if (ptr) |p| {
         const raw_ptr: [*]u8 = @as([*]u8, @ptrCast(p)) - header_size;
         const ptrs: []usize = @as([*]usize, @ptrCast(@alignCast(raw_ptr)))[0..2];
-        const memory: []u8 = @as([*]u8, @ptrCast(&ptrs[1]))[0..ptrs[0]];
-        assert(memory.ptr == @as([*]u8, @ptrCast(ptr)));
+        const memory: []u8 = @as([*]u8, @ptrCast(&ptrs[0]))[0..ptrs[0]];
+        assert(&ptrs[1] == @as(*usize, @alignCast(@ptrCast(ptr))));
 
         current_temp.arena.rawFree(memory, default_align);
     }
