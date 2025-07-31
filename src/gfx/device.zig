@@ -390,22 +390,15 @@ const CreateDescriptorPoolError = vk.DeviceProxy.CreateDescriptorPoolError;
 fn createDescriptorPool(this: *@This()) CreateDescriptorPoolError!void {
     const pool_sizes = [_]vk.DescriptorPoolSize{.{
         .type = .combined_image_sampler,
-        .descriptor_count = 1,
+        .descriptor_count = 128,
     }};
 
     const pool_info = vk.DescriptorPoolCreateInfo{
         .pool_size_count = @intCast(pool_sizes.len),
         .p_pool_sizes = &pool_sizes,
-        .max_sets = 2,
+        .max_sets = 128,
     };
 
-    std.log.debug("Creating Descriptor Pool with:", .{});
-    std.log.debug("  max_sets: {}", .{pool_info.max_sets});
-    std.log.debug("  pool_size_count: {}", .{pool_info.pool_size_count});
-    if (pool_info.pool_size_count > 0) {
-        std.log.debug("  Pool Size 0 Type: {s}", .{@tagName(@as([*c]const vk.DescriptorPoolSize, @ptrCast(pool_info.p_pool_sizes))[0].type)});
-        std.log.debug("  Pool Size 0 Descriptor Count: {}", .{@as([*c]const vk.DescriptorPoolSize, @ptrCast(pool_info.p_pool_sizes))[0].descriptor_count});
-    }
     this.descriptor_pool = try this.device.createDescriptorPool(&pool_info, null);
 }
 
