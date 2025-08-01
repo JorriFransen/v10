@@ -9,11 +9,13 @@ const RenderSystem2D = @This();
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Texture = gfx.Texture;
+const Sprite = gfx.Sprite;
 const Camera = gfx.Camera;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 const Mat4 = math.Mat4;
+const Rect = math.Rect;
 const Index = u32;
 
 const assert = std.debug.assert;
@@ -84,6 +86,7 @@ pub const DrawOptions = struct {
     /// This color overrides the per-vertex color
     color: ?Vec4 = Vec4.scalar(1),
     texture: ?*const Texture = null,
+    uv_rect: ?Rect = null,
 };
 
 pub const DrawCommand = struct {
@@ -206,13 +209,10 @@ fn createPipeline(this: *RenderSystem2D, render_pass: vk.RenderPass) !Pipeline {
     return try Pipeline.create(this.device, "shaders/simple_2d.vert.spv", "shaders/simple_2d.frag.spv", pipeline_config);
 }
 
-pub fn beginBatch(this: *RenderSystem2D, cb: vk.CommandBufferProxy, camera: *const Camera, ppu: f32) Batch {
-    assert(ppu >= 1);
-
+pub fn beginBatch(this: *RenderSystem2D, cb: vk.CommandBufferProxy, camera: *const Camera) Batch {
     this.commands.clearRetainingCapacity();
 
     return .{
-        .ppu = ppu,
         .camera = camera,
         .system = this,
         .command_buffer = cb,
@@ -220,7 +220,6 @@ pub fn beginBatch(this: *RenderSystem2D, cb: vk.CommandBufferProxy, camera: *con
 }
 
 pub const Batch = struct {
-    ppu: f32,
     camera: *const Camera,
     system: *RenderSystem2D,
     command_buffer: vk.CommandBufferProxy,
@@ -242,10 +241,32 @@ pub const Batch = struct {
     }
 
     pub fn drawTexture(this: *const Batch, texture: *const Texture, pos: Vec2) void {
-        const size = Vec2.new(@floatFromInt(texture.width), @floatFromInt(texture.height));
+        const size = texture.getSize();
         this.pushCommand(.{
             .options = .{ .texture = texture, .color = white },
-            .data = .{ .quad = .{ .pos = pos, .size = size.div_scalar(this.ppu) } },
+            .data = .{ .quad = .{ .pos = pos, .size = size } },
+        });
+    }
+
+    pub fn drawTextureRect(this: *const Batch, texture: *const Texture, rect: Rect) void {
+        this.pushCommand(.{
+            .options = .{ .texture = texture, .color = white },
+            .data = .{ .quad = .{ .pos = rect.pos, .size = rect.size } },
+        });
+    }
+
+    pub fn drawTextureRectUv(this: *const Batch, texture: *const Texture, rect: Rect, uv_rect: Rect) void {
+        this.pushCommand(.{
+            .options = .{ .texture = texture, .color = white, .uv_rect = uv_rect },
+            .data = .{ .quad = .{ .pos = rect.pos, .size = rect.size } },
+        });
+    }
+
+    pub fn drawSprite(this: *const Batch, sprite: *const Sprite, pos: Vec2) void {
+        const size = sprite.texture.getSize().div_scalar(sprite.ppu);
+        this.pushCommand(.{
+            .options = .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect },
+            .data = .{ .quad = .{ .pos = pos, .size = size } },
         });
     }
 
@@ -334,11 +355,21 @@ pub const Batch = struct {
                 .quad => |q| {
                     const color = options.color orelse white;
 
+                    const uvs: [4]Vec2 = if (options.uv_rect) |uvr|
+                        .{
+                            uvr.pos,
+                            Vec2.new(uvr.pos.x + uvr.size.x, uvr.pos.y),
+                            uvr.pos.add(uvr.size),
+                            Vec2.new(uvr.pos.x, uvr.pos.y + uvr.size.y),
+                        }
+                    else
+                        .{ Vec2.scalar(0), Vec2.new(1, 0), Vec2.scalar(1), Vec2.new(0, 1) };
+
                     const verts = [4]Vertex{
-                        .{ .pos = q.pos, .color = color, .uv = Vec2.new(0, 0) },
-                        .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color, .uv = Vec2.new(1, 0) },
-                        .{ .pos = q.pos.add(q.size), .color = color, .uv = Vec2.new(1, 1) },
-                        .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color, .uv = Vec2.new(0, 1) },
+                        .{ .pos = q.pos, .color = color, .uv = uvs[0] },
+                        .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color, .uv = uvs[1] },
+                        .{ .pos = q.pos.add(q.size), .color = color, .uv = uvs[2] },
+                        .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color, .uv = uvs[3] },
                     };
 
                     const fi: Index = @intCast(vertex_count);
