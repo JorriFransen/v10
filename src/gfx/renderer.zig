@@ -101,9 +101,9 @@ pub fn endFrame(this: *Renderer, cb: vk.CommandBufferProxy) !void {
     this.current_frame_index = @mod(this.current_frame_index + 1, Swapchain.MAX_FRAMES_IN_FLIGHT);
 }
 
-pub fn beginRenderpass(this: *Renderer, cb: vk.CommandBufferProxy) void {
+pub fn beginRenderpass(this: *Renderer, cb: vk.CommandBufferProxy, clear_color: @Vector(4, f32)) void {
     const clear_values = [_]vk.ClearValue{
-        .{ .color = .{ .float_32 = .{ 0.01, 0.01, 0.01, 1 } } },
+        .{ .color = .{ .float_32 = clear_color } },
         .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
     };
 
