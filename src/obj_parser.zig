@@ -358,6 +358,19 @@ inline fn stripRight(str: []const u8) []const u8 {
     return str[0..end];
 }
 
+/// Triangulates concave faces in the model using ear clipping algorithm.
+/// Handles 3D faces by projecting them onto their dominant plane.
+/// Does not support polygons with holes or self-intersections.
+///
+/// Process:
+/// 1. Project 3D face onto 2D plane using face normal
+/// 2. Remove duplicate/collinear vertices
+/// 3. Find and clip "ears" (convex triangles) until only one triangle remains
+///
+/// Arguments:
+///  - model: Input model to triangulate
+///  - allocator: For final triangulated mesh storage
+///  - temp: Temporary arena for working data
 fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
     var triangle_face_count: usize = 0;
     for (model.faces, 0..) |face, i| {
@@ -622,7 +635,9 @@ fn earclip(model: *ModelBuilder, allocator: Allocator, temp: TempArena) !void {
     model.faces = new_faces.items;
 }
 
-/// Calculates the winding sum (or signed area) times two
+/// Calculates signed area of polygon using shoelace formula.
+/// Positive result means counter-clockwise winding.
+/// Result is twice the actual area.
 inline fn shoelaceSum(vertices: []const ProjectedVertex) f32 {
     assert(vertices.len >= 3);
 
@@ -637,6 +652,9 @@ inline fn shoelaceSum(vertices: []const ProjectedVertex) f32 {
     return shoelace_sum;
 }
 
+/// Test if point is inside triangle using signed areas.
+/// Uses geometric epsilon for robust comparisons.
+/// Returns true if point is strictly inside the triangle.
 inline fn inTriangle(p: Vec2, ta: Vec2, tb: Vec2, tc: Vec2) bool {
     const ab = tb - ta;
     const bc = tc - tb;
@@ -664,6 +682,9 @@ inline fn cross2d(a: Vec2, b: Vec2) f32 {
     return (a[0] * b[1]) - (a[1] * b[0]);
 }
 
+/// Tests if three 2D points are collinear within geometric epsilon.
+/// Uses signed area of the triangle formed by the points.
+/// Returns true if points are effectively collinear.
 inline fn collinear(a: Vec2, b: Vec2, c: Vec2) bool {
     const vec_in = b - a;
     const vec_out = c - b;

@@ -4,3 +4,5 @@ zig-out/
 
 .nvim.lua
 .lldbinit
+
+AGENTS.md
