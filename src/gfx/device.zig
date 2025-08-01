@@ -38,8 +38,10 @@ command_pool: vk.CommandPool = .null_handle,
 
 // TODO: Move this to renderer?
 descriptor_pool: vk.DescriptorPool = .null_handle,
+
 linear_sampler: vk.Sampler = .null_handle,
-linear_sampler_layout: vk.DescriptorSetLayout = .null_handle,
+nearest_sampler: vk.Sampler = .null_handle,
+texture_sampler_set_layout: vk.DescriptorSetLayout = .null_handle,
 
 pub const DeviceInfo = struct {
     name: []const u8,
@@ -142,7 +144,8 @@ pub fn create(system: *gfx.System, window: *const Window) !@This() {
     try this.createCommandPool();
 
     try this.createSamplerDescriptorSetLayout();
-    try this.createTextureSampler();
+    this.linear_sampler = try this.createSampler(.linear);
+    this.nearest_sampler = try this.createSampler(.nearest);
     try this.createDescriptorPool();
 
     return this;
@@ -152,8 +155,9 @@ pub fn destroy(this: *@This()) void {
     const device = this.device;
     const vki = this.vki;
 
-    device.destroyDescriptorSetLayout(this.linear_sampler_layout, null);
+    device.destroyDescriptorSetLayout(this.texture_sampler_set_layout, null);
     device.destroySampler(this.linear_sampler, null);
+    device.destroySampler(this.nearest_sampler, null);
     device.destroyDescriptorPool(this.descriptor_pool, null);
 
     device.destroyCommandPool(this.command_pool, null);
@@ -360,14 +364,25 @@ fn createSamplerDescriptorSetLayout(this: *@This()) !void {
         .p_bindings = @ptrCast(&sampler_layout_binding),
     };
 
-    this.linear_sampler_layout = try this.device.createDescriptorSetLayout(&layout_info, null);
+    this.texture_sampler_set_layout = try this.device.createDescriptorSetLayout(&layout_info, null);
 }
 
 const CreateTextureSamplerError = vk.DeviceProxy.CreateSamplerError;
-fn createTextureSampler(this: *@This()) CreateTextureSamplerError!void {
+
+fn createSampler(this: *@This(), filter: gfx.Texture.Filter) CreateTextureSamplerError!vk.Sampler {
+    const filter_mode: vk.Filter = switch (filter) {
+        .nearest => .nearest,
+        .linear => .linear,
+    };
+
+    const mipmap_mode: vk.SamplerMipmapMode = switch (filter) {
+        .nearest => .nearest,
+        .linear => .linear,
+    };
+
     const sampler_info = vk.SamplerCreateInfo{
-        .mag_filter = .linear,
-        .min_filter = .linear,
+        .mag_filter = filter_mode,
+        .min_filter = filter_mode,
         .address_mode_u = .clamp_to_edge,
         .address_mode_v = .clamp_to_edge,
         .address_mode_w = .clamp_to_edge,
@@ -377,13 +392,12 @@ fn createTextureSampler(this: *@This()) CreateTextureSamplerError!void {
         .unnormalized_coordinates = vk.FALSE,
         .compare_enable = vk.FALSE,
         .compare_op = .always,
-        .mipmap_mode = .linear,
+        .mipmap_mode = mipmap_mode,
         .mip_lod_bias = 0,
         .min_lod = 0,
         .max_lod = 0,
     };
-
-    this.linear_sampler = try this.device.createSampler(&sampler_info, null);
+    return try this.device.createSampler(&sampler_info, null);
 }
 
 const CreateDescriptorPoolError = vk.DeviceProxy.CreateDescriptorPoolError;
