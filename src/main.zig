@@ -89,9 +89,15 @@ var test_tile_texture: Texture = undefined;
 var test_texture: Texture = undefined;
 
 var test_tile_sprite: Sprite = undefined;
-var test_tile_sprite_sub: Sprite = undefined;
+var test_tile_sprite_sub_tl: Sprite = undefined;
+var test_tile_sprite_sub_tr: Sprite = undefined;
+var test_tile_sprite_sub_bl: Sprite = undefined;
+var test_tile_sprite_sub_br: Sprite = undefined;
 var test_sprite: Sprite = undefined;
-var test_sprite_sub: Sprite = undefined;
+var test_sprite_sub_tl: Sprite = undefined;
+var test_sprite_sub_tr: Sprite = undefined;
+var test_sprite_sub_bl: Sprite = undefined;
+var test_sprite_sub_br: Sprite = undefined;
 
 fn run() !void {
     const width = 1920;
@@ -119,12 +125,18 @@ fn run() !void {
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .nearest);
     defer test_tile_texture.deinit(&device);
     test_tile_sprite = Sprite.init(&test_tile_texture, .{ .yflip = true });
-    test_tile_sprite_sub = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
+    test_tile_sprite_sub_tl = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
+    test_tile_sprite_sub_tr = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_tile_sprite_sub_bl = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_tile_sprite_sub_br = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
     test_texture = try Texture.load(&device, "res/textures/test.png", .linear);
     defer test_texture.deinit(&device);
     test_sprite = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512 });
-    test_sprite_sub = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
+    test_sprite_sub_tl = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
+    test_sprite_sub_tr = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_sprite_sub_bl = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_sprite_sub_br = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
     var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.deinit(&device);
@@ -196,7 +208,7 @@ fn updateEntities(dt: f32) void {
 
 fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
-        renderer.beginRenderpass(cb);
+        renderer.beginRenderpass(cb, .{ 0.01, 0.11, 0.21, 1 });
 
         // d3d.drawEntities(cb, entities, &camera_3d);
 
@@ -220,14 +232,21 @@ fn drawFrame() !void {
             batch.drawTextureRectUv(&test_tile_texture, .{ .pos = .{ .x = 2, .y = -2 }, .size = Vec2.scalar(1) }, y_flip_uv);
 
             // Test uv_rect not covering whole texture
-            batch.drawSprite(&test_sprite_sub, .{ .y = -4 });
-            batch.drawSprite(&test_tile_sprite_sub, .{ .y = -4, .x = 2 });
+            batch.drawSpriteRect(&test_sprite_sub_tl, .{ .pos = .{ .x = -0.05, .y = -3.95 }, .size = Vec2.scalar(0.5) });
+            batch.drawSpriteRect(&test_sprite_sub_tr, .{ .pos = .{ .x = 0.55, .y = -3.95 }, .size = Vec2.scalar(0.5) });
+            batch.drawSpriteRect(&test_sprite_sub_bl, .{ .pos = .{ .x = -0.05, .y = -4.55 }, .size = Vec2.scalar(0.5) });
+            batch.drawSpriteRect(&test_sprite_sub_br, .{ .pos = .{ .x = 0.55, .y = -4.55 }, .size = Vec2.scalar(0.5) });
+
+            batch.drawSpriteRect(&test_tile_sprite_sub_tl, .{ .pos = .{ .x = 1.95, .y = -3.95 }, .size = Vec2.scalar(0.5) });
+            batch.drawSpriteRect(&test_tile_sprite_sub_tr, .{ .pos = .{ .x = 2.55, .y = -3.95 }, .size = Vec2.scalar(0.5) });
+            batch.drawSpriteRect(&test_tile_sprite_sub_bl, .{ .pos = .{ .x = 1.95, .y = -4.55 }, .size = Vec2.scalar(0.5) });
+            batch.drawSpriteRect(&test_tile_sprite_sub_br, .{ .pos = .{ .x = 2.55, .y = -4.55 }, .size = Vec2.scalar(0.5) });
         }
         batch.end();
 
         const ui_batch = d2d.beginBatch(cb, &camera_ui);
         {
-            // ui_batch.drawTexture(&test_texture, Vec2.scalar(20));
+            ui_batch.drawTextureRect(&test_texture, .{ .pos = Vec2.scalar(20), .size = Vec2.scalar(800) });
             // ui_batch.drawTexture(&uv_test_texture, .{ .x = 532, .y = 20 });
             // ui_batch.drawQuad(Vec2.scalar(1124), Vec2.scalar(100), .{ .color = Vec4.new(1, 0, 0, 1) });
         }

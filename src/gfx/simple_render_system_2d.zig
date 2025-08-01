@@ -89,6 +89,7 @@ pub const DrawOptions = struct {
     uv_rect: ?Rect = null,
 };
 
+// TODO: Allow uv coords for triangle
 pub const DrawCommand = struct {
     options: DrawOptions,
 
@@ -267,6 +268,14 @@ pub const Batch = struct {
         this.pushCommand(.{
             .options = .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect },
             .data = .{ .quad = .{ .pos = pos, .size = size } },
+        });
+    }
+
+    pub fn drawSpriteRect(this: *const Batch, sprite: *const Sprite, rect: Rect) void {
+        const size = sprite.texture.getSize().div_scalar(sprite.ppu);
+        this.pushCommand(.{
+            .options = .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect },
+            .data = .{ .quad = .{ .pos = rect.pos, .size = size.mul(rect.size) } },
         });
     }
 
