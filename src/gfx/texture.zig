@@ -4,15 +4,14 @@ const gfx = @import("../gfx.zig");
 const stb = @import("../stb/stb.zig");
 const mem = @import("memory");
 const resource = @import("../resource.zig");
+const math = @import("../math.zig");
 
 const Texture = @This();
 const Device = gfx.Device;
+const Vec2 = math.Vec2;
 
 const log = std.log.scoped(.gpu_texture);
 const assert = std.debug.assert;
-
-// TODO: Debugging, remove
-name: []const u8,
 
 image: vk.Image,
 image_memory: vk.DeviceMemory,
@@ -32,11 +31,11 @@ pub fn load(device: *Device, name: []const u8) !Texture {
     const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_identifier = name });
     log.info("Loaded cpu texture: '{s}' - {}x{}", .{ name, cpu_texture.size.x, cpu_texture.size.y });
 
-    return try init(device, cpu_texture, name);
+    return try init(device, cpu_texture);
 }
 
 // TODO: Define error
-pub fn init(device: *Device, cpu_texture: resource.CpuTexture, name: []const u8) !Texture {
+pub fn init(device: *Device, cpu_texture: resource.CpuTexture) !Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -89,7 +88,6 @@ pub fn init(device: *Device, cpu_texture: resource.CpuTexture, name: []const u8)
     const descriptor_set = try createDescriptorSet(device, image_view);
 
     return .{
-        .name = name,
         .image = image,
         .image_memory = image_mem,
         .image_view = image_view,
@@ -141,8 +139,12 @@ fn createDescriptorSet(device: *Device, image_view: vk.ImageView) !vk.Descriptor
     return result;
 }
 
-pub fn bind(this: *const @This(), cb: vk.CommandBufferProxy, layout: vk.PipelineLayout) void {
+pub fn bind(this: *const Texture, cb: vk.CommandBufferProxy, layout: vk.PipelineLayout) void {
     cb.bindDescriptorSets(.graphics, layout, 0, 1, @ptrCast(&this.descriptor_set), 0, null);
+}
+
+pub inline fn getSize(this: *const Texture) Vec2 {
+    return .{ .x = @floatFromInt(this.width), .y = @floatFromInt(this.height) };
 }
 
 // TODO: Define error
@@ -152,5 +154,5 @@ pub fn initDefaultWhite(device: *Device) !Texture {
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
 
-    return init(device, cpu_texture, "default_white");
+    return init(device, cpu_texture);
 }

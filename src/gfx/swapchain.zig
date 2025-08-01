@@ -139,11 +139,11 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         );
 
     const surface_format = this.chooseSwapSurfaceFormat(swapchain_support.formats);
-    // log.info("Using surface format: {}", .{surface_format});
+    log.debug("Using surface format: {}", .{surface_format});
     const present_mode = this.chooseSwapPresentMode(swapchain_support.present_modes);
-    log.info("Using present mode: {s}", .{@tagName(present_mode)});
+    log.debug("Using present mode: {s}", .{@tagName(present_mode)});
     const extent = this.chooseSwapExtent(swapchain_support.capabilities);
-    // log.info("Swapchain extent: {}", .{extent});
+    log.debug("Swapchain extent: {}", .{extent});
 
     var image_count = swapchain_support.capabilities.min_image_count + 1;
     if (swapchain_support.capabilities.max_image_count > 0 and
@@ -152,7 +152,7 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         image_count = swapchain_support.capabilities.max_image_count;
     }
 
-    // log.info("Swapchain image count: {}", .{image_count});
+    log.debug("Swapchain image count: {}", .{image_count});
 
     const indices = this.device.device_info.queue_family_indices;
     const queue_indices = .{ indices.graphics_family.?, indices.present_family.? };

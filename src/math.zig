@@ -10,14 +10,16 @@ pub inline fn eps(comptime T: type, e: T, a: T) T {
     );
 }
 
+pub const degrees = std.math.radiansToDegrees;
+pub const radians = std.math.degreesToRadians;
+
 pub const vector = @import("math/vector.zig");
 pub const matrix = @import("math/matrix.zig");
+pub const rect = @import("math/rect.zig");
 
 pub const Vec = vector.Vec;
 pub const Mat = matrix.Mat;
-
-pub const degrees = std.math.radiansToDegrees;
-pub const radians = std.math.degreesToRadians;
+pub const RectT = rect.RectT;
 
 pub const Vec2 = vector.Vec2f32;
 pub const Vec3 = vector.Vec3f32;
@@ -25,3 +27,4 @@ pub const Vec4 = vector.Vec4f32;
 pub const Mat2 = matrix.Mat2f32;
 pub const Mat3 = matrix.Mat3f32;
 pub const Mat4 = matrix.Mat4f32;
+pub const Rect = rect.Rectf32;
