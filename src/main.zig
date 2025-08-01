@@ -116,12 +116,12 @@ fn run() !void {
     try d2d.init(&device, renderer.swapchain.render_pass);
     defer d2d.destroy();
 
-    test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png");
+    test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .nearest);
     defer test_tile_texture.deinit(&device);
     test_tile_sprite = Sprite.init(&test_tile_texture, .{ .yflip = true });
     test_tile_sprite_sub = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
 
-    test_texture = try Texture.load(&device, "res/textures/test.png");
+    test_texture = try Texture.load(&device, "res/textures/test.png", .linear);
     defer test_texture.deinit(&device);
     test_sprite = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512 });
     test_sprite_sub = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
