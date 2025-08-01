@@ -180,7 +180,7 @@ pub fn destroy(this: *RenderSystem2D) void {
 }
 
 fn createPipelineLayout(this: *RenderSystem2D, device: *Device) !vk.PipelineLayout {
-    const descriptor_set_layout = device.linear_sampler_layout;
+    const descriptor_set_layout = device.texture_sampler_set_layout;
 
     const push_constant_ranges = [_]vk.PushConstantRange{.{
         .offset = 0,

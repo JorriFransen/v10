@@ -6,6 +6,11 @@ const mem = @import("memory");
 const resource = @import("../resource.zig");
 const math = @import("../math.zig");
 
+pub const Filter = enum {
+    nearest,
+    linear,
+};
+
 const Texture = @This();
 const Device = gfx.Device;
 const Vec2 = math.Vec2;
@@ -22,7 +27,7 @@ width: u32,
 height: u32,
 
 // TODO: Define error
-pub fn load(device: *Device, name: []const u8) !Texture {
+pub fn load(device: *Device, name: []const u8, filter: Filter) !Texture {
     var ta = mem.get_temp();
     defer ta.release();
 
@@ -31,11 +36,11 @@ pub fn load(device: *Device, name: []const u8) !Texture {
     const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_identifier = name });
     log.info("Loaded cpu texture: '{s}' - {}x{}", .{ name, cpu_texture.size.x, cpu_texture.size.y });
 
-    return try init(device, cpu_texture);
+    return try init(device, cpu_texture, filter);
 }
 
 // TODO: Define error
-pub fn init(device: *Device, cpu_texture: resource.CpuTexture) !Texture {
+pub fn init(device: *Device, cpu_texture: resource.CpuTexture, filter: Filter) !Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -85,7 +90,7 @@ pub fn init(device: *Device, cpu_texture: resource.CpuTexture) !Texture {
 
     const image_view = try device.createImageView(image, format);
 
-    const descriptor_set = try createDescriptorSet(device, image_view);
+    const descriptor_set = try createDescriptorSet(device, image_view, filter);
 
     return .{
         .image = image,
@@ -105,13 +110,13 @@ pub fn deinit(this: *Texture, device: *Device) void {
     vkd.destroyImageView(this.image_view, null);
 }
 
-fn createDescriptorSet(device: *Device, image_view: vk.ImageView) !vk.DescriptorSet {
+fn createDescriptorSet(device: *Device, image_view: vk.ImageView, filter: Filter) !vk.DescriptorSet {
     const vkd = &device.device;
 
     const alloc_info = vk.DescriptorSetAllocateInfo{
         .descriptor_pool = device.descriptor_pool,
         .descriptor_set_count = 1,
-        .p_set_layouts = @ptrCast(&device.linear_sampler_layout),
+        .p_set_layouts = @ptrCast(&device.texture_sampler_set_layout),
     };
 
     var result: vk.DescriptorSet = .null_handle;
@@ -120,7 +125,10 @@ fn createDescriptorSet(device: *Device, image_view: vk.ImageView) !vk.Descriptor
     const image_info = vk.DescriptorImageInfo{
         .image_layout = .shader_read_only_optimal,
         .image_view = image_view,
-        .sampler = device.linear_sampler,
+        .sampler = switch (filter) {
+            .nearest => device.nearest_sampler,
+            .linear => device.linear_sampler,
+        },
     };
 
     const descriptor_writes = vk.WriteDescriptorSet{
@@ -153,6 +161,5 @@ pub fn initDefaultWhite(device: *Device) !Texture {
         .size = .{ .x = 1, .y = 1 },
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
-
-    return init(device, cpu_texture);
+    return init(device, cpu_texture, .nearest);
 }
