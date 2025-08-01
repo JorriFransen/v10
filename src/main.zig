@@ -11,6 +11,7 @@ const Renderer = gfx.Renderer;
 const Device = gfx.Device;
 const Model = gfx.Model;
 const Texture = gfx.Texture;
+const Sprite = gfx.Sprite;
 const Camera = gfx.Camera;
 const SimpleRenderSystem2D = gfx.SimpleRenderSystem2D;
 const SimpleRenderSystem3D = gfx.SimpleRenderSystem3D;
@@ -20,6 +21,7 @@ const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 const Mat4 = math.Mat4;
+const Rect = math.Rect;
 const KBMoveController = @import("keyboard_movement_controller.zig");
 
 const assert = std.debug.assert;
@@ -53,6 +55,13 @@ pub fn main() !void {
     std.log.debug("Clean exit", .{});
 }
 
+pub const EngineConfig = struct {
+    ppu: f32 = 32,
+    zoom: f32 = 3,
+};
+
+pub const config = EngineConfig{};
+
 var window: Window = .{};
 var device: Device = .{};
 var renderer: Renderer = .{};
@@ -69,9 +78,6 @@ const camera_2d_near_clip = -50;
 const camera_2d_far_clip = 50;
 
 var camera_ui: Camera = .{};
-
-const camer_2d_ppu = 32;
-const camera_2d_zoom = 4;
 var camera_2d: Camera = .{};
 
 var kb_move_controller: KBMoveController = .{};
@@ -79,8 +85,13 @@ var kb_move_controller: KBMoveController = .{};
 var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
+var test_tile_texture: Texture = undefined;
 var test_texture: Texture = undefined;
-var uv_test_texture: Texture = undefined;
+
+var test_tile_sprite: Sprite = undefined;
+var test_tile_sprite_sub: Sprite = undefined;
+var test_sprite: Sprite = undefined;
+var test_sprite_sub: Sprite = undefined;
 
 fn run() !void {
     const width = 1920;
@@ -105,11 +116,15 @@ fn run() !void {
     try d2d.init(&device, renderer.swapchain.render_pass);
     defer d2d.destroy();
 
-    test_texture = try Texture.load(&device, "res/textures/test_tile.png");
-    defer test_texture.deinit(&device);
+    test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png");
+    defer test_tile_texture.deinit(&device);
+    test_tile_sprite = Sprite.init(&test_tile_texture, .{ .yflip = true });
+    test_tile_sprite_sub = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
 
-    uv_test_texture = try Texture.load(&device, "res/textures/uvtest.png");
-    defer uv_test_texture.deinit(&device);
+    test_texture = try Texture.load(&device, "res/textures/test.png");
+    defer test_texture.deinit(&device);
+    test_sprite = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512 });
+    test_sprite_sub = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
 
     var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.deinit(&device);
@@ -143,7 +158,7 @@ fn run() !void {
     } }, camera_2d_near_clip, camera_2d_far_clip);
     camera_ui.setViewYXZ(Vec3.new(0, 0, camera_2d_near_clip), Vec3.scalar(0));
 
-    const ortho_height = @as(f32, @floatFromInt(window.height)) / (2 * camer_2d_ppu) / camera_2d_zoom;
+    const ortho_height = @as(f32, @floatFromInt(window.height)) / (2 * config.ppu) / config.zoom;
     const ortho_width = ortho_height * aspect;
     camera_2d.setProjection(.{ .orthographic = .{
         .l = -ortho_width,
@@ -185,16 +200,32 @@ fn drawFrame() !void {
 
         // d3d.drawEntities(cb, entities, &camera_3d);
 
-        const batch = d2d.beginBatch(cb, &camera_2d, camer_2d_ppu);
+        const batch = d2d.beginBatch(cb, &camera_2d);
         {
-            batch.drawQuad(.{ .x = 0, .y = 0 }, Vec2.scalar(1), .{ .color = Vec4.new(1, 0, 0, 1) });
-            batch.drawQuad(.{ .x = 2, .y = 0 }, Vec2.scalar(1), .{ .texture = &test_texture });
-            // batch.drawQuad(.{ .x = 1, .y = 1 }, Vec2.scalar(2), .{ .texture = &test_texture });
-            // batch.drawTexture(&test_texture, Vec2.scalar(1));
+            // Draw the sprites, sprite loading flips y for these sprites
+            batch.drawSprite(&test_sprite, .{ .y = 4 });
+            batch.drawSprite(&test_tile_sprite, .{ .x = 2, .y = 4 });
+
+            // Draw them by texture, need to flip uv's manually, also need to specify size in worldspace (ppu not applied)
+            const y_flip_uv = Rect{ .pos = .{ .x = 0, .y = 1 }, .size = .{ .x = 1, .y = -1 } };
+            batch.drawQuad(.{ .y = 2 }, Vec2.scalar(1), .{ .texture = &test_texture, .uv_rect = y_flip_uv });
+            batch.drawQuad(.{ .x = 2, .y = 2 }, Vec2.scalar(1), .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
+
+            // Cannot control uv's in this case, only specify size in worldspace
+            batch.drawTextureRect(&test_texture, .{ .size = Vec2.scalar(1) });
+            batch.drawTextureRect(&test_tile_texture, .{ .pos = .{ .x = 2, .y = 0 }, .size = Vec2.scalar(1) });
+
+            // Same as drawTextureRect, but contol uvs
+            batch.drawTextureRectUv(&test_texture, .{ .pos = .{ .y = -2 }, .size = Vec2.scalar(1) }, y_flip_uv);
+            batch.drawTextureRectUv(&test_tile_texture, .{ .pos = .{ .x = 2, .y = -2 }, .size = Vec2.scalar(1) }, y_flip_uv);
+
+            // Test uv_rect not covering whole texture
+            batch.drawSprite(&test_sprite_sub, .{ .y = -4 });
+            batch.drawSprite(&test_tile_sprite_sub, .{ .y = -4, .x = 2 });
         }
         batch.end();
 
-        const ui_batch = d2d.beginBatch(cb, &camera_ui, 1);
+        const ui_batch = d2d.beginBatch(cb, &camera_ui);
         {
             // ui_batch.drawTexture(&test_texture, Vec2.scalar(20));
             // ui_batch.drawTexture(&uv_test_texture, .{ .x = 532, .y = 20 });
@@ -216,7 +247,7 @@ fn resizeCallback(r: *const Renderer) void {
         .aspect = aspect,
     } }, camera_3d_near_clip, camera_3d_far_clip);
 
-    const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * camer_2d_ppu) / camera_2d_zoom;
+    const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * config.ppu) / config.zoom;
     const ortho_width = ortho_height * aspect;
     camera_2d.setProjection(.{ .orthographic = .{
         .l = -ortho_width,
@@ -224,7 +255,6 @@ fn resizeCallback(r: *const Renderer) void {
         .b = -ortho_height,
         .t = ortho_height,
     } }, camera_2d_near_clip, camera_2d_far_clip);
-
     camera_ui.setProjection(.{ .orthographic = .{
         .l = 0,
         .r = @as(f32, @floatFromInt(renderer.window.width)),

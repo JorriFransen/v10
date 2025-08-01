@@ -8,6 +8,7 @@ pub const Swapchain = @import("gfx/swapchain.zig");
 pub const Renderer = @import("gfx/renderer.zig");
 pub const Model = @import("gfx/model.zig");
 pub const Texture = @import("gfx/texture.zig");
+pub const Sprite = @import("gfx/sprite.zig");
 pub const Camera = @import("gfx/camera.zig");
 pub const SimpleRenderSystem2D = @import("gfx/simple_render_system_2d.zig");
 pub const SimpleRenderSystem3D = @import("gfx/simple_render_system_3d.zig");
