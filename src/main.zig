@@ -223,8 +223,8 @@ fn drawFrame() !void {
 
             // Draw them by texture, need to flip uv's manually, also need to specify size in worldspace (ppu not applied)
             const y_flip_uv = Rect{ .pos = .{ .x = 0, .y = 1 }, .size = .{ .x = 1, .y = -1 } };
-            batch.drawQuad(.{ .y = 2 }, Vec2.scalar(1), .{ .texture = &test_texture, .uv_rect = y_flip_uv });
-            batch.drawQuad(.{ .x = 2, .y = 2 }, Vec2.scalar(1), .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
+            batch.drawRect(.{ .y = 2 }, Vec2.scalar(1), .{ .texture = &test_texture, .uv_rect = y_flip_uv });
+            batch.drawRect(.{ .x = 2, .y = 2 }, Vec2.scalar(1), .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
 
             // Cannot control uv's in this case, only specify size in worldspace
             batch.drawTextureRect(&test_texture, .{ .size = Vec2.scalar(1) });
@@ -244,6 +244,8 @@ fn drawFrame() !void {
             batch.drawSpriteRect(&test_tile_sprite_sub_tr, .{ .pos = .{ .x = 2.55, .y = -3.95 }, .size = Vec2.scalar(0.5) });
             batch.drawSpriteRect(&test_tile_sprite_sub_bl, .{ .pos = .{ .x = 1.95, .y = -4.55 }, .size = Vec2.scalar(0.5) });
             batch.drawSpriteRect(&test_tile_sprite_sub_br, .{ .pos = .{ .x = 2.55, .y = -4.55 }, .size = Vec2.scalar(0.5) });
+
+            batch.drawLine(Vec2.new(0, 10), Vec2.new(0, -10), 1, Vec4.new(1, 0, 0, 1));
         }
         batch.end();
 

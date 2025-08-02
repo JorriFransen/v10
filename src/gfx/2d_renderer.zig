@@ -5,7 +5,7 @@ const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
 const mem = @import("memory");
 
-const RenderSystem2D = @This();
+const Renderer = @This();
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Texture = gfx.Texture;
@@ -26,7 +26,8 @@ const white = Vec4.scalar(1);
 
 device: *Device = undefined,
 layout: vk.PipelineLayout = .null_handle,
-pipeline: Pipeline = .{},
+triangle_pipeline: Pipeline = .{},
+line_pipeline: Pipeline = .{},
 
 arena: mem.Arena = undefined,
 commands: std.ArrayList(DrawCommand) = undefined,
@@ -89,21 +90,27 @@ pub const DrawOptions = struct {
     uv_rect: ?Rect = null,
 };
 
-// TODO: Allow uv coords for triangle
+// TODO: Remove drawOptions (move into data)
+// TODO: Test triangle uv
+// TODO: Use Vertex for lines
 pub const DrawCommand = struct {
     options: DrawOptions,
 
     data: union(enum) {
         triangle: [3]Vertex,
         quad: struct { pos: Vec2, size: Vec2 },
+        line: struct {
+            positions: [2]Vec2,
+            width: f32,
+        },
     },
 };
 
-pub fn init(this: *RenderSystem2D, device: *Device, render_pass: vk.RenderPass) !void {
+pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void {
     this.device = device;
 
     this.layout = try this.createPipelineLayout(device);
-    this.pipeline = try this.createPipeline(render_pass);
+    try this.createPipelines(render_pass, Pipeline.ConfigInfo.default2d());
 
     this.arena = try mem.Arena.init(.{ .virtual = .{ .reserved_capacity = arena_cap } });
     this.commands = std.ArrayList(DrawCommand).init(this.arena.allocator());
@@ -157,11 +164,12 @@ pub fn init(this: *RenderSystem2D, device: *Device, render_pass: vk.RenderPass) 
     this.default_white_texture = try Texture.initDefaultWhite(device);
 }
 
-pub fn destroy(this: *RenderSystem2D) void {
+pub fn destroy(this: *Renderer) void {
     const vkd = &this.device.device;
 
     vkd.destroyPipelineLayout(this.layout, null);
-    this.pipeline.destroy();
+    this.triangle_pipeline.destroy();
+    this.line_pipeline.destroy();
 
     this.arena.deinit();
 
@@ -180,7 +188,7 @@ pub fn destroy(this: *RenderSystem2D) void {
     this.default_white_texture.deinit(this.device);
 }
 
-fn createPipelineLayout(this: *RenderSystem2D, device: *Device) !vk.PipelineLayout {
+fn createPipelineLayout(this: *Renderer, device: *Device) !vk.PipelineLayout {
     const descriptor_set_layout = device.texture_sampler_set_layout;
 
     const push_constant_ranges = [_]vk.PushConstantRange{.{
@@ -199,34 +207,65 @@ fn createPipelineLayout(this: *RenderSystem2D, device: *Device) !vk.PipelineLayo
     return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
 }
 
-fn createPipeline(this: *RenderSystem2D, render_pass: vk.RenderPass) !Pipeline {
-    var pipeline_config = Pipeline.ConfigInfo.default2d();
-    pipeline_config.render_pass = render_pass;
-    pipeline_config.pipeline_layout = this.layout;
+fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: Pipeline.ConfigInfo) !void {
+    var triangle_config = default_config;
+    // TODO: Make defaultconfig take these as params?
+    triangle_config.render_pass = render_pass;
+    triangle_config.pipeline_layout = this.layout;
+    triangle_config.vertex_binding_descriptions = &.{Vertex.binding_description};
+    triangle_config.vertex_attribute_descriptions = &Vertex.attribute_descriptions;
 
-    pipeline_config.vertex_binding_descriptions = &.{Vertex.binding_description};
-    pipeline_config.vertex_attribute_descriptions = &Vertex.attribute_descriptions;
+    this.triangle_pipeline = try Pipeline.create(
+        this.device,
+        "shaders/simple_2d.vert.spv",
+        "shaders/simple_2d.frag.spv",
+        triangle_config,
+    );
 
-    return try Pipeline.create(this.device, "shaders/simple_2d.vert.spv", "shaders/simple_2d.frag.spv", pipeline_config);
+    var line_config = default_config;
+    line_config.render_pass = render_pass;
+    line_config.pipeline_layout = this.layout;
+    line_config.vertex_binding_descriptions = &.{Vertex.binding_description};
+    line_config.vertex_attribute_descriptions = &Vertex.attribute_descriptions;
+
+    line_config.input_assembly_info.topology = .line_list;
+    line_config.rasterization_info.line_width = 1;
+
+    // var dynamic_states = [_]vk.DynamicState{ .viewport, .scissor, .line_width };
+    var dynamic_states = Pipeline.ConfigInfo.default_dynamic_state_enables ++ .{.line_width};
+    line_config.dynamic_state_enables = &dynamic_states;
+    line_config.dynamic_state_info = vk.PipelineDynamicStateCreateInfo{
+        .dynamic_state_count = dynamic_states.len,
+        .p_dynamic_states = &dynamic_states,
+        .flags = .{},
+    };
+
+    this.line_pipeline = try Pipeline.create(
+        this.device,
+        "shaders/line.vert.spv",
+        "shaders/line.frag.spv",
+        line_config,
+    );
 }
 
-pub fn beginBatch(this: *RenderSystem2D, cb: vk.CommandBufferProxy, camera: *const Camera) Batch {
+pub fn beginBatch(this: *Renderer, cb: vk.CommandBufferProxy, camera: *const Camera) Batch {
     this.commands.clearRetainingCapacity();
 
     return .{
         .camera = camera,
-        .system = this,
+        .renderer = this,
         .command_buffer = cb,
     };
 }
 
 pub const Batch = struct {
     camera: *const Camera,
-    system: *RenderSystem2D,
+    renderer: *Renderer,
     command_buffer: vk.CommandBufferProxy,
+    line_width: f32 = 1,
 
     inline fn pushCommand(this: *const Batch, cmd: DrawCommand) void {
-        this.system.commands.append(cmd) catch @panic("Command memory full");
+        this.renderer.commands.append(cmd) catch @panic("Command memory full");
     }
 
     pub fn drawTriangle(this: *const Batch, vertices: [3]Vertex, options: DrawOptions) void {
@@ -235,7 +274,7 @@ pub const Batch = struct {
         } });
     }
 
-    pub fn drawQuad(this: *const Batch, pos: Vec2, size: Vec2, options: DrawOptions) void {
+    pub fn drawRect(this: *const Batch, pos: Vec2, size: Vec2, options: DrawOptions) void {
         this.pushCommand(.{ .options = options, .data = .{
             .quad = .{ .pos = pos, .size = size },
         } });
@@ -279,11 +318,19 @@ pub const Batch = struct {
         });
     }
 
+    /// Line width is fixed in screen pixels. For world-space scaling, use drawRect or calculate width via ppu.
+    pub fn drawLine(this: *const Batch, p1: Vec2, p2: Vec2, width: f32, color: Vec4) void {
+        this.pushCommand(.{
+            .options = .{ .color = color },
+            .data = .{ .line = .{ .positions = .{ p1, p2 }, .width = width } },
+        });
+    }
+
     pub fn end(batch: *const Batch) void {
-        const system = batch.system;
+        const renderer = batch.renderer;
         const cb = batch.command_buffer;
 
-        if (system.commands.items.len < 1) return;
+        if (renderer.commands.items.len < 1) return;
 
         // std.mem.sort(DrawCommand, this.commands.items, this, struct {
         //     fn f(ctx: @TypeOf(this), l: DrawCommand, r: DrawCommand) bool {
@@ -294,26 +341,30 @@ pub const Batch = struct {
         //     }
         // }.f);
 
-        cb.bindPipeline(.graphics, system.pipeline.graphics_pipeline);
+        var current_pipeline = &renderer.triangle_pipeline;
+        if (renderer.commands.items[0].data == .line) {
+            current_pipeline = &renderer.line_pipeline;
+        }
+        current_pipeline.bind(cb);
 
         const pcd = PushConstantData{
             .projection = batch.camera.projection_matrix,
             .view = batch.camera.view_matrix,
         };
 
-        cb.pushConstants(system.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
+        cb.pushConstants(renderer.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
-        cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{system.vertex_buffer}, &[_]vk.DeviceSize{0});
+        cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{renderer.vertex_buffer}, &[_]vk.DeviceSize{0});
         const index_type = comptime switch (Index) {
             else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
             u8 => .uint8_khr,
             u16 => .uint16,
             u32 => .uint32,
         };
-        cb.bindIndexBuffer(system.index_buffer, 0, index_type);
+        cb.bindIndexBuffer(renderer.index_buffer, 0, index_type);
 
-        const vbuf = system.vertex_staging_buffer_mapped;
-        const ibuf = system.index_staging_buffer_mapped;
+        const vbuf = renderer.vertex_staging_buffer_mapped;
+        const ibuf = renderer.index_staging_buffer_mapped;
 
         var vertex_count: usize = 0;
         var index_count: usize = 0;
@@ -322,22 +373,40 @@ pub const Batch = struct {
         var batch_index_offset: u32 = 0;
 
         var current_texture: *const Texture =
-            system.commands.items[0].options.texture orelse
-            &system.default_white_texture;
+            renderer.commands.items[0].options.texture orelse
+            &renderer.default_white_texture;
 
-        current_texture.bind(cb, system.layout);
+        current_texture.bind(cb, renderer.layout);
 
-        for (system.commands.items) |*command| {
+        for (renderer.commands.items) |*command| {
             const options = &command.options;
-            const command_texture = options.texture orelse &system.default_white_texture;
+            const command_pipeline = switch (command.data) {
+                .line => &renderer.line_pipeline,
+                else => &renderer.triangle_pipeline,
+            };
+            const command_texture = options.texture orelse &renderer.default_white_texture;
 
-            if (current_texture != command_texture) {
+            const switch_pipeline = current_pipeline != command_pipeline;
+            const switch_texure = current_texture != command_texture;
+
+            if (switch_pipeline or switch_texure) {
                 if (batch_index_count > 0) {
                     cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
                 }
 
-                current_texture = command_texture;
-                current_texture.bind(cb, system.layout);
+                if (switch_pipeline) {
+                    current_pipeline = command_pipeline;
+                    current_pipeline.bind(cb);
+                    if (current_pipeline == &renderer.line_pipeline) {
+                        cb.setLineWidth(batch.line_width);
+                    }
+                }
+
+                if (switch_texure) {
+                    current_texture = command_texture;
+                    current_texture.bind(cb, renderer.layout);
+                }
+
                 batch_index_offset = @intCast(index_count);
                 batch_index_count = 0;
             }
@@ -397,15 +466,40 @@ pub const Batch = struct {
                     index_count += indices.len;
                     batch_index_count += indices.len;
                 },
+                .line => |l| {
+                    if (batch.line_width != l.width) {
+                        cb.setLineWidth(l.width);
+                    }
+
+                    const color = if (options.color) |c| c else white;
+
+                    const verts = [2]Vertex{
+                        .{ .pos = l.positions[0], .color = color },
+                        .{ .pos = l.positions[1], .color = color },
+                    };
+
+                    const fi: Index = @intCast(vertex_count);
+                    const indices = [2]Index{ fi, fi + 1 };
+
+                    assert(vertex_count + verts.len <= vbuf.len);
+                    assert(index_count + indices.len <= ibuf.len);
+
+                    @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
+                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                    vertex_count += verts.len;
+                    index_count += indices.len;
+                    batch_index_count += indices.len;
+                },
             }
         }
 
-        cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 1);
+        cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
 
         // TODO: Consistent command buffer for this?
-        const ccb = system.device.beginSingleTimeCommands();
-        system.device.copyBuffer(ccb, system.vertex_staging_buffer, system.vertex_buffer, system.vertex_buffer_size);
-        system.device.copyBuffer(ccb, system.index_staging_buffer, system.index_buffer, system.index_buffer_size);
-        system.device.endSingleTimeCommands(ccb);
+        const ccb = renderer.device.beginSingleTimeCommands();
+        renderer.device.copyBuffer(ccb, renderer.vertex_staging_buffer, renderer.vertex_buffer, renderer.vertex_buffer_size);
+        renderer.device.copyBuffer(ccb, renderer.index_staging_buffer, renderer.index_buffer, renderer.index_buffer_size);
+        renderer.device.endSingleTimeCommands(ccb);
     }
 };

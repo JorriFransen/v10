@@ -4,6 +4,7 @@ const vk = @import("vulkan");
 const mem = @import("memory");
 const vklog = std.log.scoped(.vulkan);
 
+const Pipeline = @This();
 const Device = gfx.Device;
 const Allocator = std.mem.Allocator;
 
@@ -16,7 +17,7 @@ vert_shader_module: vk.ShaderModule = .null_handle,
 frag_shader_module: vk.ShaderModule = .null_handle,
 
 pub const ConfigInfo = struct {
-    const default_dynamic_state_enables = [_]vk.DynamicState{ .viewport, .scissor };
+    pub const default_dynamic_state_enables = [_]vk.DynamicState{ .viewport, .scissor };
 
     viewport_info: vk.PipelineViewportStateCreateInfo = .{},
     input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo = undefined,
@@ -34,7 +35,7 @@ pub const ConfigInfo = struct {
     vertex_binding_descriptions: []const vk.VertexInputBindingDescription = &.{},
     vertex_attribute_descriptions: []const vk.VertexInputAttributeDescription = &.{},
 
-    pub fn default2d() @This() {
+    pub fn default2d() ConfigInfo {
         const viewport_info = vk.PipelineViewportStateCreateInfo{
             .viewport_count = 1,
             .p_viewports = null,
@@ -120,7 +121,7 @@ pub const ConfigInfo = struct {
         };
     }
 
-    pub fn default3d() @This() {
+    pub fn default3d() ConfigInfo {
         const viewport_info = vk.PipelineViewportStateCreateInfo{
             .viewport_count = 1,
             .p_viewports = null,
@@ -237,7 +238,7 @@ fn readShaderFile(allocator: Allocator, path: []const u8) ReadFileAllocError![:0
     return @ptrCast(buf[0..read]);
 }
 
-pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !@This() {
+pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !Pipeline {
     assert(config.pipeline_layout != .null_handle);
     assert(config.render_pass != .null_handle);
 
@@ -252,7 +253,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     const frag_code = try readShaderFile(tmp.allocator(), frag_path);
     vklog.debug("frag_code.len: {}", .{frag_code.len});
 
-    var this = @This(){
+    var this = Pipeline{
         .device = device,
         .config = config,
         .graphics_pipeline = .null_handle,
@@ -317,7 +318,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
     return this;
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn destroy(this: *Pipeline) void {
     const vkd = &this.device.device;
 
     vkd.destroyShaderModule(this.vert_shader_module, null);
@@ -326,7 +327,7 @@ pub fn destroy(this: *@This()) void {
     vkd.destroyPipeline(this.graphics_pipeline, null);
 }
 
-fn createShaderModule(this: *@This(), code: []const u8) !vk.ShaderModule {
+fn createShaderModule(this: *Pipeline, code: []const u8) !vk.ShaderModule {
     const vkd = &this.device.device;
 
     const create_info = vk.ShaderModuleCreateInfo{
@@ -335,4 +336,8 @@ fn createShaderModule(this: *@This(), code: []const u8) !vk.ShaderModule {
     };
 
     return try vkd.createShaderModule(&create_info, null);
+}
+
+pub fn bind(this: *const Pipeline, cb: vk.CommandBufferProxy) void {
+    cb.bindPipeline(.graphics, this.graphics_pipeline);
 }
