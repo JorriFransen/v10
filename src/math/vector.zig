@@ -50,11 +50,11 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn div(a: @This(), b: @This()) @This() {
                 return F.div(a, b);
             }
-            pub inline fn mul_scalar(vec: @This(), s: T) @This() {
-                return F.mul_scalar(vec, s);
+            pub inline fn mulScalar(vec: @This(), s: T) @This() {
+                return F.mulScalar(vec, s);
             }
-            pub inline fn div_scalar(vec: @This(), s: T) @This() {
-                return F.div_scalar(vec, s);
+            pub inline fn divScalar(vec: @This(), s: T) @This() {
+                return F.divScalar(vec, s);
             }
             pub inline fn cross(a: @This(), b: @This()) @This() {
                 return F.cross(a, b);
@@ -62,8 +62,8 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn dot(a: @This(), b: @This()) T {
                 return F.dot(a, b);
             }
-            pub inline fn eql_eps(a: @This(), b: @This()) bool {
-                return F.eql_eps(a, b);
+            pub inline fn eqlEps(a: @This(), b: @This()) bool {
+                return F.eqlEps(a, b);
             }
             pub inline fn toVector3(vec: @This(), z: T) Vec(3, T) {
                 return Vec(3, T){ .x = vec.x, .y = vec.y, .z = z };
@@ -113,11 +113,11 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn div(a: Vec3, b: Vec3) Vec3 {
                 return F.div(a, b);
             }
-            pub inline fn mul_scalar(vec: Vec3, s: T) Vec3 {
-                return F.mul_scalar(vec, s);
+            pub inline fn mulScalar(vec: Vec3, s: T) Vec3 {
+                return F.mulScalar(vec, s);
             }
-            pub inline fn div_scalar(vec: Vec3, s: T) Vec3 {
-                return F.div_scalar(vec, s);
+            pub inline fn divScalar(vec: Vec3, s: T) Vec3 {
+                return F.divScalar(vec, s);
             }
             pub inline fn cross(a: Vec3, b: Vec3) Vec3 {
                 return F.cross(a, b);
@@ -125,8 +125,8 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn dot(a: Vec3, b: Vec3) T {
                 return F.dot(a, b);
             }
-            pub inline fn eql_eps(a: Vec3, b: Vec3) bool {
-                return F.eql_eps(a, b);
+            pub inline fn eqlEps(a: Vec3, b: Vec3) bool {
+                return F.eqlEps(a, b);
             }
             pub fn toPoint4(this: Vec3) Vec(4, T) {
                 return .{ .x = this.x, .y = this.y, .z = this.z, .w = 1 };
@@ -199,11 +199,11 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn div(a: @This(), b: @This()) @This() {
                 return F.div(a, b);
             }
-            pub inline fn mul_scalar(vec: @This(), s: T) @This() {
-                return F.mul_scalar(vec, s);
+            pub inline fn mulScalar(vec: @This(), s: T) @This() {
+                return F.mulScalar(vec, s);
             }
-            pub inline fn div_scalar(vec: @This(), s: T) @This() {
-                return F.div_scalar(vec, s);
+            pub inline fn divScalar(vec: @This(), s: T) @This() {
+                return F.divScalar(vec, s);
             }
             pub inline fn cross(a: @This(), b: @This()) @This() {
                 return F.cross(a, b);
@@ -211,8 +211,8 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn dot(a: @This(), b: @This()) T {
                 return F.dot(a, b);
             }
-            pub inline fn eql_eps(a: @This(), b: @This()) bool {
-                return F.eql_eps(a, b);
+            pub inline fn eqlEps(a: @This(), b: @This()) bool {
+                return F.eqlEps(a, b);
             }
         },
     }
@@ -254,10 +254,10 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         pub inline fn div(a: Base, b: Base) Base {
             return @bitCast(a.vector() / b.vector());
         }
-        pub inline fn mul_scalar(vec: Base, s: T) Base {
+        pub inline fn mulScalar(vec: Base, s: T) Base {
             return @bitCast(vec.vector() * @as(V, @splat(s)));
         }
-        pub inline fn div_scalar(vec: Base, s: T) Base {
+        pub inline fn divScalar(vec: Base, s: T) Base {
             return @bitCast(vec.vector() / @as(V, @splat(s)));
         }
         pub inline fn cross(a: Base, b: Base) Base {
@@ -289,7 +289,7 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
             return @reduce(.Add, a.vector() * b.vector());
         }
 
-        pub inline fn eql_eps(a: Base, b: Base) bool {
+        pub inline fn eqlEps(a: Base, b: Base) bool {
             const va = vector(a);
             const vb = vector(b);
             const abs_diff = @abs(va - vb);
@@ -325,22 +325,22 @@ pub inline fn epsAtV(comptime V: type, v: V) V {
     return @abs(v - y_vec);
 }
 
-test "eql_eps function" {
+test "eqlEps function" {
     const vec1 = Vec4f32.new(1.0, 2.0, 3.0, 4.0);
     const vec2 = Vec4f32.new(1.0 + 1e-8, 2.0 - 1e-8, 3.0 + 1e-9, 4.0 - 1e-9); // Within typical f32 epsilon
     const vec3 = Vec4f32.new(1.0 + 1e-5, 2.0, 3.0, 4.0); // Larger than typical f32 epsilon
 
     // Should be approximately equal
-    try std.testing.expect(vec1.eql_eps(vec2));
+    try std.testing.expect(vec1.eqlEps(vec2));
 
     // Should NOT be approximately equal
-    try std.testing.expect(!vec1.eql_eps(vec3));
+    try std.testing.expect(!vec1.eqlEps(vec3));
 
     // Testing near-zero values
     const zero_vec = Vec4f32.new(0.0, 0.0, 0.0, 0.0);
     const tiny_vec = Vec4f32.new(std.math.floatEps(f32) / 2, 0.0, 0.0, 0.0);
     const not_tiny_vec = Vec4f32.new(std.math.floatEps(f32) * 5, 0.0, 0.0, 0.0);
 
-    try std.testing.expect(zero_vec.eql_eps(tiny_vec));
-    try std.testing.expect(!zero_vec.eql_eps(not_tiny_vec));
+    try std.testing.expect(zero_vec.eqlEps(tiny_vec));
+    try std.testing.expect(!zero_vec.eqlEps(not_tiny_vec));
 }
