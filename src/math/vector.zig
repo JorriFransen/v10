@@ -65,6 +65,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn eql_eps(a: @This(), b: @This()) bool {
                 return F.eql_eps(a, b);
             }
+            pub inline fn toVector3(vec: @This(), z: T) Vec(3, T) {
+                return Vec(3, T){ .x = vec.x, .y = vec.y, .z = z };
+            }
         },
 
         3 => return extern struct {
@@ -79,12 +82,6 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
 
             pub fn new(x: T, y: T, z: T) Vec3 {
                 return @bitCast(V{ x, y, z });
-            }
-            pub fn toPoint4(this: Vec3) Vec(4, T) {
-                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 1 };
-            }
-            pub fn toVector4(this: Vec3) Vec(4, T) {
-                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 0 };
             }
             pub inline fn v(vec: V) Vec3 {
                 return F.v(vec);
@@ -130,6 +127,12 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             }
             pub inline fn eql_eps(a: Vec3, b: Vec3) bool {
                 return F.eql_eps(a, b);
+            }
+            pub fn toPoint4(this: Vec3) Vec(4, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 1 };
+            }
+            pub fn toVector4(this: Vec3) Vec(4, T) {
+                return .{ .x = this.x, .y = this.y, .z = this.z, .w = 0 };
             }
 
             pub inline fn directionFromEuler(euler: Vec3) Vec3 {

@@ -22,7 +22,8 @@ const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 const Mat4 = math.Mat4;
 const Rect = math.Rect;
-const KBMoveController = @import("keyboard_movement_controller.zig");
+const KB3DMoveController = @import("3d_keyboard_move_controller.zig");
+const KB2DMoveController = @import("2d_keyboard_move_controller.zig");
 
 const assert = std.debug.assert;
 
@@ -76,11 +77,14 @@ var camera_3d_transform: Transform = .{};
 
 const camera_2d_near_clip = -50;
 const camera_2d_far_clip = 50;
+var camera_2d_pos = Vec2{};
+var camera_2d_zoom = config.zoom;
 
 var camera_ui: Camera = .{};
 var camera_2d: Camera = .{};
 
-var kb_move_controller: KBMoveController = .{};
+var kb_3d_move_controller: KB3DMoveController = .{};
+var kb_2d_move_controller: KB2DMoveController = .{};
 
 var entities: []Entity = &.{};
 var entity: *Entity = undefined;
@@ -170,16 +174,6 @@ fn run() !void {
     } }, camera_2d_near_clip, camera_2d_far_clip);
     camera_ui.setViewYXZ(Vec3.new(0, 0, camera_2d_near_clip), Vec3.scalar(0));
 
-    const ortho_height = @as(f32, @floatFromInt(window.height)) / (2 * config.ppu) / config.zoom;
-    const ortho_width = ortho_height * aspect;
-    camera_2d.setProjection(.{ .orthographic = .{
-        .l = -ortho_width,
-        .r = ortho_width,
-        .b = -ortho_height,
-        .t = ortho_height,
-    } }, camera_2d_near_clip, camera_2d_far_clip);
-    camera_2d.setViewYXZ(Vec3.new(0, 0, camera_2d_near_clip), Vec3.scalar(0));
-
     var current_time = try Instant.now();
 
     while (!window.shouldClose()) {
@@ -192,23 +186,33 @@ fn run() !void {
 
         camera_3d.setViewYXZ(camera_3d_transform.translation, camera_3d_transform.rotation);
 
-        updateEntities(dt);
+        const ortho_height = @as(f32, @floatFromInt(window.height)) / (2 * config.ppu) / camera_2d_zoom;
+        const ortho_width = ortho_height * aspect;
+        camera_2d.setProjection(.{ .orthographic = .{
+            .l = -ortho_width,
+            .r = ortho_width,
+            .b = -ortho_height,
+            .t = ortho_height,
+        } }, camera_2d_near_clip, camera_2d_far_clip);
+        camera_2d.setViewYXZ(camera_2d_pos.toVector3(camera_2d_near_clip), Vec3.scalar(0));
+
+        update(dt);
         drawFrame() catch unreachable;
     }
 
     try device.device.deviceWaitIdle();
 }
 
-fn updateEntities(dt: f32) void {
-    _ = dt;
+fn update(dt: f32) void {
     // kb_move_controller.moveInPlaneXZ(&window, dt, &camera_3d_transform);
-
-    // kb_move_controller.moveInPlaneXZ(&window, dt, &camera_2d_transform);
+    kb_2d_move_controller.updateInput(&window, dt, &camera_2d_pos, &camera_2d_zoom);
 }
 
 fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
-        renderer.beginRenderpass(cb, .{ 0.01, 0.11, 0.21, 1 });
+        // renderer.beginRenderpass(cb, .{ 0.01, 0.11, 0.21, 1 });
+        const clear_color = @Vector(4, f32){ 1, 1, 1, 1 };
+        renderer.beginRenderpass(cb, clear_color);
 
         // d3d.drawEntities(cb, entities, &camera_3d);
 
@@ -246,9 +250,8 @@ fn drawFrame() !void {
 
         const ui_batch = d2d.beginBatch(cb, &camera_ui);
         {
-            ui_batch.drawTextureRect(&test_texture, .{ .pos = Vec2.scalar(20), .size = Vec2.scalar(800) });
-            // ui_batch.drawTexture(&uv_test_texture, .{ .x = 532, .y = 20 });
-            // ui_batch.drawQuad(Vec2.scalar(1124), Vec2.scalar(100), .{ .color = Vec4.new(1, 0, 0, 1) });
+            // ui_batch.drawTextureRect(&test_tile_texture, .{ .pos = Vec2.scalar(20), .size = Vec2.scalar(400) });
+            // ui_batch.drawTextureRect(&test_texture, .{ .pos = Vec2.new(20, 440), .size = Vec2.scalar(400) });
         }
         ui_batch.end();
 
@@ -266,7 +269,7 @@ fn resizeCallback(r: *const Renderer) void {
         .aspect = aspect,
     } }, camera_3d_near_clip, camera_3d_far_clip);
 
-    const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * config.ppu) / config.zoom;
+    const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * config.ppu) / camera_2d_zoom;
     const ortho_width = ortho_height * aspect;
     camera_2d.setProjection(.{ .orthographic = .{
         .l = -ortho_width,
