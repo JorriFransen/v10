@@ -128,10 +128,10 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
                     return std.hash.Wyhash.hash(0, &@as([@sizeOf(Vertex)]u8, @bitCast(v)));
                 }
                 pub inline fn eql(_: @This(), va: Vertex, vb: Vertex) bool {
-                    return va.position.eql_eps(vb.position) and
-                        va.color.eql_eps(vb.color) and
-                        va.normal.eql_eps(vb.normal) and
-                        va.texcoord.eql_eps(vb.texcoord);
+                    return va.position.eqlEps(vb.position) and
+                        va.color.eqlEps(vb.color) and
+                        va.normal.eqlEps(vb.normal) and
+                        va.texcoord.eqlEps(vb.texcoord);
                 }
             };
 
