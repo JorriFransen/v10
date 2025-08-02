@@ -13,8 +13,8 @@ const Model = gfx.Model;
 const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
 const Camera = gfx.Camera;
-const SimpleRenderSystem2D = gfx.SimpleRenderSystem2D;
-const SimpleRenderSystem3D = gfx.SimpleRenderSystem3D;
+const Renderer2D = gfx.Renderer2D;
+const Renderer3D = gfx.Renderer3D;
 const Entity = @import("entity.zig");
 const Transform = @import("transform.zig");
 const Vec2 = math.Vec2;
@@ -66,8 +66,8 @@ pub const config = EngineConfig{};
 var window: Window = .{};
 var device: Device = .{};
 var renderer: Renderer = .{};
-var d3d: SimpleRenderSystem3D = .{};
-var d2d: SimpleRenderSystem2D = .{};
+var r3d: Renderer3D = .{};
+var r2d: Renderer2D = .{};
 
 const camera_3d_fov_y = math.radians(50);
 const camera_3d_near_clip = 0.1;
@@ -120,11 +120,11 @@ fn run() !void {
     try renderer.init(&window, &device, resizeCallback);
     defer renderer.destroy();
 
-    try d3d.init(&device, renderer.swapchain.render_pass);
-    defer d3d.destroy();
+    try r3d.init(&device, renderer.swapchain.render_pass);
+    defer r3d.destroy();
 
-    try d2d.init(&device, renderer.swapchain.render_pass);
-    defer d2d.destroy();
+    try r2d.init(&device, renderer.swapchain.render_pass);
+    defer r2d.destroy();
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .nearest);
     defer test_tile_texture.deinit(&device);
@@ -210,13 +210,12 @@ fn update(dt: f32) void {
 
 fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
-        // renderer.beginRenderpass(cb, .{ 0.01, 0.11, 0.21, 1 });
-        const clear_color = @Vector(4, f32){ 1, 1, 1, 1 };
+        const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
         renderer.beginRenderpass(cb, clear_color);
 
         // d3d.drawEntities(cb, entities, &camera_3d);
 
-        const batch = d2d.beginBatch(cb, &camera_2d);
+        const batch = r2d.beginBatch(cb, &camera_2d);
         {
             // Draw the sprites, sprite loading flips y for these sprites
             batch.drawSprite(&test_sprite, .{ .y = 4 });
@@ -248,7 +247,7 @@ fn drawFrame() !void {
         }
         batch.end();
 
-        const ui_batch = d2d.beginBatch(cb, &camera_ui);
+        const ui_batch = r2d.beginBatch(cb, &camera_ui);
         {
             // ui_batch.drawTextureRect(&test_tile_texture, .{ .pos = Vec2.scalar(20), .size = Vec2.scalar(400) });
             // ui_batch.drawTextureRect(&test_texture, .{ .pos = Vec2.new(20, 440), .size = Vec2.scalar(400) });
@@ -262,7 +261,7 @@ fn drawFrame() !void {
 
 fn resizeCallback(r: *const Renderer) void {
     const aspect = r.swapchain.extentSwapchainRatio();
-    // std.log.debug("Resized to: {},{} - aspect: {}", .{ r.window.width, r.window.height, aspect });
+    std.log.debug("Resized to: {},{} - aspect: {}", .{ r.window.width, r.window.height, aspect });
 
     camera_3d.setProjection(.{ .perspective = .{
         .fov_y = camera_3d_fov_y,
