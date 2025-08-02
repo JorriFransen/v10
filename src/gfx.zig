@@ -5,13 +5,13 @@ pub const vk = @import("vulkan");
 pub const Device = @import("gfx/device.zig");
 pub const Pipeline = @import("gfx/pipeline.zig");
 pub const Swapchain = @import("gfx/swapchain.zig");
-pub const Renderer = @import("gfx/renderer.zig");
+pub const Renderer = @import("gfx/vulkan_renderer.zig");
 pub const Model = @import("gfx/model.zig");
 pub const Texture = @import("gfx/texture.zig");
 pub const Sprite = @import("gfx/sprite.zig");
 pub const Camera = @import("gfx/camera.zig");
-pub const SimpleRenderSystem2D = @import("gfx/simple_render_system_2d.zig");
-pub const SimpleRenderSystem3D = @import("gfx/simple_render_system_3d.zig");
+pub const Renderer2D = @import("gfx/2d_renderer.zig");
+pub const Renderer3D = @import("gfx/3d_renderer.zig");
 
 pub var system: System = undefined;
 pub const System = struct {
