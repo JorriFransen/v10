@@ -264,7 +264,7 @@ pub const Batch = struct {
     }
 
     pub fn drawSprite(this: *const Batch, sprite: *const Sprite, pos: Vec2) void {
-        const size = sprite.texture.getSize().div_scalar(sprite.ppu);
+        const size = sprite.texture.getSize().divScalar(sprite.ppu);
         this.pushCommand(.{
             .options = .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect },
             .data = .{ .quad = .{ .pos = pos, .size = size } },
@@ -272,7 +272,7 @@ pub const Batch = struct {
     }
 
     pub fn drawSpriteRect(this: *const Batch, sprite: *const Sprite, rect: Rect) void {
-        const size = sprite.texture.getSize().div_scalar(sprite.ppu);
+        const size = sprite.texture.getSize().divScalar(sprite.ppu);
         this.pushCommand(.{
             .options = .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect },
             .data = .{ .quad = .{ .pos = rect.pos, .size = size.mul(rect.size) } },

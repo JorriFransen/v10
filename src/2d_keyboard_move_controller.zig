@@ -41,5 +41,5 @@ pub fn updateInput(this: *const Controller, window_: *Window, dt: f32, pos: *Vec
     zoom.* *= std.math.pow(f32, this.zoom_step_per_second, dt * zoom_dir);
 
     // Proportional to zoom level
-    pos.* = pos.add(dir.mul_scalar(dt * this.move_speed / zoom.*));
+    pos.* = pos.add(dir.mulScalar(dt * this.move_speed / zoom.*));
 }
