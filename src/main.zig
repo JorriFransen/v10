@@ -210,12 +210,13 @@ fn update(dt: f32) void {
 
 fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
-        const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
+        const clear_color = @Vector(4, f32){ 0, 0, 0, 1 };
+        // const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
         renderer.beginRenderpass(cb, clear_color);
 
         // d3d.drawEntities(cb, entities, &camera_3d);
 
-        const batch = r2d.beginBatch(cb, &camera_2d);
+        var batch = r2d.beginBatch(cb, &camera_2d);
         {
             // Draw the sprites, sprite loading flips y for these sprites
             batch.drawSprite(&test_sprite, .{ .y = 4 });
@@ -223,16 +224,15 @@ fn drawFrame() !void {
 
             // Draw them by texture, need to flip uv's manually, also need to specify size in worldspace (ppu not applied)
             const y_flip_uv = Rect{ .pos = .{ .x = 0, .y = 1 }, .size = .{ .x = 1, .y = -1 } };
-            batch.drawRect(.{ .y = 2 }, Vec2.scalar(1), .{ .texture = &test_texture, .uv_rect = y_flip_uv });
-            batch.drawRect(.{ .x = 2, .y = 2 }, Vec2.scalar(1), .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
+            batch.drawRect(.{ .pos = .{ .y = 2 }, .size = Vec2.scalar(1) }, .{ .texture = &test_texture, .uv_rect = y_flip_uv });
+            batch.drawRect(.{ .pos = Vec2.scalar(2), .size = Vec2.scalar(1) }, .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
 
             // Cannot control uv's in this case, only specify size in worldspace
-            batch.drawTextureRect(&test_texture, .{ .size = Vec2.scalar(1) });
-            batch.drawTextureRect(&test_tile_texture, .{ .pos = .{ .x = 2, .y = 0 }, .size = Vec2.scalar(1) });
+            batch.drawRect(.{ .size = Vec2.scalar(1) }, .{ .texture = &test_texture });
+            batch.drawRect(.{ .pos = .{ .x = 2 }, .size = Vec2.scalar(1) }, .{ .texture = &test_tile_texture });
 
-            // Same as drawTextureRect, but contol uvs
-            batch.drawTextureRectUv(&test_texture, .{ .pos = .{ .y = -2 }, .size = Vec2.scalar(1) }, y_flip_uv);
-            batch.drawTextureRectUv(&test_tile_texture, .{ .pos = .{ .x = 2, .y = -2 }, .size = Vec2.scalar(1) }, y_flip_uv);
+            batch.drawRect(.{ .pos = .{ .y = -2 }, .size = Vec2.scalar(1) }, .{ .color = Vec4.new(1, 0, 0, 1) });
+            batch.drawRect(.{ .pos = .{ .x = 2, .y = -2 }, .size = Vec2.scalar(1) }, .{ .color = Vec4.new(0, 1, 0, 1) });
 
             // Test uv_rect not covering whole texture
             batch.drawSpriteRect(&test_sprite_sub_tl, .{ .pos = .{ .x = -0.05, .y = -3.95 }, .size = Vec2.scalar(0.5) });
@@ -245,16 +245,16 @@ fn drawFrame() !void {
             batch.drawSpriteRect(&test_tile_sprite_sub_bl, .{ .pos = .{ .x = 1.95, .y = -4.55 }, .size = Vec2.scalar(0.5) });
             batch.drawSpriteRect(&test_tile_sprite_sub_br, .{ .pos = .{ .x = 2.55, .y = -4.55 }, .size = Vec2.scalar(0.5) });
 
-            batch.drawLine(Vec2.new(0, 10), Vec2.new(0, -10), 1, Vec4.new(1, 0, 0, 1));
+            // batch.drawLine(Vec2.new(0, 10), Vec2.new(0, -10), 1, Vec4.new(1, 0, 0, 1));
         }
         batch.end();
 
-        const ui_batch = r2d.beginBatch(cb, &camera_ui);
-        {
-            // ui_batch.drawTextureRect(&test_tile_texture, .{ .pos = Vec2.scalar(20), .size = Vec2.scalar(400) });
-            // ui_batch.drawTextureRect(&test_texture, .{ .pos = Vec2.new(20, 440), .size = Vec2.scalar(400) });
-        }
-        ui_batch.end();
+        // const ui_batch = r2d.beginBatch(cb, &camera_ui);
+        // {
+        //     // ui_batch.drawTextureRect(&test_tile_texture, .{ .pos = Vec2.scalar(20), .size = Vec2.scalar(400) });
+        //     // ui_batch.drawTextureRect(&test_texture, .{ .pos = Vec2.new(20, 440), .size = Vec2.scalar(400) });
+        // }
+        // ui_batch.end();
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);

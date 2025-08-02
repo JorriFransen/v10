@@ -83,27 +83,19 @@ const PushConstantData = extern struct {
     view: Mat4,
 };
 
-pub const DrawOptions = struct {
-    /// This color overrides the per-vertex color
-    color: ?Vec4 = Vec4.scalar(1),
-    texture: ?*const Texture = null,
-    uv_rect: ?Rect = null,
+pub const PrimitiveType = enum(u8) {
+    line,
+    triangle,
+    quad,
 };
 
-// TODO: Remove drawOptions (move into data)
-// TODO: Test triangle uv
-// TODO: Use Vertex for lines
 pub const DrawCommand = struct {
-    options: DrawOptions,
+    type: PrimitiveType,
+    texture: ?*const Texture,
+    line_width: f32 = 1,
 
-    data: union(enum) {
-        triangle: [3]Vertex,
-        quad: struct { pos: Vec2, size: Vec2 },
-        line: struct {
-            positions: [2]Vec2,
-            width: f32,
-        },
-    },
+    vertex_start: usize,
+    vertex_count: usize,
 };
 
 pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void {
@@ -255,6 +247,7 @@ pub fn beginBatch(this: *Renderer, cb: vk.CommandBufferProxy, camera: *const Cam
         .camera = camera,
         .renderer = this,
         .command_buffer = cb,
+        .vertex_count = 0,
     };
 }
 
@@ -262,71 +255,55 @@ pub const Batch = struct {
     camera: *const Camera,
     renderer: *Renderer,
     command_buffer: vk.CommandBufferProxy,
-    line_width: f32 = 1,
+    vertex_count: usize,
 
-    inline fn pushCommand(this: *const Batch, cmd: DrawCommand) void {
-        this.renderer.commands.append(cmd) catch @panic("Command memory full");
+    pub inline fn pushCommand(batch: *Batch, cmd: DrawCommand) void {
+        batch.renderer.commands.append(cmd) catch @panic("Command memory full");
     }
 
-    pub fn drawTriangle(this: *const Batch, vertices: [3]Vertex, options: DrawOptions) void {
-        this.pushCommand(.{ .options = options, .data = .{
-            .triangle = vertices,
-        } });
-    }
+    pub const DrawRectOptions = struct {
+        texture: ?*const Texture = null,
+        color: Vec4 = white,
+        uv_rect: Rect = .{ .pos = Vec2.scalar(0), .size = Vec2.scalar(1) },
+    };
 
-    pub fn drawRect(this: *const Batch, pos: Vec2, size: Vec2, options: DrawOptions) void {
-        this.pushCommand(.{ .options = options, .data = .{
-            .quad = .{ .pos = pos, .size = size },
-        } });
-    }
+    /// Draws the specified rectangle with options (texture, color, uv_rect)
+    pub inline fn drawRect(batch: *Batch, rect: Rect, options: DrawRectOptions) void {
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        assert(batch.vertex_count + 4 <= vbuf.len);
 
-    pub fn drawTexture(this: *const Batch, texture: *const Texture, pos: Vec2) void {
-        const size = texture.getSize();
-        this.pushCommand(.{
-            .options = .{ .texture = texture, .color = white },
-            .data = .{ .quad = .{ .pos = pos, .size = size } },
+        const vertices = vbuf[batch.vertex_count .. batch.vertex_count + 4];
+        const uv_rect = options.uv_rect;
+
+        vertices[0] = .{ .pos = rect.pos, .uv = uv_rect.pos, .color = options.color };
+        vertices[1] = .{ .pos = rect.pos.add(.{ .x = rect.size.x }), .uv = uv_rect.pos.add(.{ .x = uv_rect.size.x }), .color = options.color };
+        vertices[2] = .{ .pos = rect.pos.add(rect.size), .uv = uv_rect.pos.add(uv_rect.size), .color = options.color };
+        vertices[3] = .{ .pos = rect.pos.add(.{ .y = rect.size.y }), .uv = uv_rect.pos.add(.{ .y = uv_rect.size.y }), .color = options.color };
+
+        const vertex_start = batch.vertex_count;
+        batch.vertex_count += 4;
+
+        batch.pushCommand(.{
+            .type = .quad,
+            .texture = options.texture,
+            .vertex_start = vertex_start,
+            .vertex_count = 4,
         });
     }
 
-    pub fn drawTextureRect(this: *const Batch, texture: *const Texture, rect: Rect) void {
-        this.pushCommand(.{
-            .options = .{ .texture = texture, .color = white },
-            .data = .{ .quad = .{ .pos = rect.pos, .size = rect.size } },
-        });
-    }
-
-    pub fn drawTextureRectUv(this: *const Batch, texture: *const Texture, rect: Rect, uv_rect: Rect) void {
-        this.pushCommand(.{
-            .options = .{ .texture = texture, .color = white, .uv_rect = uv_rect },
-            .data = .{ .quad = .{ .pos = rect.pos, .size = rect.size } },
-        });
-    }
-
-    pub fn drawSprite(this: *const Batch, sprite: *const Sprite, pos: Vec2) void {
+    /// Draws a sprite at the specified position, scaled by the sprites ppu
+    pub inline fn drawSprite(batch: *Batch, sprite: *const Sprite, pos: Vec2) void {
         const size = sprite.texture.getSize().divScalar(sprite.ppu);
-        this.pushCommand(.{
-            .options = .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect },
-            .data = .{ .quad = .{ .pos = pos, .size = size } },
-        });
+        const rect = Rect{ .pos = pos, .size = size };
+        batch.drawRect(rect, .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect });
     }
 
-    pub fn drawSpriteRect(this: *const Batch, sprite: *const Sprite, rect: Rect) void {
-        const size = sprite.texture.getSize().divScalar(sprite.ppu);
-        this.pushCommand(.{
-            .options = .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect },
-            .data = .{ .quad = .{ .pos = rect.pos, .size = size.mul(rect.size) } },
-        });
+    /// Draws a sprite at the specified rectangle
+    pub inline fn drawSpriteRect(batch: *Batch, sprite: *Sprite, rect: Rect) void {
+        batch.drawRect(rect, .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect });
     }
 
-    /// Line width is fixed in screen pixels. For world-space scaling, use drawRect or calculate width via ppu.
-    pub fn drawLine(this: *const Batch, p1: Vec2, p2: Vec2, width: f32, color: Vec4) void {
-        this.pushCommand(.{
-            .options = .{ .color = color },
-            .data = .{ .line = .{ .positions = .{ p1, p2 }, .width = width } },
-        });
-    }
-
-    pub fn end(batch: *const Batch) void {
+    pub inline fn end(batch: *const Batch) void {
         const renderer = batch.renderer;
         const cb = batch.command_buffer;
 
@@ -341,17 +318,12 @@ pub const Batch = struct {
         //     }
         // }.f);
 
-        var current_pipeline = &renderer.triangle_pipeline;
-        if (renderer.commands.items[0].data == .line) {
-            current_pipeline = &renderer.line_pipeline;
-        }
-        current_pipeline.bind(cb);
+        const ibuf = renderer.index_staging_buffer_mapped;
 
         const pcd = PushConstantData{
             .projection = batch.camera.projection_matrix,
             .view = batch.camera.view_matrix,
         };
-
         cb.pushConstants(renderer.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
 
         cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{renderer.vertex_buffer}, &[_]vk.DeviceSize{0});
@@ -363,33 +335,29 @@ pub const Batch = struct {
         };
         cb.bindIndexBuffer(renderer.index_buffer, 0, index_type);
 
-        const vbuf = renderer.vertex_staging_buffer_mapped;
-        const ibuf = renderer.index_staging_buffer_mapped;
-
-        var vertex_count: usize = 0;
-        var index_count: usize = 0;
-
         var batch_index_count: u32 = 0;
         var batch_index_offset: u32 = 0;
+        var index_count: u32 = 0;
 
-        var current_texture: *const Texture =
-            renderer.commands.items[0].options.texture orelse
-            &renderer.default_white_texture;
+        var current_pipeline = switch (renderer.commands.items[0].type) {
+            .line => &renderer.line_pipeline,
+            .triangle, .quad => &renderer.triangle_pipeline,
+        };
+        current_pipeline.bind(cb);
 
+        var current_texture = renderer.commands.items[0].texture orelse &renderer.default_white_texture;
         current_texture.bind(cb, renderer.layout);
 
         for (renderer.commands.items) |*command| {
-            const options = &command.options;
-            const command_pipeline = switch (command.data) {
+            const command_pipeline = switch (command.type) {
                 .line => &renderer.line_pipeline,
-                else => &renderer.triangle_pipeline,
+                .triangle, .quad => &renderer.triangle_pipeline,
             };
-            const command_texture = options.texture orelse &renderer.default_white_texture;
 
             const switch_pipeline = current_pipeline != command_pipeline;
-            const switch_texure = current_texture != command_texture;
+            const switch_texture = current_texture != command.texture;
 
-            if (switch_pipeline or switch_texure) {
+            if (switch_pipeline or switch_texture) {
                 if (batch_index_count > 0) {
                     cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
                 }
@@ -398,12 +366,12 @@ pub const Batch = struct {
                     current_pipeline = command_pipeline;
                     current_pipeline.bind(cb);
                     if (current_pipeline == &renderer.line_pipeline) {
-                        cb.setLineWidth(batch.line_width);
+                        cb.setLineWidth(command.line_width);
                     }
                 }
 
-                if (switch_texure) {
-                    current_texture = command_texture;
+                if (switch_texture) {
+                    current_texture = command.texture orelse &renderer.default_white_texture;
                     current_texture.bind(cb, renderer.layout);
                 }
 
@@ -411,85 +379,27 @@ pub const Batch = struct {
                 batch_index_count = 0;
             }
 
-            switch (command.data) {
-                .triangle => |*t| {
-                    if (options.color) |color| {
-                        inline for (t) |*e| e.color = color;
+            switch (command.type) {
+                .line => unreachable,
+                .triangle => unreachable,
+                .quad => {
+                    assert(command.vertex_count % 4 == 0);
+                    const quad_count = command.vertex_count / 4;
+
+                    for (0..quad_count) |qi| {
+                        const fi: Index = @intCast(command.vertex_start + (qi * 4));
+                        const indices = [6]Index{
+                            fi, fi + 1, fi + 2,
+                            fi, fi + 2, fi + 3,
+                        };
+
+                        assert(index_count + indices.len <= ibuf.len);
+
+                        @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                        index_count += indices.len;
+                        batch_index_count += indices.len;
                     }
-
-                    const fi: Index = @intCast(vertex_count);
-                    const indices = [3]Index{ fi, fi + 1, fi + 2 };
-
-                    assert(vertex_count + t.len <= vbuf.len);
-                    assert(index_count + indices.len <= ibuf.len);
-
-                    @memcpy(vbuf[vertex_count .. vertex_count + t.len], t);
-                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
-
-                    vertex_count += t.len;
-                    index_count += indices.len;
-                    batch_index_count += indices.len;
-                },
-                .quad => |q| {
-                    const color = options.color orelse white;
-
-                    const uvs: [4]Vec2 = if (options.uv_rect) |uvr|
-                        .{
-                            uvr.pos,
-                            Vec2.new(uvr.pos.x + uvr.size.x, uvr.pos.y),
-                            uvr.pos.add(uvr.size),
-                            Vec2.new(uvr.pos.x, uvr.pos.y + uvr.size.y),
-                        }
-                    else
-                        .{ Vec2.scalar(0), Vec2.new(1, 0), Vec2.scalar(1), Vec2.new(0, 1) };
-
-                    const verts = [4]Vertex{
-                        .{ .pos = q.pos, .color = color, .uv = uvs[0] },
-                        .{ .pos = q.pos.add(Vec2{ .x = q.size.x }), .color = color, .uv = uvs[1] },
-                        .{ .pos = q.pos.add(q.size), .color = color, .uv = uvs[2] },
-                        .{ .pos = q.pos.add(Vec2{ .y = q.size.y }), .color = color, .uv = uvs[3] },
-                    };
-
-                    const fi: Index = @intCast(vertex_count);
-                    const indices = [6]Index{
-                        fi, fi + 1, fi + 2,
-                        fi, fi + 2, fi + 3,
-                    };
-
-                    assert(vertex_count + verts.len <= vbuf.len);
-                    assert(index_count + indices.len <= ibuf.len);
-
-                    @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
-                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
-
-                    vertex_count += verts.len;
-                    index_count += indices.len;
-                    batch_index_count += indices.len;
-                },
-                .line => |l| {
-                    if (batch.line_width != l.width) {
-                        cb.setLineWidth(l.width);
-                    }
-
-                    const color = if (options.color) |c| c else white;
-
-                    const verts = [2]Vertex{
-                        .{ .pos = l.positions[0], .color = color },
-                        .{ .pos = l.positions[1], .color = color },
-                    };
-
-                    const fi: Index = @intCast(vertex_count);
-                    const indices = [2]Index{ fi, fi + 1 };
-
-                    assert(vertex_count + verts.len <= vbuf.len);
-                    assert(index_count + indices.len <= ibuf.len);
-
-                    @memcpy(vbuf[vertex_count .. vertex_count + verts.len], &verts);
-                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
-
-                    vertex_count += verts.len;
-                    index_count += indices.len;
-                    batch_index_count += indices.len;
                 },
             }
         }
