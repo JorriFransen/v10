@@ -140,6 +140,11 @@ pub fn create(system: *gfx.System, window: *const Window) !@This() {
     try this.setupDebugMessenger();
     try this.createSurface();
     try this.pickPhysicalDevice();
+
+    const l = this.device_info.properties.limits;
+    // TODO: Do something with this! (assert or clamp?/warn);
+    vklog.debug("min,max line width: {},{}", .{ l.line_width_range[0], l.line_width_range[1] });
+
     try this.createLogicalDevice();
     try this.createCommandPool();
 
@@ -313,6 +318,7 @@ fn createLogicalDevice(this: *@This()) !void {
 
     const device_features = vk.PhysicalDeviceFeatures{
         .sampler_anisotropy = vk.TRUE,
+        .wide_lines = vk.TRUE,
     };
 
     const index_type_uint8_features = vk.PhysicalDeviceIndexTypeUint8FeaturesKHR{
@@ -526,6 +532,7 @@ fn isDeviceSuitable(this: *@This(), dev_info: DeviceInfo) !bool {
 
     const supported_features = this.vki.getPhysicalDeviceFeatures(dev_info.physical_device);
     if (supported_features.sampler_anisotropy == 0) return false;
+    if (supported_features.wide_lines == 0) return false;
 
     return true;
 }

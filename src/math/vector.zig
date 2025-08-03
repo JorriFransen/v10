@@ -50,6 +50,12 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn div(a: @This(), b: @This()) @This() {
                 return F.div(a, b);
             }
+            pub inline fn addScalar(vec: @This(), s: T) @This() {
+                return F.addScalar(vec, s);
+            }
+            pub inline fn subScalar(vec: @This(), s: T) @This() {
+                return F.subScalar(vec, s);
+            }
             pub inline fn mulScalar(vec: @This(), s: T) @This() {
                 return F.mulScalar(vec, s);
             }
@@ -112,6 +118,12 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             }
             pub inline fn div(a: Vec3, b: Vec3) Vec3 {
                 return F.div(a, b);
+            }
+            pub inline fn addScalar(vec: @This(), s: T) @This() {
+                return F.addScalar(vec, s);
+            }
+            pub inline fn subScalar(vec: @This(), s: T) @This() {
+                return F.subScalar(vec, s);
             }
             pub inline fn mulScalar(vec: Vec3, s: T) Vec3 {
                 return F.mulScalar(vec, s);
@@ -199,6 +211,12 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn div(a: @This(), b: @This()) @This() {
                 return F.div(a, b);
             }
+            pub inline fn addScalar(vec: @This(), s: T) @This() {
+                return F.addScalar(vec, s);
+            }
+            pub inline fn subScalar(vec: @This(), s: T) @This() {
+                return F.subScalar(vec, s);
+            }
             pub inline fn mulScalar(vec: @This(), s: T) @This() {
                 return F.mulScalar(vec, s);
             }
@@ -253,6 +271,12 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         }
         pub inline fn div(a: Base, b: Base) Base {
             return @bitCast(a.vector() / b.vector());
+        }
+        pub inline fn addScalar(vec: Base, s: T) Base {
+            return @bitCast(vec.vector() + @as(V, @splat(s)));
+        }
+        pub inline fn subScalar(vec: Base, s: T) Base {
+            return @bitCast(vec.vector() - @as(V, @splat(s)));
         }
         pub inline fn mulScalar(vec: Base, s: T) Base {
             return @bitCast(vec.vector() * @as(V, @splat(s)));

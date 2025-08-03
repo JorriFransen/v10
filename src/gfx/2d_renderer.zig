@@ -261,6 +261,61 @@ pub const Batch = struct {
         batch.renderer.commands.append(cmd) catch @panic("Command memory full");
     }
 
+    pub const DrawLineOptions = struct {
+        color: Vec4 = white,
+        width: f32 = 1,
+    };
+
+    /// Draws a line segment between two points
+    pub inline fn drawLine(batch: *Batch, p0: Vec2, p1: Vec2, options: DrawLineOptions) void {
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        assert(batch.vertex_count + 2 <= vbuf.len);
+
+        const vertices = vbuf[batch.vertex_count .. batch.vertex_count + 2];
+
+        vertices[0] = .{ .pos = p0, .color = options.color, .uv = Vec2.scalar(0) };
+        vertices[1] = .{ .pos = p1, .color = options.color, .uv = Vec2.scalar(0) };
+
+        const vertex_start = batch.vertex_count;
+        batch.vertex_count += 2;
+
+        batch.pushCommand(.{
+            .type = .line,
+            .texture = &batch.renderer.default_white_texture,
+            .line_width = options.width,
+            .vertex_start = vertex_start,
+            .vertex_count = 2,
+        });
+    }
+
+    pub const DrawTriangleOptions = struct {
+        texture: ?*const Texture = null,
+        color: Vec4 = white,
+        uv_coords: [3]Vec2 = .{ Vec2.scalar(0), Vec2.scalar(0), Vec2.scalar(0) },
+    };
+
+    /// Draws a triangle with the specified vertices and options
+    pub inline fn drawTriangle(batch: *Batch, p1: Vec2, p2: Vec2, p3: Vec2, options: DrawTriangleOptions) void {
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        assert(batch.vertex_count + 3 <= vbuf.len);
+
+        const vertices = vbuf[batch.vertex_count .. batch.vertex_count + 3];
+
+        vertices[0] = .{ .pos = p1, .color = options.color, .uv = options.uv_coords[0] };
+        vertices[1] = .{ .pos = p2, .color = options.color, .uv = options.uv_coords[1] };
+        vertices[2] = .{ .pos = p3, .color = options.color, .uv = options.uv_coords[2] };
+
+        const vertex_start = batch.vertex_count;
+        batch.vertex_count += 3;
+
+        batch.pushCommand(.{
+            .type = .triangle,
+            .texture = options.texture,
+            .vertex_start = vertex_start,
+            .vertex_count = 3,
+        });
+    }
+
     pub const DrawRectOptions = struct {
         texture: ?*const Texture = null,
         color: Vec4 = white,
@@ -348,6 +403,8 @@ pub const Batch = struct {
         var current_texture = renderer.commands.items[0].texture orelse &renderer.default_white_texture;
         current_texture.bind(cb, renderer.layout);
 
+        var current_line_width: f32 = 1;
+
         for (renderer.commands.items) |*command| {
             const command_pipeline = switch (command.type) {
                 .line => &renderer.line_pipeline,
@@ -356,8 +413,9 @@ pub const Batch = struct {
 
             const switch_pipeline = current_pipeline != command_pipeline;
             const switch_texture = current_texture != command.texture;
+            const switch_line_width = current_line_width != command.line_width;
 
-            if (switch_pipeline or switch_texture) {
+            if (switch_pipeline or switch_texture or switch_line_width) {
                 if (batch_index_count > 0) {
                     cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
                 }
@@ -365,9 +423,6 @@ pub const Batch = struct {
                 if (switch_pipeline) {
                     current_pipeline = command_pipeline;
                     current_pipeline.bind(cb);
-                    if (current_pipeline == &renderer.line_pipeline) {
-                        cb.setLineWidth(command.line_width);
-                    }
                 }
 
                 if (switch_texture) {
@@ -375,13 +430,50 @@ pub const Batch = struct {
                     current_texture.bind(cb, renderer.layout);
                 }
 
+                if (switch_line_width) {
+                    current_line_width = command.line_width;
+                    cb.setLineWidth(current_line_width);
+                }
+
                 batch_index_offset = @intCast(index_count);
                 batch_index_count = 0;
             }
 
             switch (command.type) {
-                .line => unreachable,
-                .triangle => unreachable,
+                .line => {
+                    assert(command.vertex_count == 2);
+                    const fi: Index = @intCast(command.vertex_start);
+                    const indices = [2]Index{
+                        fi, fi + 1,
+                    };
+
+                    assert(index_count + indices.len <= ibuf.len);
+
+                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                    index_count += indices.len;
+                    batch_index_count += indices.len;
+                },
+
+                .triangle => {
+                    assert(command.vertex_count % 3 == 0);
+                    const triangle_count = command.vertex_count / 3;
+
+                    for (0..triangle_count) |ti| {
+                        const fi: Index = @intCast(command.vertex_start + (ti * 3));
+                        const indices = [3]Index{
+                            fi, fi + 1, fi + 2,
+                        };
+
+                        assert(index_count + indices.len <= ibuf.len);
+
+                        @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+
+                        index_count += indices.len;
+                        batch_index_count += indices.len;
+                    }
+                },
+
                 .quad => {
                     assert(command.vertex_count % 4 == 0);
                     const quad_count = command.vertex_count / 4;
