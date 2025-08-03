@@ -72,7 +72,7 @@ var r2d: Renderer2D = .{};
 const camera_3d_fov_y = math.radians(50);
 const camera_3d_near_clip = 0.1;
 const camera_3d_far_clip = 100;
-var camera_3d: Camera = .{};
+var camera_3d: Camera = undefined;
 var camera_3d_transform: Transform = .{};
 
 const camera_2d_near_clip = -50;
@@ -80,8 +80,8 @@ const camera_2d_far_clip = 50;
 var camera_2d_pos = Vec2{};
 var camera_2d_zoom = config.zoom;
 
-var camera_ui: Camera = .{};
-var camera_2d: Camera = .{};
+var camera_ui: Camera = undefined;
+var camera_2d: Camera = undefined;
 
 var kb_3d_move_controller: KB3DMoveController = .{};
 var kb_2d_move_controller: KB2DMoveController = .{};
@@ -218,6 +218,7 @@ fn drawFrame() !void {
 
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
+            drawDebugWorldGrid(&batch);
             drawTestScene(&batch);
         }
         batch.end();
@@ -231,6 +232,43 @@ fn drawFrame() !void {
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
+    }
+}
+const outline = Renderer2D.DrawLineOptions{ .color = Vec4.new(1, 1, 1, 1), .width = 2 };
+const ruler_line = Renderer2D.DrawLineOptions{ .color = outline.color.mulScalar(0.5) };
+const quadrant_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(0.5, 0, 0.5, 1), .width = 2 };
+const triangle_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(0, 0, 0, 1), .width = 2 };
+const divider_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(1, 0, 0, 1) };
+
+fn drawDebugWorldGrid(batch: *Renderer2D.Batch) void {
+    const campos = camera_2d_pos;
+    const o_width = camera_2d.info.orthographic.width;
+    const o_height = camera_2d.info.orthographic.height;
+
+    const left = -(o_width / 2) + campos.x;
+    const right = (o_width / 2) + campos.x;
+    const top = (o_height / 2) + campos.y;
+    const bottom = -(o_height / 2) + campos.y;
+
+    const left_i = @ceil(left);
+    const right_i = @floor(right);
+    const top_i = @floor(top);
+    const bottom_i = @ceil(bottom);
+
+    assert(left_i < right_i);
+    assert(bottom_i < top_i);
+
+    const vcount = @abs(left_i - right_i) + 1;
+    const hcount = @abs(bottom_i - top_i) + 1;
+
+    for (0..@as(usize, @intFromFloat(vcount))) |i| {
+        const x = @as(f32, @floatFromInt(i)) + left_i;
+        batch.drawDebugLine(Vec2.new(x, top), Vec2.new(x, bottom), ruler_line);
+    }
+
+    for (0..@as(usize, @intFromFloat(hcount))) |i| {
+        const y = @as(f32, @floatFromInt(i)) + bottom_i;
+        batch.drawDebugLine(Vec2.new(left, y), Vec2.new(right, y), ruler_line);
     }
 }
 
@@ -270,38 +308,7 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
     const tile_sub_bl_rect = sub_bl_rect.move(xstep);
     const tile_sub_br_rect = sub_br_rect.move(xstep);
 
-    const outline = Renderer2D.DrawLineOptions{ .color = Vec4.new(1, 1, 1, 1), .width = 2 };
-    const ruler_line = Renderer2D.DrawLineOptions{ .color = outline.color.mulScalar(0.5) };
-    const quadrant_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(0.5, 0, 0.5, 1), .width = 2 };
-    const triangle_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(0, 0, 0, 1), .width = 2 };
-    const divider_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(1, 0, 0, 1) };
     const dim = Vec2.scalar(1);
-
-    // vertical lines
-    batch.drawDebugLine(Vec2.new(p0_0.x, p0_0.y + 2), Vec2.new(p0_4.x, p0_4.y - 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p0_0.x + 1, p0_0.y + 2), Vec2.new(p0_4.x + 1, p0_4.y - 1), ruler_line);
-
-    batch.drawDebugLine(Vec2.new(p1_0.x, p1_0.y + 2), Vec2.new(p1_4.x, p0_4.y - 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p1_0.x + 1, p1_0.y + 2), Vec2.new(p1_4.x + 1, p0_4.y - 1), ruler_line);
-
-    batch.drawDebugLine(Vec2.new(p2_0.x, p2_0.y + 2), Vec2.new(p2_4.x, p0_4.y - 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p2_0.x + 1, p2_0.y + 2), Vec2.new(p2_4.x + 1, p0_4.y - 1), ruler_line);
-
-    // horizontal lines
-    batch.drawDebugLine(Vec2.new(p0_0.x - 1, p0_0.y + 1), Vec2.new(p2_0.x + 2, p2_0.y + 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p0_0.x - 1, p0_0.y), Vec2.new(p2_0.x + 2, p2_0.y), ruler_line);
-
-    batch.drawDebugLine(Vec2.new(p0_1.x - 1, p0_1.y + 1), Vec2.new(p2_1.x + 2, p2_1.y + 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p0_1.x - 1, p0_1.y), Vec2.new(p2_1.x + 2, p2_1.y), ruler_line);
-
-    batch.drawDebugLine(Vec2.new(p0_2.x - 1, p0_2.y + 1), Vec2.new(p2_2.x + 2, p2_2.y + 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p0_2.x - 1, p0_2.y), Vec2.new(p2_2.x + 2, p2_2.y), ruler_line);
-
-    batch.drawDebugLine(Vec2.new(p0_3.x - 1, p0_3.y + 1), Vec2.new(p2_3.x + 2, p2_3.y + 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p0_3.x - 1, p0_3.y), Vec2.new(p2_3.x + 2, p2_3.y), ruler_line);
-
-    batch.drawDebugLine(Vec2.new(p0_4.x - 1, p0_4.y + 1), Vec2.new(p2_4.x + 2, p2_4.y + 1), ruler_line);
-    batch.drawDebugLine(Vec2.new(p0_4.x - 1, p0_4.y), Vec2.new(p2_4.x + 2, p2_4.y), ruler_line);
 
     // Draw the sprites, sprite loading flips y for these sprites
     batch.drawSprite(&test_sprite, p0_0);

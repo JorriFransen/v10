@@ -6,7 +6,15 @@ const Mat4 = math.Mat4;
 projection_matrix: Mat4 = Mat4.identity,
 view_matrix: Mat4 = Mat4.identity,
 
-pub const ProjectionInfo = union(enum) {
+info: union {
+    perspective: void,
+    orthographic: struct {
+        width: f32,
+        height: f32,
+    },
+},
+
+pub const SetProjectionOptions = union(enum) {
     orthographic: struct { l: f32, r: f32, t: f32, b: f32 },
     perspective: struct {
         fov_y: f32,
@@ -14,10 +22,15 @@ pub const ProjectionInfo = union(enum) {
     },
 };
 
-pub inline fn setProjection(this: *@This(), info: ProjectionInfo, near: f32, far: f32) void {
+pub inline fn setProjection(this: *@This(), info: SetProjectionOptions, near: f32, far: f32) void {
     this.projection_matrix = switch (info) {
-        .orthographic => |o| Mat4.ortho(o.l, o.r, o.t, o.b, near, far),
-        .perspective => |p| Mat4.perspective(p.fov_y, p.aspect, near, far),
+        .orthographic => |o| blk: {
+            this.info = .{ .orthographic = .{ .width = @abs(o.r - o.l), .height = @abs(o.t - o.b) } };
+            break :blk Mat4.ortho(o.l, o.r, o.t, o.b, near, far);
+        },
+        .perspective => |p| blk: {
+            break :blk Mat4.perspective(p.fov_y, p.aspect, near, far);
+        },
     };
 }
 
