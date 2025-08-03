@@ -5,7 +5,7 @@ const math = @import("../math.zig");
 
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
-const Camera = gfx.Camera;
+const Camera = gfx.Camera3D;
 const Entity = @import("../entity.zig");
 const GpuModel = @import("model.zig");
 const Vec2 = math.Vec2;

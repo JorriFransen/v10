@@ -37,7 +37,7 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, transform:
 
     if (rot.dot(rot) > epsilon) {
         const trot = &transform.rotation;
-        trot.* = trot.add(rot.normalized().mul_scalar(dt * this.look_speed));
+        trot.* = trot.add(rot.normalized().mulScalar(dt * this.look_speed));
 
         // Limit pitch to about +/- 85 degrees
         trot.x = std.math.clamp(trot.x, -1.5, 1.5);
@@ -61,7 +61,7 @@ pub fn moveInPlaneXZ(this: *const @This(), window_: *Window, dt: f32, transform:
 
     if (mdir.dot(mdir) > epsilon) {
         const ttra = &transform.translation;
-        ttra.* = ttra.add(mdir.normalized().mul_scalar(dt * this.move_speed));
+        ttra.* = ttra.add(mdir.normalized().mulScalar(dt * this.move_speed));
         // std.log.debug("Cam pos: {}", .{ttra.*});
     }
 }

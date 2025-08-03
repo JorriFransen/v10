@@ -12,7 +12,8 @@ const Device = gfx.Device;
 const Model = gfx.Model;
 const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
-const Camera = gfx.Camera;
+const Camera2D = gfx.Camera2D;
+const Camera3D = gfx.Camera3D;
 const Renderer2D = gfx.Renderer2D;
 const Renderer3D = gfx.Renderer3D;
 const Entity = @import("entity.zig");
@@ -72,7 +73,7 @@ var r2d: Renderer2D = .{};
 const camera_3d_fov_y = math.radians(50);
 const camera_3d_near_clip = 0.1;
 const camera_3d_far_clip = 100;
-var camera_3d: Camera = undefined;
+var camera_3d: Camera3D = undefined;
 var camera_3d_transform: Transform = .{};
 
 const camera_2d_near_clip = -50;
@@ -80,8 +81,8 @@ const camera_2d_far_clip = 50;
 var camera_2d_pos = Vec2{};
 var camera_2d_zoom = config.zoom;
 
-var camera_ui: Camera = undefined;
-var camera_2d: Camera = undefined;
+var camera_ui: Camera2D = undefined;
+var camera_2d: Camera2D = undefined;
 
 var kb_3d_move_controller: KB3DMoveController = .{};
 var kb_2d_move_controller: KB2DMoveController = .{};
@@ -164,14 +165,18 @@ fn run() !void {
     camera_3d.setProjection(.{ .perspective = .{
         .fov_y = camera_3d_fov_y,
         .aspect = aspect,
-    } }, camera_3d_near_clip, camera_3d_far_clip);
+        .near = camera_3d_near_clip,
+        .far = camera_3d_far_clip,
+    } });
 
-    camera_ui.setProjection(.{ .orthographic = .{
+    camera_ui.setProjection(.{
         .l = 0,
         .r = @as(f32, @floatFromInt(window.width)),
         .t = 0,
         .b = @as(f32, @floatFromInt(window.height)),
-    } }, camera_2d_near_clip, camera_2d_far_clip);
+        .n = camera_2d_near_clip,
+        .f = camera_2d_far_clip,
+    });
     camera_ui.setViewYXZ(Vec3.new(0, 0, camera_2d_near_clip), Vec3.scalar(0));
 
     var current_time = try Instant.now();
@@ -188,12 +193,14 @@ fn run() !void {
 
         const ortho_height = @as(f32, @floatFromInt(window.height)) / (2 * config.ppu) / camera_2d_zoom;
         const ortho_width = ortho_height * aspect;
-        camera_2d.setProjection(.{ .orthographic = .{
+        camera_2d.setProjection(.{
             .l = -ortho_width,
             .r = ortho_width,
             .b = -ortho_height,
             .t = ortho_height,
-        } }, camera_2d_near_clip, camera_2d_far_clip);
+            .n = camera_2d_near_clip,
+            .f = camera_2d_far_clip,
+        });
         camera_2d.setViewYXZ(camera_2d_pos.toVector3(camera_2d_near_clip), Vec3.scalar(0));
 
         update(dt);
@@ -204,7 +211,7 @@ fn run() !void {
 }
 
 fn update(dt: f32) void {
-    // kb_move_controller.moveInPlaneXZ(&window, dt, &camera_3d_transform);
+    // kb_3d_move_controller.moveInPlaneXZ(&window, dt, &camera_3d_transform);
     kb_2d_move_controller.updateInput(&window, dt, &camera_2d_pos, &camera_2d_zoom);
 }
 
@@ -214,7 +221,7 @@ fn drawFrame() !void {
         const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
         renderer.beginRenderpass(cb, clear_color);
 
-        // d3d.drawEntities(cb, entities, &camera_3d);
+        r3d.drawEntities(cb, entities, &camera_3d);
 
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
@@ -242,8 +249,8 @@ const divider_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(1, 0, 0, 1) }
 
 fn drawDebugWorldGrid(batch: *Renderer2D.Batch) void {
     const campos = camera_2d_pos;
-    const o_width = camera_2d.info.orthographic.width;
-    const o_height = camera_2d.info.orthographic.height;
+    const o_width = camera_2d.ortho_width;
+    const o_height = camera_2d.ortho_height;
 
     const left = -(o_width / 2) + campos.x;
     const right = (o_width / 2) + campos.x;
@@ -447,20 +454,26 @@ fn resizeCallback(r: *const Renderer) void {
     camera_3d.setProjection(.{ .perspective = .{
         .fov_y = camera_3d_fov_y,
         .aspect = aspect,
-    } }, camera_3d_near_clip, camera_3d_far_clip);
+        .near = camera_3d_near_clip,
+        .far = camera_3d_far_clip,
+    } });
 
     const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * config.ppu) / camera_2d_zoom;
     const ortho_width = ortho_height * aspect;
-    camera_2d.setProjection(.{ .orthographic = .{
+    camera_2d.setProjection(.{
         .l = -ortho_width,
         .r = ortho_width,
         .b = -ortho_height,
         .t = ortho_height,
-    } }, camera_2d_near_clip, camera_2d_far_clip);
-    camera_ui.setProjection(.{ .orthographic = .{
+        .n = camera_2d_near_clip,
+        .f = camera_2d_far_clip,
+    });
+    camera_ui.setProjection(.{
         .l = 0,
         .r = @as(f32, @floatFromInt(renderer.window.width)),
         .t = 0,
         .b = @as(f32, @floatFromInt(renderer.window.height)),
-    } }, camera_2d_near_clip, camera_2d_far_clip);
+        .n = camera_2d_near_clip,
+        .f = camera_2d_far_clip,
+    });
 }
