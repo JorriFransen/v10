@@ -401,13 +401,13 @@ pub const Batch = struct {
         current_pipeline.bind(cb);
 
         var current_line_width: f32 = 1;
-        if (current_pipeline == &renderer.line_pipeline) {
+        if (renderer.commands.items[0].type == .line) {
             current_line_width = renderer.commands.items[0].line_width;
             cb.setLineWidth(current_line_width);
         }
 
         var current_texture = renderer.commands.items[0].texture orelse &renderer.default_white_texture;
-        current_texture.bind(cb, renderer.layout);
+        if (renderer.commands.items[0].type != .line) current_texture.bind(cb, renderer.layout);
 
         for (renderer.commands.items) |*command| {
             const command_pipeline = switch (command.type) {
@@ -415,33 +415,28 @@ pub const Batch = struct {
                 .triangle, .quad => &renderer.triangle_pipeline,
             };
 
-            const switch_pipeline = current_pipeline != command_pipeline;
-            const switch_texture = current_texture != command.texture;
             const is_line_command = command.type == .line;
+            const switch_pipeline = current_pipeline != command_pipeline;
+            const switch_texture = !is_line_command and current_texture != command.texture;
+            const switch_line_width = is_line_command and (switch_pipeline or current_line_width != command.line_width);
+            const flush = batch_index_count > 0 and (switch_pipeline or switch_texture or switch_line_width);
 
-            // Switch pipline/texture when changed, switch linewidth when changed or switched to line pipline
-            if (switch_pipeline or switch_texture or (is_line_command and current_line_width != command.line_width)) {
-                if (batch_index_count > 0) {
-                    cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
-                }
-
-                if (switch_pipeline) {
-                    current_pipeline = command_pipeline;
-                    current_pipeline.bind(cb);
-                }
-
-                if (switch_texture) {
-                    current_texture = command.texture orelse &renderer.default_white_texture;
-                    current_texture.bind(cb, renderer.layout);
-                }
-
-                if (is_line_command) {
-                    current_line_width = command.line_width;
-                    cb.setLineWidth(current_line_width);
-                }
-
+            if (flush) {
+                cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
                 batch_index_offset = @intCast(index_count);
                 batch_index_count = 0;
+            }
+
+            if (switch_pipeline) {
+                current_pipeline = command_pipeline;
+                current_pipeline.bind(cb);
+            }
+            if (switch_texture) {
+                current_texture = command.texture orelse &renderer.default_white_texture;
+                current_texture.bind(cb, renderer.layout);
+            } else if (switch_line_width) {
+                current_line_width = command.line_width;
+                cb.setLineWidth(current_line_width);
             }
 
             switch (command.type) {
