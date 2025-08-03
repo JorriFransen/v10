@@ -267,7 +267,7 @@ pub const Batch = struct {
     };
 
     /// Draws a line segment between two points
-    pub inline fn drawLine(batch: *Batch, p0: Vec2, p1: Vec2, options: DrawLineOptions) void {
+    pub inline fn drawDebugLine(batch: *Batch, p0: Vec2, p1: Vec2, options: DrawLineOptions) void {
         const vbuf = batch.renderer.vertex_staging_buffer_mapped;
         assert(batch.vertex_count + 2 <= vbuf.len);
 
@@ -400,10 +400,14 @@ pub const Batch = struct {
         };
         current_pipeline.bind(cb);
 
+        var current_line_width: f32 = 1;
+        if (current_pipeline == &renderer.line_pipeline) {
+            current_line_width = renderer.commands.items[0].line_width;
+            cb.setLineWidth(current_line_width);
+        }
+
         var current_texture = renderer.commands.items[0].texture orelse &renderer.default_white_texture;
         current_texture.bind(cb, renderer.layout);
-
-        var current_line_width: f32 = 1;
 
         for (renderer.commands.items) |*command| {
             const command_pipeline = switch (command.type) {
@@ -413,9 +417,10 @@ pub const Batch = struct {
 
             const switch_pipeline = current_pipeline != command_pipeline;
             const switch_texture = current_texture != command.texture;
-            const switch_line_width = current_line_width != command.line_width;
+            const is_line_command = command.type == .line;
 
-            if (switch_pipeline or switch_texture or switch_line_width) {
+            // Switch pipline/texture when changed, switch linewidth when changed or switched to line pipline
+            if (switch_pipeline or switch_texture or (is_line_command and current_line_width != command.line_width)) {
                 if (batch_index_count > 0) {
                     cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
                 }
@@ -430,7 +435,7 @@ pub const Batch = struct {
                     current_texture.bind(cb, renderer.layout);
                 }
 
-                if (switch_line_width) {
+                if (is_line_command) {
                     current_line_width = command.line_width;
                     cb.setLineWidth(current_line_width);
                 }
