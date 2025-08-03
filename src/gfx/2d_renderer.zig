@@ -251,6 +251,23 @@ pub fn beginBatch(this: *Renderer, cb: vk.CommandBufferProxy, camera: *const Cam
     };
 }
 
+pub const DrawLineOptions = struct {
+    color: Vec4 = white,
+    width: f32 = 1,
+};
+
+pub const DrawTriangleOptions = struct {
+    texture: ?*const Texture = null,
+    color: Vec4 = white,
+    uv_coords: [3]Vec2 = .{ Vec2.scalar(0), Vec2.scalar(0), Vec2.scalar(0) },
+};
+
+pub const DrawRectOptions = struct {
+    texture: ?*const Texture = null,
+    color: Vec4 = white,
+    uv_rect: Rect = .{ .pos = Vec2.scalar(0), .size = Vec2.scalar(1) },
+};
+
 pub const Batch = struct {
     camera: *const Camera,
     renderer: *Renderer,
@@ -260,11 +277,6 @@ pub const Batch = struct {
     pub inline fn pushCommand(batch: *Batch, cmd: DrawCommand) void {
         batch.renderer.commands.append(cmd) catch @panic("Command memory full");
     }
-
-    pub const DrawLineOptions = struct {
-        color: Vec4 = white,
-        width: f32 = 1,
-    };
 
     /// Draws a line segment between two points
     pub inline fn drawDebugLine(batch: *Batch, p0: Vec2, p1: Vec2, options: DrawLineOptions) void {
@@ -288,12 +300,6 @@ pub const Batch = struct {
         });
     }
 
-    pub const DrawTriangleOptions = struct {
-        texture: ?*const Texture = null,
-        color: Vec4 = white,
-        uv_coords: [3]Vec2 = .{ Vec2.scalar(0), Vec2.scalar(0), Vec2.scalar(0) },
-    };
-
     /// Draws a triangle with the specified vertices and options
     pub inline fn drawTriangle(batch: *Batch, p1: Vec2, p2: Vec2, p3: Vec2, options: DrawTriangleOptions) void {
         const vbuf = batch.renderer.vertex_staging_buffer_mapped;
@@ -315,12 +321,6 @@ pub const Batch = struct {
             .vertex_count = 3,
         });
     }
-
-    pub const DrawRectOptions = struct {
-        texture: ?*const Texture = null,
-        color: Vec4 = white,
-        uv_rect: Rect = .{ .pos = Vec2.scalar(0), .size = Vec2.scalar(1) },
-    };
 
     /// Draws the specified rectangle with options (texture, color, uv_rect)
     pub inline fn drawRect(batch: *Batch, rect: Rect, options: DrawRectOptions) void {
