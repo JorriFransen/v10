@@ -210,42 +210,15 @@ fn update(dt: f32) void {
 
 fn drawFrame() !void {
     if (try renderer.beginFrame()) |cb| {
-        const clear_color = @Vector(4, f32){ 0, 0, 0, 1 };
-        // const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
+        // const clear_color = @Vector(4, f32){ 0, 0, 0, 1 };
+        const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
         renderer.beginRenderpass(cb, clear_color);
 
         // d3d.drawEntities(cb, entities, &camera_3d);
 
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
-            // Draw the sprites, sprite loading flips y for these sprites
-            batch.drawSprite(&test_sprite, .{ .y = 4 });
-            batch.drawSprite(&test_tile_sprite, .{ .x = 2, .y = 4 });
-
-            // Draw them by texture, need to flip uv's manually, also need to specify size in worldspace (ppu not applied)
-            const y_flip_uv = Rect{ .pos = .{ .x = 0, .y = 1 }, .size = .{ .x = 1, .y = -1 } };
-            batch.drawRect(.{ .pos = .{ .y = 2 }, .size = Vec2.scalar(1) }, .{ .texture = &test_texture, .uv_rect = y_flip_uv });
-            batch.drawRect(.{ .pos = Vec2.scalar(2), .size = Vec2.scalar(1) }, .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
-
-            // Cannot control uv's in this case, only specify size in worldspace
-            batch.drawRect(.{ .size = Vec2.scalar(1) }, .{ .texture = &test_texture });
-            batch.drawRect(.{ .pos = .{ .x = 2 }, .size = Vec2.scalar(1) }, .{ .texture = &test_tile_texture });
-
-            batch.drawRect(.{ .pos = .{ .y = -2 }, .size = Vec2.scalar(1) }, .{ .color = Vec4.new(1, 0, 0, 1) });
-            batch.drawRect(.{ .pos = .{ .x = 2, .y = -2 }, .size = Vec2.scalar(1) }, .{ .color = Vec4.new(0, 1, 0, 1) });
-
-            // Test uv_rect not covering whole texture
-            batch.drawSpriteRect(&test_sprite_sub_tl, .{ .pos = .{ .x = -0.05, .y = -3.95 }, .size = Vec2.scalar(0.5) });
-            batch.drawSpriteRect(&test_sprite_sub_tr, .{ .pos = .{ .x = 0.55, .y = -3.95 }, .size = Vec2.scalar(0.5) });
-            batch.drawSpriteRect(&test_sprite_sub_bl, .{ .pos = .{ .x = -0.05, .y = -4.55 }, .size = Vec2.scalar(0.5) });
-            batch.drawSpriteRect(&test_sprite_sub_br, .{ .pos = .{ .x = 0.55, .y = -4.55 }, .size = Vec2.scalar(0.5) });
-
-            batch.drawSpriteRect(&test_tile_sprite_sub_tl, .{ .pos = .{ .x = 1.95, .y = -3.95 }, .size = Vec2.scalar(0.5) });
-            batch.drawSpriteRect(&test_tile_sprite_sub_tr, .{ .pos = .{ .x = 2.55, .y = -3.95 }, .size = Vec2.scalar(0.5) });
-            batch.drawSpriteRect(&test_tile_sprite_sub_bl, .{ .pos = .{ .x = 1.95, .y = -4.55 }, .size = Vec2.scalar(0.5) });
-            batch.drawSpriteRect(&test_tile_sprite_sub_br, .{ .pos = .{ .x = 2.55, .y = -4.55 }, .size = Vec2.scalar(0.5) });
-
-            // batch.drawLine(Vec2.new(0, 10), Vec2.new(0, -10), 1, Vec4.new(1, 0, 0, 1));
+            drawTestScene(&batch);
         }
         batch.end();
 
@@ -259,6 +232,117 @@ fn drawFrame() !void {
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
     }
+}
+
+fn drawTestScene(batch: *Renderer2D.Batch) void {
+    @setEvalBranchQuota(10000);
+
+    const xstep = Vec2.new(2, 0);
+    const ystep = Vec2.new(0, -2);
+    const p = Vec2.new(-2, 4);
+
+    const p0_0 = p;
+    const p0_1 = p0_0.add(ystep);
+    const p0_2 = p0_1.add(ystep);
+    const p0_3 = p0_2.add(ystep);
+    const p0_4 = p0_3.add(ystep);
+
+    const p1_0 = p0_0.add(xstep);
+    const p1_1 = p1_0.add(ystep);
+    const p1_2 = p1_1.add(ystep);
+    const p1_3 = p1_2.add(ystep);
+    const p1_4 = p1_3.add(ystep);
+
+    const p2_0 = p1_0.add(xstep);
+    const p2_1 = p2_0.add(ystep);
+    const p2_2 = p2_1.add(ystep);
+    const p2_3 = p2_2.add(ystep);
+    const p2_4 = p2_3.add(ystep);
+
+    const sub_size = Vec2.scalar(0.5);
+    const sub_tl_rect = Rect.new(p0_4.add(Vec2.new(-0.05, 0.55)), sub_size);
+    const sub_tr_rect = sub_tl_rect.move(.{ .x = 0.55 });
+    const sub_bl_rect = sub_tl_rect.move(.{ .y = -0.55 });
+    const sub_br_rect = sub_bl_rect.move(.{ .x = 0.55 });
+
+    _ = p1_4;
+    const tile_sub_tl_rect = sub_tl_rect.move(xstep);
+    const tile_sub_tr_rect = sub_tr_rect.move(xstep);
+    const tile_sub_bl_rect = sub_bl_rect.move(xstep);
+    const tile_sub_br_rect = sub_br_rect.move(xstep);
+
+    batch.drawLine(Vec2.new(0, 10), Vec2.new(0, -10), .{ .width = 5, .color = Vec4.new(1, 0, 0, 1) });
+    batch.drawLine(Vec2.new(-10, -0.4), Vec2.new(10, -0.4), .{ .color = Vec4.new(1, 1, 1, 1) });
+    batch.drawLine(Vec2.new(-10, 0.4), Vec2.new(10, 0.4), .{ .color = Vec4.new(1, 1, 1, 1) });
+
+    // Draw the sprites, sprite loading flips y for these sprites
+    batch.drawSprite(&test_sprite, p0_0);
+    batch.drawSprite(&test_tile_sprite, p1_0);
+
+    // Draw them by texture, need to flip uv's manually, also need to specify size in worldspace (ppu not applied)
+    const y_flip_uv = Rect{ .pos = .{ .x = 0, .y = 1 }, .size = .{ .x = 1, .y = -1 } };
+    batch.drawRect(.{ .pos = p0_1, .size = Vec2.scalar(1) }, .{ .texture = &test_texture, .uv_rect = y_flip_uv });
+    batch.drawRect(.{ .pos = p1_1, .size = Vec2.scalar(1) }, .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
+
+    // Cannot control uv's in this case, only specify size in worldspace
+    batch.drawRect(.{ .pos = p0_2, .size = Vec2.scalar(1) }, .{ .texture = &test_texture });
+    batch.drawRect(.{ .pos = p1_2, .size = Vec2.scalar(1) }, .{ .texture = &test_tile_texture });
+
+    batch.drawRect(.{ .pos = p0_3, .size = Vec2.scalar(1) }, .{ .color = Vec4.new(1, 0, 0, 1) });
+    batch.drawRect(.{ .pos = p1_3, .size = Vec2.scalar(1) }, .{ .color = Vec4.new(0, 1, 0, 1) });
+
+    // Test uv_rect not covering whole texture
+    batch.drawSpriteRect(&test_sprite_sub_tl, sub_tl_rect);
+    batch.drawSpriteRect(&test_sprite_sub_tr, sub_tr_rect);
+    batch.drawSpriteRect(&test_sprite_sub_bl, sub_bl_rect);
+    batch.drawSpriteRect(&test_sprite_sub_br, sub_br_rect);
+
+    batch.drawSpriteRect(&test_tile_sprite_sub_tl, tile_sub_tl_rect);
+    batch.drawSpriteRect(&test_tile_sprite_sub_tr, tile_sub_tr_rect);
+    batch.drawSpriteRect(&test_tile_sprite_sub_bl, tile_sub_bl_rect);
+    batch.drawSpriteRect(&test_tile_sprite_sub_br, tile_sub_br_rect);
+
+    batch.drawTriangle(p2_0, p2_0.add(Vec2.new(0.5, 1)), p2_0.add(.{ .x = 1 }), .{ .color = Vec4.new(1, 0, 0, 1) });
+    batch.drawTriangle(p2_1, p2_1.add(Vec2.new(0.5, 1)), p2_1.add(.{ .x = 1 }), .{
+        .texture = &test_texture,
+        .uv_coords = .{ Vec2.new(0, 1), Vec2.new(0.5, 0), Vec2.new(1, 1) },
+    });
+    batch.drawTriangle(p2_2.add(.{ .y = 1 }), p2_2.add(Vec2.scalar(1)), p2_2.add(.{ .x = 1 }), .{
+        .texture = &test_tile_texture,
+        .uv_coords = .{ Vec2.new(0, 1), Vec2.new(1, 1), Vec2.new(1, 0) },
+    });
+    batch.drawTriangle(p2_3, p2_3.add(Vec2.new(0.5, 1)), p2_3.add(.{ .x = 1 }), .{
+        .texture = &test_tile_texture,
+        .uv_coords = .{ Vec2.new(0, 1), Vec2.new(1, 1), Vec2.new(1, 0) },
+    });
+
+    const tl = p2_4.add(Vec2.new(-0.05, 1.05));
+    const tl_uv = test_sprite_sub_tl.uv_rect;
+    batch.drawTriangle(tl, tl.add(.{ .x = 0.5 }), tl.add(.{ .x = 0.5, .y = -0.5 }), .{
+        .texture = &test_texture,
+        .uv_coords = .{ tl_uv.tl(), tl_uv.tr(), tl_uv.br() },
+    });
+
+    const tr = tl.add(.{ .x = 1.1 });
+    const tr_uv = test_sprite_sub_tr.uv_rect;
+    batch.drawTriangle(tr.add(.{ .x = -0.5 }), tr, tr.add(Vec2.scalar(-0.5)), .{
+        .texture = &test_texture,
+        .uv_coords = .{ tr_uv.tl(), tr_uv.tr(), tr_uv.bl() },
+    });
+
+    const bl = tl.add(.{ .y = -1.1 });
+    const bl_uv = test_sprite_sub_bl.uv_rect;
+    batch.drawTriangle(bl, bl.add(Vec2.scalar(0.5)), bl.add(.{ .x = 0.5 }), .{
+        .texture = &test_texture,
+        .uv_coords = .{ bl_uv.bl(), bl_uv.tr(), bl_uv.br() },
+    });
+
+    const br = bl.add(.{ .x = 1.1 });
+    const br_uv = test_sprite_sub_br.uv_rect;
+    batch.drawTriangle(br.add(.{ .x = -0.5 }), br.add(.{ .x = -0.5, .y = 0.5 }), br, .{
+        .texture = &test_texture,
+        .uv_coords = .{ br_uv.bl(), br_uv.tl(), br_uv.br() },
+    });
 }
 
 fn resizeCallback(r: *const Renderer) void {
