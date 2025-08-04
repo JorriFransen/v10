@@ -20,8 +20,11 @@ const Index = u32;
 
 const assert = std.debug.assert;
 
+// Buffer sizes are for typical use cases.
+// Implement dynamic resizing if these limits prove too small.
 const arena_cap = mem.MiB * 10;
 const buffer_init_cap = mem.MiB * 2;
+
 const white = Vec4.scalar(1);
 
 device: *Device = undefined,
@@ -31,7 +34,10 @@ line_pipeline: Pipeline = .{},
 
 arena: mem.Arena = undefined,
 commands: std.ArrayList(DrawCommand) = undefined,
+
+/// Offset for the next vertex to be written in the staging buffer, reset in beginFrame
 vertex_offset: u32 = 0,
+/// Offset for the next index to be written in the staging buffer, reset in beginFrame
 index_offset: u32 = 0,
 
 vertex_buffer_size: vk.DeviceSize = 0,
@@ -96,8 +102,9 @@ pub const DrawCommand = struct {
     texture: ?*const Texture,
     line_width: f32 = 1,
 
-    vertex_start: usize,
-    vertex_count: usize,
+    /// Offset of the first vertex of this command into the staging buffer
+    vertex_offset: u32,
+    vertex_count: u32,
 };
 
 pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void {
@@ -109,8 +116,8 @@ pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void 
     this.arena = try mem.Arena.init(.{ .virtual = .{ .reserved_capacity = arena_cap } });
     this.commands = std.ArrayList(DrawCommand).init(this.arena.allocator());
 
-    const vertex_count = buffer_init_cap / @sizeOf(Vertex);
-    this.vertex_buffer_size = @sizeOf(Vertex) * vertex_count;
+    const total_vertex_count = buffer_init_cap / @sizeOf(Vertex);
+    this.vertex_buffer_size = @sizeOf(Vertex) * total_vertex_count;
 
     this.vertex_buffer = device.createBuffer(
         this.vertex_buffer_size,
@@ -130,10 +137,10 @@ pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void 
     const vertex_data = vertex_data_opt orelse return error.VulkanMapMemory;
 
     const vertices_mapped: [*]Vertex = @ptrCast(@alignCast(vertex_data));
-    this.vertex_staging_buffer_mapped = vertices_mapped[0..vertex_count];
+    this.vertex_staging_buffer_mapped = vertices_mapped[0..total_vertex_count];
 
-    const index_count = buffer_init_cap / @sizeOf(Index);
-    this.index_buffer_size = @sizeOf(Index) * index_count;
+    const total_index_count = buffer_init_cap / @sizeOf(Index);
+    this.index_buffer_size = @sizeOf(Index) * total_index_count;
 
     this.index_buffer = device.createBuffer(
         this.index_buffer_size,
@@ -153,7 +160,7 @@ pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void 
     const index_data = index_data_opt orelse return error.VulkanMapMemory;
 
     const indices_mapped: [*]Index = @ptrCast(@alignCast(index_data));
-    this.index_staging_buffer_mapped = indices_mapped[0..index_count];
+    this.index_staging_buffer_mapped = indices_mapped[0..total_index_count];
 
     this.default_white_texture = try Texture.initDefaultWhite(device);
 }
@@ -242,13 +249,21 @@ fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: 
     );
 }
 
-pub fn beginFrame(this: *Renderer) void {
+pub fn beginFrame(this: *Renderer, cb: vk.CommandBufferProxy) void {
     this.vertex_offset = 0;
     this.index_offset = 0;
+
+    cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{this.vertex_buffer}, &[_]vk.DeviceSize{0});
+    const index_type = comptime switch (Index) {
+        else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
+        u8 => .uint8_khr,
+        u16 => .uint16,
+        u32 => .uint32,
+    };
+    cb.bindIndexBuffer(this.index_buffer, 0, index_type);
 }
 
 pub fn endFrame(this: *Renderer) void {
-
     // TODO: Consistent command buffer for this?
     const ccb = this.device.beginSingleTimeCommands();
     this.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, this.vertex_offset * @sizeOf(Vertex));
@@ -298,7 +313,7 @@ pub const Batch = struct {
 
         const vbuf = batch.renderer.vertex_staging_buffer_mapped;
         const vstart = renderer.vertex_offset;
-        assert(vstart + 2 <= vbuf.len);
+        if (vstart + 2 > vbuf.len) @panic("Vertex buffer full");
 
         const vertices = vbuf[vstart .. vstart + 2];
 
@@ -311,7 +326,7 @@ pub const Batch = struct {
             .type = .line,
             .texture = &batch.renderer.default_white_texture,
             .line_width = options.width,
-            .vertex_start = vstart,
+            .vertex_offset = vstart,
             .vertex_count = 2,
         });
     }
@@ -322,7 +337,7 @@ pub const Batch = struct {
 
         const vbuf = batch.renderer.vertex_staging_buffer_mapped;
         const vstart = renderer.vertex_offset;
-        assert(vstart + 3 <= vbuf.len);
+        if (vstart + 2 > vbuf.len) @panic("Vertex buffer full");
 
         const vertices = vbuf[vstart .. vstart + 3];
 
@@ -335,7 +350,7 @@ pub const Batch = struct {
         batch.pushCommand(.{
             .type = .triangle,
             .texture = options.texture,
-            .vertex_start = vstart,
+            .vertex_offset = vstart,
             .vertex_count = 3,
         });
     }
@@ -346,7 +361,7 @@ pub const Batch = struct {
 
         const vbuf = batch.renderer.vertex_staging_buffer_mapped;
         const vstart = renderer.vertex_offset;
-        assert(vstart + 4 <= vbuf.len);
+        if (vstart + 2 > vbuf.len) @panic("Vertex buffer full");
 
         const vertices = vbuf[vstart .. vstart + 4];
         const uv_rect = options.uv_rect;
@@ -361,7 +376,7 @@ pub const Batch = struct {
         batch.pushCommand(.{
             .type = .quad,
             .texture = options.texture,
-            .vertex_start = vstart,
+            .vertex_offset = vstart,
             .vertex_count = 4,
         });
     }
@@ -393,22 +408,11 @@ pub const Batch = struct {
         //     }
         // }.f);
 
-        const ibuf = renderer.index_staging_buffer_mapped;
-
         const pcd = PushConstantData{
             .projection = batch.camera.projection_matrix,
             .view = batch.camera.view_matrix,
         };
         cb.pushConstants(renderer.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstantData), &pcd);
-
-        cb.bindVertexBuffers(0, 1, &[_]vk.Buffer{renderer.vertex_buffer}, &[_]vk.DeviceSize{0});
-        const index_type = comptime switch (Index) {
-            else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{Index})),
-            u8 => .uint8_khr,
-            u16 => .uint16,
-            u32 => .uint32,
-        };
-        cb.bindIndexBuffer(renderer.index_buffer, 0, index_type);
 
         // Number of indices for the current drawcall
         var batch_index_count: u32 = 0;
@@ -458,59 +462,57 @@ pub const Batch = struct {
                 cb.setLineWidth(current_line_width);
             }
 
+            const ibuf = renderer.index_staging_buffer_mapped;
+            const fi: Index = @intCast(command.vertex_offset);
+            const istart = renderer.index_offset + batch_index_count;
+
             switch (command.type) {
                 .line => {
                     assert(command.vertex_count == 2);
-                    const fi: Index = @intCast(command.vertex_start);
-                    const indices = [2]Index{
-                        fi, fi + 1,
-                    };
+                    const icount = 2;
+                    if (ibuf.len - istart < icount) @panic("Index buffer full");
 
-                    const istart = renderer.index_offset + batch_index_count;
-                    assert(istart + indices.len <= ibuf.len);
+                    ibuf[istart] = fi;
+                    ibuf[istart + 1] = fi + 1;
 
-                    @memcpy(ibuf[istart .. istart + indices.len], &indices);
-
-                    batch_index_count += indices.len;
+                    batch_index_count += icount;
                 },
 
                 .triangle => {
                     assert(command.vertex_count % 3 == 0);
                     const triangle_count = command.vertex_count / 3;
+                    const icount = 3 * triangle_count;
+                    if (ibuf.len - istart < icount) @panic("Index buffer full");
 
                     for (0..triangle_count) |ti| {
-                        const fi: Index = @intCast(command.vertex_start + (ti * 3));
-                        const indices = [3]Index{
-                            fi, fi + 1, fi + 2,
-                        };
+                        const offset: u32 = @intCast(ti * 3);
 
-                        const istart = renderer.index_offset + batch_index_count;
-                        assert(istart + indices.len <= ibuf.len);
-
-                        @memcpy(ibuf[istart .. istart + indices.len], &indices);
-
-                        batch_index_count += indices.len;
+                        ibuf[istart + offset] = fi + offset;
+                        ibuf[istart + offset + 1] = fi + offset + 1;
+                        ibuf[istart + offset + 2] = fi + offset + 2;
                     }
+
+                    batch_index_count += icount;
                 },
 
                 .quad => {
                     assert(command.vertex_count % 4 == 0);
                     const quad_count = command.vertex_count / 4;
+                    const icount = 6 * quad_count;
+                    if (ibuf.len - istart < icount) @panic("Index buffer full");
 
                     for (0..quad_count) |qi| {
-                        const fi: Index = @intCast(command.vertex_start + (qi * 4));
-                        const indices = [6]Index{
-                            fi, fi + 1, fi + 2,
-                            fi, fi + 2, fi + 3,
-                        };
+                        const offset: u32 = @intCast(qi * 4);
 
-                        const istart = renderer.index_offset + batch_index_count;
-                        assert(istart + indices.len <= ibuf.len);
+                        ibuf[istart + offset] = fi + offset;
+                        ibuf[istart + offset + 1] = fi + offset + 1;
+                        ibuf[istart + offset + 2] = fi + offset + 2;
 
-                        @memcpy(ibuf[istart .. istart + indices.len], &indices);
-
-                        batch_index_count += indices.len;
+                        ibuf[istart + offset + 3] = fi + offset;
+                        ibuf[istart + offset + 4] = fi + offset + 2;
+                        ibuf[istart + offset + 5] = fi + offset + 3;
                     }
+                    batch_index_count += icount;
                 },
             }
         }
