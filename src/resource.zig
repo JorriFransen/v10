@@ -10,7 +10,7 @@ const Allocator = std.mem.Allocator;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
-const Vec2U = math.Vec(2, u32);
+const Vec2u32 = math.Vec(2, u32);
 
 const assert = std.debug.assert;
 
@@ -20,7 +20,7 @@ pub const CpuModel = struct {
 };
 
 pub const CpuTexture = struct {
-    size: Vec2U,
+    size: Vec2u32,
     data: []const u8,
 };
 
@@ -217,7 +217,7 @@ pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureErr
     ta.release(); // Free texture file
 
     return .{
-        .size = Vec2U.new(texture.x, texture.y),
+        .size = Vec2u32.new(texture.x, texture.y),
         .data = texture.data,
     };
 }

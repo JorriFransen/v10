@@ -7,14 +7,15 @@ pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
 pub const Mat4f32 = math.matrix.Mat4f32;
 
-pub fn Vec(comptime N: usize, comptime ET: type) type {
-    switch (N) {
+pub fn Vec(comptime EN: usize, comptime ET: type) type {
+    switch (EN) {
         else => @compileError("N must be between 2 and 4"),
 
         2 => return extern struct {
-            pub const V = @Vector(N, ET);
+            pub const V = @Vector(EN, ET);
             pub const T = ET;
-            const F = VecFunctionsMixin(N, T, @This());
+            pub const N = EN;
+            const F = VecFunctionsMixin(EN, T, @This());
             x: T = 0,
             y: T = 0,
             pub inline fn new(x: T, y: T) @This() {
@@ -80,10 +81,11 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         },
 
         3 => return extern struct {
-            pub const V = @Vector(N, ET);
+            pub const V = @Vector(EN, ET);
             pub const T = ET;
+            pub const N = EN;
             const Vec3 = @This();
-            const F = VecFunctionsMixin(N, T, Vec3);
+            const F = VecFunctionsMixin(EN, T, Vec3);
 
             x: T = 0,
             y: T = 0,
@@ -174,9 +176,10 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
         },
 
         4 => return extern struct {
-            pub const V = @Vector(N, ET);
+            pub const V = @Vector(EN, ET);
             pub const T = ET;
-            const F = VecFunctionsMixin(N, T, @This());
+            pub const N = EN;
+            const F = VecFunctionsMixin(EN, T, @This());
             x: T = 0,
             y: T = 0,
             z: T = 0,

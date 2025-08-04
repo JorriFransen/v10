@@ -10,12 +10,12 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
-const Vec2u = math.Vec(2, u32);
+const Vec2u32 = math.Vec(2, u32);
 
 pub const MAX_FRAMES_IN_FLIGHT = 2;
 
 device: *Device = undefined,
-window_extent: Vec2u = undefined,
+window_extent: Vec2u32 = undefined,
 
 swapchain: vk.SwapchainKHR = undefined,
 image_format: vk.Format = undefined,
@@ -36,7 +36,7 @@ in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
 
 pub const SwapchainOptions = struct {
-    extent: Vec2u,
+    extent: Vec2u32,
     old_swapchain: vk.SwapchainKHR = .null_handle,
 };
 
@@ -422,7 +422,7 @@ fn chooseSwapPresentMode(this: *@This(), pmodes: []vk.PresentModeKHR) vk.Present
     return result;
 }
 
-fn chooseSwapExtent(this: *@This(), caps: vk.SurfaceCapabilitiesKHR) Vec2u {
+fn chooseSwapExtent(this: *@This(), caps: vk.SurfaceCapabilitiesKHR) Vec2u32 {
     if (caps.current_extent.width != std.math.maxInt(u32)) {
         return @bitCast(caps.current_extent);
     }
