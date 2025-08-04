@@ -2,14 +2,6 @@ const std = @import("std");
 
 pub const GeometricEpsilon = 1e-6;
 
-pub inline fn eps(comptime T: type, e: T, a: T) T {
-    return @max(
-        std.math.floatEps(T) * 4,
-        std.math.floatEpsAt(T, e),
-        std.math.floatEpsAt(T, a),
-    );
-}
-
 pub const degrees = std.math.radiansToDegrees;
 pub const radians = std.math.degreesToRadians;
 
@@ -28,3 +20,21 @@ pub const Mat2 = matrix.Mat2f32;
 pub const Mat3 = matrix.Mat3f32;
 pub const Mat4 = matrix.Mat4f32;
 pub const Rect = rect.Rectf32;
+
+pub inline fn epsWith(comptime T: type, e: T, a: T) T {
+    return @max(
+        std.math.floatEps(T) * 4,
+        std.math.floatEpsAt(T, e),
+        std.math.floatEpsAt(T, a),
+    );
+}
+
+pub inline fn eqlEps(comptime T: type, a: T, b: T) bool {
+    const abs_diff = @abs(a - b);
+    const eps = epsWith(T, a, b);
+    return abs_diff <= eps;
+}
+
+pub inline fn intToFloatVec(comptime IV: type, comptime FV: type, iv: IV) FV {
+    return FV.v(@floatFromInt(iv.vector()));
+}

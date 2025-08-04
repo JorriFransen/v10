@@ -3,16 +3,19 @@ const vk = @import("vulkan");
 const mem = @import("memory");
 const log = std.log.scoped(.swapchain);
 const gfx = @import("../gfx.zig");
+const math = @import("../math.zig");
+
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
 const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
+const Vec2u = math.Vec(2, u32);
 
 pub const MAX_FRAMES_IN_FLIGHT = 2;
 
 device: *Device = undefined,
-window_extent: vk.Extent2D = undefined,
+window_extent: Vec2u = undefined,
 
 swapchain: vk.SwapchainKHR = undefined,
 image_format: vk.Format = undefined,
@@ -33,7 +36,7 @@ in_flight_fences: []vk.Fence = &.{},
 images_in_flight: []vk.Fence = &.{},
 
 pub const SwapchainOptions = struct {
-    extent: vk.Extent2D,
+    extent: Vec2u,
     old_swapchain: vk.SwapchainKHR = .null_handle,
 };
 
@@ -139,11 +142,11 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         );
 
     const surface_format = this.chooseSwapSurfaceFormat(swapchain_support.formats);
-    log.debug("Using surface format: {}", .{surface_format});
+    // log.debug("Using surface format: {}", .{surface_format});
     const present_mode = this.chooseSwapPresentMode(swapchain_support.present_modes);
-    log.debug("Using present mode: {s}", .{@tagName(present_mode)});
+    // log.debug("Using present mode: {s}", .{@tagName(present_mode)});
     const extent = this.chooseSwapExtent(swapchain_support.capabilities);
-    log.debug("Swapchain extent: {}", .{extent});
+    // log.debug("Swapchain extent: {}", .{extent});
 
     var image_count = swapchain_support.capabilities.min_image_count + 1;
     if (swapchain_support.capabilities.max_image_count > 0 and
@@ -152,7 +155,7 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         image_count = swapchain_support.capabilities.max_image_count;
     }
 
-    log.debug("Swapchain image count: {}", .{image_count});
+    // log.debug("Swapchain image count: {}", .{image_count});
 
     const indices = this.device.device_info.queue_family_indices;
     const queue_indices = .{ indices.graphics_family.?, indices.present_family.? };
@@ -163,7 +166,7 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
         .min_image_count = image_count,
         .image_format = surface_format.format,
         .image_color_space = surface_format.color_space,
-        .image_extent = extent,
+        .image_extent = @bitCast(extent),
         .image_array_layers = 1,
         .image_usage = .{ .color_attachment_bit = true },
         .pre_transform = swapchain_support.capabilities.current_transform,
@@ -190,7 +193,7 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
     }
 
     this.image_format = surface_format.format;
-    this.swapchain_extent = extent;
+    this.swapchain_extent = @bitCast(extent);
 }
 
 fn createImageViews(this: *@This(), allocator: Allocator) !void {
@@ -419,14 +422,14 @@ fn chooseSwapPresentMode(this: *@This(), pmodes: []vk.PresentModeKHR) vk.Present
     return result;
 }
 
-fn chooseSwapExtent(this: *@This(), caps: vk.SurfaceCapabilitiesKHR) vk.Extent2D {
+fn chooseSwapExtent(this: *@This(), caps: vk.SurfaceCapabilitiesKHR) Vec2u {
     if (caps.current_extent.width != std.math.maxInt(u32)) {
-        return caps.current_extent;
+        return @bitCast(caps.current_extent);
     }
 
     var actual_extent = this.window_extent;
-    actual_extent.width = @max(caps.min_image_extent.width, @min(caps.max_image_extent.width, actual_extent.width));
-    actual_extent.height = @max(caps.min_image_extent.height, @min(caps.max_image_extent.height, actual_extent.height));
+    actual_extent.x = @max(caps.min_image_extent.width, @min(caps.max_image_extent.width, actual_extent.x));
+    actual_extent.y = @max(caps.min_image_extent.height, @min(caps.max_image_extent.height, actual_extent.y));
     return actual_extent;
 }
 
