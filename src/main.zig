@@ -228,12 +228,15 @@ fn drawFrame() !void {
 
         // r3d.drawEntities(cb, entities, &camera_3d);
 
+        r2d.beginFrame();
+
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
-            // drawDebugWorldGrid(&batch);
-            // drawTestScene(&batch);
+            drawDebugWorldGrid(&batch);
+            drawTestScene(&batch);
 
-            batch.drawDebugLine(Vec2.scalar(0), Vec2.scalar(1), .{ .color = Vec4.new(0, 1, 0, 1) });
+            // batch.drawRect(Rect.new(.{}, Vec2.scalar(1)), .{ .color = Vec4.new(1, 0, 0, 1) });
+            // batch.drawDebugLine(Vec2.scalar(1), Vec2.scalar(2), .{ .color = Vec4.new(0, 1, 0, 1) });
         }
         batch.end();
 
@@ -242,6 +245,8 @@ fn drawFrame() !void {
             ui_batch.drawRect(Rect.new(.{}, Vec2.scalar(100)), .{ .color = Vec4.new(1, 0, 0, 1) });
         }
         ui_batch.end();
+
+        r2d.endFrame();
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);

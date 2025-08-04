@@ -31,6 +31,8 @@ line_pipeline: Pipeline = .{},
 
 arena: mem.Arena = undefined,
 commands: std.ArrayList(DrawCommand) = undefined,
+vertex_offset: u32 = 0,
+index_offset: u32 = 0,
 
 vertex_buffer_size: vk.DeviceSize = 0,
 vertex_buffer: vk.Buffer = .null_handle,
@@ -240,6 +242,20 @@ fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: 
     );
 }
 
+pub fn beginFrame(this: *Renderer) void {
+    this.vertex_offset = 0;
+    this.index_offset = 0;
+}
+
+pub fn endFrame(this: *Renderer) void {
+
+    // TODO: Consistent command buffer for this?
+    const ccb = this.device.beginSingleTimeCommands();
+    this.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, this.vertex_offset * @sizeOf(Vertex));
+    this.device.copyBuffer(ccb, this.index_staging_buffer, this.index_buffer, this.index_offset * @sizeOf(Index));
+    this.device.endSingleTimeCommands(ccb);
+}
+
 pub fn beginBatch(this: *Renderer, cb: vk.CommandBufferProxy, camera: *const Camera) Batch {
     this.commands.clearRetainingCapacity();
 
@@ -247,7 +263,6 @@ pub fn beginBatch(this: *Renderer, cb: vk.CommandBufferProxy, camera: *const Cam
         .camera = camera,
         .renderer = this,
         .command_buffer = cb,
-        .vertex_count = 0,
     };
 }
 
@@ -272,62 +287,68 @@ pub const Batch = struct {
     camera: *const Camera,
     renderer: *Renderer,
     command_buffer: vk.CommandBufferProxy,
-    vertex_count: usize,
 
     pub inline fn pushCommand(batch: *Batch, cmd: DrawCommand) void {
         batch.renderer.commands.append(cmd) catch @panic("Command memory full");
     }
 
     /// Draws a line segment between two points
-    pub inline fn drawDebugLine(batch: *Batch, p0: Vec2, p1: Vec2, options: DrawLineOptions) void {
-        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
-        assert(batch.vertex_count + 2 <= vbuf.len);
+    pub fn drawDebugLine(batch: *Batch, p0: Vec2, p1: Vec2, options: DrawLineOptions) void {
+        const renderer = batch.renderer;
 
-        const vertices = vbuf[batch.vertex_count .. batch.vertex_count + 2];
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        const vstart = renderer.vertex_offset;
+        assert(vstart + 2 <= vbuf.len);
+
+        const vertices = vbuf[vstart .. vstart + 2];
 
         vertices[0] = .{ .pos = p0, .color = options.color, .uv = Vec2.scalar(0) };
         vertices[1] = .{ .pos = p1, .color = options.color, .uv = Vec2.scalar(0) };
 
-        const vertex_start = batch.vertex_count;
-        batch.vertex_count += 2;
+        renderer.vertex_offset += 2;
 
         batch.pushCommand(.{
             .type = .line,
             .texture = &batch.renderer.default_white_texture,
             .line_width = options.width,
-            .vertex_start = vertex_start,
+            .vertex_start = vstart,
             .vertex_count = 2,
         });
     }
 
     /// Draws a triangle with the specified vertices and options
-    pub inline fn drawTriangle(batch: *Batch, p1: Vec2, p2: Vec2, p3: Vec2, options: DrawTriangleOptions) void {
-        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
-        assert(batch.vertex_count + 3 <= vbuf.len);
+    pub fn drawTriangle(batch: *Batch, p1: Vec2, p2: Vec2, p3: Vec2, options: DrawTriangleOptions) void {
+        const renderer = batch.renderer;
 
-        const vertices = vbuf[batch.vertex_count .. batch.vertex_count + 3];
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        const vstart = renderer.vertex_offset;
+        assert(vstart + 3 <= vbuf.len);
+
+        const vertices = vbuf[vstart .. vstart + 3];
 
         vertices[0] = .{ .pos = p1, .color = options.color, .uv = options.uv_coords[0] };
         vertices[1] = .{ .pos = p2, .color = options.color, .uv = options.uv_coords[1] };
         vertices[2] = .{ .pos = p3, .color = options.color, .uv = options.uv_coords[2] };
 
-        const vertex_start = batch.vertex_count;
-        batch.vertex_count += 3;
+        renderer.vertex_offset += 3;
 
         batch.pushCommand(.{
             .type = .triangle,
             .texture = options.texture,
-            .vertex_start = vertex_start,
+            .vertex_start = vstart,
             .vertex_count = 3,
         });
     }
 
     /// Draws the specified rectangle with options (texture, color, uv_rect)
-    pub inline fn drawRect(batch: *Batch, rect: Rect, options: DrawRectOptions) void {
-        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
-        assert(batch.vertex_count + 4 <= vbuf.len);
+    pub fn drawRect(batch: *Batch, rect: Rect, options: DrawRectOptions) void {
+        const renderer = batch.renderer;
 
-        const vertices = vbuf[batch.vertex_count .. batch.vertex_count + 4];
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        const vstart = renderer.vertex_offset;
+        assert(vstart + 4 <= vbuf.len);
+
+        const vertices = vbuf[vstart .. vstart + 4];
         const uv_rect = options.uv_rect;
 
         vertices[0] = .{ .pos = rect.pos, .uv = uv_rect.pos, .color = options.color };
@@ -335,30 +356,29 @@ pub const Batch = struct {
         vertices[2] = .{ .pos = rect.pos.add(rect.size), .uv = uv_rect.pos.add(uv_rect.size), .color = options.color };
         vertices[3] = .{ .pos = rect.pos.add(.{ .y = rect.size.y }), .uv = uv_rect.pos.add(.{ .y = uv_rect.size.y }), .color = options.color };
 
-        const vertex_start = batch.vertex_count;
-        batch.vertex_count += 4;
+        renderer.vertex_offset += 4;
 
         batch.pushCommand(.{
             .type = .quad,
             .texture = options.texture,
-            .vertex_start = vertex_start,
+            .vertex_start = vstart,
             .vertex_count = 4,
         });
     }
 
     /// Draws a sprite at the specified position, scaled by the sprites ppu
-    pub inline fn drawSprite(batch: *Batch, sprite: *const Sprite, pos: Vec2) void {
+    pub fn drawSprite(batch: *Batch, sprite: *const Sprite, pos: Vec2) void {
         const size = sprite.texture.getSize().divScalar(sprite.ppu);
         const rect = Rect{ .pos = pos, .size = size };
         batch.drawRect(rect, .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect });
     }
 
     /// Draws a sprite at the specified rectangle
-    pub inline fn drawSpriteRect(batch: *Batch, sprite: *Sprite, rect: Rect) void {
+    pub fn drawSpriteRect(batch: *Batch, sprite: *Sprite, rect: Rect) void {
         batch.drawRect(rect, .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect });
     }
 
-    pub inline fn end(batch: *const Batch) void {
+    pub fn end(batch: *const Batch) void {
         const renderer = batch.renderer;
         const cb = batch.command_buffer;
 
@@ -390,9 +410,8 @@ pub const Batch = struct {
         };
         cb.bindIndexBuffer(renderer.index_buffer, 0, index_type);
 
+        // Number of indices for the current drawcall
         var batch_index_count: u32 = 0;
-        var batch_index_offset: u32 = 0;
-        var index_count: u32 = 0;
 
         var current_pipeline = switch (renderer.commands.items[0].type) {
             .line => &renderer.line_pipeline,
@@ -422,8 +441,8 @@ pub const Batch = struct {
             const flush = batch_index_count > 0 and (switch_pipeline or switch_texture or switch_line_width);
 
             if (flush) {
-                cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
-                batch_index_offset = @intCast(index_count);
+                cb.drawIndexed(batch_index_count, 1, renderer.index_offset, 0, 0);
+                renderer.index_offset += batch_index_count;
                 batch_index_count = 0;
             }
 
@@ -447,11 +466,11 @@ pub const Batch = struct {
                         fi, fi + 1,
                     };
 
-                    assert(index_count + indices.len <= ibuf.len);
+                    const istart = renderer.index_offset + batch_index_count;
+                    assert(istart + indices.len <= ibuf.len);
 
-                    @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+                    @memcpy(ibuf[istart .. istart + indices.len], &indices);
 
-                    index_count += indices.len;
                     batch_index_count += indices.len;
                 },
 
@@ -465,11 +484,11 @@ pub const Batch = struct {
                             fi, fi + 1, fi + 2,
                         };
 
-                        assert(index_count + indices.len <= ibuf.len);
+                        const istart = renderer.index_offset + batch_index_count;
+                        assert(istart + indices.len <= ibuf.len);
 
-                        @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+                        @memcpy(ibuf[istart .. istart + indices.len], &indices);
 
-                        index_count += indices.len;
                         batch_index_count += indices.len;
                     }
                 },
@@ -485,23 +504,18 @@ pub const Batch = struct {
                             fi, fi + 2, fi + 3,
                         };
 
-                        assert(index_count + indices.len <= ibuf.len);
+                        const istart = renderer.index_offset + batch_index_count;
+                        assert(istart + indices.len <= ibuf.len);
 
-                        @memcpy(ibuf[index_count .. index_count + indices.len], &indices);
+                        @memcpy(ibuf[istart .. istart + indices.len], &indices);
 
-                        index_count += indices.len;
                         batch_index_count += indices.len;
                     }
                 },
             }
         }
 
-        cb.drawIndexed(batch_index_count, 1, batch_index_offset, 0, 0);
-
-        // TODO: Consistent command buffer for this?
-        const ccb = renderer.device.beginSingleTimeCommands();
-        renderer.device.copyBuffer(ccb, renderer.vertex_staging_buffer, renderer.vertex_buffer, renderer.vertex_buffer_size);
-        renderer.device.copyBuffer(ccb, renderer.index_staging_buffer, renderer.index_buffer, renderer.index_buffer_size);
-        renderer.device.endSingleTimeCommands(ccb);
+        cb.drawIndexed(batch_index_count, 1, renderer.index_offset, 0, 0);
+        renderer.index_offset += batch_index_count;
     }
 };
