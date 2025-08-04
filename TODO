@@ -1,0 +1,9 @@
+camera to/from screenspace functions
+
+text rendering
+ - mono bitmap
+ - bitmap (parse .fnt)
+ - ttf (stb truetype)
+
+
+static update time
