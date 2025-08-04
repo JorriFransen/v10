@@ -6,6 +6,7 @@ const math = @import("math.zig");
 
 const Window = @This();
 const Vec2 = math.Vec2;
+const Vec2u = math.Vec(2, u32);
 
 const log = std.log.scoped(.window);
 
@@ -22,10 +23,11 @@ const wlog = std.log.scoped(.window);
 pub const PfnResizeCallback = ?*const fn (this: *Window, width: i32, height: i32) void;
 pub const PfnFramebufferResizeCallback = ?*const fn (this: *Window) void;
 
-/// Framebuffer width in pixels
-width: u32 = undefined,
-/// Framebuffer height in pixels
-height: u32 = undefined,
+/// Framebuffer size in pixels
+size: Vec2u,
+
+/// Dpi aware window size
+window_size: Vec2u,
 
 framebuffer_resized: bool = false,
 name: []const u8 = "",
@@ -62,17 +64,19 @@ pub fn init(this: *Window, logical_width: i32, logical_height: i32, name: [:0]co
     var fb_height: c_int = undefined;
     glfw.getFramebufferSize(handle, &fb_width, &fb_height);
 
-    log.debug("Actual window size: {},{}", .{ fb_width, fb_height });
+    var w_width: c_int = undefined;
+    var w_height: c_int = undefined;
+    glfw.getWindowSize(handle, &w_width, &w_height);
 
     glfw.setWindowUserPointer(handle, this);
+
+    _ = glfw.setWindowSizeCallback(handle, resizeCallback);
     _ = glfw.setFramebufferSizeCallback(handle, framebufferResizeCallback);
     _ = glfw.setKeyCallback(handle, keyCallback);
 
-    _ = glfw.setWindowSizeCallback(handle, resizeCallback);
-
     this.* = .{
-        .width = @intCast(fb_width),
-        .height = @intCast(fb_height),
+        .size = Vec2u.new(@intCast(fb_width), @intCast(fb_height)),
+        .window_size = Vec2u.new(@intCast(w_width), @intCast(w_height)),
         .framebuffer_resized = false,
         .name = name,
         .handle = handle,
@@ -112,28 +116,22 @@ pub fn createWindowSurface(this: *const Window, instance: vk.Instance, surface: 
     }
 }
 
-pub fn getExtent(this: *const Window) vk.Extent2D {
-    return .{ .width = @intCast(this.width), .height = @intCast(this.height) };
+pub fn windowToFrameBufferPoint(this: *const Window, p: Vec2) Vec2 {
+    const fsize = math.intToFloatVec(Vec2u, Vec2, this.size);
+    const fwindow_size = math.intToFloatVec(Vec2u, Vec2, this.window_size);
+    return p.mul(fsize.div(fwindow_size));
 }
 
-pub fn framebufferResizeCallback(glfw_window: *glfw.Window, width: c_int, height: c_int) callconv(.c) void {
-    const window: *Window = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
-
-    window.framebuffer_resized = true;
-    window.width = @intCast(width);
-    window.height = @intCast(height);
-
-    if (window.framebuffer_resize_callback) |cb| cb(window);
-}
-
+/// Cursor position in framebuffer pixel space
 pub fn getCursorPos(this: *const Window) Vec2 {
     var x: f64 = undefined;
     var y: f64 = undefined;
     glfw.getCursorPos(this.handle, &x, &y);
-    return .{
+
+    return this.windowToFrameBufferPoint(.{
         .x = @floatCast(x),
         .y = @floatCast(y),
-    };
+    });
 }
 
 fn keyCallback(glfw_window: *glfw.Window, key: glfw.Key, scancode: c_int, action: glfw.Action, mods: glfw.Mod) callconv(.c) void {
@@ -148,13 +146,19 @@ fn keyCallback(glfw_window: *glfw.Window, key: glfw.Key, scancode: c_int, action
     }
 }
 
-fn refreshCallback(glfw_window: *glfw.Window) callconv(.c) void {
+pub fn framebufferResizeCallback(glfw_window: *glfw.Window, width: c_int, height: c_int) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
-    if (window.refresh_callback) |cb| cb(window);
+
+    window.framebuffer_resized = true;
+    window.size = Vec2u.new(@intCast(width), @intCast(height));
+
+    if (window.framebuffer_resize_callback) |cb| cb(window);
 }
 
 fn resizeCallback(glfw_window: *glfw.Window, width: c_int, height: c_int) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
+
+    window.window_size = Vec2u.new(@intCast(width), @intCast(height));
 
     if (window.resize_callback) |cb| cb(window, width, height);
 }

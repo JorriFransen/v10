@@ -661,7 +661,7 @@ fn MatrixDiffer(M: type) type {
 
                 const avalue = self.actual.data[i];
 
-                const diff = @abs(evalue - avalue) >= math.eps(M.T, evalue, avalue);
+                const diff = @abs(evalue - avalue) >= math.epsWith(M.T, evalue, avalue);
 
                 if (diff) try self.ttyconf.setColor(&awriter.new_interface, .red);
                 try writer.print("{d: >14.6}", .{evalue});

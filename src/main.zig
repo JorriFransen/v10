@@ -25,7 +25,6 @@ const Mat4 = math.Mat4;
 const Rect = math.Rect;
 const KB3DMoveController = @import("3d_keyboard_move_controller.zig");
 const KB2DMoveController = @import("2d_keyboard_move_controller.zig");
-
 const assert = std.debug.assert;
 
 const OptionParser = clip.OptionParser(&.{
@@ -64,7 +63,7 @@ pub const EngineConfig = struct {
 
 pub const config = EngineConfig{};
 
-var window: Window = .{};
+var window: Window = undefined;
 var device: Device = .{};
 var renderer: Renderer = .{};
 var r3d: Renderer3D = .{};
@@ -126,16 +125,17 @@ fn run() !void {
     defer r2d.destroy();
 
     camera_ui = Camera2D.init(.{
-        .screen_width = window.width,
-        .screen_height = window.height,
+        .screen_width = window.size.x,
+        .screen_height = window.size.y,
         .zoom = 1,
         .near_clip = camera_2d_near_clip,
         .far_clip = camera_2d_far_clip,
+        .origin = .top_left,
     });
 
     camera_2d = Camera2D.init(.{
-        .screen_width = window.width,
-        .screen_height = window.height,
+        .screen_width = window.size.x,
+        .screen_height = window.size.y,
         .zoom = config.zoom,
         .ppu = config.ppu,
         .near_clip = camera_2d_near_clip,
@@ -210,14 +210,9 @@ fn update(dt: f32) void {
     kb_2d_move_controller.updateInput(&window, dt, &pos, &zoom);
     camera_2d.setPosition(pos);
     camera_2d.setZoom(zoom);
-    camera_2d.update(window.width, window.height);
+    camera_2d.update(window.size.x, window.size.y);
 
-    camera_ui.update(window.width, window.height);
-
-    // const screen_pos = window.getCursorPos();
-    // const world_pos = camera_2d.toWorldSpace(screen_pos);
-
-    // std.log.debug("world_pos: {}", .{world_pos});
+    camera_ui.update(window.size.x, window.size.y);
 }
 
 fn drawFrame() !void {
@@ -230,19 +225,22 @@ fn drawFrame() !void {
 
         r2d.beginFrame(cb);
 
+        const spos = window.getCursorPos();
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
             drawDebugWorldGrid(&batch);
             drawTestScene(&batch);
 
-            // batch.drawRect(Rect.new(.{}, Vec2.scalar(1)), .{ .color = Vec4.new(1, 0, 0, 1) });
-            // batch.drawDebugLine(Vec2.scalar(1), Vec2.scalar(2), .{ .color = Vec4.new(0, 1, 0, 1) });
+            const wpos = camera_2d.toWorldSpace(spos);
+
+            batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
         }
         batch.end();
 
         var ui_batch = r2d.beginBatch(cb, &camera_ui);
         {
-            ui_batch.drawRect(Rect.new(.{}, Vec2.scalar(100)), .{ .color = Vec4.new(1, 0, 0, 1) });
+            const ui_pos = camera_ui.toWorldSpace(spos);
+            ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
         }
         ui_batch.end();
 
@@ -260,16 +258,15 @@ const divider_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(1, 0, 0, 1) }
 
 fn drawDebugWorldGrid(batch: *Renderer2D.Batch) void {
     const campos = camera_2d.pos;
-    const o_width = camera_2d.ortho_width;
-    const o_height = camera_2d.ortho_height;
+    const o_dim = camera_2d.getViewportWorldSize();
 
-    assert(o_width != 0);
-    assert(o_height != 0);
+    assert(o_dim.x != 0);
+    assert(o_dim.y != 0);
 
-    const left = -(o_width / 2) + campos.x;
-    const right = (o_width / 2) + campos.x;
-    const top = (o_height / 2) + campos.y;
-    const bottom = -(o_height / 2) + campos.y;
+    const left = -(o_dim.x / 2) + campos.x;
+    const right = (o_dim.x / 2) + campos.x;
+    const top = (o_dim.y / 2) + campos.y;
+    const bottom = -(o_dim.y / 2) + campos.y;
 
     const left_i = @ceil(left);
     const right_i = @floor(right);
@@ -460,7 +457,7 @@ fn drawTriangleLine(batch: *Renderer2D.Batch, p0: Vec2, p1: Vec2, p2: Vec2, opti
 
 fn resizeCallback(r: *const Renderer) void {
     const aspect = r.swapchain.extentSwapchainRatio();
-    std.log.debug("Resized to: {},{} - aspect: {}", .{ r.window.width, r.window.height, aspect });
+    // std.log.debug("Resized to: {} - aspect: {}", .{ r.window.size, aspect });
 
     camera_3d.setProjection(.{ .perspective = .{
         .fov_y = camera_3d_fov_y,
@@ -468,23 +465,4 @@ fn resizeCallback(r: *const Renderer) void {
         .near = camera_3d_near_clip,
         .far = camera_3d_far_clip,
     } });
-
-    // const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * config.ppu) / camera_2d.zoom;
-    // const ortho_width = ortho_height * aspect;
-    // camera_2d.setProjection(.{
-    //     .l = -ortho_width,
-    //     .r = ortho_width,
-    //     .b = -ortho_height,
-    //     .t = ortho_height,
-    //     .n = camera_2d_near_clip,
-    //     .f = camera_2d_far_clip,
-    // });
-    // camera_ui.setProjection(.{
-    //     .l = 0,
-    //     .r = @as(f32, @floatFromInt(renderer.window.width)),
-    //     .t = 0,
-    //     .b = @as(f32, @floatFromInt(renderer.window.height)),
-    //     .n = camera_2d_near_clip,
-    //     .f = camera_2d_far_clip,
-    // });
 }

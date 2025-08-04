@@ -26,7 +26,7 @@ pub fn init(this: *Renderer, window: *Window, device: *Device, resize_callback: 
     this.device = device;
     this.resize_callback = resize_callback;
 
-    try this.swapchain.init(device, .{ .extent = window.getExtent() });
+    try this.swapchain.init(device, .{ .extent = window.size });
     try this.createCommandBuffers();
 }
 
@@ -144,9 +144,7 @@ pub fn recreateSwapchain(this: *Renderer) !void {
 
     try vkd.deviceWaitIdle();
 
-    var extent = this.window.getExtent();
-    while (extent.width == 0 or extent.height == 0) {
-        extent = this.window.getExtent();
+    while (this.window.size.x == 0 or this.window.size.y == 0) {
         this.window.waitEvents();
 
         if (this.window.shouldClose()) {
@@ -184,7 +182,10 @@ pub fn recreateSwapchain(this: *Renderer) !void {
 
     mem.swapchain_arena.reset();
 
-    try new_chain.init(this.device, .{ .extent = extent, .old_swapchain = old_chain.swapchain });
+    try new_chain.init(this.device, .{
+        .extent = this.window.size,
+        .old_swapchain = old_chain.swapchain,
+    });
 
     if (!old_chain.compareSwapFormats(&new_chain)) {
         return error.swapchainImageOrDepthFormatChanged;
