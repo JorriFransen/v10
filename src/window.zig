@@ -2,8 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const glfw = @import("glfw");
 const vk = @import("vulkan");
+const math = @import("math.zig");
 
 const Window = @This();
+const Vec2 = math.Vec2;
 
 const log = std.log.scoped(.window);
 
@@ -21,9 +23,9 @@ pub const PfnResizeCallback = ?*const fn (this: *Window, width: i32, height: i32
 pub const PfnFramebufferResizeCallback = ?*const fn (this: *Window) void;
 
 /// Framebuffer width in pixels
-width: i32 = undefined,
+width: u32 = undefined,
 /// Framebuffer height in pixels
-height: i32 = undefined,
+height: u32 = undefined,
 
 framebuffer_resized: bool = false,
 name: []const u8 = "",
@@ -69,8 +71,8 @@ pub fn init(this: *Window, logical_width: i32, logical_height: i32, name: [:0]co
     _ = glfw.setWindowSizeCallback(handle, resizeCallback);
 
     this.* = .{
-        .width = fb_width,
-        .height = fb_height,
+        .width = @intCast(fb_width),
+        .height = @intCast(fb_height),
         .framebuffer_resized = false,
         .name = name,
         .handle = handle,
@@ -118,10 +120,20 @@ pub fn framebufferResizeCallback(glfw_window: *glfw.Window, width: c_int, height
     const window: *Window = @ptrCast(@alignCast(glfw.getWindowUserPointer(glfw_window)));
 
     window.framebuffer_resized = true;
-    window.width = width;
-    window.height = height;
+    window.width = @intCast(width);
+    window.height = @intCast(height);
 
     if (window.framebuffer_resize_callback) |cb| cb(window);
+}
+
+pub fn getCursorPos(this: *const Window) Vec2 {
+    var x: f64 = undefined;
+    var y: f64 = undefined;
+    glfw.getCursorPos(this.handle, &x, &y);
+    return .{
+        .x = @floatCast(x),
+        .y = @floatCast(y),
+    };
 }
 
 fn keyCallback(glfw_window: *glfw.Window, key: glfw.Key, scancode: c_int, action: glfw.Action, mods: glfw.Mod) callconv(.c) void {

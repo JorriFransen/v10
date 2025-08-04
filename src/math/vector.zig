@@ -68,6 +68,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn dot(a: @This(), b: @This()) T {
                 return F.dot(a, b);
             }
+            pub inline fn eql(a: @This(), b: @This()) bool {
+                return F.eql(a, b);
+            }
             pub inline fn eqlEps(a: @This(), b: @This()) bool {
                 return F.eqlEps(a, b);
             }
@@ -136,6 +139,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             }
             pub inline fn dot(a: Vec3, b: Vec3) T {
                 return F.dot(a, b);
+            }
+            pub inline fn eql(a: @This(), b: @This()) bool {
+                return F.eql(a, b);
             }
             pub inline fn eqlEps(a: Vec3, b: Vec3) bool {
                 return F.eqlEps(a, b);
@@ -229,6 +235,9 @@ pub fn Vec(comptime N: usize, comptime ET: type) type {
             pub inline fn dot(a: @This(), b: @This()) T {
                 return F.dot(a, b);
             }
+            pub inline fn eql(a: @This(), b: @This()) bool {
+                return F.eql(a, b);
+            }
             pub inline fn eqlEps(a: @This(), b: @This()) bool {
                 return F.eqlEps(a, b);
             }
@@ -311,6 +320,12 @@ pub fn VecFunctionsMixin(comptime N: usize, comptime T: type, comptime Base: typ
         }
         pub inline fn dot(a: Base, b: Base) T {
             return @reduce(.Add, a.vector() * b.vector());
+        }
+
+        pub inline fn eql(a: Base, b: Base) bool {
+            const va = vector(a);
+            const vb = vector(b);
+            return @reduce(.And, va == vb);
         }
 
         pub inline fn eqlEps(a: Base, b: Base) bool {
