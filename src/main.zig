@@ -228,7 +228,7 @@ fn drawFrame() !void {
 
         // r3d.drawEntities(cb, entities, &camera_3d);
 
-        r2d.beginFrame();
+        r2d.beginFrame(cb);
 
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
