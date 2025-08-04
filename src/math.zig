@@ -35,6 +35,14 @@ pub inline fn eqlEps(comptime T: type, a: T, b: T) bool {
     return abs_diff <= eps;
 }
 
+pub inline fn intToIntVec(comptime IvIn: type, comptime IvOut: type, iv: IvIn) IvOut {
+    return IvOut.v(@intCast(iv.vector()));
+}
+
+pub inline fn floatToFloatVec(comptime FvIn: type, comptime FvOut: type, fv: FvIn) FvOut {
+    return FvOut.v(@floatCast(fv.vector()));
+}
+
 pub inline fn intToFloatVec(comptime IV: type, comptime FV: type, iv: IV) FV {
     return FV.v(@floatFromInt(iv.vector()));
 }
