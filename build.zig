@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 
 const LazyPath = std.Build.LazyPath;
 
-const debugging = false;
+const debugging = true;
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});

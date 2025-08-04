@@ -73,13 +73,11 @@ var r2d: Renderer2D = .{};
 const camera_3d_fov_y = math.radians(50);
 const camera_3d_near_clip = 0.1;
 const camera_3d_far_clip = 100;
-var camera_3d: Camera3D = undefined;
+var camera_3d: Camera3D = .{};
 var camera_3d_transform: Transform = .{};
 
 const camera_2d_near_clip = -50;
 const camera_2d_far_clip = 50;
-var camera_2d_pos = Vec2{};
-var camera_2d_zoom = config.zoom;
 
 var camera_ui: Camera2D = undefined;
 var camera_2d: Camera2D = undefined;
@@ -127,6 +125,23 @@ fn run() !void {
     try r2d.init(&device, renderer.swapchain.render_pass);
     defer r2d.destroy();
 
+    camera_ui = Camera2D.init(.{
+        .screen_width = window.width,
+        .screen_height = window.height,
+        .zoom = 1,
+        .near_clip = camera_2d_near_clip,
+        .far_clip = camera_2d_far_clip,
+    });
+
+    camera_2d = Camera2D.init(.{
+        .screen_width = window.width,
+        .screen_height = window.height,
+        .zoom = config.zoom,
+        .ppu = config.ppu,
+        .near_clip = camera_2d_near_clip,
+        .far_clip = camera_2d_far_clip,
+    });
+
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .nearest);
     defer test_tile_texture.deinit(&device);
     test_tile_sprite = Sprite.init(&test_tile_texture, .{ .yflip = true });
@@ -169,16 +184,6 @@ fn run() !void {
         .far = camera_3d_far_clip,
     } });
 
-    camera_ui.setProjection(.{
-        .l = 0,
-        .r = @as(f32, @floatFromInt(window.width)),
-        .t = 0,
-        .b = @as(f32, @floatFromInt(window.height)),
-        .n = camera_2d_near_clip,
-        .f = camera_2d_far_clip,
-    });
-    camera_ui.setViewYXZ(Vec3.new(0, 0, camera_2d_near_clip), Vec3.scalar(0));
-
     var current_time = try Instant.now();
 
     while (!window.shouldClose()) {
@@ -189,20 +194,6 @@ fn run() !void {
         const dt: f32 = @as(f32, @floatFromInt(dt_ns)) / std.time.ns_per_s;
         current_time = new_time;
 
-        camera_3d.setViewYXZ(camera_3d_transform.translation, camera_3d_transform.rotation);
-
-        const ortho_height = @as(f32, @floatFromInt(window.height)) / (2 * config.ppu) / camera_2d_zoom;
-        const ortho_width = ortho_height * aspect;
-        camera_2d.setProjection(.{
-            .l = -ortho_width,
-            .r = ortho_width,
-            .b = -ortho_height,
-            .t = ortho_height,
-            .n = camera_2d_near_clip,
-            .f = camera_2d_far_clip,
-        });
-        camera_2d.setViewYXZ(camera_2d_pos.toVector3(camera_2d_near_clip), Vec3.scalar(0));
-
         update(dt);
         drawFrame() catch unreachable;
     }
@@ -211,8 +202,22 @@ fn run() !void {
 }
 
 fn update(dt: f32) void {
+    camera_3d.setViewYXZ(camera_3d_transform.translation, camera_3d_transform.rotation);
     // kb_3d_move_controller.moveInPlaneXZ(&window, dt, &camera_3d_transform);
-    kb_2d_move_controller.updateInput(&window, dt, &camera_2d_pos, &camera_2d_zoom);
+
+    var pos: Vec2 = camera_2d.pos;
+    var zoom: f32 = camera_2d.zoom;
+    kb_2d_move_controller.updateInput(&window, dt, &pos, &zoom);
+    camera_2d.setPosition(pos);
+    camera_2d.setZoom(zoom);
+    camera_2d.update(window.width, window.height);
+
+    camera_ui.update(window.width, window.height);
+
+    // const screen_pos = window.getCursorPos();
+    // const world_pos = camera_2d.toWorldSpace(screen_pos);
+
+    // std.log.debug("world_pos: {}", .{world_pos});
 }
 
 fn drawFrame() !void {
@@ -221,21 +226,22 @@ fn drawFrame() !void {
         const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
         renderer.beginRenderpass(cb, clear_color);
 
-        r3d.drawEntities(cb, entities, &camera_3d);
+        // r3d.drawEntities(cb, entities, &camera_3d);
 
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
-            drawDebugWorldGrid(&batch);
-            drawTestScene(&batch);
+            // drawDebugWorldGrid(&batch);
+            // drawTestScene(&batch);
+
+            batch.drawDebugLine(Vec2.scalar(0), Vec2.scalar(1), .{ .color = Vec4.new(0, 1, 0, 1) });
         }
         batch.end();
 
-        // const ui_batch = r2d.beginBatch(cb, &camera_ui);
-        // {
-        //     // ui_batch.drawTextureRect(&test_tile_texture, .{ .pos = Vec2.scalar(20), .size = Vec2.scalar(400) });
-        //     // ui_batch.drawTextureRect(&test_texture, .{ .pos = Vec2.new(20, 440), .size = Vec2.scalar(400) });
-        // }
-        // ui_batch.end();
+        var ui_batch = r2d.beginBatch(cb, &camera_ui);
+        {
+            ui_batch.drawRect(Rect.new(.{}, Vec2.scalar(100)), .{ .color = Vec4.new(1, 0, 0, 1) });
+        }
+        ui_batch.end();
 
         renderer.endRenderPass(cb);
         try renderer.endFrame(cb);
@@ -248,9 +254,12 @@ const triangle_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(0, 0, 0, 1),
 const divider_line = Renderer2D.DrawLineOptions{ .color = Vec4.new(1, 0, 0, 1) };
 
 fn drawDebugWorldGrid(batch: *Renderer2D.Batch) void {
-    const campos = camera_2d_pos;
+    const campos = camera_2d.pos;
     const o_width = camera_2d.ortho_width;
     const o_height = camera_2d.ortho_height;
+
+    assert(o_width != 0);
+    assert(o_height != 0);
 
     const left = -(o_width / 2) + campos.x;
     const right = (o_width / 2) + campos.x;
@@ -261,9 +270,6 @@ fn drawDebugWorldGrid(batch: *Renderer2D.Batch) void {
     const right_i = @floor(right);
     const top_i = @floor(top);
     const bottom_i = @ceil(bottom);
-
-    assert(left_i < right_i);
-    assert(bottom_i < top_i);
 
     const vcount = @abs(left_i - right_i) + 1;
     const hcount = @abs(bottom_i - top_i) + 1;
@@ -458,22 +464,22 @@ fn resizeCallback(r: *const Renderer) void {
         .far = camera_3d_far_clip,
     } });
 
-    const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * config.ppu) / camera_2d_zoom;
-    const ortho_width = ortho_height * aspect;
-    camera_2d.setProjection(.{
-        .l = -ortho_width,
-        .r = ortho_width,
-        .b = -ortho_height,
-        .t = ortho_height,
-        .n = camera_2d_near_clip,
-        .f = camera_2d_far_clip,
-    });
-    camera_ui.setProjection(.{
-        .l = 0,
-        .r = @as(f32, @floatFromInt(renderer.window.width)),
-        .t = 0,
-        .b = @as(f32, @floatFromInt(renderer.window.height)),
-        .n = camera_2d_near_clip,
-        .f = camera_2d_far_clip,
-    });
+    // const ortho_height = @as(f32, @floatFromInt(r.window.height)) / (2 * config.ppu) / camera_2d.zoom;
+    // const ortho_width = ortho_height * aspect;
+    // camera_2d.setProjection(.{
+    //     .l = -ortho_width,
+    //     .r = ortho_width,
+    //     .b = -ortho_height,
+    //     .t = ortho_height,
+    //     .n = camera_2d_near_clip,
+    //     .f = camera_2d_far_clip,
+    // });
+    // camera_ui.setProjection(.{
+    //     .l = 0,
+    //     .r = @as(f32, @floatFromInt(renderer.window.width)),
+    //     .t = 0,
+    //     .b = @as(f32, @floatFromInt(renderer.window.height)),
+    //     .n = camera_2d_near_clip,
+    //     .f = camera_2d_far_clip,
+    // });
 }
