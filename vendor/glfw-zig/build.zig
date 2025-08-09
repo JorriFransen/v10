@@ -63,8 +63,8 @@ pub fn build(b: *std.Build) !void {
             });
         },
         .linux => {
-            var flags = try std.BoundedArray([]const u8, 16).init(0);
-            var sources = try std.BoundedArray([]const u8, 64).init(0);
+            var flags = std.ArrayList([]const u8).init(b.allocator);
+            var sources = std.ArrayList([]const u8).init(b.allocator);
 
             try sources.appendSlice(&base_sources);
             try sources.appendSlice(&linux_sources);
@@ -87,8 +87,8 @@ pub fn build(b: *std.Build) !void {
 
             lib.addCSourceFiles(.{
                 .root = glfw_source.path(""),
-                .files = sources.slice(),
-                .flags = flags.slice(),
+                .files = sources.items,
+                .flags = flags.items,
             });
         },
     }
