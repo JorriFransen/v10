@@ -12,6 +12,7 @@ const Device = gfx.Device;
 const Model = gfx.Model;
 const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
+const Font = gfx.Font;
 const Camera2D = gfx.Camera2D;
 const Camera3D = gfx.Camera3D;
 const Renderer2D = gfx.Renderer2D;
@@ -87,6 +88,9 @@ var kb_2d_move_controller: KB2DMoveController = .{};
 var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
+// var test_font: Font = undefined;
+var font_tex: Texture = undefined;
+
 var test_tile_texture: Texture = undefined;
 var test_texture: Texture = undefined;
 
@@ -141,6 +145,10 @@ fn run() !void {
         .near_clip = camera_2d_near_clip,
         .far_clip = camera_2d_far_clip,
     });
+
+    // Mono bitmap font
+    font_tex = try Texture.load(&device, "res/fonts/profont_96_0.png", .nearest);
+    defer font_tex.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .nearest);
     defer test_tile_texture.deinit(&device);
@@ -232,8 +240,9 @@ fn drawFrame() !void {
             drawTestScene(&batch);
 
             const wpos = camera_2d.toWorldSpace(spos);
-
             batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
+
+            batch.drawRect(Rect.new(wpos, Vec2.scalar(5)), .{ .texture = &font_tex });
         }
         batch.end();
 
@@ -241,6 +250,8 @@ fn drawFrame() !void {
         {
             const ui_pos = camera_ui.toWorldSpace(spos);
             ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
+
+            ui_batch.drawRect(Rect.new(Vec2.new(10, 10), font_tex.getSize()), .{ .texture = &font_tex });
         }
         ui_batch.end();
 
