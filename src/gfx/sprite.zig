@@ -20,6 +20,7 @@ pub const Options = struct {
     ppu: ?f32 = null,
 };
 
+// TODO: Should this return a pointer
 pub fn init(texture: *const Texture, options: Options) Sprite {
     var uv_rect = options.uv_rect;
     if (options.yflip) {

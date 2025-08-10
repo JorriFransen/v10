@@ -27,6 +27,7 @@ width: u32,
 height: u32,
 
 // TODO: Define error
+// TODO: Should this return a pointer?
 pub fn load(device: *Device, name: []const u8, filter: Filter) !Texture {
     var ta = mem.get_temp();
     defer ta.release();

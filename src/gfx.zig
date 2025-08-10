@@ -10,6 +10,7 @@ pub const Renderer = @import("gfx/vulkan_renderer.zig");
 pub const Model = @import("gfx/model.zig");
 pub const Texture = @import("gfx/texture.zig");
 pub const Sprite = @import("gfx/sprite.zig");
+pub const Font = @import("gfx/font.zig");
 pub const Camera2D = camera.Camera2D;
 pub const Camera3D = camera.Camera3D;
 pub const Renderer2D = @import("gfx/2d_renderer.zig");

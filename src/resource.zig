@@ -40,6 +40,8 @@ pub const ResourceData = union(enum) {
         name: []const u8,
         data: []const u8,
     },
+
+    bitmap_font: struct {},
 };
 
 pub const LoadResourceError = error{
@@ -90,7 +92,7 @@ pub const LoadModelError = error{UnsupportedFileType} ||
     obj_parser.ObjParseError;
 
 pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!CpuModel {
-    var ta = mem.get_scratch(@alignCast(@ptrCast(allocator.ptr)));
+    var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
     defer ta.release();
 
     const model_file = mfb: switch (options) {
@@ -197,7 +199,7 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
 pub const LoadTextureError = stb.image.Error || LoadResourceError;
 
 pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureError!CpuTexture {
-    var ta = mem.get_scratch(@alignCast(@ptrCast(allocator.ptr)));
+    var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
     defer ta.release();
 
     const texture_file = tfb: switch (options) {

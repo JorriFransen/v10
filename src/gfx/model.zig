@@ -60,6 +60,7 @@ pub const LoadModelError =
     CreateModelError ||
     resource.LoadModelError;
 
+// TODO: Return pointer
 pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
     var ta = mem.get_temp();
     defer ta.release();
