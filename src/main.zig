@@ -88,7 +88,7 @@ var kb_2d_move_controller: KB2DMoveController = .{};
 var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
-// var test_font: Font = undefined;
+var test_font: Font = undefined;
 var font_tex: Texture = undefined;
 
 var test_tile_texture: Texture = undefined;
@@ -147,6 +147,7 @@ fn run() !void {
     });
 
     // Mono bitmap font
+    test_font = try Font.load(&device, "res/fonts/profont_96.fnt");
     font_tex = try Texture.load(&device, "res/fonts/profont_96_0.png", .nearest);
     defer font_tex.deinit(&device);
 

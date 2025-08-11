@@ -24,6 +24,7 @@ pub const CpuTexture = struct {
     data: []const u8,
 };
 
+// TODO: Probably refactor into binary/text file
 pub const ResourceData = union(enum) {
     model_file: struct {
         pub const Kind = enum {
@@ -41,7 +42,10 @@ pub const ResourceData = union(enum) {
         data: []const u8,
     },
 
-    bitmap_font: struct {},
+    angelfont_file: struct {
+        name: []const u8,
+        data: []const u8,
+    },
 };
 
 pub const LoadResourceError = error{
@@ -76,6 +80,8 @@ pub fn load(allocator: Allocator, identifier: []const u8) LoadResourceError!Reso
         .{ .model_file = .{ .kind = .obj, .name = identifier, .data = file_buf } }
     else if (std.mem.endsWith(u8, identifier, ".png"))
         .{ .texture_file = .{ .name = identifier, .data = file_buf } }
+    else if (std.mem.endsWith(u8, identifier, ".fnt"))
+        .{ .angelfont_file = .{ .name = identifier, .data = file_buf } }
     else
         return error.UnsupportedFileExtension;
 
