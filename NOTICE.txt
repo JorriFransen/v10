@@ -7,3 +7,6 @@ deps/glfw/
  - Removed CMakeLists.txt
  - Removed examples/
  - Removed docs/
+
+res/fonts/ProFontWindows (license in directory)
+ - Renamed ProFontWindows.ttf -> ProFont.ttf

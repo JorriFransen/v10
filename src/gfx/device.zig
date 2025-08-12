@@ -681,7 +681,11 @@ pub fn findSupportedFormat(this: *@This(), candidates: []const vk.Format, tiling
     return error.findSupportedFormatFailed;
 }
 
-pub fn createImageWithInfo(this: *@This(), image_info: *const vk.ImageCreateInfo, properties: vk.MemoryPropertyFlags, memory: *vk.DeviceMemory) !vk.Image {
+pub const CreateImageError = error{} ||
+    vk.DeviceProxy.CreateImageError ||
+    vk.DeviceProxy.AllocateMemoryError;
+
+pub fn createImageWithInfo(this: *@This(), image_info: *const vk.ImageCreateInfo, properties: vk.MemoryPropertyFlags, memory: *vk.DeviceMemory) CreateImageError!vk.Image {
     const result = try this.device.createImage(image_info, null);
     const mem_req = this.device.getImageMemoryRequirements(result);
 
@@ -727,7 +731,11 @@ pub fn findMemoryType(this: *@This(), type_filter: u32, properties: vk.MemoryPro
     @panic("No suitable memory type found");
 }
 
-pub fn createBuffer(this: *@This(), size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags, memory: *vk.DeviceMemory) !vk.Buffer {
+pub const CreateBufferError = error{} ||
+    vk.DeviceProxy.CreateBufferError ||
+    vk.DeviceProxy.AllocateMemoryError;
+
+pub fn createBuffer(this: *@This(), size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags, memory: *vk.DeviceMemory) CreateBufferError!vk.Buffer {
     const buffer_info = vk.BufferCreateInfo{
         .size = size,
         .usage = usage,

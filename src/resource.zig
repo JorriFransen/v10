@@ -48,21 +48,30 @@ pub const ResourceData = union(enum) {
     },
 };
 
+/// Check if a named resource can be found
+pub fn exists(identifier: []const u8) bool {
+    const cwd = std.fs.cwd();
+    _ = cwd.statFile(identifier) catch {
+        return false;
+    };
+    return true;
+}
+
 pub const LoadResourceError = error{
     OutOfMemory,
     UnsupportedFileExtension,
     UnexpectedResourceKind,
-} || std.fs.File.OpenError;
+    NotFound,
+    Unexpected,
+};
 
 /// Load named resource into memory
 pub fn load(allocator: Allocator, identifier: []const u8) LoadResourceError!ResourceData {
-    const file = std.fs.cwd().openFile(identifier, .{}) catch |err| switch (err) {
-        else => return err,
-        error.FileNotFound => {
-            log.err("Unable to open resource file: '{s}'", .{identifier});
-            return error.FileNotFound;
-        },
-    };
+    if (!exists(identifier)) {
+        log.err("Unable to open resource file: '{s}'", .{identifier});
+        return error.NotFound;
+    }
+    const file = std.fs.cwd().openFile(identifier, .{}) catch @panic("Unable to open resource file");
     defer file.close();
 
     const file_size = file.getEndPos() catch return error.Unexpected;
@@ -202,9 +211,9 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
     }
 }
 
-pub const LoadTextureError = stb.image.Error || LoadResourceError;
+pub const LoadCpuTextureError = stb.image.Error || LoadResourceError;
 
-pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadTextureError!CpuTexture {
+pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadCpuTextureError!CpuTexture {
     var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
     defer ta.release();
 

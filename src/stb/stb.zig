@@ -60,8 +60,6 @@ pub const image = struct {
         const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &c, rgb_alpha);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
 
-        log.debug("-- {} original channels", .{c});
-
         const len = @as(usize, @intCast(x * y * rgb_alpha));
         const data = try allocator.alloc(u8, len);
         @memcpy(data, stb_data[0..len]);

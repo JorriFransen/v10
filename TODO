@@ -3,5 +3,7 @@ text rendering
  - bitmap (parse .fnt)
  - ttf (stb truetype)
 
+canonical resource names
+should resources be pointers/handles?
 
 static update time
