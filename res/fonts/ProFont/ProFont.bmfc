@@ -3,7 +3,7 @@ fileVersion=1
 
 # font settings
 fontName=ProFontWindows
-fontFile=../../../../Downloads/ProFontWinTweaked/ProFontWinTweaked/ProFontWindows.ttf
+fontFile=../../../../../Downloads/ProFontWinTweaked/ProFontWinTweaked/ProFontWindows.ttf
 charSet=0
 fontSize=96
 aa=1

@@ -147,8 +147,10 @@ fn run() !void {
     });
 
     // Mono bitmap font
-    test_font = try Font.load(&device, "res/fonts/profont_96.fnt");
-    font_tex = try Texture.load(&device, "res/fonts/profont_96_0.png", .nearest);
+    test_font = try Font.load(&device, "res/fonts/ProFont/96.fnt");
+    defer test_font.deinit(&device);
+
+    font_tex = try Texture.load(&device, "res/fonts/ProFont/96_0.png", .nearest);
     defer font_tex.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .nearest);

@@ -26,9 +26,12 @@ descriptor_set: vk.DescriptorSet,
 width: u32,
 height: u32,
 
-// TODO: Define error
+pub const TextureLoadError = error{} ||
+    TextureInitError ||
+    resource.LoadCpuTextureError;
+
 // TODO: Should this return a pointer?
-pub fn load(device: *Device, name: []const u8, filter: Filter) !Texture {
+pub fn load(device: *Device, name: []const u8, filter: Filter) TextureLoadError!Texture {
     var ta = mem.get_temp();
     defer ta.release();
 
@@ -40,8 +43,13 @@ pub fn load(device: *Device, name: []const u8, filter: Filter) !Texture {
     return try init(device, cpu_texture, filter);
 }
 
-// TODO: Define error
-pub fn init(device: *Device, cpu_texture: resource.CpuTexture, filter: Filter) !Texture {
+pub const TextureInitError = error{VulkanMapMemory} ||
+    Device.CreateBufferError ||
+    Device.CreateImageError ||
+    CreateDescriptorSetError ||
+    vk.DeviceProxy.MapMemoryError;
+
+pub fn init(device: *Device, cpu_texture: resource.CpuTexture, filter: Filter) TextureInitError!Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -111,7 +119,10 @@ pub fn deinit(this: *Texture, device: *Device) void {
     vkd.destroyImageView(this.image_view, null);
 }
 
-fn createDescriptorSet(device: *Device, image_view: vk.ImageView, filter: Filter) !vk.DescriptorSet {
+pub const CreateDescriptorSetError = error{} ||
+    vk.DeviceProxy.AllocateDescriptorSetsError;
+
+fn createDescriptorSet(device: *Device, image_view: vk.ImageView, filter: Filter) CreateDescriptorSetError!vk.DescriptorSet {
     const vkd = &device.device;
 
     const alloc_info = vk.DescriptorSetAllocateInfo{
