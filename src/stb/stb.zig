@@ -12,6 +12,12 @@ const assert = std.debug.assert;
 var current_temp: mem.TempArena = undefined;
 
 pub const image = struct {
+    pub const Format = enum(c_int) {
+        grey = c_stbi.STBI_grey,
+        grey_alpha = c_stbi.STBI_grey_alpha,
+        rgb = c_stbi.STBI_rgb,
+        rgb_alpha = c_stbi.STBI_rgb_alpha,
+    };
     pub const rgb_alpha = c_stbi.STBI_rgb_alpha;
 
     pub const Texture = struct {
@@ -26,15 +32,17 @@ pub const image = struct {
         OutOfMemory,
     };
 
-    pub fn load(allocator: Allocator, path: []const u8) Error!Texture {
+    pub fn load(allocator: Allocator, path: []const u8, format: Format) Error!Texture {
         current_temp = mem.TempArena.init(&mem.stb_arena);
         defer current_temp.release();
 
         var x: c_int = undefined;
         var y: c_int = undefined;
         var c: c_int = undefined;
-        const data_opt = stbi_load(path, &x, &y, &c, rgb_alpha);
+        const data_opt = stbi_load(path, &x, &y, &c, format);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
+
+        assert(@intFromEnum(format) == c); // This might be desired in some cases?
 
         const len = @as(usize, @intCast(x * y * c));
         const data = try allocator.alloc(u8, len);
@@ -50,17 +58,19 @@ pub const image = struct {
         };
     }
 
-    pub fn loadFromMemory(allocator: Allocator, buffer: []const u8) Error!Texture {
+    pub fn loadFromMemory(allocator: Allocator, buffer: []const u8, format: Format) Error!Texture {
         current_temp = mem.TempArena.init(&mem.stb_arena);
         defer current_temp.release();
+
+        const format_int: c_int = @intFromEnum(format);
 
         var x: c_int = undefined;
         var y: c_int = undefined;
         var c: c_int = undefined;
-        const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &c, rgb_alpha);
+        const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &c, format_int);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
 
-        const len = @as(usize, @intCast(x * y * rgb_alpha));
+        const len = @as(usize, @intCast(x * y * format_int));
         const data = try allocator.alloc(u8, len);
         @memcpy(data, stb_data[0..len]);
 

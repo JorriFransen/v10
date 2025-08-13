@@ -6,11 +6,6 @@ const mem = @import("memory");
 const resource = @import("../resource.zig");
 const math = @import("../math.zig");
 
-pub const Filter = enum {
-    nearest,
-    linear,
-};
-
 const Texture = @This();
 const Device = gfx.Device;
 const Vec2 = math.Vec2;
@@ -26,21 +21,48 @@ descriptor_set: vk.DescriptorSet,
 width: u32,
 height: u32,
 
+pub const Format = enum {
+    u8_s_rgba,
+    u8_u_r,
+
+    pub fn toVulkan(this: Format) vk.Format {
+        switch (this) {
+            .u8_s_rgba => return .r8g8b8a8_srgb,
+            .u8_u_r => return .r8_unorm,
+        }
+    }
+};
+
+pub const Filter = enum {
+    nearest,
+    linear,
+};
+
+pub const InitOptions = struct {
+    format: Format = .u8_s_rgba,
+    filter: Filter = .nearest,
+};
+
 pub const TextureLoadError = error{} ||
     TextureInitError ||
     resource.LoadCpuTextureError;
 
 // TODO: Should this return a pointer?
-pub fn load(device: *Device, name: []const u8, filter: Filter) TextureLoadError!Texture {
+pub fn load(device: *Device, name: []const u8, options: InitOptions) TextureLoadError!Texture {
     var ta = mem.get_temp();
     defer ta.release();
 
     // const texture_file = try resource.load(ta.allocator(), name);
     // const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_resource = texture_file });
-    const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_identifier = name });
-    log.info("Loaded cpu texture: '{s}' - {}x{}", .{ name, cpu_texture.size.x, cpu_texture.size.y });
+    const cpu_texture = try resource.loadCpuTexture(
+        ta.allocator(),
+        .{ .from_identifier = name },
+        .{ .format = options.format },
+    );
 
-    return try init(device, cpu_texture, filter);
+    log.info("Loaded cpu texture: '{s}' - {}x{} - {}", .{ name, cpu_texture.size.x, cpu_texture.size.y, options.format });
+
+    return try init(device, cpu_texture, options);
 }
 
 pub const TextureInitError = error{VulkanMapMemory} ||
@@ -49,7 +71,7 @@ pub const TextureInitError = error{VulkanMapMemory} ||
     CreateDescriptorSetError ||
     vk.DeviceProxy.MapMemoryError;
 
-pub fn init(device: *Device, cpu_texture: resource.CpuTexture, filter: Filter) TextureInitError!Texture {
+pub fn init(device: *Device, cpu_texture: resource.CpuTexture, options: InitOptions) TextureInitError!Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -70,7 +92,7 @@ pub fn init(device: *Device, cpu_texture: resource.CpuTexture, filter: Filter) T
     @memcpy(staging_mapped, cpu_texture.data);
     vkd.unmapMemory(staging_buffer_memory);
 
-    const format = vk.Format.r8g8b8a8_srgb;
+    const format = options.format.toVulkan();
 
     var image_mem: vk.DeviceMemory = .null_handle;
     const image = try device.createImageWithInfo(
@@ -92,14 +114,14 @@ pub fn init(device: *Device, cpu_texture: resource.CpuTexture, filter: Filter) T
     );
 
     const cb = device.beginSingleTimeCommands();
-    device.transitionImageLayout(cb, image, .r8g8b8a8_srgb, .undefined, .transfer_dst_optimal);
+    device.transitionImageLayout(cb, image, format, .undefined, .transfer_dst_optimal);
     device.copyBufferToImage(cb, staging_buffer, image, cpu_texture.size.x, cpu_texture.size.y);
-    device.transitionImageLayout(cb, image, .r8g8b8a8_srgb, .transfer_dst_optimal, .shader_read_only_optimal);
+    device.transitionImageLayout(cb, image, format, .transfer_dst_optimal, .shader_read_only_optimal);
     device.endSingleTimeCommands(cb);
 
     const image_view = try device.createImageView(image, format);
 
-    const descriptor_set = try createDescriptorSet(device, image_view, filter);
+    const descriptor_set = try createDescriptorSet(device, image_view, options.filter);
 
     return .{
         .image = image,
@@ -173,5 +195,5 @@ pub fn initDefaultWhite(device: *Device) !Texture {
         .size = .{ .x = 1, .y = 1 },
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
-    return init(device, cpu_texture, .nearest);
+    return init(device, cpu_texture, .{ .filter = .nearest });
 }

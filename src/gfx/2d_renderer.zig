@@ -10,6 +10,7 @@ const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
+const Font = gfx.Font;
 const Camera = gfx.Camera2D;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
@@ -30,6 +31,7 @@ const white = Vec4.scalar(1);
 device: *Device = undefined,
 layout: vk.PipelineLayout = .null_handle,
 triangle_pipeline: Pipeline = .{},
+text_pipeline: Pipeline = .{},
 line_pipeline: Pipeline = .{},
 
 arena: mem.Arena = undefined,
@@ -91,14 +93,15 @@ const PushConstantData = extern struct {
     view: Mat4,
 };
 
-pub const PrimitiveType = enum(u8) {
+pub const CommandType = enum(u8) {
     line,
     triangle,
     quad,
+    text,
 };
 
 pub const DrawCommand = struct {
-    type: PrimitiveType,
+    type: CommandType,
     texture: ?*const Texture,
     line_width: f32 = 1,
 
@@ -169,6 +172,7 @@ pub fn destroy(this: *Renderer) void {
     const vkd = &this.device.device;
 
     vkd.destroyPipelineLayout(this.layout, null);
+    this.text_pipeline.destroy();
     this.triangle_pipeline.destroy();
     this.line_pipeline.destroy();
 
@@ -221,6 +225,15 @@ fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: 
         "shaders/simple_2d.vert.spv",
         "shaders/simple_2d.frag.spv",
         triangle_config,
+    );
+
+    const text_config = triangle_config;
+
+    this.text_pipeline = try Pipeline.create(
+        this.device,
+        "shaders/text.vert.spv",
+        "shaders/text.frag.spv",
+        text_config,
     );
 
     var line_config = default_config;
@@ -337,7 +350,7 @@ pub const Batch = struct {
 
         const vbuf = batch.renderer.vertex_staging_buffer_mapped;
         const vstart = renderer.vertex_offset;
-        if (vstart + 2 > vbuf.len) @panic("Vertex buffer full");
+        if (vstart + 3 > vbuf.len) @panic("Vertex buffer full");
 
         const vertices = vbuf[vstart .. vstart + 3];
 
@@ -361,7 +374,7 @@ pub const Batch = struct {
 
         const vbuf = batch.renderer.vertex_staging_buffer_mapped;
         const vstart = renderer.vertex_offset;
-        if (vstart + 2 > vbuf.len) @panic("Vertex buffer full");
+        if (vstart + 4 > vbuf.len) @panic("Vertex buffer full");
 
         const vertices = vbuf[vstart .. vstart + 4];
         const uv_rect = options.uv_rect;
@@ -393,6 +406,37 @@ pub const Batch = struct {
         batch.drawRect(rect, .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect });
     }
 
+    pub fn drawText(batch: *Batch, font: *Font, pos: Vec2, text: []const u8) void {
+        _ = text;
+        const renderer = batch.renderer;
+
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        const vstart = renderer.vertex_offset;
+        // const vcount: u32 = @intCast(text.len * 4);
+        const vcount = 4;
+        if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
+
+        const vertices = vbuf[vstart .. vstart + vcount];
+
+        const uv_rect: Rect = .{ .pos = Vec2.scalar(0), .size = Vec2.scalar(1) };
+        const color = white;
+        const size = font.texture.getSize();
+
+        vertices[0] = .{ .pos = pos, .uv = uv_rect.pos, .color = color };
+        vertices[1] = .{ .pos = pos.add(.{ .x = size.x }), .uv = uv_rect.pos.add(.{ .x = uv_rect.size.x }), .color = color };
+        vertices[2] = .{ .pos = pos.add(size), .uv = uv_rect.pos.add(uv_rect.size), .color = color };
+        vertices[3] = .{ .pos = pos.add(.{ .y = size.y }), .uv = uv_rect.pos.add(.{ .y = uv_rect.size.y }), .color = color };
+
+        renderer.vertex_offset += 4;
+
+        batch.pushCommand(.{
+            .type = .text,
+            .texture = &font.texture,
+            .vertex_offset = vstart,
+            .vertex_count = vcount,
+        });
+    }
+
     pub fn end(batch: *const Batch) void {
         const renderer = batch.renderer;
         const cb = batch.command_buffer;
@@ -420,6 +464,7 @@ pub const Batch = struct {
         var current_pipeline = switch (renderer.commands.items[0].type) {
             .line => &renderer.line_pipeline,
             .triangle, .quad => &renderer.triangle_pipeline,
+            .text => &renderer.text_pipeline,
         };
         current_pipeline.bind(cb);
 
@@ -436,6 +481,7 @@ pub const Batch = struct {
             const command_pipeline = switch (command.type) {
                 .line => &renderer.line_pipeline,
                 .triangle, .quad => &renderer.triangle_pipeline,
+                .text => &renderer.text_pipeline,
             };
 
             const is_line_command = command.type == .line;
@@ -496,6 +542,26 @@ pub const Batch = struct {
                 },
 
                 .quad => {
+                    assert(command.vertex_count % 4 == 0);
+                    const quad_count = command.vertex_count / 4;
+                    const icount = 6 * quad_count;
+                    if (ibuf.len - istart < icount) @panic("Index buffer full");
+
+                    for (0..quad_count) |qi| {
+                        const offset: u32 = @intCast(qi * 4);
+
+                        ibuf[istart + offset] = fi + offset;
+                        ibuf[istart + offset + 1] = fi + offset + 1;
+                        ibuf[istart + offset + 2] = fi + offset + 2;
+
+                        ibuf[istart + offset + 3] = fi + offset;
+                        ibuf[istart + offset + 4] = fi + offset + 2;
+                        ibuf[istart + offset + 5] = fi + offset + 3;
+                    }
+                    batch_index_count += icount;
+                },
+
+                .text => {
                     assert(command.vertex_count % 4 == 0);
                     const quad_count = command.vertex_count / 4;
                     const icount = 6 * quad_count;

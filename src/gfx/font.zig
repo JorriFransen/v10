@@ -20,7 +20,6 @@ pub const LoadFontError = error{
 } ||
     AngelcodeFNTParseError ||
     Texture.TextureLoadError;
-// resource.LoadResourceError;
 
 pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
     var fnt_file_arena = mem.get_temp();
@@ -64,7 +63,7 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
     }
 
     assert(font_info.pages.len == 1);
-    const texture = try Texture.load(device, font_info.pages[0], .nearest);
+    const texture = try Texture.load(device, font_info.pages[0], .{ .format = .u8_u_r, .filter = .nearest });
 
     // TODO: Copy font/char metrics to our format
     return .{
