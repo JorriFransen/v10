@@ -89,7 +89,6 @@ var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
 var test_font: Font = undefined;
-var font_tex: Texture = undefined;
 
 var test_tile_texture: Texture = undefined;
 var test_texture: Texture = undefined;
@@ -150,10 +149,7 @@ fn run() !void {
     test_font = try Font.load(&device, "res/fonts/ProFont/96.fnt");
     defer test_font.deinit(&device);
 
-    font_tex = try Texture.load(&device, "res/fonts/ProFont/96_0.png", .nearest);
-    defer font_tex.deinit(&device);
-
-    test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .nearest);
+    test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit(&device);
     test_tile_sprite = Sprite.init(&test_tile_texture, .{ .yflip = true });
     test_tile_sprite_sub_tl = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
@@ -161,7 +157,7 @@ fn run() !void {
     test_tile_sprite_sub_bl = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
     test_tile_sprite_sub_br = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
-    test_texture = try Texture.load(&device, "res/textures/test.png", .linear);
+    test_texture = try Texture.load(&device, "res/textures/test.png", .{ .filter = .linear });
     defer test_texture.deinit(&device);
     test_sprite = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512 });
     test_sprite_sub_tl = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
@@ -245,7 +241,7 @@ fn drawFrame() !void {
             const wpos = camera_2d.toWorldSpace(spos);
             batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
-            batch.drawRect(Rect.new(wpos, Vec2.scalar(5)), .{ .texture = &font_tex });
+            // batch.drawRect(Rect.new(wpos, Vec2.scalar(5)), .{ .texture = &test_font.texture });
         }
         batch.end();
 
@@ -254,7 +250,8 @@ fn drawFrame() !void {
             const ui_pos = camera_ui.toWorldSpace(spos);
             ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            ui_batch.drawRect(Rect.new(Vec2.new(10, 10), font_tex.getSize()), .{ .texture = &font_tex });
+            // ui_batch.drawRect(Rect.new(Vec2.new(10, 10), test_font.texture.getSize()), .{ .texture = &test_font.texture });
+            ui_batch.drawText(&test_font, Vec2.new(10, 10), "Test abc!");
         }
         ui_batch.end();
 

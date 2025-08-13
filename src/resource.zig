@@ -6,6 +6,7 @@ const math = @import("math.zig");
 const stb = @import("stb/stb.zig");
 
 const Model = @import("gfx/model.zig");
+const Texture = @import("gfx/texture.zig");
 const Allocator = std.mem.Allocator;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
@@ -97,7 +98,7 @@ pub fn load(allocator: Allocator, identifier: []const u8) LoadResourceError!Reso
     return result;
 }
 
-pub const LoadOptions = union(enum) {
+pub const Source = union(enum) {
     from_identifier: []const u8,
     from_resource: ResourceData,
 };
@@ -106,11 +107,11 @@ pub const LoadModelError = error{UnsupportedFileType} ||
     LoadResourceError ||
     obj_parser.ObjParseError;
 
-pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!CpuModel {
+pub fn loadCpuModel(allocator: Allocator, source: Source) LoadModelError!CpuModel {
     var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
     defer ta.release();
 
-    const model_file = mfb: switch (options) {
+    const model_file = mfb: switch (source) {
         .from_identifier => |identifier| {
             switch (try load(ta.allocator(), identifier)) {
                 else => return error.UnexpectedResourceKind,
@@ -213,11 +214,15 @@ pub fn loadCpuModel(allocator: Allocator, options: LoadOptions) LoadModelError!C
 
 pub const LoadCpuTextureError = stb.image.Error || LoadResourceError;
 
-pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadCpuTextureError!CpuTexture {
+pub const LoadCpuTextureOptions = struct {
+    format: Texture.Format = .u8_s_rgba,
+};
+
+pub fn loadCpuTexture(allocator: Allocator, source: Source, options: LoadCpuTextureOptions) LoadCpuTextureError!CpuTexture {
     var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
     defer ta.release();
 
-    const texture_file = tfb: switch (options) {
+    const texture_file = tfb: switch (source) {
         .from_identifier => |identifier| {
             switch (try load(ta.allocator(), identifier)) {
                 else => return error.UnexpectedResourceKind,
@@ -230,7 +235,12 @@ pub fn loadCpuTexture(allocator: Allocator, options: LoadOptions) LoadCpuTexture
         },
     };
 
-    const texture = try stb.image.loadFromMemory(allocator, texture_file.data);
+    const stbi_format: stb.image.Format = switch (options.format) {
+        .u8_s_rgba => .rgb_alpha,
+        .u8_u_r => .grey,
+    };
+
+    const texture = try stb.image.loadFromMemory(allocator, texture_file.data, stbi_format);
     ta.release(); // Free texture file
 
     return .{
