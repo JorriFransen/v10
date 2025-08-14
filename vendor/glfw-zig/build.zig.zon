@@ -4,10 +4,7 @@
     .fingerprint = 0xcba456a596f199f0, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.0-dev.1160+e43617e68",
     .dependencies = .{
-        .glfw = .{
-            .url = "https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz",
-            .hash = "N-V-__8AAL40TADEbrysYHBl-UIZO4KiG4chP8pLDVDINGH4",
-        },
+        .glfw = .{ .path = "../glfw-3-4" },
     },
     .paths = .{
         "build.zig",
