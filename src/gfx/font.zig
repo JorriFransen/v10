@@ -2,17 +2,50 @@ const std = @import("std");
 const gfx = @import("../gfx.zig");
 const resource = @import("../resource.zig");
 const mem = @import("memory");
+const math = @import("../math.zig");
 
 const Font = @This();
 const Texture = gfx.Texture;
 const Device = gfx.Device;
 const Allocator = std.mem.Allocator;
+const Rect = math.Rect;
+
+const GlyphMap = std.HashMap(u32, Glyph, Glyph.MapContext, std.hash_map.default_max_load_percentage);
 
 const assert = std.debug.assert;
 const log = std.log.scoped(.font);
 
 // TODO: Pointer?
 texture: Texture,
+glyphs: GlyphMap,
+
+line_height: u32,
+base_height: u32,
+
+pub const Glyph = struct {
+    pixel_width: u32,
+    pixel_height: u32,
+
+    uv_rect: Rect,
+
+    /// offset from the cursor
+    x_offset: i32,
+
+    /// offset from the top of the cell to the top ot the uvrect
+    y_offset: i32,
+
+    /// advance after drawing this glyph
+    x_advance: i32,
+
+    pub const MapContext = struct {
+        pub inline fn hash(_: MapContext, codepoint: u32) u64 {
+            return std.hash.Wyhash.hash(0, &@as([@sizeOf(u32) / @sizeOf(u8)]u8, @bitCast(codepoint)));
+        }
+        pub inline fn eql(_: MapContext, a: u32, b: u32) bool {
+            return a == b;
+        }
+    };
+};
 
 pub const LoadFontError = error{
     UnsupportedFontType,
@@ -35,8 +68,6 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
 
     const font_info = try parseAngelcodeFNT(fnt_info_arena.allocator(), fnt_file.angelfont_file.data, fnt_file.angelfont_file.name);
     fnt_file_arena.release();
-
-    log.debug("angel info: {any}", .{font_info});
 
     if (!font_info.unicode) {
         log.err("Only unicode BMFonts are supported", .{});
@@ -65,16 +96,43 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
     assert(font_info.pages.len == 1);
     const texture = try Texture.load(device, font_info.pages[0], .{ .format = .u8_u_r, .filter = .nearest });
 
-    // TODO: Copy font/char metrics to our format
-    return .{
-        .texture = texture,
-    };
+    // TODO: Allocator!
+    var glyphs = GlyphMap.init(mem.common_arena.allocator());
+    try glyphs.ensureTotalCapacity(@intCast(font_info.chars.len));
+
+    for (font_info.chars) |char| {
+        assert(char.page == 0); // TODO: Handle pages
+        const page_size = texture.getSize();
+
+        try glyphs.putNoClobber(char.id, .{
+            .pixel_width = char.width,
+            .pixel_height = char.height,
+            .uv_rect = Rect{
+                .pos = .{
+                    .x = @as(f32, @floatFromInt(char.x)) / page_size.x,
+                    .y = @as(f32, @floatFromInt(char.y)) / page_size.y,
+                },
+                .size = .{
+                    .x = @as(f32, @floatFromInt(char.width)) / page_size.x,
+                    .y = @as(f32, @floatFromInt(char.height)) / page_size.y,
+                },
+            },
+            .x_offset = char.x_offset,
+            .y_offset = char.y_offset,
+            .x_advance = char.xadvance,
+        });
+    }
+
+    return init(texture, glyphs, font_info.line_height, font_info.base);
 }
 
 // TODO: Return error
-pub fn init(texture: *const Texture) !Font {
+pub fn init(texture: Texture, glyphs: GlyphMap, line_height: u32, base_height: u32) !Font {
     return .{
         .texture = texture,
+        .glyphs = glyphs,
+        .line_height = line_height,
+        .base_height = base_height,
     };
 }
 
@@ -102,8 +160,8 @@ const AngelcodeFNTInfo = struct {
     outline: u8 = 0,
 
     // common tag
-    line_height: i16 = 0,
-    base: i16 = 0,
+    line_height: u16 = 0,
+    base: u16 = 0,
     scale_w: i16 = 0,
     scale_h: i16 = 0,
     @"packed": bool = false,
@@ -227,9 +285,9 @@ fn parseAngelcodeFNT(allocator: Allocator, text: []const u8, filename: []const u
         } else if (eat(&line, "common")) {
             while (line.len > 0) {
                 if (eat(&line, "lineHeight=")) {
-                    result.line_height = try parseInt(i16, &line);
+                    result.line_height = try parseInt(u16, &line);
                 } else if (eat(&line, "base=")) {
-                    result.base = try parseInt(i16, &line);
+                    result.base = try parseInt(u16, &line);
                 } else if (eat(&line, "scaleW=")) {
                     result.scale_w = try parseInt(i16, &line);
                 } else if (eat(&line, "scaleH=")) {

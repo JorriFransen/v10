@@ -407,34 +407,69 @@ pub const Batch = struct {
     }
 
     pub fn drawText(batch: *Batch, font: *Font, pos: Vec2, text: []const u8) void {
-        _ = text;
+        if (text.len == 0) return;
+
         const renderer = batch.renderer;
 
-        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
-        const vstart = renderer.vertex_offset;
-        // const vcount: u32 = @intCast(text.len * 4);
-        const vcount = 4;
-        if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
+        var cursor_pos = pos;
 
-        const vertices = vbuf[vstart .. vstart + vcount];
+        for (text) |char| {
+            const glyph = font.glyphs.get(char) orelse @panic("Invalid character");
 
-        const uv_rect: Rect = .{ .pos = Vec2.scalar(0), .size = Vec2.scalar(1) };
-        const color = white;
-        const size = font.texture.getSize();
+            const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+            const vstart = renderer.vertex_offset;
+            // const vcount: u32 = @intCast(text.len * 4);
+            const vcount = 4;
+            if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
 
-        vertices[0] = .{ .pos = pos, .uv = uv_rect.pos, .color = color };
-        vertices[1] = .{ .pos = pos.add(.{ .x = size.x }), .uv = uv_rect.pos.add(.{ .x = uv_rect.size.x }), .color = color };
-        vertices[2] = .{ .pos = pos.add(size), .uv = uv_rect.pos.add(uv_rect.size), .color = color };
-        vertices[3] = .{ .pos = pos.add(.{ .y = size.y }), .uv = uv_rect.pos.add(.{ .y = uv_rect.size.y }), .color = color };
+            const vertices = vbuf[vstart .. vstart + vcount];
 
-        renderer.vertex_offset += 4;
+            const uv_rect = glyph.uv_rect;
+            const size = Vec2.new(@floatFromInt(glyph.pixel_width), @floatFromInt(glyph.pixel_height));
+            const color = white;
 
-        batch.pushCommand(.{
-            .type = .text,
-            .texture = &font.texture,
-            .vertex_offset = vstart,
-            .vertex_count = vcount,
-        });
+            const glyph_pos = cursor_pos.add(.{
+                .x = @floatFromInt(glyph.x_offset),
+                .y = @floatFromInt(glyph.y_offset),
+            });
+
+            vertices[0] = .{ .pos = glyph_pos, .uv = uv_rect.pos, .color = color };
+            vertices[1] = .{ .pos = glyph_pos.add(.{ .x = size.x }), .uv = uv_rect.br(), .color = color };
+            vertices[2] = .{ .pos = glyph_pos.add(size), .uv = uv_rect.tr(), .color = color };
+            vertices[3] = .{ .pos = glyph_pos.add(.{ .y = size.y }), .uv = uv_rect.tl(), .color = color };
+
+            renderer.vertex_offset += 4;
+
+            batch.pushCommand(.{
+                .type = .text,
+                .texture = &font.texture,
+                .vertex_offset = vstart,
+                .vertex_count = vcount,
+            });
+
+            // Debug drawing
+            batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(@floatFromInt(glyph.x_advance), @floatFromInt(font.line_height))), .{});
+            batch.drawRectLine(Rect.new(glyph_pos, size), .{ .color = Vec4.new(1, 0, 0, 1) });
+
+            cursor_pos.x += @floatFromInt(glyph.x_advance);
+        }
+    }
+
+    pub fn drawRectLine(batch: *Batch, rect: Rect, options: DrawLineOptions) void {
+        const bl = rect.bl();
+        const br = rect.br();
+        const tl = rect.tl();
+        const tr = rect.tr();
+        batch.drawDebugLine(bl, tl, .{ .color = options.color, .width = options.width });
+        batch.drawDebugLine(tl, tr, .{ .color = options.color, .width = options.width });
+        batch.drawDebugLine(tr, br, .{ .color = options.color, .width = options.width });
+        batch.drawDebugLine(br, bl, .{ .color = options.color, .width = options.width });
+    }
+
+    pub fn drawTriangleLine(batch: *Batch, p0: Vec2, p1: Vec2, p2: Vec2, options: DrawLineOptions) void {
+        batch.drawDebugLine(p0, p1, options);
+        batch.drawDebugLine(p1, p2, options);
+        batch.drawDebugLine(p2, p0, options);
     }
 
     pub fn end(batch: *const Batch) void {
