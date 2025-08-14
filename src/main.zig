@@ -232,26 +232,23 @@ fn drawFrame() !void {
 
         r2d.beginFrame(cb);
 
-        const spos = window.getCursorPos();
+        // const spos = window.getCursorPos();
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
-            drawDebugWorldGrid(&batch);
+            // drawDebugWorldGrid(&batch);
             drawTestScene(&batch);
 
-            const wpos = camera_2d.toWorldSpace(spos);
-            batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
-
-            // batch.drawRect(Rect.new(wpos, Vec2.scalar(5)), .{ .texture = &test_font.texture });
+            // const wpos = camera_2d.toWorldSpace(spos);
+            // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
         }
         batch.end();
 
         var ui_batch = r2d.beginBatch(cb, &camera_ui);
         {
-            const ui_pos = camera_ui.toWorldSpace(spos);
-            ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
+            // const ui_pos = camera_ui.toWorldSpace(spos);
+            // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            // ui_batch.drawRect(Rect.new(Vec2.new(10, 10), test_font.texture.getSize()), .{ .texture = &test_font.texture });
-            ui_batch.drawText(&test_font, Vec2.new(10, 10), "Test abc!");
+            ui_batch.drawText(&test_font, Vec2.new(10, 10), "Test abc! TjpPjh To");
         }
         ui_batch.end();
 
@@ -338,74 +335,74 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
 
     // Draw the sprites, sprite loading flips y for these sprites
     batch.drawSprite(&test_sprite, p0_0);
-    drawRectLine(batch, Rect.new(p0_0, dim), outline);
+    batch.drawRectLine(Rect.new(p0_0, dim), outline);
     batch.drawSprite(&test_tile_sprite, p1_0);
-    drawRectLine(batch, Rect.new(p1_0, dim), outline);
+    batch.drawRectLine(Rect.new(p1_0, dim), outline);
 
     // Draw them by texture, need to flip uv's manually, also need to specify size in worldspace (ppu not applied)
     const y_flip_uv = Rect{ .pos = .{ .x = 0, .y = 1 }, .size = .{ .x = 1, .y = -1 } };
     batch.drawRect(.{ .pos = p0_1, .size = dim }, .{ .texture = &test_texture, .uv_rect = y_flip_uv });
-    drawRectLine(batch, Rect.new(p0_1, dim), outline);
+    batch.drawRectLine(Rect.new(p0_1, dim), outline);
     batch.drawRect(.{ .pos = p1_1, .size = dim }, .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
-    drawRectLine(batch, Rect.new(p1_1, dim), outline);
+    batch.drawRectLine(Rect.new(p1_1, dim), outline);
 
     // Cannot control uv's in this case, only specify size in worldspace
     batch.drawRect(.{ .pos = p0_2, .size = dim }, .{ .texture = &test_texture });
-    drawRectLine(batch, Rect.new(p0_2, dim), outline);
+    batch.drawRectLine(Rect.new(p0_2, dim), outline);
     batch.drawRect(.{ .pos = p1_2, .size = dim }, .{ .texture = &test_tile_texture });
-    drawRectLine(batch, Rect.new(p1_2, dim), outline);
+    batch.drawRectLine(Rect.new(p1_2, dim), outline);
 
     batch.drawRect(.{ .pos = p0_3, .size = dim }, .{ .color = Vec4.new(1, 0, 0, 1) });
-    drawRectLine(batch, Rect.new(p0_3, dim), outline);
+    batch.drawRectLine(Rect.new(p0_3, dim), outline);
     batch.drawRect(.{ .pos = p1_3, .size = dim }, .{ .color = Vec4.new(0, 1, 0, 1) });
-    drawRectLine(batch, Rect.new(p1_3, dim), outline);
+    batch.drawRectLine(Rect.new(p1_3, dim), outline);
 
     // Test uv_rect not covering whole texture
     batch.drawDebugLine(sub_tl_rect.tr().add(.{ .x = 0.05, .y = 0.05 }), sub_bl_rect.br().add(.{ .x = 0.05, .y = -0.05 }), divider_line);
     batch.drawDebugLine(sub_tl_rect.bl().add(.{ .x = -0.05, .y = -0.05 }), sub_tr_rect.br().add(.{ .x = 0.05, .y = -0.05 }), divider_line);
     batch.drawSpriteRect(&test_sprite_sub_tl, sub_tl_rect);
-    drawRectLine(batch, sub_tl_rect, quadrant_line);
+    batch.drawRectLine(sub_tl_rect, quadrant_line);
     batch.drawSpriteRect(&test_sprite_sub_tr, sub_tr_rect);
-    drawRectLine(batch, sub_tr_rect, quadrant_line);
+    batch.drawRectLine(sub_tr_rect, quadrant_line);
     batch.drawSpriteRect(&test_sprite_sub_bl, sub_bl_rect);
-    drawRectLine(batch, sub_bl_rect, quadrant_line);
+    batch.drawRectLine(sub_bl_rect, quadrant_line);
     batch.drawSpriteRect(&test_sprite_sub_br, sub_br_rect);
-    drawRectLine(batch, sub_br_rect, quadrant_line);
-    drawRectLine(batch, Rect.new(p0_4, dim), outline);
+    batch.drawRectLine(sub_br_rect, quadrant_line);
+    batch.drawRectLine(Rect.new(p0_4, dim), outline);
 
     batch.drawDebugLine(tile_sub_tl_rect.tr().add(.{ .x = 0.05, .y = 0.05 }), tile_sub_bl_rect.br().add(.{ .x = 0.05, .y = -0.05 }), divider_line);
     batch.drawDebugLine(tile_sub_tl_rect.bl().add(.{ .x = -0.05, .y = -0.05 }), tile_sub_tr_rect.br().add(.{ .x = 0.05, .y = -0.05 }), divider_line);
     batch.drawSpriteRect(&test_tile_sprite_sub_tl, tile_sub_tl_rect);
-    drawRectLine(batch, tile_sub_tl_rect, quadrant_line);
+    batch.drawRectLine(tile_sub_tl_rect, quadrant_line);
     batch.drawSpriteRect(&test_tile_sprite_sub_tr, tile_sub_tr_rect);
-    drawRectLine(batch, tile_sub_tr_rect, quadrant_line);
+    batch.drawRectLine(tile_sub_tr_rect, quadrant_line);
     batch.drawSpriteRect(&test_tile_sprite_sub_bl, tile_sub_bl_rect);
-    drawRectLine(batch, tile_sub_bl_rect, quadrant_line);
+    batch.drawRectLine(tile_sub_bl_rect, quadrant_line);
     batch.drawSpriteRect(&test_tile_sprite_sub_br, tile_sub_br_rect);
-    drawRectLine(batch, tile_sub_br_rect, quadrant_line);
-    drawRectLine(batch, Rect.new(p1_4, dim), outline);
+    batch.drawRectLine(tile_sub_br_rect, quadrant_line);
+    batch.drawRectLine(Rect.new(p1_4, dim), outline);
 
     batch.drawTriangle(p2_0, p2_0.add(Vec2.new(0.5, 1)), p2_0.add(.{ .x = 1 }), .{ .color = Vec4.new(1, 0, 0, 1) });
-    drawRectLine(batch, Rect.new(p2_0, dim), outline);
-    drawTriangleLine(batch, p2_0, p2_0.add(Vec2.new(0.5, 1)), p2_0.add(.{ .x = 1 }), triangle_line);
+    batch.drawRectLine(Rect.new(p2_0, dim), outline);
+    batch.drawTriangleLine(p2_0, p2_0.add(Vec2.new(0.5, 1)), p2_0.add(.{ .x = 1 }), triangle_line);
     batch.drawTriangle(p2_1, p2_1.add(Vec2.new(0.5, 1)), p2_1.add(.{ .x = 1 }), .{
         .texture = &test_texture,
         .uv_coords = .{ Vec2.new(0, 1), Vec2.new(0.5, 0), Vec2.new(1, 1) },
     });
-    drawRectLine(batch, Rect.new(p2_1, dim), outline);
-    drawTriangleLine(batch, p2_1, p2_1.add(Vec2.new(0.5, 1)), p2_1.add(.{ .x = 1 }), triangle_line);
+    batch.drawRectLine(Rect.new(p2_1, dim), outline);
+    batch.drawTriangleLine(p2_1, p2_1.add(Vec2.new(0.5, 1)), p2_1.add(.{ .x = 1 }), triangle_line);
     batch.drawTriangle(p2_2.add(.{ .y = 1 }), p2_2.add(dim), p2_2.add(.{ .x = 1 }), .{
         .texture = &test_tile_texture,
         .uv_coords = .{ Vec2.new(0, 1), Vec2.new(1, 1), Vec2.new(1, 0) },
     });
-    drawRectLine(batch, Rect.new(p2_2, dim), outline);
-    drawTriangleLine(batch, p2_2.add(.{ .y = 1 }), p2_2.add(dim), p2_2.add(.{ .x = 1 }), triangle_line);
+    batch.drawRectLine(Rect.new(p2_2, dim), outline);
+    batch.drawTriangleLine(p2_2.add(.{ .y = 1 }), p2_2.add(dim), p2_2.add(.{ .x = 1 }), triangle_line);
     batch.drawTriangle(p2_3, p2_3.add(Vec2.new(0.5, 1)), p2_3.add(.{ .x = 1 }), .{
         .texture = &test_tile_texture,
         .uv_coords = .{ Vec2.new(0, 1), Vec2.new(1, 1), Vec2.new(1, 0) },
     });
-    drawRectLine(batch, Rect.new(p2_3, dim), outline);
-    drawTriangleLine(batch, p2_3, p2_3.add(Vec2.new(0.5, 1)), p2_3.add(.{ .x = 1 }), triangle_line);
+    batch.drawRectLine(Rect.new(p2_3, dim), outline);
+    batch.drawTriangleLine(p2_3, p2_3.add(Vec2.new(0.5, 1)), p2_3.add(.{ .x = 1 }), triangle_line);
 
     const tl = p2_4.add(Vec2.new(-0.05, 1.05));
     const tr = tl.add(.{ .x = 1.1 });
@@ -419,51 +416,34 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
         .texture = &test_texture,
         .uv_coords = .{ tl_uv.tl(), tl_uv.tr(), tl_uv.br() },
     });
-    drawRectLine(batch, Rect.new(tl.add(.{ .y = -0.5 }), Vec2.scalar(0.5)), quadrant_line);
-    drawTriangleLine(batch, tl, tl.add(.{ .x = 0.5 }), tl.add(.{ .x = 0.5, .y = -0.5 }), triangle_line);
+    batch.drawRectLine(Rect.new(tl.add(.{ .y = -0.5 }), Vec2.scalar(0.5)), quadrant_line);
+    batch.drawTriangleLine(tl, tl.add(.{ .x = 0.5 }), tl.add(.{ .x = 0.5, .y = -0.5 }), triangle_line);
 
     const tr_uv = test_sprite_sub_tr.uv_rect;
     batch.drawTriangle(tr.add(.{ .x = -0.5 }), tr, tr.add(Vec2.scalar(-0.5)), .{
         .texture = &test_texture,
         .uv_coords = .{ tr_uv.tl(), tr_uv.tr(), tr_uv.bl() },
     });
-    drawRectLine(batch, Rect.new(tr.addScalar(-0.5), Vec2.scalar(0.5)), quadrant_line);
-    drawTriangleLine(batch, tr.add(.{ .x = -0.5 }), tr, tr.add(Vec2.scalar(-0.5)), triangle_line);
+    batch.drawRectLine(Rect.new(tr.addScalar(-0.5), Vec2.scalar(0.5)), quadrant_line);
+    batch.drawTriangleLine(tr.add(.{ .x = -0.5 }), tr, tr.add(Vec2.scalar(-0.5)), triangle_line);
 
     const bl_uv = test_sprite_sub_bl.uv_rect;
     batch.drawTriangle(bl, bl.add(Vec2.scalar(0.5)), bl.add(.{ .x = 0.5 }), .{
         .texture = &test_texture,
         .uv_coords = .{ bl_uv.bl(), bl_uv.tr(), bl_uv.br() },
     });
-    drawRectLine(batch, Rect.new(bl, Vec2.scalar(0.5)), quadrant_line);
-    drawTriangleLine(batch, bl, bl.add(Vec2.scalar(0.5)), bl.add(.{ .x = 0.5 }), triangle_line);
+    batch.drawRectLine(Rect.new(bl, Vec2.scalar(0.5)), quadrant_line);
+    batch.drawTriangleLine(bl, bl.add(Vec2.scalar(0.5)), bl.add(.{ .x = 0.5 }), triangle_line);
 
     const br_uv = test_sprite_sub_br.uv_rect;
     batch.drawTriangle(br.add(.{ .x = -0.5 }), br.add(.{ .x = -0.5, .y = 0.5 }), br, .{
         .texture = &test_texture,
         .uv_coords = .{ br_uv.bl(), br_uv.tl(), br_uv.br() },
     });
-    drawRectLine(batch, Rect.new(br.add(.{ .x = -0.5 }), Vec2.scalar(0.5)), quadrant_line);
-    drawTriangleLine(batch, br.add(.{ .x = -0.5 }), br.add(.{ .x = -0.5, .y = 0.5 }), br, triangle_line);
+    batch.drawRectLine(Rect.new(br.add(.{ .x = -0.5 }), Vec2.scalar(0.5)), quadrant_line);
+    batch.drawTriangleLine(br.add(.{ .x = -0.5 }), br.add(.{ .x = -0.5, .y = 0.5 }), br, triangle_line);
 
-    drawRectLine(batch, Rect.new(p2_4, dim), outline);
-}
-
-fn drawRectLine(batch: *Renderer2D.Batch, rect: Rect, options: Renderer2D.DrawLineOptions) void {
-    const bl = rect.bl();
-    const br = rect.br();
-    const tl = rect.tl();
-    const tr = rect.tr();
-    batch.drawDebugLine(bl, tl, .{ .color = options.color, .width = options.width });
-    batch.drawDebugLine(tl, tr, .{ .color = options.color, .width = options.width });
-    batch.drawDebugLine(tr, br, .{ .color = options.color, .width = options.width });
-    batch.drawDebugLine(br, bl, .{ .color = options.color, .width = options.width });
-}
-
-fn drawTriangleLine(batch: *Renderer2D.Batch, p0: Vec2, p1: Vec2, p2: Vec2, options: Renderer2D.DrawLineOptions) void {
-    batch.drawDebugLine(p0, p1, options);
-    batch.drawDebugLine(p1, p2, options);
-    batch.drawDebugLine(p2, p0, options);
+    batch.drawRectLine(Rect.new(p2_4, dim), outline);
 }
 
 fn resizeCallback(r: *const Renderer) void {
