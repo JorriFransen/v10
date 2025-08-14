@@ -26,8 +26,8 @@
             .hash = "N-V-__8AAPLT7gH4vgN7Xo6yZlOMrzllGbdvVxxhrwUvgI9r",
         },
         .vulkan = .{
-            .url = "https://github.com/Snektron/vulkan-zig/archive/refs/heads/master.tar.gz",
-            .hash = "vulkan-0.0.0-r7Ytx5w-AwB0hzckD1mPHma0VgtiJ2DHj5dvgzWVwk2e",
+            .url = "git+https://github.com/Snektron/vulkan-zig/#ed429842b8ad60966bc3b8b214606d8a5714f99e",
+            .hash = "vulkan-0.0.0-r7Ytx5w-AwC04xBpfzcuIjGyYv2z6xb1i49ZUeNUgT5H",
         },
     },
 }
