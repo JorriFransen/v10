@@ -18,6 +18,7 @@ const log = std.log.scoped(.font);
 // TODO: Pointer?
 texture: Texture,
 glyphs: GlyphMap,
+invalid_glyph: ?Glyph = null,
 
 line_height: u32,
 base_height: u32,
@@ -102,37 +103,22 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
 
     for (font_info.chars) |char| {
         assert(char.page == 0); // TODO: Handle pages
-        const page_size = texture.getSize();
-
-        try glyphs.putNoClobber(char.id, .{
-            .pixel_width = char.width,
-            .pixel_height = char.height,
-            .uv_rect = Rect{
-                .pos = .{
-                    .x = @as(f32, @floatFromInt(char.x)) / page_size.x,
-                    .y = @as(f32, @floatFromInt(char.y)) / page_size.y,
-                },
-                .size = .{
-                    .x = @as(f32, @floatFromInt(char.width)) / page_size.x,
-                    .y = @as(f32, @floatFromInt(char.height)) / page_size.y,
-                },
-            },
-            .x_offset = char.x_offset,
-            .y_offset = char.y_offset,
-            .x_advance = char.xadvance,
-        });
+        try glyphs.putNoClobber(char.id, char.toGlyph(&texture));
     }
 
-    return init(texture, glyphs, font_info.line_height, font_info.base);
+    const invalid_glyph = if (font_info.invalid_char) |ic| ic.toGlyph(&texture) else null;
+
+    return init(texture, glyphs, invalid_glyph, font_info.line_height, font_info.base);
 }
 
 // TODO: Return error
-pub fn init(texture: Texture, glyphs: GlyphMap, line_height: u32, base_height: u32) !Font {
+pub fn init(texture: Texture, glyphs: GlyphMap, invalid_glyph: ?Glyph, line_height: u32, base_height: u32) !Font {
     return .{
         .texture = texture,
         .glyphs = glyphs,
         .line_height = line_height,
         .base_height = base_height,
+        .invalid_glyph = invalid_glyph,
     };
 }
 
@@ -172,6 +158,7 @@ const AngelcodeFNTInfo = struct {
 
     pages: []const []const u8 = &.{},
     chars: []const Char = &.{},
+    invalid_char: ?Char = null,
 
     pub const ChannelType = enum(u3) {
         glyph = 0,
@@ -192,6 +179,28 @@ const AngelcodeFNTInfo = struct {
         xadvance: u16,
         page: u8,
         channel: CharChannel,
+
+        pub fn toGlyph(this: Char, texture: *const Texture) Glyph {
+            assert(this.page == 0);
+            const page_size = texture.getSize();
+            return .{
+                .pixel_width = this.width,
+                .pixel_height = this.height,
+                .uv_rect = Rect{
+                    .pos = .{
+                        .x = @as(f32, @floatFromInt(this.x)) / page_size.x,
+                        .y = @as(f32, @floatFromInt(this.y)) / page_size.y,
+                    },
+                    .size = .{
+                        .x = @as(f32, @floatFromInt(this.width)) / page_size.x,
+                        .y = @as(f32, @floatFromInt(this.height)) / page_size.y,
+                    },
+                },
+                .x_offset = this.x_offset,
+                .y_offset = this.y_offset,
+                .x_advance = this.xadvance,
+            };
+        }
     };
 
     pub const CharChannel = packed struct(u4) {
@@ -354,7 +363,7 @@ fn parseAngelcodeFNT(allocator: Allocator, text: []const u8, filename: []const u
                 }
             }
         } else if (eat(&line, "char")) {
-            var id: u32 = undefined;
+            var signed_id: i64 = -1;
             var x: u16 = undefined;
             var y: u16 = undefined;
             var width: u16 = undefined;
@@ -367,7 +376,7 @@ fn parseAngelcodeFNT(allocator: Allocator, text: []const u8, filename: []const u
 
             while (line.len > 0) {
                 if (eat(&line, "id=")) {
-                    id = try parseInt(u32, &line);
+                    signed_id = try parseInt(i64, &line);
                 } else if (eat(&line, "x=")) {
                     x = try parseInt(u16, &line);
                 } else if (eat(&line, "y=")) {
@@ -393,8 +402,8 @@ fn parseAngelcodeFNT(allocator: Allocator, text: []const u8, filename: []const u
                 }
             }
 
-            try chars.append(tmp.allocator(), .{
-                .id = id,
+            var char = AngelcodeFNTInfo.Char{
+                .id = 0,
                 .x = x,
                 .y = y,
                 .width = width,
@@ -404,7 +413,14 @@ fn parseAngelcodeFNT(allocator: Allocator, text: []const u8, filename: []const u
                 .xadvance = xadvance,
                 .page = page,
                 .channel = channel,
-            });
+            };
+
+            if (signed_id >= 0) {
+                char.id = @intCast(signed_id);
+                try chars.append(tmp.allocator(), char);
+            } else {
+                result.invalid_char = char;
+            }
         } else {
             log.err("Invalid tag in BMFont; file: '{s}', tag: '{s}'", .{ filename, line });
             return error.InvalidTag;
@@ -417,7 +433,7 @@ fn parseAngelcodeFNT(allocator: Allocator, text: []const u8, filename: []const u
     assert(page_count == pages.items.len);
     result.pages = try pages.toOwnedSlice(allocator);
 
-    assert(char_count == chars.items.len);
+    assert(char_count == if (result.invalid_char == null) chars.items.len else chars.items.len + 1);
     result.chars = try chars.toOwnedSlice(allocator);
 
     return result;
@@ -440,7 +456,7 @@ fn parseInt(comptime T: type, str: *[]const u8) std.fmt.ParseIntError!T {
     }
 
     const sub = str.*[0..len];
-    const result = std.fmt.parseInt(T, sub, 10);
+    const result = try std.fmt.parseInt(T, sub, 10);
     str.* = stripLeft(str.*[sub.len..]);
     return result;
 }
