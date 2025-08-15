@@ -3,7 +3,7 @@ fileVersion=1
 
 # font settings
 fontName=ProFontWindows
-fontFile=../../../../../Downloads/ProFontWinTweaked/ProFontWinTweaked/ProFontWindows.ttf
+fontFile=ProFont.ttf
 charSet=0
 fontSize=96
 aa=1
@@ -13,7 +13,7 @@ isBold=0
 isItalic=0
 useUnicode=1
 disableBoxChars=1
-outputInvalidCharGlyph=0
+outputInvalidCharGlyph=1
 dontIncludeKerningPairs=0
 useHinting=1
 renderFromOutline=0
@@ -54,7 +54,7 @@ invB=0
 outlineThickness=0
 
 # selected chars
-chars=32-126,160-255,305,338-339,352-353,376,381-382,402,710-711,713,728-733,956,8208,8211-8212,8215-8218
-chars=8220-8222,8224-8226,8230,8240,8249-8250,8364,8482,8722,8729
+chars=32-126,160-255,305,338-339,352-353,376,381-382,402,710-711,713,728-733,956,8211-8212,8215-8218,8220
+chars=8221-8222,8224-8226,8230,8240,8249-8250,8364,8482,8722,8729
 
 # imported icon images
