@@ -416,16 +416,16 @@ pub const Batch = struct {
 
         var cursor_pos = pos;
 
-        for (text) |char| {
+        const vcount: u32 = @intCast(text.len * 4);
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        const vstart = renderer.vertex_offset;
+        if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
+        const text_vertices = vbuf[vstart .. vstart + vcount];
+
+        for (text, 0..) |char, i| {
             const glyph = font.glyphs.get(char) orelse @panic("Invalid character");
-
-            const vbuf = batch.renderer.vertex_staging_buffer_mapped;
-            const vstart = renderer.vertex_offset;
-            // const vcount: u32 = @intCast(text.len * 4);
-            const vcount = 4;
-            if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
-
-            const vertices = vbuf[vstart .. vstart + vcount];
+            const vi = i * 4;
+            const glyph_vertices = text_vertices[vi .. vi + 4];
 
             const uv_rect = glyph.uv_rect;
             const size = Vec2.new(@floatFromInt(glyph.pixel_width), @floatFromInt(glyph.pixel_height));
@@ -436,26 +436,22 @@ pub const Batch = struct {
                 .y = @floatFromInt(glyph.y_offset),
             });
 
-            vertices[0] = .{ .pos = glyph_pos, .uv = uv_rect.pos, .color = color };
-            vertices[1] = .{ .pos = glyph_pos.add(.{ .x = size.x }), .uv = uv_rect.br(), .color = color };
-            vertices[2] = .{ .pos = glyph_pos.add(size), .uv = uv_rect.tr(), .color = color };
-            vertices[3] = .{ .pos = glyph_pos.add(.{ .y = size.y }), .uv = uv_rect.tl(), .color = color };
-
-            renderer.vertex_offset += 4;
-
-            batch.pushCommand(.{
-                .type = .text,
-                .texture = &font.texture,
-                .vertex_offset = vstart,
-                .vertex_count = vcount,
-            });
-
-            // Debug drawing
-            batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(@floatFromInt(glyph.x_advance), @floatFromInt(font.line_height))), .{});
-            batch.drawRectLine(Rect.new(glyph_pos, size), .{ .color = Vec4.new(1, 0, 0, 1) });
+            glyph_vertices[0] = .{ .pos = glyph_pos, .uv = uv_rect.pos, .color = color };
+            glyph_vertices[1] = .{ .pos = glyph_pos.add(.{ .x = size.x }), .uv = uv_rect.br(), .color = color };
+            glyph_vertices[2] = .{ .pos = glyph_pos.add(size), .uv = uv_rect.tr(), .color = color };
+            glyph_vertices[3] = .{ .pos = glyph_pos.add(.{ .y = size.y }), .uv = uv_rect.tl(), .color = color };
 
             cursor_pos.x += @floatFromInt(glyph.x_advance);
         }
+
+        renderer.vertex_offset += vcount;
+
+        batch.pushCommand(.{
+            .type = .text,
+            .texture = &font.texture,
+            .vertex_offset = vstart,
+            .vertex_count = vcount,
+        });
     }
 
     pub fn drawRectLine(batch: *Batch, rect: Rect, options: DrawLineOptions) void {
@@ -546,77 +542,64 @@ pub const Batch = struct {
                 cb.setLineWidth(current_line_width);
             }
 
-            const ibuf = renderer.index_staging_buffer_mapped;
-            const fi: Index = @intCast(command.vertex_offset);
-            const istart = renderer.index_offset + batch_index_count;
+            const index_buffer = renderer.index_staging_buffer_mapped;
+            const first_index_index = renderer.index_offset + batch_index_count;
 
             switch (command.type) {
                 .line => {
+                    // TODO: Support for multiple back to back lines, like trianges and quads.
+
                     assert(command.vertex_count == 2);
-                    const icount = 2;
-                    if (ibuf.len - istart < icount) @panic("Index buffer full");
+                    const index_count = 2;
+                    if (index_buffer.len - first_index_index < index_count) @panic("Index buffer full");
 
-                    ibuf[istart] = fi;
-                    ibuf[istart + 1] = fi + 1;
+                    const index_index = first_index_index;
+                    const vertex_index = command.vertex_offset;
 
-                    batch_index_count += icount;
+                    index_buffer[index_index + 0] = vertex_index + 0;
+                    index_buffer[index_index + 1] = vertex_index + 1;
+
+                    batch_index_count += index_count;
                 },
 
                 .triangle => {
                     assert(command.vertex_count % 3 == 0);
                     const triangle_count = command.vertex_count / 3;
-                    const icount = 3 * triangle_count;
-                    if (ibuf.len - istart < icount) @panic("Index buffer full");
+                    const index_count = 3 * triangle_count;
+                    if (index_buffer.len - first_index_index < index_count) @panic("Index buffer full");
 
                     for (0..triangle_count) |ti| {
                         const offset: u32 = @intCast(ti * 3);
+                        const index_index = first_index_index + offset;
+                        const vertex_index = command.vertex_offset + offset;
 
-                        ibuf[istart + offset] = fi + offset;
-                        ibuf[istart + offset + 1] = fi + offset + 1;
-                        ibuf[istart + offset + 2] = fi + offset + 2;
+                        index_buffer[index_index + 0] = vertex_index + 0;
+                        index_buffer[index_index + 1] = vertex_index + 1;
+                        index_buffer[index_index + 2] = vertex_index + 2;
                     }
 
-                    batch_index_count += icount;
+                    batch_index_count += index_count;
                 },
 
-                .quad => {
+                .quad, .text => {
                     assert(command.vertex_count % 4 == 0);
                     const quad_count = command.vertex_count / 4;
-                    const icount = 6 * quad_count;
-                    if (ibuf.len - istart < icount) @panic("Index buffer full");
+                    const index_count = 6 * quad_count;
+                    if (index_buffer.len - first_index_index < index_count) @panic("Index buffer full");
 
                     for (0..quad_count) |qi| {
-                        const offset: u32 = @intCast(qi * 4);
+                        const index_index = first_index_index + (qi * 6);
+                        const vertex_index: u32 = command.vertex_offset + @as(u32, @intCast(qi * 4));
 
-                        ibuf[istart + offset] = fi + offset;
-                        ibuf[istart + offset + 1] = fi + offset + 1;
-                        ibuf[istart + offset + 2] = fi + offset + 2;
+                        index_buffer[index_index + 0] = vertex_index + 0;
+                        index_buffer[index_index + 1] = vertex_index + 1;
+                        index_buffer[index_index + 2] = vertex_index + 2;
 
-                        ibuf[istart + offset + 3] = fi + offset;
-                        ibuf[istart + offset + 4] = fi + offset + 2;
-                        ibuf[istart + offset + 5] = fi + offset + 3;
+                        index_buffer[index_index + 3] = vertex_index + 0;
+                        index_buffer[index_index + 4] = vertex_index + 2;
+                        index_buffer[index_index + 5] = vertex_index + 3;
                     }
-                    batch_index_count += icount;
-                },
-
-                .text => {
-                    assert(command.vertex_count % 4 == 0);
-                    const quad_count = command.vertex_count / 4;
-                    const icount = 6 * quad_count;
-                    if (ibuf.len - istart < icount) @panic("Index buffer full");
-
-                    for (0..quad_count) |qi| {
-                        const offset: u32 = @intCast(qi * 4);
-
-                        ibuf[istart + offset] = fi + offset;
-                        ibuf[istart + offset + 1] = fi + offset + 1;
-                        ibuf[istart + offset + 2] = fi + offset + 2;
-
-                        ibuf[istart + offset + 3] = fi + offset;
-                        ibuf[istart + offset + 4] = fi + offset + 2;
-                        ibuf[istart + offset + 5] = fi + offset + 3;
-                    }
-                    batch_index_count += icount;
+                    batch_index_count += index_count;
                 },
             }
         }
