@@ -117,7 +117,9 @@ pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void 
     try this.createPipelines(render_pass, Pipeline.ConfigInfo.default2d());
 
     this.arena = try mem.Arena.init(.{ .virtual = .{ .reserved_capacity = arena_cap } });
-    this.commands = std.ArrayList(DrawCommand).init(this.arena.allocator());
+
+    // TODO: Reserve?
+    this.commands = std.ArrayList(DrawCommand){};
 
     const total_vertex_count = buffer_init_cap / @sizeOf(Vertex);
     this.vertex_buffer_size = @sizeOf(Vertex) * total_vertex_count;
@@ -317,7 +319,8 @@ pub const Batch = struct {
     command_buffer: vk.CommandBufferProxy,
 
     pub inline fn pushCommand(batch: *Batch, cmd: DrawCommand) void {
-        batch.renderer.commands.append(cmd) catch @panic("Command memory full");
+        const renderer = batch.renderer;
+        renderer.commands.append(renderer.arena.allocator(), cmd) catch @panic("Command memory full");
     }
 
     /// Draws a line segment between two points

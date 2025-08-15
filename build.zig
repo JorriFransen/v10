@@ -139,11 +139,11 @@ fn addShaderStep(b: *std.Build) !*std.Build.Step {
     var shader_dir_walker = try shader_dir.walk(b.allocator);
     defer shader_dir_walker.deinit();
 
-    var shaders = std.ArrayList([]const u8).init(b.allocator);
-    defer shaders.deinit();
+    var shaders = std.ArrayList([]const u8){};
+    defer shaders.deinit(b.allocator);
 
     while (try shader_dir_walker.next()) |entry| {
-        try shaders.append(b.pathJoin(&.{ shader_dir_path, entry.path }));
+        try shaders.append(b.allocator, b.pathJoin(&.{ shader_dir_path, entry.path }));
     }
 
     const shaders_step = b.step("shaders", "compile shaders");
