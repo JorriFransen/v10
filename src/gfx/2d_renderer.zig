@@ -428,7 +428,7 @@ pub const Batch = struct {
             const glyph_vertices = text_vertices[vi .. vi + 4];
 
             const uv_rect = glyph.uv_rect;
-            const size = Vec2.new(@floatFromInt(glyph.pixel_width), @floatFromInt(glyph.pixel_height));
+            const glyph_size = Vec2.new(@floatFromInt(glyph.pixel_width), @floatFromInt(glyph.pixel_height));
             const color = white;
 
             const glyph_pos = cursor_pos.add(.{
@@ -437,9 +437,9 @@ pub const Batch = struct {
             });
 
             glyph_vertices[0] = .{ .pos = glyph_pos, .uv = uv_rect.pos, .color = color };
-            glyph_vertices[1] = .{ .pos = glyph_pos.add(.{ .x = size.x }), .uv = uv_rect.br(), .color = color };
-            glyph_vertices[2] = .{ .pos = glyph_pos.add(size), .uv = uv_rect.tr(), .color = color };
-            glyph_vertices[3] = .{ .pos = glyph_pos.add(.{ .y = size.y }), .uv = uv_rect.tl(), .color = color };
+            glyph_vertices[1] = .{ .pos = glyph_pos.add(.{ .x = glyph_size.x }), .uv = uv_rect.br(), .color = color };
+            glyph_vertices[2] = .{ .pos = glyph_pos.add(glyph_size), .uv = uv_rect.tr(), .color = color };
+            glyph_vertices[3] = .{ .pos = glyph_pos.add(.{ .y = glyph_size.y }), .uv = uv_rect.tl(), .color = color };
 
             cursor_pos.x += @floatFromInt(glyph.x_advance);
         }
@@ -452,6 +452,28 @@ pub const Batch = struct {
             .vertex_offset = vstart,
             .vertex_count = vcount,
         });
+
+        // Debug lines
+        if (true) {
+            cursor_pos = pos;
+            for (text) |char| {
+                const glyph = font.glyphs.get(char) orelse unreachable;
+
+                const glyph_pos = cursor_pos.add(.{
+                    .x = @floatFromInt(glyph.x_offset),
+                    .y = @floatFromInt(glyph.y_offset),
+                });
+                const glyph_size = Vec2.new(@floatFromInt(glyph.pixel_width), @floatFromInt(glyph.pixel_height));
+
+                batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(@floatFromInt(glyph.x_advance), @floatFromInt(font.line_height))), .{});
+                batch.drawRectLine(Rect.new(glyph_pos, glyph_size), .{ .color = Vec4.new(1, 0, 0, 1) });
+
+                cursor_pos.x += @floatFromInt(glyph.x_advance);
+            }
+
+            const base = pos.y + @as(f32, @floatFromInt(font.base_height));
+            batch.drawDebugLine(Vec2.new(pos.x, base), Vec2.new(cursor_pos.x, base), .{ .color = Vec4.new(0, 1, 0, 1) });
+        }
     }
 
     pub fn drawRectLine(batch: *Batch, rect: Rect, options: DrawLineOptions) void {
