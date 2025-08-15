@@ -431,11 +431,17 @@ fn parseAngelcodeFNT(allocator: Allocator, text: []const u8, filename: []const u
     result.charset = try copyString(allocator, result.charset);
 
     assert(page_count == pages.items.len);
-    result.pages = try pages.toOwnedSlice(allocator);
+    result.pages = try copySlice([]const u8, allocator, pages.items);
 
     assert(char_count == if (result.invalid_char == null) chars.items.len else chars.items.len + 1);
-    result.chars = try chars.toOwnedSlice(allocator);
+    result.chars = try copySlice(AngelcodeFNTInfo.Char, allocator, chars.items);
 
+    return result;
+}
+
+fn copySlice(comptime T: type, allocator: Allocator, slice: []const T) ![]const T {
+    const result = try allocator.alloc(T, slice.len);
+    @memcpy(result, slice);
     return result;
 }
 
