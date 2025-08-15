@@ -88,7 +88,8 @@ var kb_2d_move_controller: KB2DMoveController = .{};
 var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
-var test_font: Font = undefined;
+var test_font_bm: Font = undefined;
+var test_font_ttf: Font = undefined;
 
 var test_tile_texture: Texture = undefined;
 var test_texture: Texture = undefined;
@@ -146,8 +147,12 @@ fn run() !void {
     });
 
     // Mono bitmap font
-    test_font = try Font.load(&device, "res/fonts/ProFont/96.fnt");
-    defer test_font.deinit(&device);
+    test_font_bm = try Font.load(&device, "res/fonts/ProFont/96.fnt");
+    defer test_font_bm.deinit(&device);
+
+    // TrueType font
+    test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf");
+    defer test_font_ttf.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit(&device);
@@ -248,7 +253,7 @@ fn drawFrame() !void {
             // const ui_pos = camera_ui.toWorldSpace(spos);
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            ui_batch.drawText(&test_font, Vec2.new(10, 10), "Test abc! TjpPjh To");
+            ui_batch.drawText(&test_font_bm, Vec2.new(10, 10), "Test abc! TjpPjh To");
         }
         ui_batch.end();
 

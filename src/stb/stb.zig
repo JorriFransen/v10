@@ -1,8 +1,9 @@
 const std = @import("std");
 const mem = @import("memory");
 const log = std.log.scoped(.stb);
-pub const c_stbi = @cImport({
+pub const c = @cImport({
     @cInclude("stb/stb_image.h");
+    @cInclude("stb/stb_truetype.h");
 });
 
 const Allocator = std.mem.Allocator;
@@ -13,12 +14,12 @@ var current_temp: mem.TempArena = undefined;
 
 pub const image = struct {
     pub const Format = enum(c_int) {
-        grey = c_stbi.STBI_grey,
-        grey_alpha = c_stbi.STBI_grey_alpha,
-        rgb = c_stbi.STBI_rgb,
-        rgb_alpha = c_stbi.STBI_rgb_alpha,
+        grey = c.STBI_grey,
+        grey_alpha = c.STBI_grey_alpha,
+        rgb = c.STBI_rgb,
+        rgb_alpha = c.STBI_rgb_alpha,
     };
-    pub const rgb_alpha = c_stbi.STBI_rgb_alpha;
+    pub const rgb_alpha = c.STBI_rgb_alpha;
 
     pub const Texture = struct {
         x: u32,
@@ -36,15 +37,17 @@ pub const image = struct {
         current_temp = mem.TempArena.init(&mem.stb_arena);
         defer current_temp.release();
 
+        const format_int: c_int = @intFromEnum(format);
+
         var x: c_int = undefined;
         var y: c_int = undefined;
-        var c: c_int = undefined;
-        const data_opt = stbi_load(path, &x, &y, &c, format);
+        var channels: c_int = undefined;
+        const data_opt = stbi_load(path, &x, &y, &channels, format_int);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
 
-        assert(@intFromEnum(format) == c); // This might be desired in some cases?
+        assert(@intFromEnum(format) == channels); // This might be desired in some cases?
 
-        const len = @as(usize, @intCast(x * y * c));
+        const len = @as(usize, @intCast(x * y * format_int));
         const data = try allocator.alloc(u8, len);
         @memcpy(data, stb_data[0..len]);
 
@@ -53,7 +56,7 @@ pub const image = struct {
         return .{
             .x = @intCast(x),
             .y = @intCast(y),
-            .c = @intCast(c),
+            .c = @intCast(channels),
             .data = data,
         };
     }
@@ -66,9 +69,11 @@ pub const image = struct {
 
         var x: c_int = undefined;
         var y: c_int = undefined;
-        var c: c_int = undefined;
-        const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &c, format_int);
+        var channels: c_int = undefined;
+        const data_opt = stbi_load_from_memory(buffer.ptr, @intCast(buffer.len), &x, &y, &channels, format_int);
         const stb_data = data_opt orelse return error.StbiLoadFailed;
+
+        assert(@intFromEnum(format) == channels); // This might be desired in some cases?
 
         const len = @as(usize, @intCast(x * y * format_int));
         const data = try allocator.alloc(u8, len);
@@ -79,7 +84,7 @@ pub const image = struct {
         return .{
             .x = @intCast(x),
             .y = @intCast(y),
-            .c = @intCast(c),
+            .c = @intCast(channels),
             .data = data,
         };
     }

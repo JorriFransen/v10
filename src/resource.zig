@@ -47,6 +47,11 @@ pub const ResourceData = union(enum) {
         name: []const u8,
         data: []const u8,
     },
+
+    ttf_file: struct {
+        name: []const u8,
+        data: []const u8,
+    },
 };
 
 /// Check if a named resource can be found
@@ -92,6 +97,8 @@ pub fn load(allocator: Allocator, identifier: []const u8) LoadResourceError!Reso
         .{ .texture_file = .{ .name = identifier, .data = file_buf } }
     else if (std.mem.endsWith(u8, identifier, ".fnt"))
         .{ .angelfont_file = .{ .name = identifier, .data = file_buf } }
+    else if (std.mem.endsWith(u8, identifier, ".ttf"))
+        .{ .ttf_file = .{ .name = identifier, .data = file_buf } }
     else
         return error.UnsupportedFileExtension;
 

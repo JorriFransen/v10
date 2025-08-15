@@ -3,6 +3,7 @@ const gfx = @import("../gfx.zig");
 const resource = @import("../resource.zig");
 const mem = @import("memory");
 const math = @import("../math.zig");
+const stb = @import("../stb/stb.zig");
 
 const Font = @This();
 const Texture = gfx.Texture;
@@ -52,6 +53,7 @@ pub const LoadFontError = error{
     UnsupportedFontType,
     UnsupportedAngelcodeFNTFeature,
 } ||
+    resource.LoadResourceError ||
     AngelcodeFNTParseError ||
     Texture.TextureLoadError;
 
@@ -59,56 +61,69 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
     var fnt_file_arena = mem.get_temp();
 
     const fnt_file = try resource.load(fnt_file_arena.allocator(), name);
-    if (fnt_file != .angelfont_file) {
-        log.err("Unsupported font type: '{s}", .{name});
-        return error.UnsupportedFontType;
+
+    switch (fnt_file) {
+        else => {
+            log.err("Trying to load font from invalid resource type: {}", .{fnt_file});
+            return error.UnexpectedResourceKind;
+        },
+
+        .angelfont_file => |bmfont| {
+            var fnt_info_arena = mem.get_scratch(fnt_file_arena.arena);
+            defer fnt_info_arena.release();
+
+            const font_info = try parseAngelcodeFNT(fnt_info_arena.allocator(), bmfont.data, bmfont.name);
+            fnt_file_arena.release();
+
+            if (!font_info.unicode) {
+                log.err("Only unicode BMFonts are supported", .{});
+                return error.UnsupportedAngelcodeFNTFeature;
+            }
+
+            if (font_info.pages.len != 1) {
+                log.err("Only 1-page BMFonts are supported", .{});
+                return error.UnsupportedAngelcodeFNTFeature;
+            }
+
+            if (font_info.@"packed") {
+                log.err("Only 1-channel BMFonts are supported", .{});
+                return error.UnsupportedAngelcodeFNTFeature;
+            }
+
+            if (!(font_info.alpha_channel == .glyph and
+                font_info.red_channel == .zero and
+                font_info.green_channel == .zero and
+                font_info.blue_channel == .zero))
+            {
+                log.err("Only 1-channel BMFonts are supported", .{});
+                return error.UnsupportedAngelcodeFNTFeature;
+            }
+
+            assert(font_info.pages.len == 1);
+            const texture = try Texture.load(device, font_info.pages[0], .{ .format = .u8_u_r, .filter = .nearest });
+
+            // TODO: Allocator!
+            var glyphs = GlyphMap.init(mem.common_arena.allocator());
+            try glyphs.ensureTotalCapacity(@intCast(font_info.chars.len));
+
+            for (font_info.chars) |char| {
+                assert(char.page == 0); // TODO: Handle pages
+                try glyphs.putNoClobber(char.id, char.toGlyph(&texture));
+            }
+
+            const invalid_glyph = if (font_info.invalid_char) |ic| ic.toGlyph(&texture) else null;
+
+            return init(texture, glyphs, invalid_glyph, font_info.line_height, font_info.base);
+        },
+
+        .ttf_file => |ttf_file| {
+            var temp_bitmap: [512 * 512]u8 = undefined;
+            var char_data: [96]stb.c.stbtt_bakedchar = undefined;
+            _ = stb.c.stbtt_BakeFontBitmap(ttf_file.data.ptr, 0, 32, &temp_bitmap, 512, 512, 32, 96, &char_data);
+            // TODO: Use packing api
+            unreachable;
+        },
     }
-
-    var fnt_info_arena = mem.get_scratch(fnt_file_arena.arena);
-    defer fnt_info_arena.release();
-
-    const font_info = try parseAngelcodeFNT(fnt_info_arena.allocator(), fnt_file.angelfont_file.data, fnt_file.angelfont_file.name);
-    fnt_file_arena.release();
-
-    if (!font_info.unicode) {
-        log.err("Only unicode BMFonts are supported", .{});
-        return error.UnsupportedAngelcodeFNTFeature;
-    }
-
-    if (font_info.pages.len != 1) {
-        log.err("Only 1-page BMFonts are supported", .{});
-        return error.UnsupportedAngelcodeFNTFeature;
-    }
-
-    if (font_info.@"packed") {
-        log.err("Only 1-channel BMFonts are supported", .{});
-        return error.UnsupportedAngelcodeFNTFeature;
-    }
-
-    if (!(font_info.alpha_channel == .glyph and
-        font_info.red_channel == .zero and
-        font_info.green_channel == .zero and
-        font_info.blue_channel == .zero))
-    {
-        log.err("Only 1-channel BMFonts are supported", .{});
-        return error.UnsupportedAngelcodeFNTFeature;
-    }
-
-    assert(font_info.pages.len == 1);
-    const texture = try Texture.load(device, font_info.pages[0], .{ .format = .u8_u_r, .filter = .nearest });
-
-    // TODO: Allocator!
-    var glyphs = GlyphMap.init(mem.common_arena.allocator());
-    try glyphs.ensureTotalCapacity(@intCast(font_info.chars.len));
-
-    for (font_info.chars) |char| {
-        assert(char.page == 0); // TODO: Handle pages
-        try glyphs.putNoClobber(char.id, char.toGlyph(&texture));
-    }
-
-    const invalid_glyph = if (font_info.invalid_char) |ic| ic.toGlyph(&texture) else null;
-
-    return init(texture, glyphs, invalid_glyph, font_info.line_height, font_info.base);
 }
 
 // TODO: Return error
