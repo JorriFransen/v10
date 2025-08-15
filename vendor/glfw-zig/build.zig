@@ -2,6 +2,9 @@
 
 const std = @import("std");
 
+const Allocator = std.mem.Allocator;
+const File = std.fs.File;
+
 const assert = std.debug.assert;
 
 pub fn build(b: *std.Build) !void {
@@ -63,27 +66,27 @@ pub fn build(b: *std.Build) !void {
             });
         },
         .linux => {
-            var flags = std.ArrayList([]const u8).init(b.allocator);
-            var sources = std.ArrayList([]const u8).init(b.allocator);
+            var flags = std.ArrayList([]const u8){};
+            var sources = std.ArrayList([]const u8){};
 
-            try sources.appendSlice(&base_sources);
-            try sources.appendSlice(&linux_sources);
+            try sources.appendSlice(b.allocator, &base_sources);
+            try sources.appendSlice(b.allocator, &linux_sources);
 
             if (use_x11) {
-                try flags.append("-D_GLFW_X11");
-                try sources.appendSlice(&linux_x11_sources);
+                try flags.append(b.allocator, "-D_GLFW_X11");
+                try sources.appendSlice(b.allocator, &linux_x11_sources);
             }
 
             if (use_wl) {
-                try flags.append("-D_GLFW_WAYLAND");
-                try sources.appendSlice(&linux_wl_sources);
+                try flags.append(b.allocator, "-D_GLFW_WAYLAND");
+                try sources.appendSlice(b.allocator, &linux_wl_sources);
 
                 const wayland_gen = try WaylandGenerator.generate(b, glfw_source);
                 lib.step.dependOn(wayland_gen.step);
                 lib.addIncludePath(wayland_gen.include_dir);
             }
 
-            try flags.append(include_src_flag);
+            try flags.append(b.allocator, include_src_flag);
 
             lib.addCSourceFiles(.{
                 .root = glfw_source.path(""),
@@ -248,10 +251,10 @@ const WaylandGenerator = struct {
 };
 
 fn pkgConfig(b: *std.Build, pkg: []const u8, flags: []const []const u8) ![]const u8 {
-    var args = std.ArrayList([]const u8).init(b.allocator);
-    try args.append("pkg-config");
-    try args.appendSlice(flags);
-    try args.append(pkg);
+    var args = std.ArrayList([]const u8){};
+    try args.append(b.allocator, "pkg-config");
+    try args.appendSlice(b.allocator, flags);
+    try args.append(b.allocator, pkg);
 
     var child = std.process.Child.init(args.items, b.allocator);
     child.stdout_behavior = .Pipe;
@@ -259,39 +262,42 @@ fn pkgConfig(b: *std.Build, pkg: []const u8, flags: []const []const u8) ![]const
 
     try child.spawn();
 
-    var stdout_buf = std.ArrayList(u8).init(b.allocator);
-    defer stdout_buf.deinit();
-    _ = try child.stdout.?.deprecatedReader().readAllArrayList(&stdout_buf, 1024 * 1024);
+    const stdout = try readAll(b.allocator, child.stdout);
+    const stderr = try readAll(b.allocator, child.stderr);
 
-    var stderr_buf = std.ArrayList(u8).init(b.allocator);
-    defer stderr_buf.deinit();
-    _ = try child.stderr.?.deprecatedReader().readAllArrayList(&stderr_buf, 1024 * 1024);
+    defer {
+        b.allocator.free(stdout);
+        b.allocator.free(stderr);
+    }
 
     const term = try child.wait();
 
     switch (term) {
         .Exited => |code| {
             if (code == 0) {
-                const result = try b.allocator.alloc(u8, stdout_buf.items.len);
-                @memcpy(result, stdout_buf.items);
+                const result = try b.allocator.alloc(u8, stdout.len);
+                @memcpy(result, stdout);
                 return stripRight(result);
             } else {
                 std.log.err("pkgconf failed with error: {}", .{code});
+                std.log.err("stderr: {s}", .{stderr});
                 return error.PkgConfigFailed;
             }
         },
         .Signal => |signal| {
             std.log.err("pkgconf failed with signal: {}", .{signal});
+            std.log.err("stderr: {s}", .{stderr});
             return error.PkgConfigSignaled;
         },
         .Stopped, .Unknown => {
             std.log.err("pkgconf failed", .{});
+            std.log.err("stderr: {s}", .{stderr});
             return error.PkgConfigFailed;
         },
     }
 }
 
-inline fn stripRight(str: []const u8) []const u8 {
+fn stripRight(str: []const u8) []const u8 {
     var end = str.len;
 
     var i = str.len;
@@ -306,4 +312,23 @@ inline fn stripRight(str: []const u8) []const u8 {
     }
 
     return str[0..end];
+}
+
+fn readAll(allocator: Allocator, file_opt: ?File) ![]const u8 {
+    const file = file_opt orelse return "";
+
+    var read_buf: [1024]u8 = undefined;
+    var result_buf = std.ArrayList(u8){};
+
+    var reader = file.reader(&.{});
+    while (!reader.atEnd()) {
+        const len = reader.readStreaming(&read_buf) catch |e| switch (e) {
+            else => return e,
+            error.EndOfStream => break,
+        };
+
+        try result_buf.appendSlice(allocator, read_buf[0..len]);
+    }
+
+    return result_buf.items;
 }
