@@ -277,7 +277,7 @@ fn pkgConfig(b: *std.Build, pkg: []const u8, flags: []const []const u8) ![]const
             if (code == 0) {
                 const result = try b.allocator.alloc(u8, stdout.len);
                 @memcpy(result, stdout);
-                return stripRight(result);
+                return std.mem.trimEnd(u8, result, &std.ascii.whitespace);
             } else {
                 std.log.err("pkgconf failed with error: {}", .{code});
                 std.log.err("stderr: {s}", .{stderr});
@@ -295,23 +295,6 @@ fn pkgConfig(b: *std.Build, pkg: []const u8, flags: []const []const u8) ![]const
             return error.PkgConfigFailed;
         },
     }
-}
-
-fn stripRight(str: []const u8) []const u8 {
-    var end = str.len;
-
-    var i = str.len;
-    while (i > 0) {
-        i -= 1;
-
-        if (!std.ascii.isWhitespace(str[i])) {
-            break;
-        }
-
-        end -= 1;
-    }
-
-    return str[0..end];
 }
 
 fn readAll(allocator: Allocator, file_opt: ?File) ![]const u8 {

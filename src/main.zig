@@ -151,8 +151,8 @@ fn run() !void {
     defer test_font_bm.deinit(&device);
 
     // TrueType font
-    test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf");
-    defer test_font_ttf.deinit(&device);
+    // test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf");
+    // defer test_font_ttf.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit(&device);
