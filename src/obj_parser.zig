@@ -104,7 +104,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     while (line_it.next()) |line_maybe_clrf| : (line_num += 1) {
         errdefer err("{s}:{}: Invalid line: '{s}'", .{ options.name, line_num, line_maybe_clrf });
 
-        const line = stripRight(line_maybe_clrf);
+        const line = std.mem.trimEnd(u8, line_maybe_clrf, &std.ascii.whitespace);
 
         var field_it = std.mem.tokenizeScalar(u8, line, ' ');
         const field = field_it.next() orelse continue;
@@ -179,7 +179,7 @@ pub fn parse(allocator: Allocator, options: ParseOptions) ObjParseError!Model {
     while (line_it.next()) |line_maybe_clrf| : (line_num += 1) {
         errdefer err("{s}:{}: Invalid line: '{s}'", .{ options.name, line_num, line_maybe_clrf });
 
-        const line = stripRight(line_maybe_clrf);
+        const line = std.mem.trimEnd(u8, line_maybe_clrf, &std.ascii.whitespace);
 
         var field_it = std.mem.tokenizeScalar(u8, line, ' ');
         const field = field_it.next() orelse continue;
@@ -315,7 +315,7 @@ inline fn parseVectorAndOptionalColor(field_it: *TokenIterator, vertices: *std.A
     if (colors_opt) |colors| {
         const white = Vec3{ 1, 1, 1 };
         const color = blk: {
-            const rest = stripRight(field_it.rest());
+            const rest = std.mem.trimEnd(u8, field_it.rest(), &std.ascii.whitespace);
             if (rest.len > 0 and !std.mem.startsWith(u8, rest, "#")) {
                 if (rest.len < 5) return error.InvalidColor;
                 break :blk parseVec3(field_it) catch return error.InvalidColor;
@@ -339,23 +339,6 @@ inline fn parseVec2(field_it: *TokenIterator) !Vec2 {
         try parseFloat(field_it.next() orelse ""),
         try parseFloat(field_it.next() orelse ""),
     };
-}
-
-inline fn stripRight(str: []const u8) []const u8 {
-    var end = str.len;
-
-    var i = str.len;
-    while (i > 0) {
-        i -= 1;
-
-        if (!std.ascii.isWhitespace(str[i])) {
-            break;
-        }
-
-        end -= 1;
-    }
-
-    return str[0..end];
 }
 
 /// Triangulates concave faces in the model using ear clipping algorithm.

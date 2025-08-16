@@ -478,7 +478,7 @@ fn parseInt(comptime T: type, str: *[]const u8) std.fmt.ParseIntError!T {
 
     const sub = str.*[0..len];
     const result = try std.fmt.parseInt(T, sub, 10);
-    str.* = stripLeft(str.*[sub.len..]);
+    str.* = std.mem.trimStart(u8, str.*[sub.len..], &std.ascii.whitespace);
     return result;
 }
 
@@ -503,7 +503,10 @@ pub const ParseStringError = error{
 
 fn parseString(str: *[]const u8) ParseStringError![]const u8 {
     const initial_str = str.*;
-    const close_quote = eatNoStrip(str, "\"");
+    const close_quote = std.mem.startsWith(u8, str.*, "\"");
+    if (close_quote) {
+        str.* = str.*[1..];
+    }
 
     var len: usize = 0;
     if (close_quote) {
@@ -526,22 +529,14 @@ fn parseString(str: *[]const u8) ParseStringError![]const u8 {
 
         len += 1;
     }
-    str.* = stripLeft(str.*[len..]);
+    str.* = std.mem.trimStart(u8, str.*[len..], &std.ascii.whitespace);
 
     return result;
 }
 
 fn eat(str: *[]const u8, start: []const u8) bool {
     if (std.mem.startsWith(u8, str.*, start)) {
-        str.* = stripLeft(str.*[start.len..]);
-        return true;
-    }
-    return false;
-}
-
-fn eatNoStrip(str: *[]const u8, start: []const u8) bool {
-    if (std.mem.startsWith(u8, str.*, start)) {
-        str.* = str.*[start.len..];
+        str.* = std.mem.trimStart(u8, str.*[start.len..], &std.ascii.whitespace);
         return true;
     }
     return false;
@@ -552,11 +547,4 @@ fn expect(str: *[]const u8, start: []const u8) error{InvalidToken}!void {
         log.err("Invalid token in BMFont file; expected: '{s}', actual: '{s}'", .{ start, str.* });
         return error.InvalidToken;
     }
-}
-
-fn stripLeft(str: []const u8) []const u8 {
-    for (str, 0..) |char, i| {
-        if (!std.ascii.isWhitespace(char)) return str[i..];
-    }
-    return "";
 }
