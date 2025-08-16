@@ -10,6 +10,7 @@ const Texture = gfx.Texture;
 const Device = gfx.Device;
 const Allocator = std.mem.Allocator;
 const Rect = math.Rect;
+const Vec2u32 = math.Vec(2, u32);
 
 const GlyphMap = std.HashMap(u32, Glyph, Glyph.MapContext, std.hash_map.default_max_load_percentage);
 
@@ -109,6 +110,10 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
             for (font_info.chars) |char| {
                 assert(char.page == 0); // TODO: Handle pages
                 try glyphs.putNoClobber(char.id, char.toGlyph(&texture));
+
+                if (char.id == 'T') {
+                    log.debug("BM t info: {}", .{char});
+                }
             }
 
             const invalid_glyph = if (font_info.invalid_char) |ic| ic.toGlyph(&texture) else null;
@@ -117,20 +122,77 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
         },
 
         .ttf_file => |ttf_file| {
-            const bitmap_width = 1024;
-            const bitmap_height = 512;
-            var bitmap: [bitmap_width * bitmap_height]u8 = undefined;
+            const bitmap_size = Vec2u32.new(1024, 512);
+            var bitmap: [bitmap_size.x * bitmap_size.y]u8 = undefined;
 
-            const first_char = 32;
-            const char_count = 96;
+            const size = 96;
+            const first_char: u32 = ' ';
+            const last_char: u32 = '~';
+            const char_count = (last_char - first_char) + 2;
+            log.debug("char count: {}", .{char_count});
+
+            var font_info: stb.c.stbtt_fontinfo = undefined;
+            _ = stb.c.stbtt_InitFont(&font_info, ttf_file.data.ptr, 0);
+
+            const scale = stb.c.stbtt_ScaleForPixelHeight(&font_info, size);
+
+            var i_ascent: c_int = undefined;
+            var i_descent: c_int = undefined;
+            var i_linegap: c_int = undefined;
+            stb.c.stbtt_GetFontVMetrics(&font_info, &i_ascent, &i_descent, &i_linegap);
+            const ascent = @as(f32, @floatFromInt(i_ascent)) * scale;
+            const descent = @as(f32, @floatFromInt(i_descent)) * scale;
+            const linegap = @as(f32, @floatFromInt(i_linegap)) * scale;
+            log.debug("vmetrics: ascent: {}, descent: {}, linegap: {}", .{ ascent, descent, linegap });
+            const base = ascent;
+            const line_height = ascent + -descent;
+
             var char_data: [char_count]stb.c.stbtt_packedchar = undefined;
-
             var context: stb.c.stbtt_pack_context = undefined;
-            _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_width, bitmap_height, 0, 1, null);
-            _ = stb.c.stbtt_PackFontRange(&context, ttf_file.data.ptr, 0, 96, first_char, char_count, &char_data);
+            _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1, null);
+            _ = stb.c.stbtt_PackFontRange(&context, ttf_file.data.ptr, 0, size, first_char, char_count, &char_data);
             stb.c.stbtt_PackEnd(&context);
 
-            unreachable;
+            const texture = try Texture.init(device, .{
+                .size = bitmap_size,
+                .data = &bitmap,
+            }, .{ .format = .u8_u_r, .filter = .nearest });
+
+            // TODO: Allocator!
+            var glyphs = GlyphMap.init(mem.common_arena.allocator());
+            try glyphs.ensureTotalCapacity(@intCast(char_data.len));
+
+            for (char_data, 0..char_count) |char_info, char_i| {
+                const codepoint: u32 = first_char + @as(u32, @intCast(char_i));
+                // log.debug("char data for '{c}': {}", .{ @as(u8, @intCast(codepoint)), char_info });
+
+                const pixel_width = char_info.x1 - char_info.x0;
+                const pixel_height = char_info.y1 - char_info.y0;
+
+                try glyphs.putNoClobber(@as(u32, @intCast(codepoint)), .{
+                    .pixel_width = pixel_width,
+                    .pixel_height = pixel_height,
+                    .uv_rect = .{
+                        .pos = .{
+                            .x = @as(f32, @floatFromInt(char_info.x0)) / bitmap_size.x,
+                            .y = @as(f32, @floatFromInt(char_info.y0)) / bitmap_size.y,
+                        },
+                        .size = .{
+                            .x = @as(f32, @floatFromInt(pixel_width)) / bitmap_size.x,
+                            .y = @as(f32, @floatFromInt(pixel_height)) / bitmap_size.y,
+                        },
+                    },
+                    .x_offset = @intFromFloat(char_info.xoff),
+                    .y_offset = @intFromFloat(char_info.yoff + ascent),
+                    .x_advance = @intFromFloat(char_info.xadvance),
+                });
+
+                if (codepoint == 'T') {
+                    log.debug("T info: {}", .{char_info});
+                }
+            }
+
+            return init(texture, glyphs, null, @intFromFloat(line_height), @intFromFloat(base));
         },
     }
 }

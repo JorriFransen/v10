@@ -241,10 +241,13 @@ fn drawFrame() !void {
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
             // drawDebugWorldGrid(&batch);
-            drawTestScene(&batch);
+            // drawTestScene(&batch);
 
             // const wpos = camera_2d.toWorldSpace(spos);
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
+
+            batch.drawText(&test_font_bm, Vec2.new(0, 0), "Test abc! TjpPjh To");
+            batch.drawText(&test_font_ttf, Vec2.new(0, 106), "=Test abc! TjpPjh To");
         }
         batch.end();
 
@@ -254,6 +257,7 @@ fn drawFrame() !void {
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
             ui_batch.drawText(&test_font_bm, Vec2.new(10, 10), "Test abc! TjpPjh To");
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 106), "Test abc! TjpPjh To");
         }
         ui_batch.end();
 
