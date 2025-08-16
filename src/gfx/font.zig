@@ -117,10 +117,19 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
         },
 
         .ttf_file => |ttf_file| {
-            var temp_bitmap: [512 * 512]u8 = undefined;
-            var char_data: [96]stb.c.stbtt_bakedchar = undefined;
-            _ = stb.c.stbtt_BakeFontBitmap(ttf_file.data.ptr, 0, 32, &temp_bitmap, 512, 512, 32, 96, &char_data);
-            // TODO: Use packing api
+            const bitmap_width = 1024;
+            const bitmap_height = 512;
+            var bitmap: [bitmap_width * bitmap_height]u8 = undefined;
+
+            const first_char = 32;
+            const char_count = 96;
+            var char_data: [char_count]stb.c.stbtt_packedchar = undefined;
+
+            var context: stb.c.stbtt_pack_context = undefined;
+            _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_width, bitmap_height, 0, 1, null);
+            _ = stb.c.stbtt_PackFontRange(&context, ttf_file.data.ptr, 0, 96, first_char, char_count, &char_data);
+            stb.c.stbtt_PackEnd(&context);
+
             unreachable;
         },
     }
