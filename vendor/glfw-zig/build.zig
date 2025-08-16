@@ -300,18 +300,18 @@ fn pkgConfig(b: *std.Build, pkg: []const u8, flags: []const []const u8) ![]const
 fn readAll(allocator: Allocator, file_opt: ?File) ![]const u8 {
     const file = file_opt orelse return "";
 
-    var read_buf: [1024]u8 = undefined;
-    var result_buf = std.ArrayList(u8){};
-
     var reader = file.reader(&.{});
+    var read_buf: [1024]u8 = undefined;
+    var result = std.ArrayList(u8){};
+
     while (!reader.atEnd()) {
-        const len = reader.readStreaming(&read_buf) catch |e| switch (e) {
-            else => return e,
+        const len = reader.read(&read_buf) catch |e| switch (e) {
             error.EndOfStream => break,
+            else => return e,
         };
 
-        try result_buf.appendSlice(allocator, read_buf[0..len]);
+        try result.appendSlice(allocator, read_buf[0..len]);
     }
 
-    return result_buf.items;
+    return result.items;
 }
