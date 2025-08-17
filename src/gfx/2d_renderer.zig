@@ -412,13 +412,16 @@ pub const Batch = struct {
     pub fn drawText(batch: *Batch, font: *Font, pos: Vec2, text: []const u8) void {
         if (text.len == 0) return;
 
-        const y_scale: f32 = switch (batch.camera.origin) {
-            .top_left => 1,
-            .center, .bottom_left => -1,
+        const ppu_factor = 1 / batch.camera.ppu;
+
+        const line_height = @as(f32, @floatFromInt(font.line_height)) * ppu_factor;
+        const cam_y_scale: f32 = switch (batch.camera.origin) {
+            .top_left => ppu_factor,
+            .center, .bottom_left => -ppu_factor,
         };
-        const y_offset: f32 = switch (batch.camera.origin) {
+        const cam_y_offset: f32 = switch (batch.camera.origin) {
             .top_left => 0,
-            .center, .bottom_left => @floatFromInt(font.line_height),
+            .center, .bottom_left => line_height,
         };
 
         const renderer = batch.renderer;
@@ -439,18 +442,17 @@ pub const Batch = struct {
             const uv_rect = glyph.uv_rect;
             const color = white;
 
-            const glyph_pos = cursor_pos.add(.{
-                .x = @floatFromInt(glyph.x_offset),
-                .y = y_offset + @as(f32, @floatFromInt(glyph.y_offset)) * y_scale,
-            });
-            const glyph_size = Vec2.new(@floatFromInt(glyph.pixel_width), @as(f32, @floatFromInt(glyph.pixel_height)) * y_scale);
+            const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
+            const glyph_offset = Vec2.newI(glyph.x_offset, glyph.y_offset).mul(cam_scale).add(.{ .y = cam_y_offset });
+            const glyph_pos = cursor_pos.add(glyph_offset);
+            const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
 
             glyph_vertices[0] = .{ .pos = glyph_pos, .uv = uv_rect.pos, .color = color };
             glyph_vertices[1] = .{ .pos = glyph_pos.add(.{ .x = glyph_size.x }), .uv = uv_rect.br(), .color = color };
             glyph_vertices[2] = .{ .pos = glyph_pos.add(glyph_size), .uv = uv_rect.tr(), .color = color };
             glyph_vertices[3] = .{ .pos = glyph_pos.add(.{ .y = glyph_size.y }), .uv = uv_rect.tl(), .color = color };
 
-            cursor_pos.x += @floatFromInt(glyph.x_advance);
+            cursor_pos.x += @as(f32, @floatFromInt(glyph.x_advance)) * ppu_factor;
         }
 
         renderer.vertex_offset += vcount;
@@ -468,21 +470,22 @@ pub const Batch = struct {
             for (text) |char| {
                 const glyph = font.glyphs.get(char) orelse unreachable;
 
-                const glyph_pos = cursor_pos.add(.{
-                    .x = @floatFromInt(glyph.x_offset),
-                    .y = y_offset + @as(f32, @floatFromInt(glyph.y_offset)) * y_scale,
-                });
-                const glyph_size = Vec2.new(@floatFromInt(glyph.pixel_width), @as(f32, @floatFromInt(glyph.pixel_height)) * y_scale);
+                const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
+                const glyph_offset = Vec2.newI(glyph.x_offset, glyph.y_offset).mul(cam_scale).add(.{ .y = cam_y_offset });
+                const glyph_pos = cursor_pos.add(glyph_offset);
+                const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
 
-                batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(@floatFromInt(glyph.x_advance), @floatFromInt(font.line_height))), .{});
+                const x_advance = @as(f32, @floatFromInt(glyph.x_advance)) * ppu_factor;
+
+                batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(x_advance, line_height)), .{});
                 batch.drawRectLine(Rect.new(glyph_pos, glyph_size), .{ .color = Vec4.new(1, 0, 0, 1) });
 
-                cursor_pos.x += @floatFromInt(glyph.x_advance);
+                cursor_pos.x += x_advance;
             }
 
             const base: f32 = switch (batch.camera.origin) {
-                .top_left => pos.y + @as(f32, @floatFromInt(font.base_height)),
-                .bottom_left, .center => pos.y + @as(f32, @floatFromInt(font.line_height - font.base_height)),
+                .top_left => pos.y + @as(f32, @floatFromInt(font.base_height)) * ppu_factor,
+                .bottom_left, .center => pos.y + @as(f32, @floatFromInt(font.line_height - font.base_height)) * ppu_factor,
             };
             batch.drawDebugLine(Vec2.new(pos.x, base), Vec2.new(cursor_pos.x, base), .{ .color = Vec4.new(0, 1, 0, 1) });
         }

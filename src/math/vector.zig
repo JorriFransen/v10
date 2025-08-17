@@ -2,6 +2,8 @@ const std = @import("std");
 
 const math = @import("../math.zig");
 
+const assert = std.debug.assert;
+
 pub const Vec2f32 = Vec(2, f32);
 pub const Vec3f32 = Vec(3, f32);
 pub const Vec4f32 = Vec(4, f32);
@@ -21,6 +23,16 @@ pub fn Vec(comptime EN: usize, comptime ET: type) type {
             pub inline fn new(x: T, y: T) @This() {
                 return @bitCast(V{ x, y });
             }
+
+            pub inline fn newI(x: anytype, y: anytype) @This() {
+                comptime assert(@TypeOf(x) == @TypeOf(y));
+                switch (@typeInfo(T)) {
+                    else => @compileError("Unsupported type"),
+                    .float => return new(@floatFromInt(x), @floatFromInt(y)),
+                    .int => return new(@intCast(x), @intCast(x)),
+                }
+            }
+
             pub inline fn v(vec: V) @This() {
                 return F.v(vec);
             }

@@ -59,7 +59,7 @@ pub fn main() !void {
 
 pub const EngineConfig = struct {
     ppu: f32 = 32,
-    zoom: f32 = 3,
+    zoom: f32 = 1,
 };
 
 pub const config = EngineConfig{};
@@ -246,9 +246,9 @@ fn drawFrame() !void {
             // const wpos = camera_2d.toWorldSpace(spos);
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
-            batch.drawRect(Rect.new(Vec2.new(0, 0), Vec2.scalar(10)), .{});
-            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "Test abc! TjpPjh To");
-            batch.drawText(&test_font_bm, Vec2.new(0, 96), "Test abc! TjpPjh To");
+            // batch.drawRect(Rect.new(Vec2.new(0, 0), Vec2.scalar(10)), .{});
+            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "Test");
+            batch.drawText(&test_font_bm, Vec2.new(0, 96 / batch.camera.ppu), "Test");
         }
         batch.end();
 
