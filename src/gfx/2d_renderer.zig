@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.r2d);
+const builtin = @import("builtin");
 const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
@@ -19,6 +19,7 @@ const Mat4 = math.Mat4;
 const Rect = math.Rect;
 const Index = u32;
 
+const log = std.log.scoped(.r2d);
 const assert = std.debug.assert;
 
 // Buffer sizes are for typical use cases.
@@ -410,11 +411,16 @@ pub const Batch = struct {
     }
 
     pub fn drawText(batch: *Batch, font: *Font, pos: Vec2, text: []const u8) void {
+        if (builtin.mode == .Debug) {
+            if (font.texture.image == .null_handle) @panic("Font has no texture, is it loaded?!");
+            if (font.glyphs.count() <= 0) @panic("Font has no glyps, is it loaded?!");
+        }
+
         if (text.len == 0) return;
 
         const ppu_factor = 1 / batch.camera.ppu;
 
-        const line_height = @as(f32, @floatFromInt(font.line_height)) * ppu_factor;
+        const line_height = font.line_height * ppu_factor;
         const cam_y_scale: f32 = switch (batch.camera.origin) {
             .top_left => ppu_factor,
             .center, .bottom_left => -ppu_factor,
@@ -480,12 +486,12 @@ pub const Batch = struct {
                 batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(x_advance, line_height)), .{});
                 batch.drawRectLine(Rect.new(glyph_pos, glyph_size), .{ .color = Vec4.new(1, 0, 0, 1) });
 
-                cursor_pos.x += x_advance;
+                cursor_pos.x += std.math.round(glyph.x_advance) * ppu_factor;
             }
 
             const base: f32 = switch (batch.camera.origin) {
-                .top_left => pos.y + @as(f32, @floatFromInt(font.base_height)) * ppu_factor,
-                .bottom_left, .center => pos.y + @as(f32, @floatFromInt(font.line_height - font.base_height)) * ppu_factor,
+                .top_left => pos.y + font.base_height * ppu_factor,
+                .bottom_left, .center => pos.y + (font.line_height - font.base_height) * ppu_factor,
             };
             batch.drawDebugLine(Vec2.new(pos.x, base), Vec2.new(cursor_pos.x, base), .{ .color = Vec4.new(0, 1, 0, 1) });
         }

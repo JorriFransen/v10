@@ -146,12 +146,9 @@ fn run() !void {
         .far_clip = camera_2d_far_clip,
     });
 
-    // Mono bitmap font
-    test_font_bm = try Font.load(&device, "res/fonts/ProFont/96.fnt");
-    defer test_font_bm.deinit(&device);
-
     // TrueType font
-    test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf");
+    // test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf");
+    test_font_ttf = try Font.load(&device, "res/fonts/Arimo/Arimo-Medium.ttf");
     defer test_font_ttf.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
@@ -247,8 +244,11 @@ fn drawFrame() !void {
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
             // batch.drawRect(Rect.new(Vec2.new(0, 0), Vec2.scalar(10)), .{});
-            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "\\<>/Test");
-            batch.drawText(&test_font_bm, Vec2.new(0, 96 / batch.camera.ppu), "\\<>/Test");
+
+            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
+
+            batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "The quick brown fox jumps over the lazy dog. 1234567890");
+            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "Whereas recognition of the inherent dignity");
         }
         batch.end();
 
@@ -257,8 +257,10 @@ fn drawFrame() !void {
             // const ui_pos = camera_ui.toWorldSpace(spos);
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            ui_batch.drawText(&test_font_bm, Vec2.new(10, 10), "Test abc!/\\<> TjpPjh To");
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 106), "Test abc!/\\<> TjpPjh To");
+            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
+
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "The quick brown fox jumps over the lazy dog. 1234567890");
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "Whereas recognition of the inherent dignity");
         }
         ui_batch.end();
 
