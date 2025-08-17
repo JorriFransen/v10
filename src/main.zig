@@ -247,8 +247,8 @@ fn drawFrame() !void {
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
             // batch.drawRect(Rect.new(Vec2.new(0, 0), Vec2.scalar(10)), .{});
-            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "Test");
-            batch.drawText(&test_font_bm, Vec2.new(0, 96 / batch.camera.ppu), "Test");
+            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "\\<>/Test");
+            batch.drawText(&test_font_bm, Vec2.new(0, 96 / batch.camera.ppu), "\\<>/Test");
         }
         batch.end();
 
@@ -257,8 +257,8 @@ fn drawFrame() !void {
             // const ui_pos = camera_ui.toWorldSpace(spos);
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            ui_batch.drawText(&test_font_bm, Vec2.new(10, 10), "Test abc! TjpPjh To");
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 106), "Test abc! TjpPjh To");
+            ui_batch.drawText(&test_font_bm, Vec2.new(10, 10), "Test abc!/\\<> TjpPjh To");
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 106), "Test abc!/\\<> TjpPjh To");
         }
         ui_batch.end();
 

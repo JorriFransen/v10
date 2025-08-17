@@ -443,7 +443,7 @@ pub const Batch = struct {
             const color = white;
 
             const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
-            const glyph_offset = Vec2.newI(glyph.x_offset, glyph.y_offset).mul(cam_scale).add(.{ .y = cam_y_offset });
+            const glyph_offset = glyph.offset.mul(cam_scale).add(.{ .y = cam_y_offset });
             const glyph_pos = cursor_pos.add(glyph_offset);
             const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
 
@@ -452,7 +452,7 @@ pub const Batch = struct {
             glyph_vertices[2] = .{ .pos = glyph_pos.add(glyph_size), .uv = uv_rect.tr(), .color = color };
             glyph_vertices[3] = .{ .pos = glyph_pos.add(.{ .y = glyph_size.y }), .uv = uv_rect.tl(), .color = color };
 
-            cursor_pos.x += @as(f32, @floatFromInt(glyph.x_advance)) * ppu_factor;
+            cursor_pos.x += std.math.round(glyph.x_advance) * ppu_factor;
         }
 
         renderer.vertex_offset += vcount;
@@ -471,11 +471,11 @@ pub const Batch = struct {
                 const glyph = font.glyphs.get(char) orelse unreachable;
 
                 const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
-                const glyph_offset = Vec2.newI(glyph.x_offset, glyph.y_offset).mul(cam_scale).add(.{ .y = cam_y_offset });
+                const glyph_offset = glyph.offset.mul(cam_scale).add(.{ .y = cam_y_offset });
                 const glyph_pos = cursor_pos.add(glyph_offset);
                 const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
 
-                const x_advance = @as(f32, @floatFromInt(glyph.x_advance)) * ppu_factor;
+                const x_advance = glyph.x_advance * ppu_factor;
 
                 batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(x_advance, line_height)), .{});
                 batch.drawRectLine(Rect.new(glyph_pos, glyph_size), .{ .color = Vec4.new(1, 0, 0, 1) });

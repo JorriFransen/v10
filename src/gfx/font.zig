@@ -10,6 +10,7 @@ const Texture = gfx.Texture;
 const Device = gfx.Device;
 const Allocator = std.mem.Allocator;
 const Rect = math.Rect;
+const Vec2 = math.Vec2;
 const Vec2u32 = math.Vec(2, u32);
 
 const GlyphMap = std.HashMap(u32, Glyph, Glyph.MapContext, std.hash_map.default_max_load_percentage);
@@ -31,14 +32,11 @@ pub const Glyph = struct {
 
     uv_rect: Rect,
 
-    /// offset from the cursor
-    x_offset: i32,
-
-    /// offset from the top of the cell to the top ot the uvrect
-    y_offset: i32,
+    /// x offset from the cursor, y offset from the top of the cell to the top of the uvrect
+    offset: Vec2,
 
     /// advance after drawing this glyph
-    x_advance: i32,
+    x_advance: f32,
 
     pub const MapContext = struct {
         pub inline fn hash(_: MapContext, codepoint: u32) u64 {
@@ -58,6 +56,7 @@ pub const LoadFontError = error{
     AngelcodeFNTParseError ||
     Texture.TextureLoadError;
 
+/// To make BMFont appear consistent with a ttf font disable truetype outline, hinting and smoothing, and set super sampling to 4
 pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
     var fnt_file_arena = mem.get_temp();
 
@@ -110,10 +109,6 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
             for (font_info.chars) |char| {
                 assert(char.page == 0); // TODO: Handle pages
                 try glyphs.putNoClobber(char.id, char.toGlyph(&texture));
-
-                if (char.id == 'T') {
-                    log.debug("BM t info: {}", .{char});
-                }
             }
 
             const invalid_glyph = if (font_info.invalid_char) |ic| ic.toGlyph(&texture) else null;
@@ -129,7 +124,6 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
             const first_char: u32 = ' ';
             const last_char: u32 = '~';
             const char_count = (last_char - first_char) + 2;
-            log.debug("char count: {}", .{char_count});
 
             var font_info: stb.c.stbtt_fontinfo = undefined;
             _ = stb.c.stbtt_InitFont(&font_info, ttf_file.data.ptr, 0);
@@ -143,7 +137,7 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
             const ascent = @as(f32, @floatFromInt(i_ascent)) * scale;
             const descent = @as(f32, @floatFromInt(i_descent)) * scale;
             const linegap = @as(f32, @floatFromInt(i_linegap)) * scale;
-            log.debug("vmetrics: ascent: {}, descent: {}, linegap: {}", .{ ascent, descent, linegap });
+            assert(linegap == 0);
             const base = ascent;
             const line_height = ascent + -descent;
 
@@ -164,7 +158,6 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
 
             for (char_data, 0..char_count) |char_info, char_i| {
                 const codepoint: u32 = first_char + @as(u32, @intCast(char_i));
-                // log.debug("char data for '{c}': {}", .{ @as(u8, @intCast(codepoint)), char_info });
 
                 const pixel_width = char_info.x1 - char_info.x0;
                 const pixel_height = char_info.y1 - char_info.y0;
@@ -182,14 +175,12 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
                             .y = @as(f32, @floatFromInt(pixel_height)) / bitmap_size.y,
                         },
                     },
-                    .x_offset = @intFromFloat(char_info.xoff),
-                    .y_offset = @intFromFloat(char_info.yoff + ascent),
-                    .x_advance = @intFromFloat(char_info.xadvance),
+                    .offset = .{
+                        .x = char_info.xoff,
+                        .y = char_info.yoff + ascent,
+                    },
+                    .x_advance = char_info.xadvance,
                 });
-
-                if (codepoint == 'T') {
-                    log.debug("T info: {}", .{char_info});
-                }
             }
 
             return init(texture, glyphs, null, @intFromFloat(line_height), @intFromFloat(base));
@@ -282,9 +273,11 @@ const AngelcodeFNTInfo = struct {
                         .y = @as(f32, @floatFromInt(this.height)) / page_size.y,
                     },
                 },
-                .x_offset = this.x_offset,
-                .y_offset = this.y_offset,
-                .x_advance = this.xadvance,
+                .offset = .{
+                    .x = @floatFromInt(this.x_offset),
+                    .y = @floatFromInt(this.y_offset),
+                },
+                .x_advance = @floatFromInt(this.xadvance),
             };
         }
     };
