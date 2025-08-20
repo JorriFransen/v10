@@ -148,7 +148,7 @@ fn run() !void {
 
     // TrueType font
     // test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf");
-    test_font_ttf = try Font.load(&device, "res/fonts/Arimo/Arimo-Medium.ttf");
+    test_font_ttf = try Font.load(&device, "res/fonts/DejaVuSans/DejaVuSans.ttf", 72);
     defer test_font_ttf.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
@@ -196,7 +196,7 @@ fn run() !void {
     var current_time = try Instant.now();
 
     while (!window.shouldClose()) {
-        window.waitEventsTimeout(0);
+        window.pollEvents();
 
         const new_time = try Instant.now();
         const dt_ns = new_time.since(current_time);
@@ -210,7 +210,15 @@ fn run() !void {
     try device.device.deviceWaitIdle();
 }
 
+var t_was_down = false;
+
 fn update(dt: f32) void {
+    if (!t_was_down and glfw.getKey(window.handle, .t) == .press) {
+        Renderer2D.font_debug_lines = !Renderer2D.font_debug_lines;
+        t_was_down = true;
+    }
+    if (glfw.getKey(window.handle, .t) == .release) t_was_down = false;
+
     camera_3d.setViewYXZ(camera_3d_transform.translation, camera_3d_transform.rotation);
     // kb_3d_move_controller.moveInPlaneXZ(&window, dt, &camera_3d_transform);
 
@@ -247,8 +255,8 @@ fn drawFrame() !void {
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
 
-            batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "The quick brown fox jumps over the lazy dog. 1234567890");
-            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "Whereas recognition of the inherent dignity");
+            batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
+            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
         }
         batch.end();
 
@@ -259,8 +267,8 @@ fn drawFrame() !void {
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
 
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "The quick brown fox jumps over the lazy dog. 1234567890");
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "Whereas recognition of the inherent dignity");
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
         }
         ui_batch.end();
 

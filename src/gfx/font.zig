@@ -14,6 +14,7 @@ const Vec2 = math.Vec2;
 const Vec2u32 = math.Vec(2, u32);
 
 const GlyphMap = std.HashMap(u32, Glyph, Glyph.MapContext, std.hash_map.default_max_load_percentage);
+const KernMap = std.HashMap(KernPair, f32, KernPair.MapContext, std.hash_map.default_max_load_percentage);
 
 const assert = std.debug.assert;
 const log = std.log.scoped(.font);
@@ -22,7 +23,9 @@ const log = std.log.scoped(.font);
 texture: Texture,
 glyphs: GlyphMap,
 invalid_glyph: ?Glyph = null,
+kern_info: KernMap,
 
+/// Distance of the baseline from the top of the line
 base_height: f32,
 line_height: f32,
 line_gap: f32,
@@ -49,6 +52,20 @@ pub const Glyph = struct {
     };
 };
 
+pub const KernPair = packed struct(u64) {
+    a: u32,
+    b: u32,
+
+    pub const MapContext = struct {
+        pub inline fn hash(_: MapContext, pair: KernPair) u64 {
+            return @bitCast(pair);
+        }
+        pub inline fn eql(_: MapContext, a: KernPair, b: KernPair) bool {
+            return @as(u64, @bitCast(a)) == @as(u64, @bitCast(b));
+        }
+    };
+};
+
 pub const LoadFontError = error{
     UnsupportedFontType,
 } ||
@@ -56,7 +73,7 @@ pub const LoadFontError = error{
     Texture.TextureLoadError;
 
 /// To make BMFont appear consistent with a ttf font disable truetype outline, hinting and smoothing, and set super sampling to 4
-pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
+pub fn load(device: *Device, name: []const u8, size: f32) LoadFontError!Font {
     var fnt_file_arena = mem.get_temp();
 
     const fnt_file = try resource.load(fnt_file_arena.allocator(), name);
@@ -70,7 +87,6 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
     const bitmap_size = Vec2u32.new(1024, 512);
     var bitmap: [bitmap_size.x * bitmap_size.y]u8 = undefined;
 
-    const size = 96;
     const first_char: u32 = ' ';
     const last_char: u32 = '~';
     const char_count = (last_char - first_char) + 2;
@@ -132,13 +148,45 @@ pub fn load(device: *Device, name: []const u8) LoadFontError!Font {
         });
     }
 
+    // This only works for old school kern tables
     const kern_count = stb.c.stbtt_GetKerningTableLength(&font_info);
-    log.debug("Kern count: {}", .{kern_count});
+    log.debug("legacy kern count: {}", .{kern_count});
+
+    // TODO: Allocator
+    var kern_info = KernMap.init(mem.common_arena.allocator());
+    if (kern_count != 0) try kern_info.ensureTotalCapacity(@intCast(kern_count));
+
+    // TODO: make this work with more complex glyph ranges
+    for (first_char..last_char + 1) |_a| {
+        const a: u32 = @intCast(_a);
+        for (first_char..last_char + 1) |_b| {
+            const b: u32 = @intCast(_b);
+            if (a == b) continue;
+
+            const kern_advance = stb.c.stbtt_GetGlyphKernAdvance(&font_info, @intCast(a), @intCast(b));
+            if (kern_advance != 0) {
+                try kern_info.put(.{ .a = a, .b = b }, @as(f32, @floatFromInt(kern_advance)) * scale);
+            }
+        }
+    }
+
+    log.debug("used kern count: {}", .{kern_info.count()});
+
+    var kern_it = kern_info.iterator();
+    while (kern_it.next()) |entry| {
+        const pair = entry.key_ptr;
+        log.debug("{c} -> {c}: {}", .{
+            @as(u8, @intCast(pair.a)),
+            @as(u8, @intCast(pair.b)),
+            entry.value_ptr.*,
+        });
+    }
 
     return .{
         .texture = texture,
         .glyphs = glyphs,
         .invalid_glyph = null,
+        .kern_info = kern_info,
         .base_height = base,
         .line_height = line_height,
         .line_gap = linegap,
