@@ -10,6 +10,8 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const no_bin = b.option(bool, "no-bin", "") orelse false;
+
     const use_llvm = if (target.result.os.tag == .windows) true else debugging;
 
     // const clap = b.dependency("clap", .{});
@@ -63,7 +65,12 @@ pub fn build(b: *std.Build) !void {
 
     exe.linkLibrary(glfw_lib);
 
-    b.installArtifact(exe);
+    if (no_bin) {
+        b.getInstallStep().dependOn(&exe.step);
+    } else {
+        const install_exe = b.addInstallArtifact(exe, .{});
+        b.getInstallStep().dependOn(&install_exe.step);
+    }
 
     std.fs.cwd().makeDir("res") catch |e| switch (e) { // Create emtpy res folder if it does not exist, to avoid errors when installing
         error.PathAlreadyExists => {}, // ok,
