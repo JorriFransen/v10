@@ -283,10 +283,18 @@ pub fn beginFrame(this: *Renderer, cb: vk.CommandBufferProxy) void {
 
 pub fn endFrame(this: *Renderer) void {
     // TODO: Consistent command buffer for this?
-    const ccb = this.device.beginSingleTimeCommands();
-    this.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, this.vertex_offset * @sizeOf(Vertex));
-    this.device.copyBuffer(ccb, this.index_staging_buffer, this.index_buffer, this.index_offset * @sizeOf(Index));
-    this.device.endSingleTimeCommands(ccb);
+
+    const vertex_buffer_size = this.vertex_offset * @sizeOf(Vertex);
+    const index_buffer_size = this.index_offset * @sizeOf(Index);
+
+    if (vertex_buffer_size == 0) {
+        assert(index_buffer_size == 0);
+    } else {
+        const ccb = this.device.beginSingleTimeCommands();
+        this.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
+        this.device.copyBuffer(ccb, this.index_staging_buffer, this.index_buffer, index_buffer_size);
+        this.device.endSingleTimeCommands(ccb);
+    }
 }
 
 pub fn beginBatch(this: *Renderer, cb: vk.CommandBufferProxy, camera: *const Camera) Batch {

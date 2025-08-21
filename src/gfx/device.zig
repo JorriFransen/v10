@@ -757,6 +757,8 @@ pub fn createBuffer(this: *@This(), size: vk.DeviceSize, usage: vk.BufferUsageFl
 }
 
 pub fn copyBuffer(_: *@This(), cb: vk.CommandBufferProxy, src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) void {
+    assert(size > 0);
+
     const copy_region = vk.BufferCopy{
         .src_offset = 0,
         .dst_offset = 0,

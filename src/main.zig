@@ -253,10 +253,10 @@ fn drawFrame() !void {
 
             // batch.drawRect(Rect.new(Vec2.new(0, 0), Vec2.scalar(10)), .{});
 
-            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
-
-            batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
-            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
+            // const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
+            //
+            // batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
+            // batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
         }
         batch.end();
 
@@ -265,10 +265,10 @@ fn drawFrame() !void {
             // const ui_pos = camera_ui.toWorldSpace(spos);
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
-
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
+            // const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
+            //
+            // ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
+            // ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
         }
         ui_batch.end();
 
