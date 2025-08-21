@@ -66,131 +66,128 @@ pub const KernPair = packed struct(u64) {
     };
 };
 
-pub const LoadFontError = error{
-    UnsupportedFontType,
-} ||
-    resource.LoadResourceError ||
-    Texture.TextureLoadError;
-
-/// To make BMFont appear consistent with a ttf font disable truetype outline, hinting and smoothing, and set super sampling to 4
-pub fn load(device: *Device, name: []const u8, size: f32) LoadFontError!Font {
-    var fnt_file_arena = mem.get_temp();
-
-    const fnt_file = try resource.load(fnt_file_arena.allocator(), name);
-    if (fnt_file != .ttf_file) {
-        log.err("Unsupported font type: '{s}'", .{name});
-        return error.UnsupportedFontType;
-    }
-    const ttf_file = fnt_file.ttf_file;
-
-    // TODO: Calculate or iterate on bitmap size
-    const bitmap_size = Vec2u32.new(1024, 512);
-    var bitmap: [bitmap_size.x * bitmap_size.y]u8 = undefined;
-
-    const first_char: u32 = ' ';
-    const last_char: u32 = '~';
-    const char_count = (last_char - first_char) + 2;
-
-    var font_info: stb.c.stbtt_fontinfo = undefined;
-    _ = stb.c.stbtt_InitFont(&font_info, ttf_file.data.ptr, 0);
-
-    const scale = stb.c.stbtt_ScaleForMappingEmToPixels(&font_info, size);
-
-    var i_ascent: c_int = undefined;
-    var i_descent: c_int = undefined;
-    var i_linegap: c_int = undefined;
-    stb.c.stbtt_GetFontVMetrics(&font_info, &i_ascent, &i_descent, &i_linegap);
-    const ascent = @as(f32, @floatFromInt(i_ascent)) * scale;
-    const descent = @as(f32, @floatFromInt(i_descent)) * scale;
-    const linegap = @as(f32, @floatFromInt(i_linegap)) * scale;
-    const base = ascent;
-    const line_height = ascent + -descent;
-
-    var char_data: [char_count]stb.c.stbtt_packedchar = undefined;
-    var context: stb.c.stbtt_pack_context = undefined;
-    _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1, null);
-    _ = stb.c.stbtt_PackFontRange(&context, ttf_file.data.ptr, 0, size, first_char, char_count, &char_data);
-    stb.c.stbtt_PackEnd(&context);
-
-    const texture = try Texture.init(device, .{
-        .size = bitmap_size,
-        .data = &bitmap,
-    }, .{ .format = .u8_u_r, .filter = .nearest });
-
-    // TODO: Allocator!
-    var glyphs = GlyphMap.init(mem.common_arena.allocator());
-    try glyphs.ensureTotalCapacity(@intCast(char_data.len));
-
-    for (char_data, 0..char_count) |char_info, char_i| {
-        const codepoint: u32 = first_char + @as(u32, @intCast(char_i));
-
-        const pixel_width = char_info.x1 - char_info.x0;
-        const pixel_height = char_info.y1 - char_info.y0;
-
-        try glyphs.putNoClobber(@as(u32, @intCast(codepoint)), .{
-            .pixel_width = pixel_width,
-            .pixel_height = pixel_height,
-            .uv_rect = .{
-                .pos = .{
-                    .x = @as(f32, @floatFromInt(char_info.x0)) / bitmap_size.x,
-                    .y = @as(f32, @floatFromInt(char_info.y0)) / bitmap_size.y,
-                },
-                .size = .{
-                    .x = @as(f32, @floatFromInt(pixel_width)) / bitmap_size.x,
-                    .y = @as(f32, @floatFromInt(pixel_height)) / bitmap_size.y,
-                },
-            },
-            .offset = .{
-                .x = char_info.xoff,
-                .y = char_info.yoff + ascent,
-            },
-            .x_advance = char_info.xadvance,
-        });
-    }
-
-    // This only works for old school kern tables
-    const kern_count = stb.c.stbtt_GetKerningTableLength(&font_info);
-    log.debug("legacy kern count: {}", .{kern_count});
-
-    // TODO: Allocator
-    var kern_info = KernMap.init(mem.common_arena.allocator());
-    if (kern_count != 0) try kern_info.ensureTotalCapacity(@intCast(kern_count));
-
-    // TODO: make this work with more complex glyph ranges
-    for (first_char..last_char + 1) |_a| {
-        const a: u32 = @intCast(_a);
-        for (first_char..last_char + 1) |_b| {
-            const b: u32 = @intCast(_b);
-            if (a == b) continue;
-
-            const kern_advance = stb.c.stbtt_GetGlyphKernAdvance(&font_info, @intCast(a), @intCast(b));
-            if (kern_advance != 0) {
-                try kern_info.put(.{ .a = a, .b = b }, @as(f32, @floatFromInt(kern_advance)) * scale);
-            }
-        }
-    }
-
-    log.debug("used kern count: {}", .{kern_info.count()});
-
-    var kern_it = kern_info.iterator();
-    while (kern_it.next()) |entry| {
-        const pair = entry.key_ptr;
-        log.debug("{c} -> {c}: {}", .{
-            @as(u8, @intCast(pair.a)),
-            @as(u8, @intCast(pair.b)),
-            entry.value_ptr.*,
-        });
-    }
-
-    return .{
-        .texture = texture,
-        .glyphs = glyphs,
-        .invalid_glyph = null,
-        .kern_info = kern_info,
-        .base_height = base,
-        .line_height = line_height,
-        .line_gap = linegap,
-    };
+pub fn load(device: *Device, name: []const u8, size: f32) !Font {
+    _ = device;
+    _ = name;
+    _ = size;
+    unreachable;
+    // var fnt_file_arena = mem.get_temp();
+    //
+    // const fnt_file = try resource.load(fnt_file_arena.allocator(), name);
+    // if (fnt_file != .ttf_file) {
+    //     log.err("Unsupported font type: '{s}'", .{name});
+    //     return error.UnsupportedFontType;
+    // }
+    // const ttf_file = fnt_file.ttf_file;
+    //
+    // // TODO: Calculate or iterate on bitmap size
+    // const bitmap_size = Vec2u32.new(1024, 512);
+    // var bitmap: [bitmap_size.x * bitmap_size.y]u8 = undefined;
+    //
+    // const first_char: u32 = ' ';
+    // const last_char: u32 = '~';
+    // const char_count = (last_char - first_char) + 2;
+    //
+    // var font_info: stb.c.stbtt_fontinfo = undefined;
+    // _ = stb.c.stbtt_InitFont(&font_info, ttf_file.data.ptr, 0);
+    //
+    // const scale = stb.c.stbtt_ScaleForMappingEmToPixels(&font_info, size);
+    //
+    // var i_ascent: c_int = undefined;
+    // var i_descent: c_int = undefined;
+    // var i_linegap: c_int = undefined;
+    // stb.c.stbtt_GetFontVMetrics(&font_info, &i_ascent, &i_descent, &i_linegap);
+    // const ascent = @as(f32, @floatFromInt(i_ascent)) * scale;
+    // const descent = @as(f32, @floatFromInt(i_descent)) * scale;
+    // const linegap = @as(f32, @floatFromInt(i_linegap)) * scale;
+    // const base = ascent;
+    // const line_height = ascent + -descent;
+    //
+    // var char_data: [char_count]stb.c.stbtt_packedchar = undefined;
+    // var context: stb.c.stbtt_pack_context = undefined;
+    // _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1, null);
+    // _ = stb.c.stbtt_PackFontRange(&context, ttf_file.data.ptr, 0, size, first_char, char_count, &char_data);
+    // stb.c.stbtt_PackEnd(&context);
+    //
+    // const texture = try Texture.init(device, .{
+    //     .size = bitmap_size,
+    //     .data = &bitmap,
+    // }, .{ .format = .u8_u_r, .filter = .nearest });
+    //
+    // // TODO: Allocator!
+    // var glyphs = GlyphMap.init(mem.common_arena.allocator());
+    // try glyphs.ensureTotalCapacity(@intCast(char_data.len));
+    //
+    // for (char_data, 0..char_count) |char_info, char_i| {
+    //     const codepoint: u32 = first_char + @as(u32, @intCast(char_i));
+    //
+    //     const pixel_width = char_info.x1 - char_info.x0;
+    //     const pixel_height = char_info.y1 - char_info.y0;
+    //
+    //     try glyphs.putNoClobber(@as(u32, @intCast(codepoint)), .{
+    //         .pixel_width = pixel_width,
+    //         .pixel_height = pixel_height,
+    //         .uv_rect = .{
+    //             .pos = .{
+    //                 .x = @as(f32, @floatFromInt(char_info.x0)) / bitmap_size.x,
+    //                 .y = @as(f32, @floatFromInt(char_info.y0)) / bitmap_size.y,
+    //             },
+    //             .size = .{
+    //                 .x = @as(f32, @floatFromInt(pixel_width)) / bitmap_size.x,
+    //                 .y = @as(f32, @floatFromInt(pixel_height)) / bitmap_size.y,
+    //             },
+    //         },
+    //         .offset = .{
+    //             .x = char_info.xoff,
+    //             .y = char_info.yoff + ascent,
+    //         },
+    //         .x_advance = char_info.xadvance,
+    //     });
+    // }
+    //
+    // // This only works for old school kern tables
+    // const kern_count = stb.c.stbtt_GetKerningTableLength(&font_info);
+    // log.debug("legacy kern count: {}", .{kern_count});
+    //
+    // // TODO: Allocator
+    // var kern_info = KernMap.init(mem.common_arena.allocator());
+    // if (kern_count != 0) try kern_info.ensureTotalCapacity(@intCast(kern_count));
+    //
+    // // TODO: make this work with more complex glyph ranges
+    // for (first_char..last_char + 1) |_a| {
+    //     const a: u32 = @intCast(_a);
+    //     for (first_char..last_char + 1) |_b| {
+    //         const b: u32 = @intCast(_b);
+    //         if (a == b) continue;
+    //
+    //         const kern_advance = stb.c.stbtt_GetGlyphKernAdvance(&font_info, @intCast(a), @intCast(b));
+    //         if (kern_advance != 0) {
+    //             try kern_info.put(.{ .a = a, .b = b }, @as(f32, @floatFromInt(kern_advance)) * scale);
+    //         }
+    //     }
+    // }
+    //
+    // log.debug("used kern count: {}", .{kern_info.count()});
+    //
+    // var kern_it = kern_info.iterator();
+    // while (kern_it.next()) |entry| {
+    //     const pair = entry.key_ptr;
+    //     log.debug("{c} -> {c}: {}", .{
+    //         @as(u8, @intCast(pair.a)),
+    //         @as(u8, @intCast(pair.b)),
+    //         entry.value_ptr.*,
+    //     });
+    // }
+    //
+    // return .{
+    //     .texture = texture,
+    //     .glyphs = glyphs,
+    //     .invalid_glyph = null,
+    //     .kern_info = kern_info,
+    //     .base_height = base,
+    //     .line_height = line_height,
+    //     .line_gap = linegap,
+    // };
 }
 
 pub fn deinit(this: *Font, device: *Device) void {

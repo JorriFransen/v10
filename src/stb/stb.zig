@@ -33,7 +33,7 @@ pub const image = struct {
         OutOfMemory,
     };
 
-    pub fn load(allocator: Allocator, path: []const u8, format: Format) Error!Texture {
+    pub fn load(allocator: Allocator, path: [:0]const u8, format: Format) Error!Texture {
         current_temp = mem.TempArena.init(&mem.stb_arena);
         defer current_temp.release();
 
@@ -152,6 +152,8 @@ pub export fn stbiZigRealloc(ptr: ?*anyopaque, new_size: usize) callconv(.c) ?*a
         return stbiZigMalloc(new_size);
     }
 }
+
+const _stbiZigFree = @export(stbiZigFree, .{ .linkage = .strong, .name = "stbiZigFree", .visibility = .default });
 
 pub export fn stbiZigFree(ptr: ?*anyopaque) callconv(.c) void {
     if (ptr) |p| {

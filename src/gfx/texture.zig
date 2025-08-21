@@ -7,6 +7,7 @@ const resource = @import("../resource.zig");
 const math = @import("../math.zig");
 
 const Texture = @This();
+const CpuTexture = gfx.CpuTexture;
 const Device = gfx.Device;
 const Vec2 = math.Vec2;
 
@@ -43,22 +44,12 @@ pub const InitOptions = struct {
     filter: Filter = .nearest,
 };
 
-pub const TextureLoadError = error{} ||
-    TextureInitError ||
-    resource.LoadCpuTextureError;
-
 // TODO: Should this return a pointer?
-pub fn load(device: *Device, name: []const u8, options: InitOptions) TextureLoadError!Texture {
+pub fn load(device: *Device, name: []const u8, options: InitOptions) !Texture {
     var ta = mem.get_temp();
     defer ta.release();
 
-    // const texture_file = try resource.load(ta.allocator(), name);
-    // const cpu_texture = try resource.loadCpuTexture(ta.allocator(), .{ .from_resource = texture_file });
-    const cpu_texture = try resource.loadCpuTexture(
-        ta.allocator(),
-        .{ .from_identifier = name },
-        .{ .format = options.format },
-    );
+    const cpu_texture = try CpuTexture.load(ta.allocator(), name, .{ .format = options.format });
 
     log.info("Loaded cpu texture: '{s}' - {}x{} - {}", .{ name, cpu_texture.size.x, cpu_texture.size.y, options.format });
 
@@ -71,7 +62,7 @@ pub const TextureInitError = error{VulkanMapMemory} ||
     CreateDescriptorSetError ||
     vk.DeviceProxy.MapMemoryError;
 
-pub fn init(device: *Device, cpu_texture: resource.CpuTexture, options: InitOptions) TextureInitError!Texture {
+pub fn init(device: *Device, cpu_texture: CpuTexture, options: InitOptions) TextureInitError!Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -191,7 +182,12 @@ pub inline fn getSize(this: *const Texture) Vec2 {
 
 // TODO: Define error
 pub fn initDefaultWhite(device: *Device) !Texture {
-    const cpu_texture = resource.CpuTexture{
+    // const cpu_texture = resource.CpuTexture{
+    //     .size = .{ .x = 1, .y = 1 },
+    //     .data = &[_]u8{ 255, 255, 255, 255 },
+    // };
+    const cpu_texture = CpuTexture{
+        .format = .u8_s_rgba,
         .size = .{ .x = 1, .y = 1 },
         .data = &[_]u8{ 255, 255, 255, 255 },
     };

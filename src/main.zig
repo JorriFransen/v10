@@ -38,6 +38,8 @@ pub var cli_options: OptionParser.Options = undefined;
 pub fn main() !void {
     try mem.init();
 
+    // _ = try stb.image.load(mem.common_arena.allocator(), "res/textures/test.png", .rgb_alpha);
+
     var tmp = mem.get_temp();
     cli_options = OptionParser.parse(mem.common_arena.allocator(), tmp.allocator()) catch {
         try OptionParser.usage(std.fs.File.stderr());

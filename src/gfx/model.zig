@@ -56,20 +56,20 @@ pub const Vertex = extern struct {
     };
 };
 
-pub const LoadModelError =
-    CreateModelError ||
-    resource.LoadModelError;
-
 // TODO: Return pointer
-pub fn load(device: *Device, name: []const u8) LoadModelError!Model {
-    var ta = mem.get_temp();
-    defer ta.release();
+pub fn load(device: *Device, name: []const u8) !Model {
+    _ = device;
+    _ = name;
+    unreachable;
 
-    const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_identifier = name });
-    // const model_file = try resource.load(ta.allocator(), name);
-    // const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_resource = model_file });
-    return create(device, buildIndexed(cpu_model.vertices, cpu_model.indices));
-    // return create(device, build(cpu_model.vertices));
+    // var ta = mem.get_temp();
+    // defer ta.release();
+    //
+    // const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_identifier = name });
+    // // const model_file = try resource.load(ta.allocator(), name);
+    // // const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_resource = model_file });
+    // return create(device, buildIndexed(cpu_model.vertices, cpu_model.indices));
+    // // return create(device, build(cpu_model.vertices));
 }
 
 pub fn deinit(this: *Model, device: *Device) void {

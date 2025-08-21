@@ -1,250 +1,275 @@
 const std = @import("std");
 const log = std.log.scoped(.Resource);
 const mem = @import("memory");
-const obj_parser = @import("obj_parser.zig");
-const math = @import("math.zig");
-const stb = @import("stb/stb.zig");
 
-const Model = @import("gfx/model.zig");
-const Texture = @import("gfx/texture.zig");
+const Resource = @This();
 const Allocator = std.mem.Allocator;
-const Vec2 = math.Vec2;
-const Vec3 = math.Vec3;
-const Vec4 = math.Vec4;
-const Vec2u32 = math.Vec(2, u32);
 
-const assert = std.debug.assert;
-
-pub const CpuModel = struct {
-    vertices: []Model.Vertex,
-    indices: []u32,
+pub const Type = enum {
+    png,
 };
 
-pub const CpuTexture = struct {
-    size: Vec2u32,
-    data: []const u8,
-};
+type: Type,
+data: []const u8,
 
-// TODO: Probably refactor into binary/text file
-pub const ResourceData = union(enum) {
-    model_file: struct {
-        pub const Kind = enum {
-            obj,
-        };
-
-        kind: Kind,
-        name: []const u8,
-        data: []const u8,
-    },
-    cpu_model: CpuModel,
-
-    texture_file: struct {
-        name: []const u8,
-        data: []const u8,
-    },
-
-    ttf_file: struct {
-        name: []const u8,
-        data: []const u8,
-    },
-};
-
-/// Check if a named resource can be found
-pub fn exists(identifier: []const u8) bool {
-    const cwd = std.fs.cwd();
-    _ = cwd.statFile(identifier) catch {
-        return false;
-    };
-    return true;
-}
-
-pub const LoadResourceError = error{
-    OutOfMemory,
-    UnsupportedFileExtension,
-    UnexpectedResourceKind,
+pub const LoadError = error{
     NotFound,
-    Unexpected,
+    UnsupportedType,
 };
 
-/// Load named resource into memory
-pub fn load(allocator: Allocator, identifier: []const u8) LoadResourceError!ResourceData {
-    if (!exists(identifier)) {
-        log.err("Unable to open resource file: '{s}'", .{identifier});
-        return error.NotFound;
-    }
-    const file = std.fs.cwd().openFile(identifier, .{}) catch @panic("Unable to open resource file");
-    defer file.close();
-
-    const file_size = file.getEndPos() catch return error.Unexpected;
-
-    var file_buf = allocator.alloc(u8, file_size + 1) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-    };
-
-    const read_size = file.readAll(file_buf) catch return error.Unexpected;
-    assert(file_size == read_size);
-    file_buf[read_size] = 0;
-    file_buf = file_buf[0..file_size];
-
-    const result: ResourceData = if (std.mem.endsWith(u8, identifier, ".obj"))
-        .{ .model_file = .{ .kind = .obj, .name = identifier, .data = file_buf } }
-    else if (std.mem.endsWith(u8, identifier, ".png"))
-        .{ .texture_file = .{ .name = identifier, .data = file_buf } }
-    else if (std.mem.endsWith(u8, identifier, ".ttf"))
-        .{ .ttf_file = .{ .name = identifier, .data = file_buf } }
-    else
-        return error.UnsupportedFileExtension;
-
-    return result;
+pub fn load(allocator: Allocator, name: []const u8) LoadError!Resource {
+    _ = allocator;
+    _ = name;
+    unreachable;
 }
 
-pub const Source = union(enum) {
-    from_identifier: []const u8,
-    from_resource: ResourceData,
-};
-
-pub const LoadModelError = error{UnsupportedFileType} ||
-    LoadResourceError ||
-    obj_parser.ObjParseError;
-
-pub fn loadCpuModel(allocator: Allocator, source: Source) LoadModelError!CpuModel {
-    var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
-    defer ta.release();
-
-    const model_file = mfb: switch (source) {
-        .from_identifier => |identifier| {
-            switch (try load(ta.allocator(), identifier)) {
-                else => return error.UnexpectedResourceKind,
-                .model_file => |mf| break :mfb mf,
-            }
-        },
-        .from_resource => |res| switch (res) {
-            else => return error.UnexpectedResourceKind,
-            .model_file => |mf| break :mfb mf,
-        },
-    };
-
-    switch (model_file.kind) {
-        .obj => {
-            var mta = mem.get_scratch(ta.arena);
-            defer mta.release();
-
-            const obj_model = try obj_parser.parse(mta.allocator(), .{
-                .buffer = model_file.data,
-                .name = model_file.name,
-            });
-            ta.release(); // Free model file
-
-            const mv = obj_model.vertices;
-            const mc = obj_model.colors;
-            const mn = obj_model.normals;
-            const mt = obj_model.texcoords;
-
-            const MapContext = struct {
-                const Vertex = Model.Vertex;
-                pub inline fn hash(_: @This(), v: Vertex) u64 {
-                    return std.hash.Wyhash.hash(0, &@as([@sizeOf(Vertex)]u8, @bitCast(v)));
-                }
-                pub inline fn eql(_: @This(), va: Vertex, vb: Vertex) bool {
-                    return va.position.eqlEps(vb.position) and
-                        va.color.eqlEps(vb.color) and
-                        va.normal.eqlEps(vb.normal) and
-                        va.texcoord.eqlEps(vb.texcoord);
-                }
-            };
-
-            var unique_vertices = std.HashMap(Model.Vertex, u32, MapContext, std.hash_map.default_max_load_percentage).init(ta.allocator());
-            defer unique_vertices.deinit();
-
-            const white = Vec3.scalar(1);
-            var indices = try allocator.alloc(u32, obj_model.indices.len);
-            var face_count: usize = 0;
-            var vertex_count: u32 = 0;
-            var index_count: usize = 0;
-
-            for (obj_model.objects) |obj| {
-                for (obj.faces) |face| {
-                    face_count += 1;
-
-                    assert(face.indices.len == 3);
-                    inline for (face.indices[0..3]) |idx| {
-                        var v = Vec3.v(mv[idx.vertex]);
-
-                        // Transform from the default blender export coordinate system to v10
-                        v.z = -v.z;
-
-                        var n: Vec3 = if (idx.normal < mn.len) Vec3.v(mn[idx.normal]) else .{};
-
-                        // Transform from the default blender export coordinate system to v10
-                        n.z = -n.z;
-
-                        const c: Vec3 = if (idx.vertex < mc.len) Vec3.v(mc[idx.vertex]) else white;
-                        const t: Vec2 = if (idx.texcoord < mt.len) Vec2.v(mt[idx.texcoord]) else .{};
-
-                        const vertex = Model.Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
-                        if (!unique_vertices.contains(vertex)) {
-                            try unique_vertices.put(vertex, vertex_count);
-                            vertex_count += 1;
-                        }
-
-                        const vidx = unique_vertices.get(vertex).?;
-                        indices[index_count] = vidx;
-                        index_count += 1;
-                    }
-                }
-            }
-
-            assert(obj_model.faces.len == face_count);
-            assert(obj_model.indices.len == index_count);
-            assert(obj_model.vertices.len <= vertex_count);
-            assert(obj_model.indices.len >= vertex_count);
-
-            var vertices = try allocator.alloc(Model.Vertex, unique_vertices.count());
-            var it = unique_vertices.iterator();
-            while (it.next()) |entry| {
-                vertices[entry.value_ptr.*] = entry.key_ptr.*;
-            }
-
-            assert(indices.len == index_count);
-            assert(vertices.len == vertex_count);
-            return .{ .vertices = vertices, .indices = indices };
-        },
-    }
-}
-
-pub const LoadCpuTextureError = stb.image.Error || LoadResourceError;
-
-pub const LoadCpuTextureOptions = struct {
-    format: Texture.Format = .u8_s_rgba,
-};
-
-pub fn loadCpuTexture(allocator: Allocator, source: Source, options: LoadCpuTextureOptions) LoadCpuTextureError!CpuTexture {
-    var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
-    defer ta.release();
-
-    const texture_file = tfb: switch (source) {
-        .from_identifier => |identifier| {
-            switch (try load(ta.allocator(), identifier)) {
-                else => return error.UnexpectedResourceKind,
-                .texture_file => |tf| break :tfb tf,
-            }
-        },
-        .from_resource => |res| switch (res) {
-            else => return error.UnexpectedResourceKind,
-            .texture_file => |tf| break :tfb tf,
-        },
-    };
-
-    const stbi_format: stb.image.Format = switch (options.format) {
-        .u8_s_rgba => .rgb_alpha,
-        .u8_u_r => .grey,
-    };
-
-    const texture = try stb.image.loadFromMemory(allocator, texture_file.data, stbi_format);
-    ta.release(); // Free texture file
-
-    return .{
-        .size = Vec2u32.new(texture.x, texture.y),
-        .data = texture.data,
-    };
-}
+// const std = @import("std");
+// const log = std.log.scoped(.Resource);
+// const mem = @import("memory");
+// const obj_parser = @import("obj_parser.zig");
+// const math = @import("math.zig");
+// const stb = @import("stb/stb.zig");
+//
+// const Model = @import("gfx/model.zig");
+// const Texture = @import("gfx/texture.zig");
+// const Allocator = std.mem.Allocator;
+// const Vec2 = math.Vec2;
+// const Vec3 = math.Vec3;
+// const Vec4 = math.Vec4;
+// const Vec2u32 = math.Vec(2, u32);
+//
+// const assert = std.debug.assert;
+//
+// pub const CpuModel = struct {
+//     vertices: []Model.Vertex,
+//     indices: []u32,
+// };
+//
+// pub const CpuTexture = struct {
+//     size: Vec2u32,
+//     data: []const u8,
+// };
+//
+// // TODO: Probably refactor into binary/text file
+// pub const ResourceData = union(enum) {
+//     model_file: struct {
+//         pub const Kind = enum {
+//             obj,
+//         };
+//
+//         kind: Kind,
+//         name: []const u8,
+//         data: []const u8,
+//     },
+//     cpu_model: CpuModel,
+//
+//     texture_file: struct {
+//         name: []const u8,
+//         data: []const u8,
+//     },
+//
+//     ttf_file: struct {
+//         name: []const u8,
+//         data: []const u8,
+//     },
+// };
+//
+// /// Check if a named resource can be found
+// pub fn exists(identifier: []const u8) bool {
+//     const cwd = std.fs.cwd();
+//     _ = cwd.statFile(identifier) catch {
+//         return false;
+//     };
+//     return true;
+// }
+//
+// pub const LoadResourceError = error{
+//     OutOfMemory,
+//     UnsupportedFileExtension,
+//     UnexpectedResourceKind,
+//     NotFound,
+//     Unexpected,
+// };
+//
+// /// Load named resource into memory
+// pub fn load(allocator: Allocator, identifier: []const u8) LoadResourceError!ResourceData {
+//     if (!exists(identifier)) {
+//         log.err("Unable to open resource file: '{s}'", .{identifier});
+//         return error.NotFound;
+//     }
+//     const file = std.fs.cwd().openFile(identifier, .{}) catch @panic("Unable to open resource file");
+//     defer file.close();
+//
+//     const file_size = file.getEndPos() catch return error.Unexpected;
+//
+//     var file_buf = allocator.alloc(u8, file_size + 1) catch |err| switch (err) {
+//         error.OutOfMemory => return error.OutOfMemory,
+//     };
+//
+//     const read_size = file.readAll(file_buf) catch return error.Unexpected;
+//     assert(file_size == read_size);
+//     file_buf[read_size] = 0;
+//     file_buf = file_buf[0..file_size];
+//
+//     const result: ResourceData = if (std.mem.endsWith(u8, identifier, ".obj"))
+//         .{ .model_file = .{ .kind = .obj, .name = identifier, .data = file_buf } }
+//     else if (std.mem.endsWith(u8, identifier, ".png"))
+//         .{ .texture_file = .{ .name = identifier, .data = file_buf } }
+//     else if (std.mem.endsWith(u8, identifier, ".ttf"))
+//         .{ .ttf_file = .{ .name = identifier, .data = file_buf } }
+//     else
+//         return error.UnsupportedFileExtension;
+//
+//     return result;
+// }
+//
+// pub const Source = union(enum) {
+//     from_identifier: []const u8,
+//     from_resource: ResourceData,
+// };
+//
+// pub const LoadModelError = error{UnsupportedFileType} ||
+//     LoadResourceError ||
+//     obj_parser.ObjParseError;
+//
+// pub fn loadCpuModel(allocator: Allocator, source: Source) LoadModelError!CpuModel {
+//     var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
+//     defer ta.release();
+//
+//     const model_file = mfb: switch (source) {
+//         .from_identifier => |identifier| {
+//             switch (try load(ta.allocator(), identifier)) {
+//                 else => return error.UnexpectedResourceKind,
+//                 .model_file => |mf| break :mfb mf,
+//             }
+//         },
+//         .from_resource => |res| switch (res) {
+//             else => return error.UnexpectedResourceKind,
+//             .model_file => |mf| break :mfb mf,
+//         },
+//     };
+//
+//     switch (model_file.kind) {
+//         .obj => {
+//             var mta = mem.get_scratch(ta.arena);
+//             defer mta.release();
+//
+//             const obj_model = try obj_parser.parse(mta.allocator(), .{
+//                 .buffer = model_file.data,
+//                 .name = model_file.name,
+//             });
+//             ta.release(); // Free model file
+//
+//             const mv = obj_model.vertices;
+//             const mc = obj_model.colors;
+//             const mn = obj_model.normals;
+//             const mt = obj_model.texcoords;
+//
+//             const MapContext = struct {
+//                 const Vertex = Model.Vertex;
+//                 pub inline fn hash(_: @This(), v: Vertex) u64 {
+//                     return std.hash.Wyhash.hash(0, &@as([@sizeOf(Vertex)]u8, @bitCast(v)));
+//                 }
+//                 pub inline fn eql(_: @This(), va: Vertex, vb: Vertex) bool {
+//                     return va.position.eqlEps(vb.position) and
+//                         va.color.eqlEps(vb.color) and
+//                         va.normal.eqlEps(vb.normal) and
+//                         va.texcoord.eqlEps(vb.texcoord);
+//                 }
+//             };
+//
+//             var unique_vertices = std.HashMap(Model.Vertex, u32, MapContext, std.hash_map.default_max_load_percentage).init(ta.allocator());
+//             defer unique_vertices.deinit();
+//
+//             const white = Vec3.scalar(1);
+//             var indices = try allocator.alloc(u32, obj_model.indices.len);
+//             var face_count: usize = 0;
+//             var vertex_count: u32 = 0;
+//             var index_count: usize = 0;
+//
+//             for (obj_model.objects) |obj| {
+//                 for (obj.faces) |face| {
+//                     face_count += 1;
+//
+//                     assert(face.indices.len == 3);
+//                     inline for (face.indices[0..3]) |idx| {
+//                         var v = Vec3.v(mv[idx.vertex]);
+//
+//                         // Transform from the default blender export coordinate system to v10
+//                         v.z = -v.z;
+//
+//                         var n: Vec3 = if (idx.normal < mn.len) Vec3.v(mn[idx.normal]) else .{};
+//
+//                         // Transform from the default blender export coordinate system to v10
+//                         n.z = -n.z;
+//
+//                         const c: Vec3 = if (idx.vertex < mc.len) Vec3.v(mc[idx.vertex]) else white;
+//                         const t: Vec2 = if (idx.texcoord < mt.len) Vec2.v(mt[idx.texcoord]) else .{};
+//
+//                         const vertex = Model.Vertex{ .position = v, .color = c, .normal = n, .texcoord = t };
+//                         if (!unique_vertices.contains(vertex)) {
+//                             try unique_vertices.put(vertex, vertex_count);
+//                             vertex_count += 1;
+//                         }
+//
+//                         const vidx = unique_vertices.get(vertex).?;
+//                         indices[index_count] = vidx;
+//                         index_count += 1;
+//                     }
+//                 }
+//             }
+//
+//             assert(obj_model.faces.len == face_count);
+//             assert(obj_model.indices.len == index_count);
+//             assert(obj_model.vertices.len <= vertex_count);
+//             assert(obj_model.indices.len >= vertex_count);
+//
+//             var vertices = try allocator.alloc(Model.Vertex, unique_vertices.count());
+//             var it = unique_vertices.iterator();
+//             while (it.next()) |entry| {
+//                 vertices[entry.value_ptr.*] = entry.key_ptr.*;
+//             }
+//
+//             assert(indices.len == index_count);
+//             assert(vertices.len == vertex_count);
+//             return .{ .vertices = vertices, .indices = indices };
+//         },
+//     }
+// }
+//
+// pub const LoadCpuTextureError = stb.image.Error || LoadResourceError;
+//
+// pub const LoadCpuTextureOptions = struct {
+//     format: Texture.Format = .u8_s_rgba,
+// };
+//
+// pub fn loadCpuTexture(allocator: Allocator, source: Source, options: LoadCpuTextureOptions) LoadCpuTextureError!CpuTexture {
+//     var ta = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
+//     defer ta.release();
+//
+//     const texture_file = tfb: switch (source) {
+//         .from_identifier => |identifier| {
+//             switch (try load(ta.allocator(), identifier)) {
+//                 else => return error.UnexpectedResourceKind,
+//                 .texture_file => |tf| break :tfb tf,
+//             }
+//         },
+//         .from_resource => |res| switch (res) {
+//             else => return error.UnexpectedResourceKind,
+//             .texture_file => |tf| break :tfb tf,
+//         },
+//     };
+//
+//     const stbi_format: stb.image.Format = switch (options.format) {
+//         .u8_s_rgba => .rgb_alpha,
+//         .u8_u_r => .grey,
+//     };
+//
+//     const texture = try stb.image.loadFromMemory(allocator, texture_file.data, stbi_format);
+//     ta.release(); // Free texture file
+//
+//     return .{
+//         .size = Vec2u32.new(texture.x, texture.y),
+//         .data = texture.data,
+//     };
+// }
