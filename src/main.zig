@@ -152,8 +152,8 @@ fn run() !void {
 
     // TrueType font
     // test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf", 72);
-    // test_font_ttf = try Font.load(&device, "res/fonts/DejaVuSans/DejaVuSans.ttf", 72);
-    // defer test_font_ttf.deinit(&device);
+    test_font_ttf = try Font.load(&device, "res/fonts/DejaVuSans/DejaVuSans.ttf", 72);
+    defer test_font_ttf.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit(&device);
@@ -255,10 +255,10 @@ fn drawFrame() !void {
             const wpos = camera_2d.toWorldSpace(spos);
             batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
-            // const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
-            //
-            // batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
-            // batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
+            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
+
+            batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
+            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
         }
         batch.end();
 
@@ -267,10 +267,10 @@ fn drawFrame() !void {
             const ui_pos = camera_ui.toWorldSpace(spos);
             ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            // const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
-            //
-            // ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
-            // ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
+            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
+
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
+            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
         }
         ui_batch.end();
 

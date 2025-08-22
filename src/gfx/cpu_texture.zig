@@ -30,7 +30,7 @@ pub fn load(allocator: Allocator, name: []const u8, options: LoadCpuTextureOptio
     switch (resource.type) {
         .png => {}, // ok
         else => {
-            log.err("Invalid resource type for cpu texture: '{s}'", .{@tagName(resource.type)});
+            log.err("Invalid resource type for cpu texture: '{s}' ({s})", .{ name, @tagName(resource.type) });
             return error.UnsupportedType;
         },
     }

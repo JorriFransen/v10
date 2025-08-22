@@ -4,11 +4,14 @@ const mem = @import("memory");
 
 const Resource = @This();
 const Allocator = std.mem.Allocator;
+
 const assert = std.debug.assert;
+const eql = std.mem.eql;
 
 pub const Type = enum {
     obj,
     png,
+    ttf,
 };
 
 type: Type,
@@ -54,10 +57,12 @@ pub fn load(allocator: Allocator, name: []const u8) LoadError!Resource {
     file_buf = file_buf[0..file_size];
 
     const rtype: Type =
-        if (std.mem.eql(u8, ext, "obj"))
+        if (eql(u8, ext, "obj"))
             .obj
-        else if (std.mem.eql(u8, ext, "png"))
+        else if (eql(u8, ext, "png"))
             .png
+        else if (eql(u8, ext, "ttf"))
+            .ttf
         else
             return error.UnsupportedType;
 

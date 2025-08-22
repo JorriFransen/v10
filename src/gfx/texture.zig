@@ -3,7 +3,7 @@ const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const stb = @import("../stb/stb.zig");
 const mem = @import("memory");
-const resource = @import("../resource.zig");
+const res = @import("../resource.zig");
 const math = @import("../math.zig");
 
 const Texture = @This();
@@ -40,29 +40,33 @@ pub const Filter = enum {
 };
 
 pub const InitOptions = struct {
-    format: Format = .u8_s_rgba,
     filter: Filter = .nearest,
 };
 
+pub const LoadError =
+    res.LoadError ||
+    CpuTexture.LoadError ||
+    InitError;
+
 // TODO: Should this return a pointer?
-pub fn load(device: *Device, name: []const u8, options: InitOptions) !Texture {
+pub fn load(device: *Device, name: []const u8, options: InitOptions) LoadError!Texture {
     var ta = mem.get_temp();
     defer ta.release();
 
-    const cpu_texture = try CpuTexture.load(ta.allocator(), name, .{ .format = options.format });
+    const cpu_texture = try CpuTexture.load(ta.allocator(), name, .{});
 
-    log.info("Loaded cpu texture: '{s}' - {}x{} - {}", .{ name, cpu_texture.size.x, cpu_texture.size.y, options.format });
+    log.info("Loaded cpu texture: '{s}' - {}x{} - {}", .{ name, cpu_texture.size.x, cpu_texture.size.y, cpu_texture.format });
 
     return try init(device, cpu_texture, options);
 }
 
-pub const TextureInitError = error{VulkanMapMemory} ||
+pub const InitError = error{VulkanMapMemory} ||
     Device.CreateBufferError ||
     Device.CreateImageError ||
     CreateDescriptorSetError ||
     vk.DeviceProxy.MapMemoryError;
 
-pub fn init(device: *Device, cpu_texture: CpuTexture, options: InitOptions) TextureInitError!Texture {
+pub fn init(device: *Device, cpu_texture: CpuTexture, options: InitOptions) InitError!Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -83,7 +87,7 @@ pub fn init(device: *Device, cpu_texture: CpuTexture, options: InitOptions) Text
     @memcpy(staging_mapped, cpu_texture.data);
     vkd.unmapMemory(staging_buffer_memory);
 
-    const format = options.format.toVulkan();
+    const format = cpu_texture.format.toVulkan();
 
     var image_mem: vk.DeviceMemory = .null_handle;
     const image = try device.createImageWithInfo(
