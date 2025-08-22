@@ -651,7 +651,8 @@ fn MatrixDiffer(M: type) type {
         }
 
         pub fn write(self: @This()) !void {
-            var awriter = self.writer.adaptToNewApi();
+            var buffer: [1024]u8 = undefined;
+            var awriter = self.writer.adaptToNewApi(&buffer);
             var writer = &awriter.derp_writer;
             try writer.print("\n", .{});
             for (self.expected.data, 0..) |evalue, i| {

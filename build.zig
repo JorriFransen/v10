@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("memory", memory_module);
 
     main_module.addCSourceFile(.{ .file = b.path("src/stb/implementation.c") });
-    main_module.addIncludePath(b.path("src"));
+    main_module.addIncludePath(b.path("src/stb/"));
 
     const exe = b.addExecutable(.{
         .name = "v10game",

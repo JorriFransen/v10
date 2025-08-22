@@ -36,6 +36,9 @@ const OptionParser = clip.OptionParser(&.{
 pub var cli_options: OptionParser.Options = undefined;
 
 pub fn main() !void {
+    // Force export of functions
+    _ = @import("stb/stb.zig");
+
     try mem.init();
 
     // _ = try stb.image.load(mem.common_arena.allocator(), "res/textures/test.png", .rgb_alpha);
@@ -148,9 +151,9 @@ fn run() !void {
     });
 
     // TrueType font
-    test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf", 72);
+    // test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf", 72);
     // test_font_ttf = try Font.load(&device, "res/fonts/DejaVuSans/DejaVuSans.ttf", 72);
-    defer test_font_ttf.deinit(&device);
+    // defer test_font_ttf.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit(&device);
@@ -168,21 +171,21 @@ fn run() !void {
     test_sprite_sub_bl = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
     test_sprite_sub_br = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
-    var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
-    defer smooth_vase.deinit(&device);
+    // var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
+    // defer smooth_vase.deinit(&device);
+    //
+    // var flat_vase = try Model.load(&device, "res/obj/flat_vase.obj");
+    // defer flat_vase.deinit(&device);
 
-    var flat_vase = try Model.load(&device, "res/obj/flat_vase.obj");
-    defer flat_vase.deinit(&device);
-
-    var entities_: [1]Entity = undefined;
-    for (&entities_) |*e| e.* = Entity.new();
-    entities = &entities_;
-
-    entity = &entities[0];
-    entity.model = &smooth_vase;
-    entity.transform.translation = .{ .z = 2.5 };
-    entity.transform.scale = Vec3.scalar(3);
-    entity.transform.scale = entity.transform.scale.mul(Vec3.new(1, -1, -1));
+    // var entities_: [1]Entity = undefined;
+    // for (&entities_) |*e| e.* = Entity.new();
+    // entities = &entities_;
+    //
+    // entity = &entities[0];
+    // entity.model = &smooth_vase;
+    // entity.transform.translation = .{ .z = 2.5 };
+    // entity.transform.scale = Vec3.scalar(3);
+    // entity.transform.scale = entity.transform.scale.mul(Vec3.new(1, -1, -1));
 
     camera_3d_transform.translation = .{ .z = 0 };
 
@@ -252,10 +255,10 @@ fn drawFrame() !void {
             const wpos = camera_2d.toWorldSpace(spos);
             batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
-            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
-
-            batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
-            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
+            // const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
+            //
+            // batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
+            // batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
         }
         batch.end();
 
@@ -264,10 +267,10 @@ fn drawFrame() !void {
             const ui_pos = camera_ui.toWorldSpace(spos);
             ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
-
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
+            // const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
+            //
+            // ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
+            // ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
         }
         ui_batch.end();
 
@@ -476,3 +479,7 @@ fn resizeCallback(r: *const Renderer) void {
         .far = camera_3d_far_clip,
     } });
 }
+
+// Force export/linking
+const stbiZigAssert = @import("stb/stb.zig").stbiZigAssert;
+const stbiZigFree = @export(@import("stb/stb.zig").stbiZigFree, .{ .linkage = .strong });

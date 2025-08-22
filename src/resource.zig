@@ -4,8 +4,10 @@ const mem = @import("memory");
 
 const Resource = @This();
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 pub const Type = enum {
+    obj,
     png,
 };
 
@@ -15,12 +17,63 @@ data: []const u8,
 pub const LoadError = error{
     NotFound,
     UnsupportedType,
+    UnexpectedFileError,
+    OutOfMemory,
+    InvalidResourceName,
 };
 
 pub fn load(allocator: Allocator, name: []const u8) LoadError!Resource {
-    _ = allocator;
-    _ = name;
-    unreachable;
+    const dot_idx_opt = std.mem.lastIndexOfScalar(u8, name, '.');
+    var ext_opt: ?[]const u8 = null;
+    if (dot_idx_opt) |dot_idx| {
+        const e = name[dot_idx + 1 ..];
+        if (e.len > 0) ext_opt = e;
+    }
+
+    const ext = ext_opt orelse {
+        log.err("Resource name must have an extension: '{s}'", .{name});
+        return error.InvalidResourceName;
+    };
+
+    if (!exists(name)) {
+        log.err("Unable to open resource file: '{s}'", .{name});
+        return error.NotFound;
+    }
+    const file = std.fs.cwd().openFile(name, .{}) catch @panic("Unable to open resource file");
+    defer file.close();
+
+    const file_size = file.getEndPos() catch return error.UnexpectedFileError;
+
+    var file_buf = allocator.alloc(u8, file_size + 1) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+
+    const read_size = file.readAll(file_buf) catch return error.UnexpectedFileError;
+    assert(file_size == read_size);
+    file_buf[read_size] = 0;
+    file_buf = file_buf[0..file_size];
+
+    const rtype: Type =
+        if (std.mem.eql(u8, ext, "obj"))
+            .obj
+        else if (std.mem.eql(u8, ext, "png"))
+            .png
+        else
+            return error.UnsupportedType;
+
+    return .{
+        .type = rtype,
+        .data = file_buf,
+    };
+}
+
+/// Check if a named resource can be found
+pub fn exists(identifier: []const u8) bool {
+    const cwd = std.fs.cwd();
+    _ = cwd.statFile(identifier) catch {
+        return false;
+    };
+    return true;
 }
 
 // const std = @import("std");

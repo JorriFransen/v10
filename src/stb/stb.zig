@@ -1,9 +1,10 @@
 const std = @import("std");
 const mem = @import("memory");
 const log = std.log.scoped(.stb);
+
 pub const c = @cImport({
-    @cInclude("stb/stb_image.h");
-    @cInclude("stb/stb_truetype.h");
+    @cInclude("stb_image.h");
+    @cInclude("stb_truetype.h");
 });
 
 const Allocator = std.mem.Allocator;
@@ -152,8 +153,6 @@ pub export fn stbiZigRealloc(ptr: ?*anyopaque, new_size: usize) callconv(.c) ?*a
         return stbiZigMalloc(new_size);
     }
 }
-
-const _stbiZigFree = @export(stbiZigFree, .{ .linkage = .strong, .name = "stbiZigFree", .visibility = .default });
 
 pub export fn stbiZigFree(ptr: ?*anyopaque) callconv(.c) void {
     if (ptr) |p| {
