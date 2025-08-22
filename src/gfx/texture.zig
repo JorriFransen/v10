@@ -52,10 +52,10 @@ pub const LoadError =
 
 // TODO: Should this return a pointer?
 pub fn load(device: *Device, name: []const u8, options: InitOptions) LoadError!Texture {
-    var ta = mem.get_temp();
-    defer ta.release();
+    var tmp = mem.get_temp();
+    defer tmp.release();
 
-    const cpu_texture = try Bitmap.load(ta.allocator(), name, .{});
+    const cpu_texture = try Bitmap.load(tmp.allocator(), name, .{});
 
     log.info("Loaded cpu texture: '{s}' - {}x{} - {}", .{ name, cpu_texture.size.x, cpu_texture.size.y, cpu_texture.format });
 

@@ -171,21 +171,21 @@ fn run() !void {
     test_sprite_sub_bl = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
     test_sprite_sub_br = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
-    // var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
-    // defer smooth_vase.deinit(&device);
-    //
+    var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
+    defer smooth_vase.deinit(&device);
+
     // var flat_vase = try Model.load(&device, "res/obj/flat_vase.obj");
     // defer flat_vase.deinit(&device);
 
-    // var entities_: [1]Entity = undefined;
-    // for (&entities_) |*e| e.* = Entity.new();
-    // entities = &entities_;
-    //
-    // entity = &entities[0];
-    // entity.model = &smooth_vase;
-    // entity.transform.translation = .{ .z = 2.5 };
-    // entity.transform.scale = Vec3.scalar(3);
-    // entity.transform.scale = entity.transform.scale.mul(Vec3.new(1, -1, -1));
+    var entities_: [1]Entity = undefined;
+    for (&entities_) |*e| e.* = Entity.new();
+    entities = &entities_;
+
+    entity = &entities[0];
+    entity.model = &smooth_vase;
+    entity.transform.translation = .{ .z = 2.5 };
+    entity.transform.scale = Vec3.scalar(3);
+    entity.transform.scale = entity.transform.scale.mul(Vec3.new(1, -1, -1));
 
     camera_3d_transform.translation = .{ .z = 0 };
 
@@ -242,7 +242,7 @@ fn drawFrame() !void {
         const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
         renderer.beginRenderpass(cb, clear_color);
 
-        // r3d.drawEntities(cb, entities, &camera_3d);
+        r3d.drawEntities(cb, entities, &camera_3d);
 
         r2d.beginFrame(cb);
 

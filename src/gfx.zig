@@ -10,7 +10,8 @@ pub const Renderer = @import("gfx/vulkan_renderer.zig");
 
 /// GPU-side model
 pub const Model = @import("gfx/model.zig");
-
+/// CPU-side model
+pub const Mesh = @import("gfx/mesh.zig");
 /// GPU-side texture
 pub const Texture = @import("gfx/texture.zig");
 /// CPU-side texture

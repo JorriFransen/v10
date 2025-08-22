@@ -3,11 +3,12 @@ const vk = @import("vulkan");
 const gfx = @import("../gfx.zig");
 const math = @import("../math.zig");
 const mem = @import("memory");
-const resource = @import("../resource.zig");
+const res = @import("../resource.zig");
 const obj_parser = @import("../obj_parser.zig");
 
 /// GPU-side model
 const Model = @This();
+const Mesh = gfx.Mesh;
 
 const Device = gfx.Device;
 const Vec2 = math.Vec2;
@@ -57,20 +58,17 @@ pub const Vertex = extern struct {
     };
 };
 
-// TODO: Return pointer
-pub fn load(device: *Device, name: []const u8) !Model {
-    _ = device;
-    _ = name;
-    unreachable;
+pub const LoadError =
+    Mesh.LoadError ||
+    InitError;
 
-    // var ta = mem.get_temp();
-    // defer ta.release();
-    //
-    // const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_identifier = name });
-    // // const model_file = try resource.load(ta.allocator(), name);
-    // // const cpu_model = try resource.loadCpuModel(ta.allocator(), .{ .from_resource = model_file });
-    // return create(device, buildIndexed(cpu_model.vertices, cpu_model.indices));
-    // // return create(device, build(cpu_model.vertices));
+// TODO: Return pointer
+pub fn load(device: *Device, name: []const u8) LoadError!Model {
+    var tmp = mem.get_temp();
+    defer tmp.release();
+
+    const mesh = try Mesh.load(tmp.allocator(), name);
+    return init(device, buildIndexed(mesh.vertices, mesh.indices));
 }
 
 pub fn deinit(this: *Model, device: *Device) void {
@@ -94,7 +92,6 @@ pub fn build(vertices: []const Vertex) Builder(void) {
 }
 
 pub fn buildIndexed(vertices: []const Vertex, indices: anytype) blk_returntype: {
-    // @compileLog(std.fmt.comptimePrint("@TypeOf(indices): -->{}<--", .{@TypeOf(indices)}));
     const err_fmt = "indices must be a slice of u32, u16 or u8. Found: '{}'";
     const err_args = .{@TypeOf(indices)};
 
@@ -127,12 +124,12 @@ pub fn Builder(comptime IT: type) type {
     };
 }
 
-pub const CreateModelError = error{
+pub const InitError = error{
     VulkanUnexpected,
     VulkanMapMemory,
 };
 
-pub fn create(device: *Device, builder: anytype) CreateModelError!Model {
+pub fn init(device: *Device, builder: anytype) InitError!Model {
     const IndexType = @TypeOf(builder).IndexType;
     assert(builder.vertices.len >= 3);
 

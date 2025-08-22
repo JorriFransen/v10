@@ -71,10 +71,10 @@ pub const LoadError =
     TtfInitError;
 
 pub fn load(device: *Device, name: []const u8, size: f32) LoadError!Font {
-    var ta = mem.get_temp();
-    defer ta.release();
+    var tmp = mem.get_temp();
+    defer tmp.release();
 
-    const resource = try res.load(ta.allocator(), name);
+    const resource = try res.load(tmp.allocator(), name);
     switch (resource.type) {
         .ttf => {}, // ok
         else => {
