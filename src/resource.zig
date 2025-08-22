@@ -81,23 +81,6 @@ pub fn exists(identifier: []const u8) bool {
     return true;
 }
 
-// const std = @import("std");
-// const log = std.log.scoped(.Resource);
-// const mem = @import("memory");
-// const obj_parser = @import("obj_parser.zig");
-// const math = @import("math.zig");
-// const stb = @import("stb/stb.zig");
-//
-// const Model = @import("gfx/model.zig");
-// const Texture = @import("gfx/texture.zig");
-// const Allocator = std.mem.Allocator;
-// const Vec2 = math.Vec2;
-// const Vec3 = math.Vec3;
-// const Vec4 = math.Vec4;
-// const Vec2u32 = math.Vec(2, u32);
-//
-// const assert = std.debug.assert;
-//
 // pub const CpuModel = struct {
 //     vertices: []Model.Vertex,
 //     indices: []u32,

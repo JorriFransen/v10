@@ -6,8 +6,10 @@ const mem = @import("memory");
 const res = @import("../resource.zig");
 const math = @import("../math.zig");
 
+/// GPU-side texture
 const Texture = @This();
-const CpuTexture = gfx.CpuTexture;
+
+const Bitmap = gfx.Bitmap;
 const Device = gfx.Device;
 const Vec2 = math.Vec2;
 
@@ -45,7 +47,7 @@ pub const InitOptions = struct {
 
 pub const LoadError =
     res.LoadError ||
-    CpuTexture.LoadError ||
+    Bitmap.LoadError ||
     InitError;
 
 // TODO: Should this return a pointer?
@@ -53,7 +55,7 @@ pub fn load(device: *Device, name: []const u8, options: InitOptions) LoadError!T
     var ta = mem.get_temp();
     defer ta.release();
 
-    const cpu_texture = try CpuTexture.load(ta.allocator(), name, .{});
+    const cpu_texture = try Bitmap.load(ta.allocator(), name, .{});
 
     log.info("Loaded cpu texture: '{s}' - {}x{} - {}", .{ name, cpu_texture.size.x, cpu_texture.size.y, cpu_texture.format });
 
@@ -66,7 +68,7 @@ pub const InitError = error{VulkanMapMemory} ||
     CreateDescriptorSetError ||
     vk.DeviceProxy.MapMemoryError;
 
-pub fn init(device: *Device, cpu_texture: CpuTexture, options: InitOptions) InitError!Texture {
+pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitError!Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -184,16 +186,11 @@ pub inline fn getSize(this: *const Texture) Vec2 {
     return .{ .x = @floatFromInt(this.width), .y = @floatFromInt(this.height) };
 }
 
-// TODO: Define error
-pub fn initDefaultWhite(device: *Device) !Texture {
-    // const cpu_texture = resource.CpuTexture{
-    //     .size = .{ .x = 1, .y = 1 },
-    //     .data = &[_]u8{ 255, 255, 255, 255 },
-    // };
-    const cpu_texture = CpuTexture{
+pub fn initDefaultWhite(device: *Device) InitError!Texture {
+    const bitmap = Bitmap{
         .format = .u8_s_rgba,
         .size = .{ .x = 1, .y = 1 },
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
-    return init(device, cpu_texture, .{ .filter = .nearest });
+    return init(device, bitmap, .{ .filter = .nearest });
 }

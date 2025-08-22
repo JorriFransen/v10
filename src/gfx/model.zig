@@ -6,14 +6,15 @@ const mem = @import("memory");
 const resource = @import("../resource.zig");
 const obj_parser = @import("../obj_parser.zig");
 
-const log = std.log.scoped(.model);
+/// GPU-side model
+const Model = @This();
 
 const Device = gfx.Device;
-const Model = @This();
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
 
+const log = std.log.scoped(.model);
 const assert = std.debug.assert;
 
 vertex_buffer: vk.Buffer = .null_handle,

@@ -7,9 +7,15 @@ pub const Device = @import("gfx/device.zig");
 pub const Pipeline = @import("gfx/pipeline.zig");
 pub const Swapchain = @import("gfx/swapchain.zig");
 pub const Renderer = @import("gfx/vulkan_renderer.zig");
+
+/// GPU-side model
 pub const Model = @import("gfx/model.zig");
+
+/// GPU-side texture
 pub const Texture = @import("gfx/texture.zig");
-pub const CpuTexture = @import("gfx/cpu_texture.zig");
+/// CPU-side texture
+pub const Bitmap = @import("gfx/bitmap.zig");
+
 pub const Sprite = @import("gfx/sprite.zig");
 pub const Font = @import("gfx/font.zig");
 pub const Camera2D = camera.Camera2D;
