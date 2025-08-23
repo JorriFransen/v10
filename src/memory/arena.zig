@@ -44,7 +44,7 @@ pub const Arena = struct {
         virtual: Virtual,
     };
 
-    pub const ArenaError = error{
+    pub const Error = error{
         OutOfMemory,
         AccessDenied,
         CantGrow,
@@ -52,7 +52,7 @@ pub const Arena = struct {
         Unexpected,
     };
 
-    pub fn init(options: InitOptions) ArenaError!Arena {
+    pub fn init(options: InitOptions) Error!Arena {
         return switch (options) {
             .slice => |s| return .{
                 .data = s.data,
@@ -66,7 +66,7 @@ pub const Arena = struct {
         };
     }
 
-    fn init_virtual(options: InitOptions.Virtual) ArenaError!Arena {
+    fn init_virtual(options: InitOptions.Virtual) Error!Arena {
         assert(options.flags.rvas);
 
         assert(options.reserved_capacity >= options.initial_commit);
@@ -165,7 +165,7 @@ pub const Arena = struct {
         };
     }
 
-    fn grow(this: *Arena, min_cap: usize) ArenaError!void {
+    fn grow(this: *Arena, min_cap: usize) Error!void {
         if (!this.flags.rvas) return error.CantGrow;
 
         var new_cap = this.data.len * 2;
@@ -178,7 +178,7 @@ pub const Arena = struct {
 
         assert(this.data.len % page_size_min == 0); // Newly committed blocks must start on page boundaries
 
-        const new_slice: []align(page_size_min) u8 = @constCast(@alignCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]));
+        const new_slice: []align(page_size_min) u8 = @alignCast(@constCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]));
 
         switch (builtin.os.tag) {
             else => @compileError("missing implementation for platform for 'Arena.grow'"),

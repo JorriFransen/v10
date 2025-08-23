@@ -29,6 +29,9 @@ base_height: f32,
 line_height: f32,
 line_gap: f32,
 
+/// Used for the glyph and kerning tables, make sure they never free any memory
+arena: mem.Arena,
+
 pub const Glyph = struct {
     pixel_width: u32,
     pixel_height: u32,
@@ -87,17 +90,18 @@ pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
 
 pub const TtfInitError =
     Texture.InitError ||
+    mem.Arena.Error ||
     error{OutOfMemory};
 
 pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*Font {
 
     // TODO: Calculate or iterate on bitmap size
-    const bitmap_size = Vec2u32.new(1024, 512);
+    const bitmap_size = Vec2u32.new(1024, 1024);
     var bitmap: [bitmap_size.x * bitmap_size.y]u8 = undefined;
 
     const first_char: u32 = ' ';
     const last_char: u32 = '~';
-    const char_count = (last_char - first_char) + 2;
+    const char_count = (last_char - first_char) + 1;
 
     var font_info: stb.c.stbtt_fontinfo = undefined;
     _ = stb.c.stbtt_InitFont(&font_info, ttf_data.ptr, 0);
@@ -126,8 +130,10 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
         .data = &bitmap,
     }, .{ .filter = .nearest });
 
-    // TODO: Allocator!
-    var glyphs = GlyphMap.init(mem.common_arena.allocator());
+    // This must be large enough to store the glyph and kerning tables, or we need to move to a different (chunked?) allocator.
+    var arena = try mem.Arena.init(.{ .virtual = .{} });
+
+    var glyphs = GlyphMap.init(arena.allocator());
     try glyphs.ensureTotalCapacity(@intCast(char_data.len));
 
     for (char_data, 0..char_count) |char_info, char_i| {
@@ -159,10 +165,8 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
 
     // This only works for old school kern tables
     const kern_count = stb.c.stbtt_GetKerningTableLength(&font_info);
-    log.debug("legacy kern count: {}", .{kern_count});
 
-    // TODO: Allocator
-    var kern_info = KernMap.init(mem.common_arena.allocator());
+    var kern_info = KernMap.init(arena.allocator());
     if (kern_count != 0) try kern_info.ensureTotalCapacity(@intCast(kern_count));
 
     // TODO: make this work with more complex glyph ranges
@@ -179,18 +183,6 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
         }
     }
 
-    log.debug("used kern count: {}", .{kern_info.count()});
-
-    var kern_it = kern_info.iterator();
-    while (kern_it.next()) |entry| {
-        const pair = entry.key_ptr;
-        log.debug("{c} -> {c}: {}", .{
-            @as(u8, @intCast(pair.a)),
-            @as(u8, @intCast(pair.b)),
-            entry.value_ptr.*,
-        });
-    }
-
     const result = try mem.font_arena.allocator().create(Font);
     result.* = .{
         .texture = texture,
@@ -200,10 +192,12 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
         .base_height = base,
         .line_height = line_height,
         .line_gap = linegap,
+        .arena = arena,
     };
     return result;
 }
 
 pub fn deinit(this: *Font, device: *Device) void {
     this.texture.deinit(device);
+    this.arena.deinit();
 }
