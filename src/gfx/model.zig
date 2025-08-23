@@ -63,7 +63,7 @@ pub const LoadError =
     InitError;
 
 // TODO: Return pointer
-pub fn load(device: *Device, name: []const u8) LoadError!Model {
+pub fn load(device: *Device, name: []const u8) LoadError!*Model {
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -127,17 +127,17 @@ pub fn Builder(comptime IT: type) type {
 pub const InitError = error{
     VulkanUnexpected,
     VulkanMapMemory,
+    OutOfMemory,
 };
 
-pub fn init(device: *Device, builder: anytype) InitError!Model {
+pub fn init(device: *Device, builder: anytype) InitError!*Model {
     const IndexType = @TypeOf(builder).IndexType;
     assert(builder.vertices.len >= 3);
 
     const vkd = &device.device;
 
-    var this = Model{
-        .vertex_count = @intCast(builder.vertices.len),
-    };
+    const result = try mem.model_arena.allocator().create(Model);
+    result.vertex_count = @intCast(builder.vertices.len);
 
     const vertex_buffer_size: vk.DeviceSize = @sizeOf(@TypeOf(builder.vertices[0])) * builder.vertices.len;
     var vertex_staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -160,15 +160,15 @@ pub fn init(device: *Device, builder: anytype) InitError!Model {
     @memcpy(vertices_mapped, builder.vertices);
     vkd.unmapMemory(vertex_staging_buffer_memory);
 
-    this.vertex_buffer = device.createBuffer(
+    result.vertex_buffer = device.createBuffer(
         vertex_buffer_size,
         .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
         .{ .device_local_bit = true },
-        &this.vertex_buffer_memory,
+        &result.vertex_buffer_memory,
     ) catch return error.VulkanUnexpected;
 
     const cb = device.beginSingleTimeCommands();
-    device.copyBuffer(cb, vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
+    device.copyBuffer(cb, vertex_staging_buffer, result.vertex_buffer, vertex_buffer_size);
 
     var index_staging_buffer: vk.Buffer = .null_handle;
     var index_staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -176,8 +176,8 @@ pub fn init(device: *Device, builder: anytype) InitError!Model {
     if (builder.indices) |indices| {
         assert(indices.len >= 3);
 
-        this.index_count = @intCast(indices.len);
-        this.index_type = switch (IndexType) {
+        result.index_count = @intCast(indices.len);
+        result.index_type = switch (IndexType) {
             else => @panic(std.fmt.comptimePrint("Invalid type for vulkan vertex index '{}'", .{IndexType})),
             u8 => .uint8_khr,
             u16 => .uint16,
@@ -199,14 +199,14 @@ pub fn init(device: *Device, builder: anytype) InitError!Model {
         @memcpy(indices_mapped, indices);
         vkd.unmapMemory(index_staging_buffer_memory);
 
-        this.index_buffer = device.createBuffer(
+        result.index_buffer = device.createBuffer(
             index_buffer_size,
             .{ .transfer_dst_bit = true, .index_buffer_bit = true },
             .{ .device_local_bit = true },
-            &this.index_buffer_memory,
+            &result.index_buffer_memory,
         ) catch return error.VulkanUnexpected;
 
-        device.copyBuffer(cb, index_staging_buffer, this.index_buffer, index_buffer_size);
+        device.copyBuffer(cb, index_staging_buffer, result.index_buffer, index_buffer_size);
     } else {
         assert(IndexType == void);
     }
@@ -217,7 +217,7 @@ pub fn init(device: *Device, builder: anytype) InitError!Model {
         vkd.freeMemory(index_staging_buffer_memory, null);
     }
 
-    return this;
+    return result;
 }
 
 pub fn bind(this: *const Model, cb: vk.CommandBufferProxy) void {

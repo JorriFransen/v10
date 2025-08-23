@@ -51,7 +51,7 @@ pub const LoadError =
     InitError;
 
 // TODO: Should this return a pointer?
-pub fn load(device: *Device, name: []const u8, options: InitOptions) LoadError!Texture {
+pub fn load(device: *Device, name: []const u8, options: InitOptions) LoadError!*Texture {
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -66,9 +66,10 @@ pub const InitError = error{VulkanMapMemory} ||
     Device.CreateBufferError ||
     Device.CreateImageError ||
     CreateDescriptorSetError ||
-    vk.DeviceProxy.MapMemoryError;
+    vk.DeviceProxy.MapMemoryError ||
+    error{OutOfMemory};
 
-pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitError!Texture {
+pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitError!*Texture {
     const vkd = &device.device;
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -120,7 +121,8 @@ pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitErro
 
     const descriptor_set = try createDescriptorSet(device, image_view, options.filter);
 
-    return .{
+    const result = try mem.texture_arena.allocator().create(Texture);
+    result.* = .{
         .image = image,
         .image_memory = image_mem,
         .image_view = image_view,
@@ -128,6 +130,7 @@ pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitErro
         .width = cpu_texture.size.x,
         .height = cpu_texture.size.y,
     };
+    return result;
 }
 
 pub fn deinit(this: *Texture, device: *Device) void {
@@ -186,7 +189,7 @@ pub inline fn getSize(this: *const Texture) Vec2 {
     return .{ .x = @floatFromInt(this.width), .y = @floatFromInt(this.height) };
 }
 
-pub fn initDefaultWhite(device: *Device) InitError!Texture {
+pub fn initDefaultWhite(device: *Device) InitError!*Texture {
     const bitmap = Bitmap{
         .format = .u8_s_rgba,
         .size = .{ .x = 1, .y = 1 },

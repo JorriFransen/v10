@@ -93,10 +93,10 @@ var kb_2d_move_controller: KB2DMoveController = .{};
 var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
-var test_font_ttf: Font = undefined;
+var test_font_ttf: *Font = undefined;
 
-var test_tile_texture: Texture = undefined;
-var test_texture: Texture = undefined;
+var test_tile_texture: *Texture = undefined;
+var test_texture: *Texture = undefined;
 
 var test_tile_sprite: Sprite = undefined;
 var test_tile_sprite_sub_tl: Sprite = undefined;
@@ -157,19 +157,19 @@ fn run() !void {
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit(&device);
-    test_tile_sprite = Sprite.init(&test_tile_texture, .{ .yflip = true });
-    test_tile_sprite_sub_tl = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
-    test_tile_sprite_sub_tr = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
-    test_tile_sprite_sub_bl = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
-    test_tile_sprite_sub_br = Sprite.init(&test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
+    test_tile_sprite = Sprite.init(test_tile_texture, .{ .yflip = true });
+    test_tile_sprite_sub_tl = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
+    test_tile_sprite_sub_tr = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_tile_sprite_sub_bl = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_tile_sprite_sub_br = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
     test_texture = try Texture.load(&device, "res/textures/test.png", .{ .filter = .linear });
     defer test_texture.deinit(&device);
-    test_sprite = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512 });
-    test_sprite_sub_tl = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
-    test_sprite_sub_tr = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
-    test_sprite_sub_bl = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
-    test_sprite_sub_br = Sprite.init(&test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
+    test_sprite = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512 });
+    test_sprite_sub_tl = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
+    test_sprite_sub_tr = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_sprite_sub_bl = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
+    test_sprite_sub_br = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
     var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
     defer smooth_vase.deinit(&device);
@@ -182,7 +182,7 @@ fn run() !void {
     entities = &entities_;
 
     entity = &entities[0];
-    entity.model = &smooth_vase;
+    entity.model = smooth_vase;
     entity.transform.translation = .{ .z = 2.5 };
     entity.transform.scale = Vec3.scalar(3);
     entity.transform.scale = entity.transform.scale.mul(Vec3.new(1, -1, -1));
@@ -257,8 +257,8 @@ fn drawFrame() !void {
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
 
-            batch.drawText(&test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
-            batch.drawText(&test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
         }
         batch.end();
 
@@ -269,8 +269,8 @@ fn drawFrame() !void {
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
 
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
-            ui_batch.drawText(&test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
+            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
+            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
         }
         ui_batch.end();
 
@@ -363,15 +363,15 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
 
     // Draw them by texture, need to flip uv's manually, also need to specify size in worldspace (ppu not applied)
     const y_flip_uv = Rect{ .pos = .{ .x = 0, .y = 1 }, .size = .{ .x = 1, .y = -1 } };
-    batch.drawRect(.{ .pos = p0_1, .size = dim }, .{ .texture = &test_texture, .uv_rect = y_flip_uv });
+    batch.drawRect(.{ .pos = p0_1, .size = dim }, .{ .texture = test_texture, .uv_rect = y_flip_uv });
     batch.drawRectLine(Rect.new(p0_1, dim), outline);
-    batch.drawRect(.{ .pos = p1_1, .size = dim }, .{ .texture = &test_tile_texture, .uv_rect = y_flip_uv });
+    batch.drawRect(.{ .pos = p1_1, .size = dim }, .{ .texture = test_tile_texture, .uv_rect = y_flip_uv });
     batch.drawRectLine(Rect.new(p1_1, dim), outline);
 
     // Cannot control uv's in this case, only specify size in worldspace
-    batch.drawRect(.{ .pos = p0_2, .size = dim }, .{ .texture = &test_texture });
+    batch.drawRect(.{ .pos = p0_2, .size = dim }, .{ .texture = test_texture });
     batch.drawRectLine(Rect.new(p0_2, dim), outline);
-    batch.drawRect(.{ .pos = p1_2, .size = dim }, .{ .texture = &test_tile_texture });
+    batch.drawRect(.{ .pos = p1_2, .size = dim }, .{ .texture = test_tile_texture });
     batch.drawRectLine(Rect.new(p1_2, dim), outline);
 
     batch.drawRect(.{ .pos = p0_3, .size = dim }, .{ .color = Vec4.new(1, 0, 0, 1) });
@@ -408,19 +408,19 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
     batch.drawRectLine(Rect.new(p2_0, dim), outline);
     batch.drawTriangleLine(p2_0, p2_0.add(Vec2.new(0.5, 1)), p2_0.add(.{ .x = 1 }), triangle_line);
     batch.drawTriangle(p2_1, p2_1.add(Vec2.new(0.5, 1)), p2_1.add(.{ .x = 1 }), .{
-        .texture = &test_texture,
+        .texture = test_texture,
         .uv_coords = .{ Vec2.new(0, 1), Vec2.new(0.5, 0), Vec2.new(1, 1) },
     });
     batch.drawRectLine(Rect.new(p2_1, dim), outline);
     batch.drawTriangleLine(p2_1, p2_1.add(Vec2.new(0.5, 1)), p2_1.add(.{ .x = 1 }), triangle_line);
     batch.drawTriangle(p2_2.add(.{ .y = 1 }), p2_2.add(dim), p2_2.add(.{ .x = 1 }), .{
-        .texture = &test_tile_texture,
+        .texture = test_tile_texture,
         .uv_coords = .{ Vec2.new(0, 1), Vec2.new(1, 1), Vec2.new(1, 0) },
     });
     batch.drawRectLine(Rect.new(p2_2, dim), outline);
     batch.drawTriangleLine(p2_2.add(.{ .y = 1 }), p2_2.add(dim), p2_2.add(.{ .x = 1 }), triangle_line);
     batch.drawTriangle(p2_3, p2_3.add(Vec2.new(0.5, 1)), p2_3.add(.{ .x = 1 }), .{
-        .texture = &test_tile_texture,
+        .texture = test_tile_texture,
         .uv_coords = .{ Vec2.new(0, 1), Vec2.new(1, 1), Vec2.new(1, 0) },
     });
     batch.drawRectLine(Rect.new(p2_3, dim), outline);
@@ -435,7 +435,7 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
 
     const tl_uv = test_sprite_sub_tl.uv_rect;
     batch.drawTriangle(tl, tl.add(.{ .x = 0.5 }), tl.add(.{ .x = 0.5, .y = -0.5 }), .{
-        .texture = &test_texture,
+        .texture = test_texture,
         .uv_coords = .{ tl_uv.tl(), tl_uv.tr(), tl_uv.br() },
     });
     batch.drawRectLine(Rect.new(tl.add(.{ .y = -0.5 }), Vec2.scalar(0.5)), quadrant_line);
@@ -443,7 +443,7 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
 
     const tr_uv = test_sprite_sub_tr.uv_rect;
     batch.drawTriangle(tr.add(.{ .x = -0.5 }), tr, tr.add(Vec2.scalar(-0.5)), .{
-        .texture = &test_texture,
+        .texture = test_texture,
         .uv_coords = .{ tr_uv.tl(), tr_uv.tr(), tr_uv.bl() },
     });
     batch.drawRectLine(Rect.new(tr.addScalar(-0.5), Vec2.scalar(0.5)), quadrant_line);
@@ -451,7 +451,7 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
 
     const bl_uv = test_sprite_sub_bl.uv_rect;
     batch.drawTriangle(bl, bl.add(Vec2.scalar(0.5)), bl.add(.{ .x = 0.5 }), .{
-        .texture = &test_texture,
+        .texture = test_texture,
         .uv_coords = .{ bl_uv.bl(), bl_uv.tr(), bl_uv.br() },
     });
     batch.drawRectLine(Rect.new(bl, Vec2.scalar(0.5)), quadrant_line);
@@ -459,7 +459,7 @@ fn drawTestScene(batch: *Renderer2D.Batch) void {
 
     const br_uv = test_sprite_sub_br.uv_rect;
     batch.drawTriangle(br.add(.{ .x = -0.5 }), br.add(.{ .x = -0.5, .y = 0.5 }), br, .{
-        .texture = &test_texture,
+        .texture = test_texture,
         .uv_coords = .{ br_uv.bl(), br_uv.tl(), br_uv.br() },
     });
     batch.drawRectLine(Rect.new(br.add(.{ .x = -0.5 }), Vec2.scalar(0.5)), quadrant_line);

@@ -19,8 +19,7 @@ const KernMap = std.HashMap(KernPair, f32, KernPair.MapContext, std.hash_map.def
 const assert = std.debug.assert;
 const log = std.log.scoped(.font);
 
-// TODO: Pointer?
-texture: Texture,
+texture: *Texture,
 glyphs: GlyphMap,
 invalid_glyph: ?Glyph = null,
 kern_info: KernMap,
@@ -70,7 +69,7 @@ pub const LoadError =
     res.LoadError ||
     TtfInitError;
 
-pub fn load(device: *Device, name: []const u8, size: f32) LoadError!Font {
+pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -90,7 +89,7 @@ pub const TtfInitError =
     Texture.InitError ||
     error{OutOfMemory};
 
-pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!Font {
+pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*Font {
 
     // TODO: Calculate or iterate on bitmap size
     const bitmap_size = Vec2u32.new(1024, 512);
@@ -192,7 +191,8 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!Fo
         });
     }
 
-    return .{
+    const result = try mem.font_arena.allocator().create(Font);
+    result.* = .{
         .texture = texture,
         .glyphs = glyphs,
         .invalid_glyph = null,
@@ -201,6 +201,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!Fo
         .line_height = line_height,
         .line_gap = linegap,
     };
+    return result;
 }
 
 pub fn deinit(this: *Font, device: *Device) void {

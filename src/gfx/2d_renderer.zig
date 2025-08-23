@@ -59,7 +59,7 @@ index_staging_buffer: vk.Buffer = .null_handle,
 index_staging_buffer_memory: vk.DeviceMemory = .null_handle,
 index_staging_buffer_mapped: []Index = undefined,
 
-default_white_texture: Texture = undefined,
+default_white_texture: *Texture = undefined,
 
 pub const Vertex = extern struct {
     pos: Vec2,
@@ -353,7 +353,7 @@ pub const Batch = struct {
 
         batch.pushCommand(.{
             .type = .line,
-            .texture = &batch.renderer.default_white_texture,
+            .texture = batch.renderer.default_white_texture,
             .line_width = options.width,
             .vertex_offset = vstart,
             .vertex_count = 2,
@@ -491,7 +491,7 @@ pub const Batch = struct {
 
         batch.pushCommand(.{
             .type = .text,
-            .texture = &font.texture,
+            .texture = font.texture,
             .vertex_offset = vstart,
             .vertex_count = vcount,
         });
@@ -599,7 +599,7 @@ pub const Batch = struct {
             cb.setLineWidth(current_line_width);
         }
 
-        var current_texture = renderer.commands.items[0].texture orelse &renderer.default_white_texture;
+        var current_texture = renderer.commands.items[0].texture orelse renderer.default_white_texture;
         if (renderer.commands.items[0].type != .line) current_texture.bind(cb, renderer.layout);
 
         for (renderer.commands.items) |*command| {
@@ -626,7 +626,7 @@ pub const Batch = struct {
                 current_pipeline.bind(cb);
             }
             if (switch_texture) {
-                current_texture = command.texture orelse &renderer.default_white_texture;
+                current_texture = command.texture orelse renderer.default_white_texture;
                 current_texture.bind(cb, renderer.layout);
             } else if (switch_line_width) {
                 current_line_width = command.line_width;
