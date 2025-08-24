@@ -9,6 +9,7 @@ pub const c = @cImport({
 });
 
 const Allocator = std.mem.Allocator;
+const Arena = mem.Arena;
 
 const assert = std.debug.assert;
 
@@ -103,65 +104,136 @@ fn f(comptime name: []const u8, comptime T: type) *const T {
 const default_align = std.mem.Alignment.fromByteUnits(@alignOf(usize));
 const header_size: usize = @sizeOf(usize);
 
-pub export fn stbiZigAssert(condition: c_int) callconv(.c) void {
+pub export fn stbZigAssert(condition: c_int) callconv(.c) void {
     std.debug.assert(condition != 0);
 }
 
-pub export fn stbiZigMalloc(size: usize) callconv(.c) ?*anyopaque {
-    const padded_size = size + header_size;
-    const raw_ptr_opt = current_temp.arena.rawAlloc(padded_size, default_align);
+fn arenaAlloc(arena: *Arena, size: usize) ?*anyopaque {
+    assert(size > 0);
+
+    const total_size = size + header_size;
+    const raw_ptr_opt = arena.rawAlloc(total_size, default_align);
     const raw_ptr: [*]u8 = raw_ptr_opt orelse {
         log.err("stbi arena malloc failure!", .{});
         return null;
     };
 
-    const ptrs: []usize = @as([*]usize, @ptrCast(@alignCast(raw_ptr)))[0..2];
-    ptrs[0] = size;
-    return @ptrCast(&ptrs[1]);
+    const header_ptr = @as(*usize, @ptrCast(@alignCast(raw_ptr)));
+    header_ptr.* = size;
+
+    return @ptrCast(raw_ptr + header_size);
+}
+
+fn arenaFree(arena: *Arena, ptr: ?*anyopaque) void {
+    if (ptr) |p| {
+        const raw_ptr = @as([*]u8, @ptrCast(p)) - header_size;
+        const header_ptr = @as(*const usize, @ptrCast(@alignCast(raw_ptr)));
+        const size = header_ptr.*;
+        const slice = raw_ptr[0 .. size + header_size];
+        arena.rawFree(slice, default_align);
+    }
+}
+
+pub export fn stbiZigMalloc(size: usize) callconv(.c) ?*anyopaque {
+    return arenaAlloc(current_temp.arena, size);
 }
 
 pub export fn stbiZigRealloc(ptr: ?*anyopaque, new_size: usize) callconv(.c) ?*anyopaque {
-    if (ptr) |p| {
-        if (new_size == 0) {
-            stbiZigFree(ptr);
-            return null;
-        }
-
-        const old_raw_start: [*]u8 = @as([*]u8, @ptrCast(p)) - header_size;
-        const old_ptrs: []usize = @as([*]usize, @ptrCast(@alignCast(old_raw_start)))[0..2];
-        const old_total_size = old_ptrs[0] + header_size;
-        const old_memory: []u8 = @as([*]u8, @ptrCast(&old_ptrs[0]))[0..old_total_size];
-
-        assert(&old_ptrs[1] == @as(*usize, @ptrCast(@alignCast(ptr))));
-        const new_total_size = new_size + header_size;
-
-        if (current_temp.arena.rawResize(old_memory, default_align, new_total_size)) {
-            old_ptrs[0] = new_size;
-
-            return ptr;
-        } else {
-            const new_ptr_opt = current_temp.arena.rawRemap(old_memory, default_align, new_total_size);
-            const new_raw_ptr: [*]u8 = new_ptr_opt orelse {
-                log.err("stbi arena realloc failure!", .{});
-                return null;
-            };
-            const ptrs: []usize = @as([*]usize, @ptrCast(@alignCast(new_raw_ptr)))[0..2];
-            ptrs[0] = new_size;
-            return &ptrs[1];
-        }
-    } else {
-        assert(new_size > 0);
+    if (ptr == null) {
         return stbiZigMalloc(new_size);
+    }
+
+    const p = ptr.?;
+    if (new_size == 0) {
+        stbiZigFree(p);
+        return null;
+    }
+
+    const old_raw_ptr = @as([*]u8, @ptrCast(p)) - header_size;
+    const old_header_ptr = @as(*usize, @ptrCast(@alignCast(old_raw_ptr)));
+    const old_user_size = old_header_ptr.*;
+    const old_total_size = old_user_size + header_size;
+    const old_slice = old_raw_ptr[0..old_total_size];
+
+    const new_total_size = new_size + header_size;
+
+    if (current_temp.arena.rawResize(old_slice, default_align, new_total_size)) {
+        old_header_ptr.* = new_size;
+        return p;
+    } else {
+        const new_ptr_opt = current_temp.arena.rawRemap(old_slice, default_align, new_total_size);
+        const new_raw_ptr = new_ptr_opt orelse {
+            log.err("stbi arena realloc failure!", .{});
+            return null;
+        };
+
+        const new_header_ptr = @as(*usize, @ptrCast(@alignCast(new_raw_ptr)));
+        new_header_ptr.* = new_size;
+        return @ptrCast(new_raw_ptr + header_size);
     }
 }
 
 pub export fn stbiZigFree(ptr: ?*anyopaque) callconv(.c) void {
-    if (ptr) |p| {
-        const raw_ptr: [*]u8 = @as([*]u8, @ptrCast(p)) - header_size;
-        const ptrs: []usize = @as([*]usize, @ptrCast(@alignCast(raw_ptr)))[0..2];
-        const memory: []u8 = @as([*]u8, @ptrCast(&ptrs[0]))[0..ptrs[0]];
-        assert(&ptrs[1] == @as(*usize, @ptrCast(@alignCast(ptr))));
+    arenaFree(current_temp.arena, ptr);
+}
 
-        current_temp.arena.rawFree(memory, default_align);
-    }
+pub export fn stbttZigIFloor(x: f64) callconv(.c) c_int {
+    return @intFromFloat(@floor(x));
+}
+
+pub export fn stbttZigICeil(x: f64) callconv(.c) c_int {
+    return @intFromFloat(@ceil(x));
+}
+
+pub export fn stbttZigSqrt(x: f64) callconv(.c) f64 {
+    return @sqrt(x);
+}
+
+pub export fn stbttZigPow(x: f64, y: f64) callconv(.c) f64 {
+    return std.math.pow(f64, x, y);
+}
+
+pub export fn stbttZigFmod(x: f64, y: f64) callconv(.c) f64 {
+    return @mod(x, y);
+}
+
+pub export fn stbttZigCos(x: f64) callconv(.c) f64 {
+    return @cos(x);
+}
+
+pub export fn stbttZigACos(x: f64) callconv(.c) f64 {
+    return std.math.acos(x);
+}
+
+pub export fn stbttZigFabs(x: f64) callconv(.c) f64 {
+    return @abs(x);
+}
+
+pub export fn stbttZigMalloc(size: usize, ctx: ?*anyopaque) callconv(.c) ?*anyopaque {
+    assert(ctx != null);
+    const arena: *Arena = @ptrCast(@alignCast(ctx));
+    return arenaAlloc(arena, size);
+}
+
+pub export fn stbttZigFree(ptr: ?*anyopaque, ctx: ?*anyopaque) callconv(.c) void {
+    assert(ctx != null);
+    const arena: *Arena = @ptrCast(@alignCast(ctx));
+    arenaFree(arena, ptr);
+}
+
+pub export fn stbttStrlen(x: [*:0]const u8) callconv(.c) usize {
+    return std.mem.span(x).len;
+}
+
+pub export fn stbttMemcpy(dst_ptr: *anyopaque, noalias src_ptr: *anyopaque, count: usize) callconv(.c) *anyopaque {
+    const dst = @as([*]u8, @ptrCast(dst_ptr));
+    const src = @as([*]u8, @ptrCast(src_ptr));
+    @memcpy(dst[0..count], src[0..count]);
+    return dst;
+}
+
+pub export fn stbttMemset(dst_ptr: *anyopaque, fill_byte: c_int, count: usize) callconv(.c) *anyopaque {
+    const dst = @as([*]u8, @ptrCast(dst_ptr));
+    @memset(dst[0..count], @intCast(fill_byte));
+    return dst;
 }

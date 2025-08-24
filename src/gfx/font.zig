@@ -118,9 +118,12 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
     const base = ascent;
     const line_height = ascent + -descent;
 
+    var tmp = mem.get_temp();
+    defer tmp.release();
+
     var char_data: [char_count]stb.c.stbtt_packedchar = undefined;
     var context: stb.c.stbtt_pack_context = undefined;
-    _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1, null);
+    _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1, tmp.arena);
     _ = stb.c.stbtt_PackFontRange(&context, ttf_data.ptr, 0, stb.c.STBTT_POINT_SIZE(size), first_char, char_count, &char_data);
     stb.c.stbtt_PackEnd(&context);
 
