@@ -4,6 +4,7 @@ const log = std.log.scoped(.stb);
 
 pub const c = @cImport({
     @cInclude("stb_image.h");
+    @cInclude("stb_rect_pack.h");
     @cInclude("stb_truetype.h");
 });
 

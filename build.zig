@@ -14,7 +14,6 @@ pub fn build(b: *std.Build) !void {
 
     const use_llvm = if (target.result.os.tag == .windows) true else debugging;
 
-    // const clap = b.dependency("clap", .{});
     const cli_parse = b.dependency("CliParse", .{});
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan_xml = vulkan_headers.path("registry/vk.xml");
@@ -53,7 +52,7 @@ pub fn build(b: *std.Build) !void {
     main_module.addImport("memory", memory_module);
 
     main_module.addCSourceFile(.{ .file = b.path("src/stb/implementation.c") });
-    main_module.addIncludePath(b.path("src/stb/"));
+    main_module.addIncludePath(b.path("vendor/stb/"));
 
     const exe = b.addExecutable(.{
         .name = "v10game",
