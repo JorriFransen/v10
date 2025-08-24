@@ -20,6 +20,8 @@ image: vk.Image,
 image_memory: vk.DeviceMemory,
 image_view: vk.ImageView,
 descriptor_set: vk.DescriptorSet,
+format: Format,
+filter: Filter,
 
 width: u32,
 height: u32,
@@ -43,6 +45,7 @@ pub const Filter = enum {
 
 pub const InitOptions = struct {
     filter: Filter = .nearest,
+    debug_name: ?[]const u8 = null,
 };
 
 pub const LoadError =
@@ -51,15 +54,26 @@ pub const LoadError =
     InitError;
 
 // TODO: Should this return a pointer?
-pub fn load(device: *Device, name: []const u8, options: InitOptions) LoadError!*Texture {
+pub fn load(device: *Device, name: []const u8, options_: InitOptions) LoadError!*Texture {
+    if (res.cache.get(name)) |ptr| {
+        const texture: *Texture = @ptrCast(@alignCast(ptr));
+        const size = texture.getSize();
+        log.info("Loading cached texture: '{s}' - {}x{} - {} - {}", .{ name, size.x, size.y, texture.format, texture.filter });
+        return texture;
+    }
+
     var tmp = mem.get_temp();
     defer tmp.release();
 
     const cpu_texture = try Bitmap.load(tmp.allocator(), name, .{});
 
-    log.info("Loaded cpu texture: '{s}' - {}x{} - {}", .{ name, cpu_texture.size.x, cpu_texture.size.y, cpu_texture.format });
+    var options = options_;
+    if (options.debug_name == null) options.debug_name = name;
+    const result = try init(device, cpu_texture, options);
 
-    return try init(device, cpu_texture, options);
+    try res.cache.put(name, result);
+
+    return result;
 }
 
 pub const InitError = error{VulkanMapMemory} ||
@@ -69,12 +83,20 @@ pub const InitError = error{VulkanMapMemory} ||
     vk.DeviceProxy.MapMemoryError ||
     error{OutOfMemory};
 
-pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitError!*Texture {
+pub fn init(device: *Device, bitmap: Bitmap, options: InitOptions) InitError!*Texture {
     const vkd = &device.device;
+
+    log.info("Creating texture: '{s}' - {}x{} - {} - {}", .{
+        options.debug_name orelse "",
+        bitmap.size.x,
+        bitmap.size.y,
+        bitmap.format,
+        options.filter,
+    });
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
     const staging_buffer = try device.createBuffer(
-        cpu_texture.data.len,
+        bitmap.data.len,
         .{ .transfer_src_bit = true },
         .{ .host_visible_bit = true, .host_coherent_bit = true },
         &staging_buffer_memory,
@@ -84,19 +106,19 @@ pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitErro
         vkd.freeMemory(staging_buffer_memory, null);
     }
 
-    const staging_data_opt = try vkd.mapMemory(staging_buffer_memory, 0, cpu_texture.data.len, .{});
+    const staging_data_opt = try vkd.mapMemory(staging_buffer_memory, 0, bitmap.data.len, .{});
     const staging_data = staging_data_opt orelse return error.VulkanMapMemory;
-    const staging_mapped = @as([*]u8, @ptrCast(staging_data))[0..cpu_texture.data.len];
-    @memcpy(staging_mapped, cpu_texture.data);
+    const staging_mapped = @as([*]u8, @ptrCast(staging_data))[0..bitmap.data.len];
+    @memcpy(staging_mapped, bitmap.data);
     vkd.unmapMemory(staging_buffer_memory);
 
-    const format = cpu_texture.format.toVulkan();
+    const format = bitmap.format.toVulkan();
 
     var image_mem: vk.DeviceMemory = .null_handle;
     const image = try device.createImageWithInfo(
         &.{
             .image_type = .@"2d",
-            .extent = .{ .width = cpu_texture.size.x, .height = cpu_texture.size.y, .depth = 1 },
+            .extent = .{ .width = bitmap.size.x, .height = bitmap.size.y, .depth = 1 },
             .mip_levels = 1,
             .array_layers = 1,
             .format = format,
@@ -113,7 +135,7 @@ pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitErro
 
     const cb = device.beginSingleTimeCommands();
     device.transitionImageLayout(cb, image, format, .undefined, .transfer_dst_optimal);
-    device.copyBufferToImage(cb, staging_buffer, image, cpu_texture.size.x, cpu_texture.size.y);
+    device.copyBufferToImage(cb, staging_buffer, image, bitmap.size.x, bitmap.size.y);
     device.transitionImageLayout(cb, image, format, .transfer_dst_optimal, .shader_read_only_optimal);
     device.endSingleTimeCommands(cb);
 
@@ -127,8 +149,10 @@ pub fn init(device: *Device, cpu_texture: Bitmap, options: InitOptions) InitErro
         .image_memory = image_mem,
         .image_view = image_view,
         .descriptor_set = descriptor_set,
-        .width = cpu_texture.size.x,
-        .height = cpu_texture.size.y,
+        .format = bitmap.format,
+        .filter = options.filter,
+        .width = bitmap.size.x,
+        .height = bitmap.size.y,
     };
     return result;
 }
@@ -195,5 +219,5 @@ pub fn initDefaultWhite(device: *Device) InitError!*Texture {
         .size = .{ .x = 1, .y = 1 },
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
-    return init(device, bitmap, .{ .filter = .nearest });
+    return init(device, bitmap, .{ .filter = .nearest, .debug_name = "default_white" });
 }

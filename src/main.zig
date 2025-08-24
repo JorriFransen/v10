@@ -4,6 +4,7 @@ const gfx = @import("gfx.zig");
 const math = @import("math.zig");
 const clip = @import("cli_parse");
 const glfw = @import("glfw");
+const res = @import("resource.zig");
 
 const Instant = std.time.Instant;
 const Window = @import("window.zig");
@@ -41,10 +42,8 @@ pub fn main() !void {
 
     try mem.init();
 
-    // _ = try stb.image.load(mem.common_arena.allocator(), "res/textures/test.png", .rgb_alpha);
-
     var tmp = mem.get_temp();
-    cli_options = OptionParser.parse(mem.common_arena.allocator(), tmp.allocator()) catch {
+    cli_options = OptionParser.parse(mem.persistent_arena.allocator(), tmp.allocator()) catch {
         try OptionParser.usage(std.fs.File.stderr());
         return;
     };
@@ -54,6 +53,8 @@ pub fn main() !void {
         try OptionParser.usage(std.fs.File.stdout());
         return;
     }
+
+    res.cache = res.CacheMap.init(mem.resource_arena.allocator());
 
     try run();
 
@@ -156,6 +157,7 @@ fn run() !void {
     defer test_font_ttf.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
+    _ = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit(&device);
     test_tile_sprite = Sprite.init(test_tile_texture, .{ .yflip = true });
     test_tile_sprite_sub_tl = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });

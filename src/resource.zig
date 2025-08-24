@@ -17,6 +17,9 @@ pub const Type = enum {
 type: Type,
 data: []const u8,
 
+pub const CacheMap = std.StringHashMap(*anyopaque);
+pub var cache: CacheMap = undefined; // memory managed in main.zig
+
 pub const LoadError = error{
     NotFound,
     UnsupportedType,

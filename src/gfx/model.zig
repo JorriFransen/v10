@@ -64,11 +64,18 @@ pub const LoadError =
 
 // TODO: Return pointer
 pub fn load(device: *Device, name: []const u8) LoadError!*Model {
+    if (res.cache.get(name)) |ptr| {
+        const model: *Model = @ptrCast(@alignCast(ptr));
+        log.info("Loading cached model: '{s}'", .{name});
+        return model;
+    }
     var tmp = mem.get_temp();
     defer tmp.release();
 
     const mesh = try Mesh.load(tmp.allocator(), name);
-    return init(device, buildIndexed(mesh.vertices, mesh.indices));
+    const result = try init(device, buildIndexed(mesh.vertices, mesh.indices));
+    try res.cache.put(name, result);
+    return result;
 }
 
 pub fn deinit(this: *Model, device: *Device) void {

@@ -286,7 +286,7 @@ fn pickPhysicalDevice(this: *@This()) !void {
             if (score > high_score) {
                 high_score = score;
                 device_index = @intCast(i);
-                this.device_info = try dev_info.copy(mem.common_arena.allocator());
+                this.device_info = try dev_info.copy(mem.persistent_arena.allocator());
             }
         }
     }

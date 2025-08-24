@@ -39,7 +39,7 @@ pub fn createCommandBuffers(this: *Renderer) !void {
     const vkd = &this.device.device;
 
     assert(this.command_buffers.len == 0);
-    this.command_buffers = try mem.common_arena.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
+    this.command_buffers = try mem.persistent_arena.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
 
     const alloc_info = vk.CommandBufferAllocateInfo{
         .level = .primary,

@@ -42,6 +42,8 @@ pub fn load(allocator: Allocator, name: []const u8, options: LoadBitmapOptions) 
         .u8_u_r => .grey,
     };
 
+    log.info("Loading bitmap: '{s}' - {}", .{ name, options.format });
+
     const texture = try stb.image.loadFromMemory(allocator, resource.data, stb_format);
 
     return .{

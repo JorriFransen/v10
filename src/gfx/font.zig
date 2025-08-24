@@ -19,6 +19,7 @@ const KernMap = std.HashMap(KernPair, f32, KernPair.MapContext, std.hash_map.def
 const assert = std.debug.assert;
 const log = std.log.scoped(.font);
 
+size: f32,
 texture: *Texture,
 glyphs: GlyphMap,
 invalid_glyph: ?Glyph = null,
@@ -73,6 +74,12 @@ pub const LoadError =
     TtfInitError;
 
 pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
+    if (res.cache.get(name)) |ptr| {
+        const font: *Font = @ptrCast(@alignCast(ptr));
+        log.info("Loading cached font: '{s}' - {}", .{ name, font.size });
+        return font;
+    }
+
     var tmp = mem.get_temp();
     defer tmp.release();
 
@@ -85,7 +92,9 @@ pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
         },
     }
 
-    return try initTtf(device, resource.data, size);
+    const result = try initTtf(device, resource.data, size, name);
+    try res.cache.put(name, result);
+    return result;
 }
 
 pub const TtfInitError =
@@ -94,7 +103,7 @@ pub const TtfInitError =
     mem.Arena.Error ||
     error{OutOfMemory};
 
-pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*Font {
+pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u8) TtfInitError!*Font {
 
     // TODO: Calculate or iterate on bitmap size
     const bitmap_size = Vec2u32.new(1024, 1024);
@@ -125,7 +134,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
         .format = .u8_u_r,
         .size = bitmap_size,
         .data = &bitmap,
-    }, .{ .filter = .nearest });
+    }, .{ .filter = .nearest, .debug_name = name });
 
     // This must be large enough to store the glyph and kerning tables, or we need to move to a different (chunked?) allocator.
     var arena = try mem.Arena.init(.{ .virtual = .{} });
@@ -182,6 +191,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
 
     const result = try mem.font_arena.allocator().create(Font);
     result.* = .{
+        .size = size,
         .texture = texture,
         .glyphs = glyphs,
         .invalid_glyph = null,
