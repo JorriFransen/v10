@@ -89,6 +89,7 @@ pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
 }
 
 pub const TtfInitError =
+    stb.truetype.Error ||
     Texture.InitError ||
     mem.Arena.Error ||
     error{OutOfMemory};
@@ -103,29 +104,22 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
     const last_char: u32 = '~';
     const char_count = (last_char - first_char) + 1;
 
-    var font_info: stb.c.stbtt_fontinfo = undefined;
-    _ = stb.c.stbtt_InitFont(&font_info, ttf_data.ptr, 0);
+    const font_info = try stb.truetype.initFont(ttf_data, 0);
 
-    const scale = stb.c.stbtt_ScaleForMappingEmToPixels(&font_info, size);
+    const scale = stb.truetype.scaleForMappingEmToPixels(&font_info, size);
 
-    var i_ascent: c_int = undefined;
-    var i_descent: c_int = undefined;
-    var i_linegap: c_int = undefined;
-    stb.c.stbtt_GetFontVMetrics(&font_info, &i_ascent, &i_descent, &i_linegap);
-    const ascent = @as(f32, @floatFromInt(i_ascent)) * scale;
-    const descent = @as(f32, @floatFromInt(i_descent)) * scale;
-    const linegap = @as(f32, @floatFromInt(i_linegap)) * scale;
+    const vmetrics = stb.truetype.getFontVMetrics(&font_info);
+    const ascent = @as(f32, @floatFromInt(vmetrics.ascent)) * scale;
+    const descent = @as(f32, @floatFromInt(vmetrics.descent)) * scale;
+    const linegap = @as(f32, @floatFromInt(vmetrics.linegap)) * scale;
     const base = ascent;
     const line_height = ascent + -descent;
 
-    var tmp = mem.get_temp();
-    defer tmp.release();
-
-    var char_data: [char_count]stb.c.stbtt_packedchar = undefined;
-    var context: stb.c.stbtt_pack_context = undefined;
-    _ = stb.c.stbtt_PackBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1, tmp.arena);
-    _ = stb.c.stbtt_PackFontRange(&context, ttf_data.ptr, 0, stb.c.STBTT_POINT_SIZE(size), first_char, char_count, &char_data);
-    stb.c.stbtt_PackEnd(&context);
+    var char_data: [char_count]stb.truetype.PackedChar = undefined;
+    var context: stb.truetype.PackContext = undefined;
+    try stb.truetype.packBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1);
+    try stb.truetype.packFontRange(&context, ttf_data, 0, stb.truetype.POINT_SIZE(size), first_char, &char_data);
+    stb.truetype.packEnd(&context);
 
     const texture = try Texture.init(device, .{
         .format = .u8_u_r,
@@ -167,10 +161,10 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
     }
 
     // This only works for old school kern tables
-    const kern_count = stb.c.stbtt_GetKerningTableLength(&font_info);
+    const kern_count = stb.truetype.getKerningTableLength(&font_info);
 
     var kern_info = KernMap.init(arena.allocator());
-    if (kern_count != 0) try kern_info.ensureTotalCapacity(@intCast(kern_count));
+    if (kern_count != 0) try kern_info.ensureTotalCapacity(kern_count);
 
     // TODO: make this work with more complex glyph ranges
     for (first_char..last_char + 1) |_a| {
@@ -179,7 +173,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32) TtfInitError!*F
             const b: u32 = @intCast(_b);
             if (a == b) continue;
 
-            const kern_advance = stb.c.stbtt_GetGlyphKernAdvance(&font_info, @intCast(a), @intCast(b));
+            const kern_advance = stb.truetype.getGLyphKernAdvance(&font_info, a, b);
             if (kern_advance != 0) {
                 try kern_info.put(.{ .a = a, .b = b }, @as(f32, @floatFromInt(kern_advance)) * scale);
             }
