@@ -422,6 +422,130 @@ pub const Batch = struct {
         batch.drawRect(rect, .{ .texture = sprite.texture, .color = white, .uv_rect = sprite.uv_rect });
     }
 
+    const OldFont = @import("old_font.zig");
+    pub fn drawTextOld(batch: *Batch, font: *OldFont, pos: Vec2, text: []const u8, options: DrawTextOptions) void {
+        _ = options;
+        if (builtin.mode == .Debug) {
+            if (font.texture.image == .null_handle) @panic("Font has no texture, is it loaded?!");
+            if (font.glyphs.count() <= 0) @panic("Font has no glyps, is it loaded?!");
+        }
+
+        if (text.len == 0) return;
+
+        const ppu_factor = 1 / batch.camera.ppu;
+
+        const line_height = font.line_height * ppu_factor;
+        const cam_y_scale: f32 = switch (batch.camera.origin) {
+            .top_left => ppu_factor,
+            .center, .bottom_left => -ppu_factor,
+        };
+        const cam_y_offset: f32 = switch (batch.camera.origin) {
+            .top_left => 0,
+            .center, .bottom_left => line_height,
+        };
+
+        const renderer = batch.renderer;
+
+        var cursor_pos = pos;
+
+        const vcount: u32 = @intCast(text.len * 4);
+        const vbuf = batch.renderer.vertex_staging_buffer_mapped;
+        const vstart = renderer.vertex_offset;
+        if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
+        const text_vertices = vbuf[vstart .. vstart + vcount];
+
+        var last_char: u32 = 0;
+        for (text, 0..) |char, i| {
+            assert(char != 0);
+
+            const glyph = font.glyphs.get(char) orelse @panic("Invalid character");
+            const vi = i * 4;
+            const glyph_vertices = text_vertices[vi .. vi + 4];
+            const uv_rect = glyph.uv_rect;
+            const color = white;
+
+            var kern_advance: f32 = 0;
+            if (last_char != 0) {
+                if (font.kern_info.get(.{ .a = last_char, .b = char })) |ka| {
+                    kern_advance = ka * ppu_factor;
+                }
+            }
+
+            cursor_pos.x += kern_advance;
+
+            const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
+            var glyph_pos = cursor_pos.add(glyph.offset.mul(cam_scale)).add(.{ .y = cam_y_offset });
+            if (ppu_factor == 1) glyph_pos.x = std.math.round(glyph_pos.x);
+            const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
+
+            glyph_vertices[0] = .{ .pos = glyph_pos, .uv = uv_rect.pos, .color = color };
+            glyph_vertices[1] = .{ .pos = glyph_pos.add(.{ .x = glyph_size.x }), .uv = uv_rect.br(), .color = color };
+            glyph_vertices[2] = .{ .pos = glyph_pos.add(glyph_size), .uv = uv_rect.tr(), .color = color };
+            glyph_vertices[3] = .{ .pos = glyph_pos.add(.{ .y = glyph_size.y }), .uv = uv_rect.tl(), .color = color };
+
+            cursor_pos.x += glyph.x_advance * ppu_factor;
+
+            last_char = char;
+        }
+
+        renderer.vertex_offset += vcount;
+
+        batch.pushCommand(.{
+            .type = .text,
+            .texture = font.texture,
+            .vertex_offset = vstart,
+            .vertex_count = vcount,
+        });
+
+        const cursor_col_1 = Vec4.new(1, 1, 1, 1);
+        const cursor_col_2 = Vec4.new(0, 0, 1, 1);
+
+        // Debug lines
+        if (font_debug_lines) {
+            last_char = 0;
+            cursor_pos = pos;
+
+            const base: f32 = switch (batch.camera.origin) {
+                .top_left => pos.y + font.base_height * ppu_factor,
+                .bottom_left, .center => pos.y + (font.line_height - font.base_height) * ppu_factor,
+            };
+
+            for (text, 0..) |char, i| {
+                const glyph = font.glyphs.get(char) orelse unreachable;
+
+                var kern_advance: f32 = 0;
+                if (last_char != 0) {
+                    if (font.kern_info.get(.{ .a = last_char, .b = char })) |ka| {
+                        kern_advance = ka * ppu_factor;
+                    }
+                }
+
+                const before_kern = cursor_pos;
+                cursor_pos.x += kern_advance;
+
+                const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
+                var glyph_pos = cursor_pos.add(glyph.offset.mul(cam_scale)).add(.{ .y = cam_y_offset });
+                if (ppu_factor == 1) glyph_pos.x = std.math.round(glyph_pos.x);
+                const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
+
+                const x_advance = glyph.x_advance * ppu_factor;
+                const cursor_color = if (i % 2 == 0) cursor_col_1 else cursor_col_2;
+                batch.drawRectLine(Rect.new(cursor_pos, Vec2.new(x_advance, line_height)), .{ .color = cursor_color });
+                batch.drawRectLine(Rect.new(glyph_pos, glyph_size), .{ .color = Vec4.new(1, 0, 0, 1) });
+                if (kern_advance != 0) {
+                    const kern_base = base + ((font.line_height - font.base_height) * 0.5 * cam_y_scale);
+                    batch.drawDebugLine(.{ .x = before_kern.x, .y = kern_base }, .{ .x = cursor_pos.x, .y = kern_base }, .{ .color = Vec4.new(1, 0, 1, 1) });
+                }
+
+                cursor_pos.x += x_advance;
+
+                last_char = char;
+            }
+
+            batch.drawDebugLine(Vec2.new(pos.x, base), Vec2.new(cursor_pos.x, base), .{ .color = Vec4.new(0, 1, 0, 1) });
+        }
+    }
+
     pub fn drawText(batch: *Batch, font: *Font, pos: Vec2, text: []const u8, options: DrawTextOptions) void {
         _ = options;
         if (builtin.mode == .Debug) {

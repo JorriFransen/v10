@@ -14,6 +14,7 @@ const Model = gfx.Model;
 const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
 const Font = gfx.Font;
+const OldFont = @import("gfx/old_font.zig");
 const Camera2D = gfx.Camera2D;
 const Camera3D = gfx.Camera3D;
 const Renderer2D = gfx.Renderer2D;
@@ -95,6 +96,7 @@ var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
 var test_font_ttf: *Font = undefined;
+var test_font_ttf_old: *OldFont = undefined;
 
 var test_tile_texture: *Texture = undefined;
 var test_texture: *Texture = undefined;
@@ -155,6 +157,9 @@ fn run() !void {
     // test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf", 72);
     test_font_ttf = try Font.load(&device, "res/fonts/DejaVuSans/DejaVuSans.ttf", 72);
     defer test_font_ttf.deinit(&device);
+
+    test_font_ttf_old = try OldFont.load(&device, "res/fonts/DejaVuSans/DejaVuSans.ttf", 72);
+    defer test_font_ttf_old.deinit(&device);
 
     test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
     _ = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
@@ -248,7 +253,7 @@ fn drawFrame() !void {
 
         r2d.beginFrame(cb);
 
-        const spos = window.getCursorPos();
+        // const spos = window.getCursorPos();
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
             // drawDebugWorldGrid(&batch);
@@ -256,23 +261,23 @@ fn drawFrame() !void {
 
             // const wpos = camera_2d.toWorldSpace(spos);
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
-            //
-            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
-            batch.drawText(test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
-            batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
+
+            batch.drawRect(Rect.new(Vec2.scalar(0), Vec2.scalar(1)), .{});
+
+            const line_height: f32 = std.math.round(test_font_ttf_old.line_height + test_font_ttf_old.line_gap) / camera_2d.ppu;
+            batch.drawTextOld(test_font_ttf_old, Vec2.new(0, line_height), "}<abc def", .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc def-_", .{});
         }
         batch.end();
 
         var ui_batch = r2d.beginBatch(cb, &camera_ui);
         {
-            const ui_pos = camera_ui.toWorldSpace(spos);
+            // const ui_pos = camera_ui.toWorldSpace(spos);
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
-            batch.drawRect(Rect.new(ui_pos, test_font_ttf.texture.getSize()), .{ .texture = test_font_ttf.texture });
-
-            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
-            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10), "}<abc", .{});
-            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc", .{});
+            const line_height: f32 = std.math.round(test_font_ttf_old.line_height + test_font_ttf_old.line_gap);
+            ui_batch.drawTextOld(test_font_ttf_old, Vec2.new(10, 10), "}<abc def", .{});
+            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc def", .{});
         }
         ui_batch.end();
 
