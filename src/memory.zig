@@ -12,7 +12,7 @@ pub const assert = std.debug.assert;
 
 pub var persistent_arena: Arena = undefined;
 pub var swapchain_arena: Arena = undefined;
-pub var stb_arena: Arena = undefined;
+pub var stb_image_arena: Arena = undefined;
 
 pub var resource_arena: Arena = undefined;
 pub var texture_arena: Arena = undefined;
@@ -27,7 +27,7 @@ threadlocal var temp_arena_next: *Arena = undefined;
 pub fn init() !void {
     persistent_arena = try Arena.init(.{ .virtual = .{} });
     swapchain_arena = try Arena.init(.{ .virtual = .{} });
-    stb_arena = try Arena.init(.{ .virtual = .{} });
+    stb_image_arena = try Arena.init(.{ .virtual = .{} });
 
     resource_arena = try Arena.init(.{ .virtual = .{} });
     texture_arena = try Arena.init(.{ .virtual = .{} });
@@ -42,7 +42,7 @@ pub fn deinit() !void {
 
     persistent_arena.deinit();
     swapchain_arena.deinit();
-    stb_arena.deinit();
+    stb_image_arena.deinit();
 
     resource_arena.deinit();
     texture_arena.deinit();

@@ -112,12 +112,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     const last_char: u32 = '~';
     const char_count = (last_char - first_char) + 1;
 
-    assert(stb.current_temp == null);
-    const stb_tmp = mem.TempArena.init(&mem.stb_arena);
-    stb.current_temp = stb_tmp;
-
     var font_info = try stb.truetype.initFont(ttf_data, 0);
-    font_info.userdata = stb_tmp.arena; // used by stbtt_MakeCodepointBitmap
 
     const scale = stb.truetype.scaleForMappingEmToPixels(&font_info, size);
 
@@ -162,7 +157,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
 
         const codepoint: u32 = @intCast(i + first_char);
         const bitmap_offset: usize = @intCast((stride * rect.y) + rect.x);
-        stb.c.stbtt_MakeCodepointBitmap(@ptrCast(&font_info), &bitmap[bitmap_offset], rect.w, rect.h, stride, scale, scale, @intCast(codepoint));
+        stb.truetype.makeCodepointBitmap(&font_info, bitmap[bitmap_offset..].ptr, rect.w, rect.h, stride, scale, scale, codepoint);
 
         var i_x_advance: c_int = undefined;
         var i_lsb: c_int = undefined;
@@ -205,8 +200,6 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
         .size = Vec2u32.scalar(bitmap_size),
         .data = &bitmap,
     }, .{ .filter = .nearest, .debug_name = name });
-
-    stb.current_temp = null;
 
     const result = try mem.font_arena.allocator().create(Font);
     result.* = .{

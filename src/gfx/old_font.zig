@@ -122,9 +122,11 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     const base = ascent;
     const line_height = ascent + -descent;
 
+    var pack_tmp = mem.get_temp();
+    defer pack_tmp.release();
+
     var char_data: [char_count]stb.truetype.PackedChar = undefined;
-    var context: stb.truetype.PackContext = undefined;
-    try stb.truetype.packBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1);
+    var context = try stb.truetype.packBegin(pack_tmp.arena, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1);
     try stb.truetype.packFontRange(&context, ttf_data, 0, stb.truetype.POINT_SIZE(size), first_char, &char_data);
     stb.truetype.packEnd(&context);
 

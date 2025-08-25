@@ -32,9 +32,9 @@ double stbttZigACos(double x);
 double stbttZigFabs(double x);
 void *stbttZigMalloc(size_t x, void *u);
 void stbttZigFree(void *x, void *u);
-size_t stbttStrlen(const char *x);
-void *stbttMemcpy(void *dest, const void *restrict src, size_t count);
-void *stbttMemset(void *dest, int ch, size_t count);
+size_t stbttZigStrlen(const char *x);
+void *stbttZigMemcpy(void *dest, const void *restrict src, size_t count);
+void *stbttZigMemset(void *dest, int ch, size_t count);
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_ifloor(x)    stbttZigIFloor(x)
@@ -48,7 +48,7 @@ void *stbttMemset(void *dest, int ch, size_t count);
 #define STBTT_malloc(x, u) stbttZigMalloc(x, u)
 #define STBTT_free(x, u)   stbttZigFree(x, u)
 #define STBTT_assert(x)    stbZigAssert(x)
-#define STBTT_strlen(x)    stbttStrlen(x)
-#define STBTT_memcpy       stbttMemcpy
-#define STBTT_memset       stbttMemset
+#define STBTT_strlen(x)    stbttZigStrlen(x)
+#define STBTT_memcpy       stbttZigMemcpy
+#define STBTT_memset       stbttZigMemset
 #include "stb_truetype.h"

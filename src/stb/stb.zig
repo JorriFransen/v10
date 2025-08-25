@@ -13,9 +13,9 @@ const Arena = mem.Arena;
 
 const assert = std.debug.assert;
 
-pub var current_temp: ?mem.TempArena = null;
-
 pub const image = struct {
+    pub var current_temp: ?mem.TempArena = null;
+
     pub const Format = enum(c_int) {
         default = 0,
         grey = 1,
@@ -37,7 +37,7 @@ pub const image = struct {
     };
 
     pub fn load(allocator: Allocator, path: [:0]const u8, format: Format) Error!Texture {
-        current_temp = mem.TempArena.init(&mem.stb_arena);
+        current_temp = mem.TempArena.init(&mem.stb_image_arena);
         defer {
             current_temp.?.release();
             current_temp = null;
@@ -68,7 +68,7 @@ pub const image = struct {
     }
 
     pub fn loadFromMemory(allocator: Allocator, buffer: []const u8, format: Format) Error!Texture {
-        current_temp = mem.TempArena.init(&mem.stb_arena);
+        current_temp = mem.TempArena.init(&mem.stb_image_arena);
         defer {
             current_temp.?.release();
             current_temp = null;
@@ -199,38 +199,56 @@ pub const truetype = struct {
         return @intCast(result);
     }
 
-    pub fn packBegin(context: *PackContext, pixels: []u8, width: u32, height: u32, stride_in_bytes: u32, padding: u32) Error!void {
-        assert(current_temp == null);
-        const tmp = mem.TempArena.init(&mem.stb_arena);
-        current_temp = tmp;
+    pub inline fn makeCodepointBitmap(font_info: *FontInfo, output: [*]u8, out_w: c_int, out_h: c_int, out_stride: c_int, scale_x: f32, scale_y: f32, codepoint: u32) void {
+        var tmp = mem.get_temp();
+        assert(font_info.userdata == null);
+        font_info.userdata = tmp.arena;
+        defer {
+            tmp.release();
+            font_info.userdata = null;
+        }
 
+        stbtt_MakeCodepointBitmap(font_info, output, out_w, out_h, out_stride, scale_x, scale_y, @intCast(codepoint));
+    }
+
+    /// The caller is responsible for calling tmp.end() after packEnd()
+    pub fn packBegin(tmp: *Arena, pixels: []u8, width: u32, height: u32, stride_in_bytes: u32, padding: u32) Error!PackContext {
         assert(pixels.len == width * height);
 
+        var context: PackContext = undefined;
+
         if (stbtt_PackBegin(
-            @ptrCast(context),
+            @ptrCast(&context),
             pixels.ptr,
             @intCast(width),
             @intCast(height),
             @intCast(stride_in_bytes),
             @intCast(padding),
-            tmp.arena,
+            tmp,
         ) == 0) {
             return error.PackBeginFailed;
         }
+
+        return context;
     }
 
     pub inline fn packFontRange(context: *PackContext, ttf_data: []const u8, font_index: u32, font_size: f32, first_unicode_char_in_range: u32, chardata_for_range: []PackedChar) Error!void {
-        if (stbtt_PackFontRange(@ptrCast(context), ttf_data.ptr, @intCast(font_index), font_size, @intCast(first_unicode_char_in_range), @intCast(chardata_for_range.len), @ptrCast(chardata_for_range.ptr)) == 0) {
+        if (stbtt_PackFontRange(
+            @ptrCast(context),
+            ttf_data.ptr,
+            @intCast(font_index),
+            font_size,
+            @intCast(first_unicode_char_in_range),
+            @intCast(chardata_for_range.len),
+            @ptrCast(chardata_for_range.ptr),
+        ) == 0) {
             return error.PackFontRangeFailed;
         }
     }
 
     pub fn packEnd(context: *PackContext) void {
         stbtt_PackEnd(@ptrCast(context));
-
-        assert(current_temp != null);
-        current_temp.?.release();
-        current_temp = null;
+        context.user_allocator_context = null;
     }
 
     pub inline fn POINT_SIZE(x: anytype) @TypeOf(-x) {
@@ -249,6 +267,8 @@ const stbtt_GetFontVMetrics = f("stbtt_GetFontVMetrics", fn (info: *const truety
 const stbtt_GetKerningTableLength = f("stbtt_GetKerningTableLength", fn (info: *const truetype.FontInfo) callconv(.c) c_int);
 const stbtt_GetGlyphKernAdvance = f("stbtt_GetGlyphKernAdvance", fn (info: *const truetype.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
 const stbtt_GetCodepointKernAdvance = f("stbtt_GetCodepointKernAdvance", fn (info: *const truetype.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
+const stbtt_MakeGlyphBitmap = f("stbtt_MakeGlyphBitmap", fn (info: *const truetype.FontInfo, output: [*]u8, out_w: c_int, out_h: c_int, out_stride: c_int, scale_x: f32, scale_y: f32, glyph: c_int) callconv(.c) void);
+const stbtt_MakeCodepointBitmap = f("stbtt_MakeCodepointBitmap", fn (info: *const truetype.FontInfo, output: [*]u8, out_w: c_int, out_h: c_int, out_stride: c_int, scale_x: f32, scale_y: f32, codepoint: c_int) callconv(.c) void);
 const stbtt_PackBegin = f("stbtt_PackBegin", fn (spc: *truetype.PackContext, pixels: [*]u8, width: c_int, height: c_int, stride_in_bytes: c_int, padding: c_int, alloc_context: ?*anyopaque) callconv(.c) c_int);
 const stbtt_PackFontRange = f("stbtt_PackFontRange", fn (spc: *truetype.PackContext, fontdata: [*]const u8, font_index: c_int, font_size: f32, first_unicode_char_in_range: c_int, num_chars_in_range: c_int, chardata_for_range: [*]truetype.PackedChar) callconv(.c) c_int);
 const stbtt_PackEnd = f("stbtt_PackEnd", fn (spc: *truetype.PackContext) callconv(.c) void);
@@ -291,7 +311,7 @@ fn arenaFree(arena: *Arena, ptr: ?*anyopaque) void {
 }
 
 pub export fn stbiZigMalloc(size: usize) callconv(.c) ?*anyopaque {
-    return arenaAlloc(current_temp.?.arena, size);
+    return arenaAlloc(image.current_temp.?.arena, size);
 }
 
 pub export fn stbiZigRealloc(ptr: ?*anyopaque, new_size: usize) callconv(.c) ?*anyopaque {
@@ -313,7 +333,7 @@ pub export fn stbiZigRealloc(ptr: ?*anyopaque, new_size: usize) callconv(.c) ?*a
 
     const new_total_size = new_size + header_size;
 
-    const tmp = current_temp.?;
+    const tmp = image.current_temp.?;
 
     if (tmp.arena.rawResize(old_slice, default_align, new_total_size)) {
         old_header_ptr.* = new_size;
@@ -332,7 +352,7 @@ pub export fn stbiZigRealloc(ptr: ?*anyopaque, new_size: usize) callconv(.c) ?*a
 }
 
 pub export fn stbiZigFree(ptr: ?*anyopaque) callconv(.c) void {
-    arenaFree(current_temp.?.arena, ptr);
+    arenaFree(image.current_temp.?.arena, ptr);
 }
 
 pub export fn stbttZigIFloor(x: f64) callconv(.c) c_int {
@@ -379,18 +399,18 @@ pub export fn stbttZigFree(ptr: ?*anyopaque, ctx: ?*anyopaque) callconv(.c) void
     arenaFree(arena, ptr);
 }
 
-pub export fn stbttStrlen(x: [*:0]const u8) callconv(.c) usize {
+pub export fn stbttZigStrlen(x: [*:0]const u8) callconv(.c) usize {
     return std.mem.span(x).len;
 }
 
-pub export fn stbttMemcpy(dst_ptr: *anyopaque, noalias src_ptr: *anyopaque, count: usize) callconv(.c) *anyopaque {
+pub export fn stbttZigMemcpy(dst_ptr: *anyopaque, noalias src_ptr: *anyopaque, count: usize) callconv(.c) *anyopaque {
     const dst = @as([*]u8, @ptrCast(dst_ptr));
     const src = @as([*]u8, @ptrCast(src_ptr));
     @memcpy(dst[0..count], src[0..count]);
     return dst;
 }
 
-pub export fn stbttMemset(dst_ptr: *anyopaque, fill_byte: c_int, count: usize) callconv(.c) *anyopaque {
+pub export fn stbttZigMemset(dst_ptr: *anyopaque, fill_byte: c_int, count: usize) callconv(.c) *anyopaque {
     const dst = @as([*]u8, @ptrCast(dst_ptr));
     @memset(dst[0..count], @intCast(fill_byte));
     return dst;
