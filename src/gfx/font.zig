@@ -139,16 +139,13 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
 
     for (rects, 0..char_count) |*rect, i| {
         const codepoint: u32 = @intCast(i + first_char);
-        var x0: c_int = undefined;
-        var y0: c_int = undefined;
-        var x1: c_int = undefined;
-        var y1: c_int = undefined;
-        const glyph_index = stb.c.stbtt_FindGlyphIndex(@ptrCast(&font_info), @intCast(codepoint));
-        stb.c.stbtt_GetGlyphBitmapBox(@ptrCast(&font_info), glyph_index, scale, scale, &x0, &y0, &x1, &y1);
+        const glyph_index = stb.truetype.findGlyphIndex(&font_info, codepoint);
+        const box = stb.truetype.getGlyphBitmapBox(&font_info, glyph_index, scale, scale);
 
-        rect.* = .{ .id = glyph_index, .w = (x1 - x0) + 1, .h = (y1 - y0) + 1 };
+        rect.* = .{ .id = @intCast(glyph_index), .w = (box.x1 - box.x0) + 1, .h = (box.y1 - box.y0) + 1 };
     }
 
+    // TODO: Check result
     _ = stb.c.stbrp_pack_rects(&pack_context, rects.ptr, @intCast(rects.len));
 
     const stride = bitmap_size;
@@ -156,19 +153,17 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
         assert(rect.was_packed != 0);
 
         const codepoint: u32 = @intCast(i + first_char);
+        const glyph_index: u32 = @intCast(rect.id);
+
         const bitmap_offset: usize = @intCast((stride * rect.y) + rect.x);
-        stb.truetype.makeCodepointBitmap(&font_info, bitmap[bitmap_offset..].ptr, rect.w, rect.h, stride, scale, scale, codepoint);
+        stb.truetype.makeGlyphBitmap(&font_info, bitmap[bitmap_offset..].ptr, rect.w, rect.h, stride, scale, scale, glyph_index);
 
         var i_x_advance: c_int = undefined;
         var i_lsb: c_int = undefined;
-        stb.c.stbtt_GetCodepointHMetrics(@ptrCast(&font_info), @intCast(codepoint), &i_x_advance, &i_lsb);
+        stb.truetype.getGlyphHMetrics(&font_info, glyph_index, &i_x_advance, &i_lsb);
         const x_advance = scale * @as(f32, @floatFromInt(i_x_advance));
 
-        var x0: c_int = undefined;
-        var y0: c_int = undefined;
-        var x1: c_int = undefined;
-        var y1: c_int = undefined;
-        stb.c.stbtt_GetGlyphBitmapBox(@ptrCast(&font_info), rect.id, scale, scale, &x0, &y0, &x1, &y1);
+        const box = stb.truetype.getGlyphBitmapBox(&font_info, glyph_index, scale, scale);
 
         const pixel_width = rect.w - 1;
         const pixel_height = rect.h - 1;
@@ -186,8 +181,8 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
                 },
             },
             .offset = .{
-                .x = @floatFromInt(x0),
-                .y = @as(f32, @floatFromInt(y0)) + ascent,
+                .x = @floatFromInt(box.x0),
+                .y = @as(f32, @floatFromInt(box.y0)) + ascent,
             },
             .x_advance = x_advance,
         };
