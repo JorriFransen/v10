@@ -262,11 +262,9 @@ fn drawFrame() !void {
             // const wpos = camera_2d.toWorldSpace(spos);
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
-            batch.drawRect(Rect.new(Vec2.scalar(0), Vec2.scalar(1)), .{});
-
             const line_height: f32 = std.math.round(test_font_ttf_old.line_height + test_font_ttf_old.line_gap) / camera_2d.ppu;
-            batch.drawTextOld(test_font_ttf_old, Vec2.new(0, line_height), "}<abc def-_", .{});
-            batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc def-_", .{});
+            batch.drawTextOld(test_font_ttf_old, Vec2.new(0, line_height), "}<abc def-_ old~", .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc def-_ new~", .{});
         }
         batch.end();
 
@@ -276,8 +274,8 @@ fn drawFrame() !void {
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
             const line_height: f32 = std.math.round(test_font_ttf_old.line_height + test_font_ttf_old.line_gap);
-            ui_batch.drawTextOld(test_font_ttf_old, Vec2.new(10, 10), "}<abc def", .{});
-            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc def", .{});
+            ui_batch.drawTextOld(test_font_ttf_old, Vec2.new(10, 10), "}<abc def old~", .{});
+            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc def new~", .{});
         }
         ui_batch.end();
 

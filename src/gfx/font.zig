@@ -23,7 +23,7 @@ size: f32,
 scale: f32,
 texture: *Texture,
 glyphs: GlyphMap,
-invalid_glyph: ?Glyph = null,
+invalid_glyph_codepoint: u32,
 
 /// Distance of the baseline from the top of the line
 base_height: f32,
@@ -31,7 +31,7 @@ line_height: f32,
 line_gap: f32,
 
 ttf_data: []const u8,
-info: stb.truetype.FontInfo,
+info: stb.tt.FontInfo,
 /// Used for the glyph cache hash table. Dont'f free and don't use for anything else!
 arena: mem.Arena,
 
@@ -98,7 +98,7 @@ pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
 }
 
 pub const TtfInitError =
-    stb.truetype.Error ||
+    stb.tt.Error ||
     Texture.InitError ||
     mem.Arena.Error ||
     error{OutOfMemory};
@@ -110,24 +110,35 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
 
     const first_char: u32 = ' ';
     const last_char: u32 = '~';
+
     const char_count = (last_char - first_char) + 1;
 
-    var font_info = try stb.truetype.initFont(ttf_data, 0);
+    var font_info = try stb.tt.initFont(ttf_data, 0);
 
-    const scale = stb.truetype.scaleForMappingEmToPixels(&font_info, size);
+    const scale = stb.tt.scaleForMappingEmToPixels(&font_info, size);
 
-    const vmetrics = stb.truetype.getFontVMetrics(&font_info);
+    const vmetrics = stb.tt.getFontVMetrics(&font_info);
     const ascent = @as(f32, @floatFromInt(vmetrics.ascent)) * scale;
     const descent = @as(f32, @floatFromInt(vmetrics.descent)) * scale;
-    const linegap = @as(f32, @floatFromInt(vmetrics.linegap)) * scale;
+    const line_gap = @as(f32, @floatFromInt(vmetrics.linegap)) * scale;
     const base = ascent;
     const line_height = ascent + -descent;
 
-    // This must be large enough to store the glyph table, and we can't allocate anything else from it!
+    // This must be large enough to store the glyph table, and noting else can be allocated from it!
     var arena = try mem.Arena.init(.{ .virtual = .{} });
 
-    var glyphs = GlyphMap.init(arena.allocator());
-    try glyphs.ensureTotalCapacity(char_count);
+    const result = try mem.font_arena.allocator().create(Font);
+    result.ttf_data = ttf_data;
+    result.info = font_info;
+    result.size = size;
+    result.scale = scale;
+    result.base_height = base;
+    result.line_height = line_height;
+    result.line_gap = line_gap;
+    result.arena = arena;
+
+    result.glyphs = GlyphMap.init(arena.allocator());
+    try result.glyphs.ensureTotalCapacity(char_count);
 
     var tmp = mem.get_temp();
     defer tmp.release();
@@ -135,59 +146,25 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     var pack_context: stb.c.stbrp_context = undefined;
     var pack_nodes: [bitmap_size]stb.c.stbrp_node = undefined;
     stb.c.stbrp_init_target(&pack_context, bitmap_size, bitmap_size, &pack_nodes, bitmap_size);
-    const rects = try tmp.allocator().alloc(stb.c.stbrp_rect, char_count);
+    var rects: [char_count + 1]stb.c.stbrp_rect = undefined;
 
-    for (rects, 0..char_count) |*rect, i| {
-        const codepoint: u32 = @intCast(i + first_char);
-        const glyph_index = stb.truetype.findGlyphIndex(&font_info, codepoint);
-        const box = stb.truetype.getGlyphBitmapBox(&font_info, glyph_index, scale, scale);
+    const invalid_glyph_codepoint = 0;
+    rects[0] = makeGlyphPackRect(&font_info, invalid_glyph_codepoint, scale);
+    assert(rects[0].id >= 0);
 
-        rect.* = .{ .id = @intCast(glyph_index), .w = (box.x1 - box.x0) + 1, .h = (box.y1 - box.y0) + 1 };
+    for (rects[1..], 0..char_count) |*rect, i| {
+        const codepoint: u32 = first_char + @as(u32, @intCast(i));
+        rect.* = makeGlyphPackRect(&font_info, codepoint, scale);
     }
 
     // TODO: Check result
-    _ = stb.c.stbrp_pack_rects(&pack_context, rects.ptr, @intCast(rects.len));
+    _ = stb.c.stbrp_pack_rects(&pack_context, &rects, @intCast(rects.len));
 
-    const stride = bitmap_size;
-    for (rects, 0..) |rect, i| {
+    try result.renderPackedGlyph(rects[0], invalid_glyph_codepoint, &bitmap, bitmap_size);
+    for (rects[1..], 0..char_count) |rect, i| {
         assert(rect.was_packed != 0);
-
-        const codepoint: u32 = @intCast(i + first_char);
-        const glyph_index: u32 = @intCast(rect.id);
-
-        const bitmap_offset: usize = @intCast((stride * rect.y) + rect.x);
-        stb.truetype.makeGlyphBitmap(&font_info, bitmap[bitmap_offset..].ptr, rect.w, rect.h, stride, scale, scale, glyph_index);
-
-        var i_x_advance: c_int = undefined;
-        var i_lsb: c_int = undefined;
-        stb.truetype.getGlyphHMetrics(&font_info, glyph_index, &i_x_advance, &i_lsb);
-        const x_advance = scale * @as(f32, @floatFromInt(i_x_advance));
-
-        const box = stb.truetype.getGlyphBitmapBox(&font_info, glyph_index, scale, scale);
-
-        const pixel_width = rect.w - 1;
-        const pixel_height = rect.h - 1;
-        const glyph = Glyph{
-            .pixel_width = @intCast(pixel_width),
-            .pixel_height = @intCast(pixel_height),
-            .uv_rect = .{
-                .pos = .{
-                    .x = @as(f32, @floatFromInt(rect.x)) / bitmap_size,
-                    .y = @as(f32, @floatFromInt(rect.y)) / bitmap_size,
-                },
-                .size = .{
-                    .x = @as(f32, @floatFromInt(pixel_width)) / bitmap_size,
-                    .y = @as(f32, @floatFromInt(pixel_height)) / bitmap_size,
-                },
-            },
-            .offset = .{
-                .x = @floatFromInt(box.x0),
-                .y = @as(f32, @floatFromInt(box.y0)) + ascent,
-            },
-            .x_advance = x_advance,
-        };
-
-        try glyphs.putNoClobber(codepoint, glyph);
+        const codepoint: u32 = @intCast(first_char + i);
+        try result.renderPackedGlyph(rect, codepoint, &bitmap, bitmap_size);
     }
 
     const texture = try Texture.init(device, .{
@@ -196,20 +173,10 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
         .data = &bitmap,
     }, .{ .filter = .nearest, .debug_name = name });
 
-    const result = try mem.font_arena.allocator().create(Font);
-    result.* = .{
-        .ttf_data = ttf_data,
-        .info = font_info,
-        .size = size,
-        .scale = scale,
-        .texture = texture,
-        .glyphs = glyphs,
-        .invalid_glyph = null,
-        .base_height = base,
-        .line_height = line_height,
-        .line_gap = linegap,
-        .arena = arena,
-    };
+    result.texture = texture;
+    result.invalid_glyph_codepoint = invalid_glyph_codepoint;
+    result.base_height = base;
+    result.line_height = line_height;
     return result;
 }
 
@@ -218,8 +185,57 @@ pub fn deinit(this: *Font, device: *Device) void {
     this.arena.deinit();
 }
 
+pub fn getGlyph(this: *Font, codepoint: u32) Glyph {
+    if (this.glyphs.get(codepoint)) |g| return g;
+    return this.glyphs.get(this.invalid_glyph_codepoint) orelse @panic("Missing invalid glyph");
+}
+
 pub fn kernAdvance(this: *Font, codepoint_a: u32, codepoint_b: u32) ?f32 {
-    const i_kern = stb.truetype.getCodepointKernAdvance(&this.info, codepoint_a, codepoint_b);
+    const i_kern = stb.tt.getCodepointKernAdvance(&this.info, codepoint_a, codepoint_b);
     if (i_kern == 0) return null;
     return @as(f32, @floatFromInt(i_kern)) * this.scale;
+}
+
+fn makeGlyphPackRect(info: *const stb.tt.FontInfo, codepoint: u32, scale: f32) stb.c.stbrp_rect {
+    const glyph = stb.tt.findGlyphIndex(info, codepoint);
+    const box = stb.tt.getGlyphBitmapBox(info, glyph, scale, scale);
+    return .{ .id = @intCast(glyph), .w = (box.x1 - box.x0) + 1, .h = (box.y1 - box.y0) + 1 };
+}
+
+/// This also adds it to the glyph hash map
+fn renderPackedGlyph(this: *Font, rect: stb.c.stbrp_rect, codepoint: u32, bitmap: []u8, stride: c_int) !void {
+    const glyph_index: u32 = @intCast(rect.id);
+
+    const bitmap_offset: usize = @intCast((stride * rect.y) + rect.x);
+    stb.tt.makeGlyphBitmap(&this.info, bitmap[bitmap_offset..].ptr, rect.w, rect.h, stride, this.scale, this.scale, glyph_index);
+
+    const hmetrics = stb.tt.getGlyphHMetrics(&this.info, glyph_index);
+    const x_advance = this.scale * @as(f32, @floatFromInt(hmetrics.x_advance));
+
+    const box = stb.tt.getGlyphBitmapBox(&this.info, glyph_index, this.scale, this.scale);
+
+    const pixel_width = rect.w - 1;
+    const pixel_height = rect.h - 1;
+    const fstride: f32 = @floatFromInt(stride);
+    const glyph = Glyph{
+        .pixel_width = @intCast(pixel_width),
+        .pixel_height = @intCast(pixel_height),
+        .uv_rect = .{
+            .pos = .{
+                .x = @as(f32, @floatFromInt(rect.x)) / fstride,
+                .y = @as(f32, @floatFromInt(rect.y)) / fstride,
+            },
+            .size = .{
+                .x = @as(f32, @floatFromInt(pixel_width)) / fstride,
+                .y = @as(f32, @floatFromInt(pixel_height)) / fstride,
+            },
+        },
+        .offset = .{
+            .x = @floatFromInt(box.x0),
+            .y = @as(f32, @floatFromInt(box.y0)) + this.base_height,
+        },
+        .x_advance = x_advance,
+    };
+
+    try this.glyphs.putNoClobber(codepoint, glyph);
 }

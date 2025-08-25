@@ -581,7 +581,7 @@ pub const Batch = struct {
         for (text, 0..) |char, i| {
             assert(char != 0);
 
-            const glyph = font.glyphs.get(char) orelse @panic("Invalid character");
+            const glyph = font.getGlyph(char);
             const vi = i * 4;
             const glyph_vertices = text_vertices[vi .. vi + 4];
             const uv_rect = glyph.uv_rect;
@@ -634,7 +634,7 @@ pub const Batch = struct {
             };
 
             for (text, 0..) |char, i| {
-                const glyph = font.glyphs.get(char) orelse unreachable;
+                const glyph = font.getGlyph(char);
 
                 var kern_advance: f32 = 0;
                 if (last_char != 0) {

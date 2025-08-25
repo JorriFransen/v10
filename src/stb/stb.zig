@@ -13,6 +13,9 @@ const Arena = mem.Arena;
 
 const assert = std.debug.assert;
 
+pub const i = image;
+pub const tt = truetype;
+
 pub const image = struct {
     pub var current_temp: ?mem.TempArena = null;
 
@@ -160,6 +163,11 @@ pub const truetype = struct {
         linegap: c_int,
     };
 
+    pub const HMetrics = struct {
+        x_advance: c_int,
+        left_side_bearing: c_int,
+    };
+
     pub const Error = error{
         InitFontFailed,
         PackBeginFailed,
@@ -245,12 +253,16 @@ pub const truetype = struct {
         return result;
     }
 
-    pub fn getGlyphHMetrics(font_info: *const FontInfo, glyph: u32, advance_width: *c_int, left_side_bearing: *c_int) void {
-        stbtt_GetGlyphHMetrics(font_info, @intCast(glyph), advance_width, left_side_bearing);
+    pub fn getGlyphHMetrics(font_info: *const FontInfo, glyph: u32) HMetrics {
+        var result: HMetrics = undefined;
+        stbtt_GetGlyphHMetrics(font_info, @intCast(glyph), &result.x_advance, &result.left_side_bearing);
+        return result;
     }
 
-    pub fn getCodepointHMetrics(font_info: *const FontInfo, codepoint: u32, advance_width: *c_int, left_side_bearing: *c_int) void {
-        stbtt_GetCodepointHMetrics(font_info, @intCast(codepoint), advance_width, left_side_bearing);
+    pub fn getCodepointHMetrics(font_info: *const FontInfo, codepoint: u32) void {
+        var result: HMetrics = undefined;
+        stbtt_GetCodepointHMetrics(font_info, @intCast(codepoint), &result.x_advance, &result.left_side_bearing);
+        return result;
     }
 
     /// The caller is responsible for calling tmp.end() after packEnd()
@@ -303,26 +315,26 @@ const stbi_load = f("stbi_load", fn (path: [*:0]const u8, x: *c_int, y: *c_int, 
 const stbi_load_from_memory = f("stbi_load_from_memory", fn (buffer: [*]const u8, len: c_int, x: *c_int, y: *c_int, c: *c_int, desired_c: c_int) callconv(.c) ?[*]const u8);
 const stbi_image_free = f("stbi_image_free", fn (data: [*]const u8) callconv(.c) void);
 
-const stbtt_InitFont = f("stbtt_InitFont", fn (info: *truetype.FontInfo, data: [*]const u8, offset: c_int) callconv(.c) c_int);
+const stbtt_InitFont = f("stbtt_InitFont", fn (info: *tt.FontInfo, data: [*]const u8, offset: c_int) callconv(.c) c_int);
 
-const stbtt_ScaleForMappingEmToPixels = f("stbtt_ScaleForMappingEmToPixels", fn (info: *const truetype.FontInfo, pixels: f32) callconv(.c) f32);
-const stbtt_FindGlyphIndex = f("stbtt_FindGlyphIndex", fn (font_info: *const truetype.FontInfo, codepoint: c_int) callconv(.c) c_int);
+const stbtt_ScaleForMappingEmToPixels = f("stbtt_ScaleForMappingEmToPixels", fn (info: *const tt.FontInfo, pixels: f32) callconv(.c) f32);
+const stbtt_FindGlyphIndex = f("stbtt_FindGlyphIndex", fn (font_info: *const tt.FontInfo, codepoint: c_int) callconv(.c) c_int);
 
-const stbtt_GetFontVMetrics = f("stbtt_GetFontVMetrics", fn (info: *const truetype.FontInfo, ascent: *c_int, descent: *c_int, line_gap: *c_int) callconv(.c) void);
-const stbtt_GetKerningTableLength = f("stbtt_GetKerningTableLength", fn (info: *const truetype.FontInfo) callconv(.c) c_int);
-const stbtt_GetGlyphKernAdvance = f("stbtt_GetGlyphKernAdvance", fn (info: *const truetype.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
-const stbtt_GetCodepointKernAdvance = f("stbtt_GetCodepointKernAdvance", fn (info: *const truetype.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
-const stbtt_GetGlyphHMetrics = f("stbtt_GetGlyphHMetrics", fn (font_info: *const truetype.FontInfo, glyph_index: c_int, advance_width: *c_int, left_side_bearing: *c_int) callconv(.c) void);
-const stbtt_GetCodepointHMetrics = f("stbtt_GetCodepointHMetrics", fn (font_info: *const truetype.FontInfo, glyph_index: c_int, advance_width: *c_int, left_side_bearing: *c_int) callconv(.c) void);
+const stbtt_GetFontVMetrics = f("stbtt_GetFontVMetrics", fn (info: *const tt.FontInfo, ascent: *c_int, descent: *c_int, line_gap: *c_int) callconv(.c) void);
+const stbtt_GetKerningTableLength = f("stbtt_GetKerningTableLength", fn (info: *const tt.FontInfo) callconv(.c) c_int);
+const stbtt_GetGlyphKernAdvance = f("stbtt_GetGlyphKernAdvance", fn (info: *const tt.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
+const stbtt_GetCodepointKernAdvance = f("stbtt_GetCodepointKernAdvance", fn (info: *const tt.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
+const stbtt_GetGlyphHMetrics = f("stbtt_GetGlyphHMetrics", fn (font_info: *const tt.FontInfo, glyph_index: c_int, advance_width: *c_int, left_side_bearing: *c_int) callconv(.c) void);
+const stbtt_GetCodepointHMetrics = f("stbtt_GetCodepointHMetrics", fn (font_info: *const tt.FontInfo, glyph_index: c_int, advance_width: *c_int, left_side_bearing: *c_int) callconv(.c) void);
 
-const stbtt_GetGlyphBitmapBox = f("stbtt_GetGlyphBitmapBox", fn (font_info: *const truetype.FontInfo, glyph: c_int, scale_x: f32, scale_y: f32, ix0: *c_int, iy0: *c_int, ix1: *c_int, iy1: *c_int) callconv(.c) void);
-const stbtt_GetCodepointBitmapBox = f("stbtt_GetCodepointBitmapBox", fn (font_info: *const truetype.FontInfo, codepoint: c_int, scale_x: f32, scale_y: f32, ix0: *c_int, iy0: *c_int, ix1: *c_int, iy1: *c_int) callconv(.c) void);
-const stbtt_MakeGlyphBitmap = f("stbtt_MakeGlyphBitmap", fn (info: *const truetype.FontInfo, output: [*]u8, out_w: c_int, out_h: c_int, out_stride: c_int, scale_x: f32, scale_y: f32, glyph: c_int) callconv(.c) void);
-const stbtt_MakeCodepointBitmap = f("stbtt_MakeCodepointBitmap", fn (info: *const truetype.FontInfo, output: [*]u8, out_w: c_int, out_h: c_int, out_stride: c_int, scale_x: f32, scale_y: f32, codepoint: c_int) callconv(.c) void);
+const stbtt_GetGlyphBitmapBox = f("stbtt_GetGlyphBitmapBox", fn (font_info: *const tt.FontInfo, glyph: c_int, scale_x: f32, scale_y: f32, ix0: *c_int, iy0: *c_int, ix1: *c_int, iy1: *c_int) callconv(.c) void);
+const stbtt_GetCodepointBitmapBox = f("stbtt_GetCodepointBitmapBox", fn (font_info: *const tt.FontInfo, codepoint: c_int, scale_x: f32, scale_y: f32, ix0: *c_int, iy0: *c_int, ix1: *c_int, iy1: *c_int) callconv(.c) void);
+const stbtt_MakeGlyphBitmap = f("stbtt_MakeGlyphBitmap", fn (info: *const tt.FontInfo, output: [*]u8, out_w: c_int, out_h: c_int, out_stride: c_int, scale_x: f32, scale_y: f32, glyph: c_int) callconv(.c) void);
+const stbtt_MakeCodepointBitmap = f("stbtt_MakeCodepointBitmap", fn (info: *const tt.FontInfo, output: [*]u8, out_w: c_int, out_h: c_int, out_stride: c_int, scale_x: f32, scale_y: f32, codepoint: c_int) callconv(.c) void);
 
-const stbtt_PackBegin = f("stbtt_PackBegin", fn (spc: *truetype.PackContext, pixels: [*]u8, width: c_int, height: c_int, stride_in_bytes: c_int, padding: c_int, alloc_context: ?*anyopaque) callconv(.c) c_int);
-const stbtt_PackFontRange = f("stbtt_PackFontRange", fn (spc: *truetype.PackContext, fontdata: [*]const u8, font_index: c_int, font_size: f32, first_unicode_char_in_range: c_int, num_chars_in_range: c_int, chardata_for_range: [*]truetype.PackedChar) callconv(.c) c_int);
-const stbtt_PackEnd = f("stbtt_PackEnd", fn (spc: *truetype.PackContext) callconv(.c) void);
+const stbtt_PackBegin = f("stbtt_PackBegin", fn (spc: *tt.PackContext, pixels: [*]u8, width: c_int, height: c_int, stride_in_bytes: c_int, padding: c_int, alloc_context: ?*anyopaque) callconv(.c) c_int);
+const stbtt_PackFontRange = f("stbtt_PackFontRange", fn (spc: *tt.PackContext, fontdata: [*]const u8, font_index: c_int, font_size: f32, first_unicode_char_in_range: c_int, num_chars_in_range: c_int, chardata_for_range: [*]tt.PackedChar) callconv(.c) c_int);
+const stbtt_PackEnd = f("stbtt_PackEnd", fn (spc: *tt.PackContext) callconv(.c) void);
 
 fn f(comptime name: []const u8, comptime T: type) *const T {
     return @extern(*const T, .{
