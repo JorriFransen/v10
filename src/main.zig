@@ -244,22 +244,22 @@ fn drawFrame() !void {
         const clear_color = @Vector(4, f32){ 0.01, 0.04, 0.04, 1 };
         renderer.beginRenderpass(cb, clear_color);
 
-        r3d.drawEntities(cb, entities, &camera_3d);
+        // r3d.drawEntities(cb, entities, &camera_3d);
 
         r2d.beginFrame(cb);
 
         const spos = window.getCursorPos();
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
-            drawDebugWorldGrid(&batch);
-            drawTestScene(&batch);
+            // drawDebugWorldGrid(&batch);
+            // drawTestScene(&batch);
 
             // const wpos = camera_2d.toWorldSpace(spos);
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
             //
-            // const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
-            // batch.drawText(test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
-            // batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
+            const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
+            batch.drawText(test_font_ttf, Vec2.new(0, -line_height), "}<abc", .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc", .{});
         }
         batch.end();
 

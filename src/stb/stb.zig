@@ -2,18 +2,18 @@ const std = @import("std");
 const mem = @import("memory");
 const log = std.log.scoped(.stb);
 
-// pub const c = @cImport({
-//     @cInclude("stb_image.h");
-//     @cInclude("stb_rect_pack.h");
-//     @cInclude("stb_truetype.h");
-// });
+pub const c = @cImport({
+    @cInclude("stb_image.h");
+    @cInclude("stb_rect_pack.h");
+    @cInclude("stb_truetype.h");
+});
 
 const Allocator = std.mem.Allocator;
 const Arena = mem.Arena;
 
 const assert = std.debug.assert;
 
-var current_temp: ?mem.TempArena = null;
+pub var current_temp: ?mem.TempArena = null;
 
 pub const image = struct {
     pub const Format = enum(c_int) {
@@ -194,7 +194,7 @@ pub const truetype = struct {
         return @intCast(result);
     }
 
-    pub inline fn packBegin(context: *PackContext, pixels: []u8, width: u32, height: u32, stride_in_bytes: u32, padding: u32) Error!void {
+    pub fn packBegin(context: *PackContext, pixels: []u8, width: u32, height: u32, stride_in_bytes: u32, padding: u32) Error!void {
         assert(current_temp == null);
         const tmp = mem.TempArena.init(&mem.stb_arena);
         current_temp = tmp;

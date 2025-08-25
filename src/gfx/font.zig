@@ -30,7 +30,8 @@ base_height: f32,
 line_height: f32,
 line_gap: f32,
 
-/// Used for the glyph and kerning tables, make sure they never free any memory
+ttf_data: []const u8,
+/// Used for the glyph cache hash table. Dont'f free and don't use for anything else!
 arena: mem.Arena,
 
 pub const Glyph = struct {
@@ -80,10 +81,7 @@ pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
         return font;
     }
 
-    var tmp = mem.get_temp();
-    defer tmp.release();
-
-    const resource = try res.load(tmp.allocator(), name);
+    const resource = try res.load(mem.font_arena.allocator(), name);
     switch (resource.type) {
         .ttf => {}, // ok
         else => {
@@ -104,16 +102,20 @@ pub const TtfInitError =
     error{OutOfMemory};
 
 pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u8) TtfInitError!*Font {
-
-    // TODO: Calculate or iterate on bitmap size
-    const bitmap_size = Vec2u32.new(1024, 1024);
-    var bitmap: [bitmap_size.x * bitmap_size.y]u8 = undefined;
+    const bitmap_size = 512;
+    var bitmap: [bitmap_size * bitmap_size]u8 = undefined;
+    @memset(bitmap[0..], 0);
 
     const first_char: u32 = ' ';
     const last_char: u32 = '~';
     const char_count = (last_char - first_char) + 1;
 
-    const font_info = try stb.truetype.initFont(ttf_data, 0);
+    assert(stb.current_temp == null);
+    const stb_tmp = mem.TempArena.init(&mem.stb_arena);
+    stb.current_temp = stb_tmp;
+
+    var font_info = try stb.truetype.initFont(ttf_data, 0);
+    font_info.userdata = stb_tmp.arena;
 
     const scale = stb.truetype.scaleForMappingEmToPixels(&font_info, size);
 
@@ -124,50 +126,85 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     const base = ascent;
     const line_height = ascent + -descent;
 
-    var char_data: [char_count]stb.truetype.PackedChar = undefined;
-    var context: stb.truetype.PackContext = undefined;
-    try stb.truetype.packBegin(&context, &bitmap, bitmap_size.x, bitmap_size.y, 0, 1);
-    try stb.truetype.packFontRange(&context, ttf_data, 0, stb.truetype.POINT_SIZE(size), first_char, &char_data);
-    stb.truetype.packEnd(&context);
-
-    const texture = try Texture.init(device, .{
-        .format = .u8_u_r,
-        .size = bitmap_size,
-        .data = &bitmap,
-    }, .{ .filter = .nearest, .debug_name = name });
-
     // This must be large enough to store the glyph and kerning tables, or we need to move to a different (chunked?) allocator.
     var arena = try mem.Arena.init(.{ .virtual = .{} });
 
     var glyphs = GlyphMap.init(arena.allocator());
-    try glyphs.ensureTotalCapacity(@intCast(char_data.len));
+    try glyphs.ensureTotalCapacity(char_count);
 
-    for (char_data, 0..char_count) |char_info, char_i| {
-        const codepoint: u32 = first_char + @as(u32, @intCast(char_i));
+    var tmp = mem.get_temp();
+    defer tmp.release();
 
-        const pixel_width = char_info.x1 - char_info.x0;
-        const pixel_height = char_info.y1 - char_info.y0;
+    var pack_context: stb.c.stbrp_context = undefined;
+    var pack_nodes: [bitmap_size]stb.c.stbrp_node = undefined;
+    stb.c.stbrp_init_target(&pack_context, bitmap_size, bitmap_size, &pack_nodes, bitmap_size);
+    const rects = try tmp.allocator().alloc(stb.c.stbrp_rect, char_count);
 
-        try glyphs.putNoClobber(@as(u32, @intCast(codepoint)), .{
-            .pixel_width = pixel_width,
-            .pixel_height = pixel_height,
+    for (rects, 0..char_count) |*rect, i| {
+        const codepoint: u32 = @intCast(i + first_char);
+        var x0: c_int = undefined;
+        var y0: c_int = undefined;
+        var x1: c_int = undefined;
+        var y1: c_int = undefined;
+        const glyph_index = stb.c.stbtt_FindGlyphIndex(@ptrCast(&font_info), @intCast(codepoint));
+        stb.c.stbtt_GetGlyphBitmapBox(@ptrCast(&font_info), glyph_index, scale, scale, &x0, &y0, &x1, &y1);
+
+        rect.* = .{ .id = glyph_index, .w = (x1 - x0) + 1, .h = (y1 - y0) + 1 };
+    }
+
+    _ = stb.c.stbrp_pack_rects(&pack_context, rects.ptr, @intCast(rects.len));
+
+    const stride = bitmap_size;
+    for (rects, 0..) |rect, i| {
+        assert(rect.was_packed != 0);
+
+        const codepoint: u32 = @intCast(i + first_char);
+        const bitmap_offset: usize = @intCast((stride * rect.y) + rect.x);
+        stb.c.stbtt_MakeCodepointBitmap(@ptrCast(&font_info), &bitmap[bitmap_offset], rect.w, rect.h, stride, scale, scale, @intCast(codepoint));
+
+        var i_x_advance: c_int = undefined;
+        var i_lsb: c_int = undefined;
+        stb.c.stbtt_GetCodepointHMetrics(@ptrCast(&font_info), @intCast(codepoint), &i_x_advance, &i_lsb);
+        const x_advance = scale * @as(f32, @floatFromInt(i_x_advance));
+
+        var x0: c_int = undefined;
+        var y0: c_int = undefined;
+        var x1: c_int = undefined;
+        var y1: c_int = undefined;
+        stb.c.stbtt_GetGlyphBitmapBox(@ptrCast(&font_info), rect.id, scale, scale, &x0, &y0, &x1, &y1);
+
+        const pixel_width = rect.w - 1;
+        const pixel_height = rect.h - 1;
+        const glyph = Glyph{
+            .pixel_width = @intCast(pixel_width),
+            .pixel_height = @intCast(pixel_height),
             .uv_rect = .{
                 .pos = .{
-                    .x = @as(f32, @floatFromInt(char_info.x0)) / bitmap_size.x,
-                    .y = @as(f32, @floatFromInt(char_info.y0)) / bitmap_size.y,
+                    .x = @as(f32, @floatFromInt(rect.x)) / bitmap_size,
+                    .y = @as(f32, @floatFromInt(rect.y)) / bitmap_size,
                 },
                 .size = .{
-                    .x = @as(f32, @floatFromInt(pixel_width)) / bitmap_size.x,
-                    .y = @as(f32, @floatFromInt(pixel_height)) / bitmap_size.y,
+                    .x = @as(f32, @floatFromInt(pixel_width)) / bitmap_size,
+                    .y = @as(f32, @floatFromInt(pixel_height)) / bitmap_size,
                 },
             },
             .offset = .{
-                .x = char_info.xoff,
-                .y = char_info.yoff + ascent,
+                .x = @floatFromInt(x0),
+                .y = @as(f32, @floatFromInt(y0)) + ascent,
             },
-            .x_advance = char_info.xadvance,
-        });
+            .x_advance = x_advance,
+        };
+
+        log.info("Glyph: '{c}' - {}", .{ @as(u8, @intCast(codepoint)), glyph });
+
+        try glyphs.putNoClobber(codepoint, glyph);
     }
+
+    const texture = try Texture.init(device, .{
+        .format = .u8_u_r,
+        .size = Vec2u32.scalar(bitmap_size),
+        .data = &bitmap,
+    }, .{ .filter = .nearest, .debug_name = name });
 
     // This only works for old school kern tables
     const kern_count = stb.truetype.getKerningTableLength(&font_info);
@@ -191,6 +228,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
 
     const result = try mem.font_arena.allocator().create(Font);
     result.* = .{
+        .ttf_data = ttf_data,
         .size = size,
         .texture = texture,
         .glyphs = glyphs,
