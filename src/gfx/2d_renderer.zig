@@ -589,7 +589,7 @@ pub const Batch = struct {
 
             var kern_advance: f32 = 0;
             if (last_char != 0) {
-                if (font.kern_info.get(.{ .a = last_char, .b = char })) |ka| {
+                if (font.kernAdvance(last_char, char)) |ka| {
                     kern_advance = ka * ppu_factor;
                 }
             }
@@ -638,7 +638,7 @@ pub const Batch = struct {
 
                 var kern_advance: f32 = 0;
                 if (last_char != 0) {
-                    if (font.kern_info.get(.{ .a = last_char, .b = char })) |ka| {
+                    if (font.kernAdvance(last_char, char)) |ka| {
                         kern_advance = ka * ppu_factor;
                     }
                 }

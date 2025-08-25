@@ -20,10 +20,10 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.font);
 
 size: f32,
+scale: f32,
 texture: *Texture,
 glyphs: GlyphMap,
 invalid_glyph: ?Glyph = null,
-kern_info: KernMap,
 
 /// Distance of the baseline from the top of the line
 base_height: f32,
@@ -31,6 +31,7 @@ line_height: f32,
 line_gap: f32,
 
 ttf_data: []const u8,
+info: stb.truetype.FontInfo,
 /// Used for the glyph cache hash table. Dont'f free and don't use for anything else!
 arena: mem.Arena,
 
@@ -116,7 +117,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     stb.current_temp = stb_tmp;
 
     var font_info = try stb.truetype.initFont(ttf_data, 0);
-    font_info.userdata = stb_tmp.arena;
+    font_info.userdata = stb_tmp.arena; // used by stbtt_MakeCodepointBitmap
 
     const scale = stb.truetype.scaleForMappingEmToPixels(&font_info, size);
 
@@ -127,7 +128,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     const base = ascent;
     const line_height = ascent + -descent;
 
-    // This must be large enough to store the glyph and kerning tables, or we need to move to a different (chunked?) allocator.
+    // This must be large enough to store the glyph table, and we can't allocate anything else from it!
     var arena = try mem.Arena.init(.{ .virtual = .{} });
 
     var glyphs = GlyphMap.init(arena.allocator());
@@ -205,36 +206,17 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
         .data = &bitmap,
     }, .{ .filter = .nearest, .debug_name = name });
 
-    // This only works for old school kern tables
-    const kern_count = stb.truetype.getKerningTableLength(&font_info);
-
-    var kern_info = KernMap.init(arena.allocator());
-    if (kern_count != 0) try kern_info.ensureTotalCapacity(kern_count);
-
-    // TODO: make this work with more complex glyph ranges
-    for (first_char..last_char + 1) |_a| {
-        const a: u32 = @intCast(_a);
-        for (first_char..last_char + 1) |_b| {
-            const b: u32 = @intCast(_b);
-            if (a == b) continue;
-
-            const kern_advance = stb.truetype.getGLyphKernAdvance(&font_info, a, b);
-            if (kern_advance != 0) {
-                try kern_info.put(.{ .a = a, .b = b }, @as(f32, @floatFromInt(kern_advance)) * scale);
-            }
-        }
-    }
-
     stb.current_temp = null;
 
     const result = try mem.font_arena.allocator().create(Font);
     result.* = .{
         .ttf_data = ttf_data,
+        .info = font_info,
         .size = size,
+        .scale = scale,
         .texture = texture,
         .glyphs = glyphs,
         .invalid_glyph = null,
-        .kern_info = kern_info,
         .base_height = base,
         .line_height = line_height,
         .line_gap = linegap,
@@ -246,4 +228,10 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
 pub fn deinit(this: *Font, device: *Device) void {
     this.texture.deinit(device);
     this.arena.deinit();
+}
+
+pub fn kernAdvance(this: *Font, codepoint_a: u32, codepoint_b: u32) ?f32 {
+    const i_kern = stb.truetype.getCodepointKernAdvance(&this.info, codepoint_a, codepoint_b);
+    if (i_kern == 0) return null;
+    return @as(f32, @floatFromInt(i_kern)) * this.scale;
 }

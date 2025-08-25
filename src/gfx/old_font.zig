@@ -180,7 +180,7 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
             const b: u32 = @intCast(_b);
             if (a == b) continue;
 
-            const kern_advance = stb.truetype.getGLyphKernAdvance(&font_info, a, b);
+            const kern_advance = stb.truetype.getCodepointKernAdvance(&font_info, a, b);
             if (kern_advance != 0) {
                 try kern_info.put(.{ .a = a, .b = b }, @as(f32, @floatFromInt(kern_advance)) * scale);
             }

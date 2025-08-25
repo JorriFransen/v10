@@ -265,7 +265,7 @@ fn drawFrame() !void {
             batch.drawRect(Rect.new(Vec2.scalar(0), Vec2.scalar(1)), .{});
 
             const line_height: f32 = std.math.round(test_font_ttf_old.line_height + test_font_ttf_old.line_gap) / camera_2d.ppu;
-            batch.drawTextOld(test_font_ttf_old, Vec2.new(0, line_height), "}<abc def", .{});
+            batch.drawTextOld(test_font_ttf_old, Vec2.new(0, line_height), "}<abc def-_", .{});
             batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc def-_", .{});
         }
         batch.end();

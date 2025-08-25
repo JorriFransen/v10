@@ -189,8 +189,13 @@ pub const truetype = struct {
         return @intCast(result);
     }
 
-    pub inline fn getGLyphKernAdvance(font_info: *const FontInfo, glyph1: u32, glyph2: u32) i32 {
+    pub inline fn getGlyphKernAdvance(font_info: *const FontInfo, glyph1: u32, glyph2: u32) i32 {
         const result = stbtt_GetGlyphKernAdvance(@ptrCast(font_info), @intCast(glyph1), @intCast(glyph2));
+        return @intCast(result);
+    }
+
+    pub inline fn getCodepointKernAdvance(font_info: *const FontInfo, cp1: u32, cp2: u32) i32 {
+        const result = stbtt_GetCodepointKernAdvance(@ptrCast(font_info), @intCast(cp1), @intCast(cp2));
         return @intCast(result);
     }
 
@@ -243,6 +248,7 @@ const stbtt_ScaleForMappingEmToPixels = f("stbtt_ScaleForMappingEmToPixels", fn 
 const stbtt_GetFontVMetrics = f("stbtt_GetFontVMetrics", fn (info: *const truetype.FontInfo, ascent: *c_int, descent: *c_int, line_gap: *c_int) callconv(.c) void);
 const stbtt_GetKerningTableLength = f("stbtt_GetKerningTableLength", fn (info: *const truetype.FontInfo) callconv(.c) c_int);
 const stbtt_GetGlyphKernAdvance = f("stbtt_GetGlyphKernAdvance", fn (info: *const truetype.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
+const stbtt_GetCodepointKernAdvance = f("stbtt_GetCodepointKernAdvance", fn (info: *const truetype.FontInfo, glyph1: c_int, glyph2: c_int) callconv(.c) c_int);
 const stbtt_PackBegin = f("stbtt_PackBegin", fn (spc: *truetype.PackContext, pixels: [*]u8, width: c_int, height: c_int, stride_in_bytes: c_int, padding: c_int, alloc_context: ?*anyopaque) callconv(.c) c_int);
 const stbtt_PackFontRange = f("stbtt_PackFontRange", fn (spc: *truetype.PackContext, fontdata: [*]const u8, font_index: c_int, font_size: f32, first_unicode_char_in_range: c_int, num_chars_in_range: c_int, chardata_for_range: [*]truetype.PackedChar) callconv(.c) c_int);
 const stbtt_PackEnd = f("stbtt_PackEnd", fn (spc: *truetype.PackContext) callconv(.c) void);
