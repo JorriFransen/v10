@@ -453,7 +453,7 @@ pub const Batch = struct {
         if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
         const text_vertices = vbuf[vstart .. vstart + vcount];
 
-        var last_char: u32 = 0;
+        var last_glyph: ?*const Font.Glyph = null;
         for (text, 0..) |char, i| {
             assert(char != 0);
 
@@ -464,8 +464,8 @@ pub const Batch = struct {
             const color = white;
 
             var kern_advance: f32 = 0;
-            if (last_char != 0) {
-                if (font.kernAdvance(last_char, char)) |ka| {
+            if (last_glyph) |last| {
+                if (font.kernAdvance(last, glyph)) |ka| {
                     kern_advance = ka * ppu_factor;
                 }
             }
@@ -484,7 +484,7 @@ pub const Batch = struct {
 
             cursor_pos.x += glyph.x_advance * ppu_factor;
 
-            last_char = char;
+            last_glyph = glyph;
         }
 
         renderer.vertex_offset += vcount;
@@ -501,7 +501,7 @@ pub const Batch = struct {
 
         // Debug lines
         if (font_debug_lines) {
-            last_char = 0;
+            last_glyph = null;
             cursor_pos = pos;
 
             const base: f32 = switch (batch.camera.origin) {
@@ -513,8 +513,8 @@ pub const Batch = struct {
                 const glyph = font.getGlyph(char);
 
                 var kern_advance: f32 = 0;
-                if (last_char != 0) {
-                    if (font.kernAdvance(last_char, char)) |ka| {
+                if (last_glyph) |last| {
+                    if (font.kernAdvance(last, glyph)) |ka| {
                         kern_advance = ka * ppu_factor;
                     }
                 }
@@ -538,7 +538,7 @@ pub const Batch = struct {
 
                 cursor_pos.x += x_advance;
 
-                last_char = char;
+                last_glyph = glyph;
             }
 
             batch.drawDebugLine(Vec2.new(pos.x, base), Vec2.new(cursor_pos.x, base), .{ .color = Vec4.new(0, 1, 0, 1) });
