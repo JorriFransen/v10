@@ -134,17 +134,12 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     @memset(bitmap[0..], 0);
 
     const ranges = [_]GlyphRange{
-        .init(' ', '~' - 1), // Basic Latin (ascii)
+        .init(' ', '~'), // Basic Latin (ascii)
         .init(0x80, 0xff), // Latin-1 Supplement
         .init(0x20a0, 0x20b9), // Currency Symbols
     };
     var total_glyph_count: u32 = 0;
     for (ranges) |r| total_glyph_count += r.count;
-
-    {
-        var rit = GlyphRangesIterator.init(&ranges);
-        while (rit.next()) |cp| log.debug("codepoint: {}", .{cp});
-    }
 
     // This must be large enough to store the glyph table, and noting else can be allocated from it!
     var arena = try mem.Arena.init(.{ .virtual = .{} });
@@ -178,29 +173,42 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
     var pack_nodes: [bitmap_size]stb.c.stbrp_node = undefined;
     stb.c.stbrp_init_target(&pack_context, bitmap_size, bitmap_size, &pack_nodes, bitmap_size);
     const rects = try tmp.allocator().alloc(stb.c.stbrp_rect, total_glyph_count + 1); // + 1 for invalid glyph
+    const codepoints = try tmp.allocator().alloc(u32, total_glyph_count + 1);
 
     // Invalid glyph
     const invalid_glyph_codepoint = 0;
     rects[0] = makeGlyphPackRect(result, invalid_glyph_codepoint, scale);
     assert(rects[0].id >= 0);
+    codepoints[0] = invalid_glyph_codepoint;
 
-    for (rects[1..], 0..total_glyph_count) |*rect, i| {
-        const codepoint: u32 = ranges[0].first + @as(u32, @intCast(i));
-        rect.* = makeGlyphPackRect(result, codepoint, scale);
+    var range_it = GlyphRangesIterator.init(&ranges);
+    var used_glyph_count: usize = 1;
+    while (range_it.next()) |codepoint| {
+        const glyph_rect = makeGlyphPackRect(result, codepoint, scale);
+        if (glyph_rect.id != 0) {
+            rects[used_glyph_count] = glyph_rect;
+            codepoints[used_glyph_count] = codepoint;
+            used_glyph_count += 1;
+        }
     }
 
     // TODO: Check result
-    _ = stb.c.stbrp_pack_rects(&pack_context, rects.ptr, @intCast(rects.len));
+    _ = stb.c.stbrp_pack_rects(&pack_context, rects.ptr, @intCast(used_glyph_count));
 
-    // Invalid glyph
-    try result.renderPackedGlyph(rects[0], invalid_glyph_codepoint, &bitmap, bitmap_size);
-
-    var range_it = GlyphRangesIterator.init(&ranges);
-    for (rects[1..]) |rect| {
-        const codepoint = range_it.next() orelse @panic("Invalid rects or invalid ranges");
+    for (rects[0..used_glyph_count], codepoints[0..used_glyph_count]) |rect, codepoint| {
         assert(rect.was_packed != 0);
         try result.renderPackedGlyph(rect, codepoint, &bitmap, bitmap_size);
     }
+
+    // // Invalid glyph
+    // try result.renderPackedGlyph(rects[0], invalid_glyph_codepoint, &bitmap, bitmap_size);
+    //
+    // range_it = GlyphRangesIterator.init(&ranges);
+    // for (rects[1..used_glyph_count]) |rect| {
+    //     const codepoint = range_it.next() orelse @panic("Invalid rects or invalid ranges");
+    //     assert(rect.was_packed != 0);
+    //     try result.renderPackedGlyph(rect, codepoint, &bitmap, bitmap_size);
+    // }
 
     const texture = try Texture.init(device, .{
         .format = .u8_u_r,
@@ -232,9 +240,9 @@ pub fn kernAdvance(this: *Font, glyph1: *const Glyph, glyph2: *const Glyph) ?f32
 }
 
 fn makeGlyphPackRect(font: *const Font, codepoint: u32, scale: f32) stb.c.stbrp_rect {
-    const glyph = stb.tt.findGlyphIndex(&font.info, codepoint);
-    const box = stb.tt.getGlyphBitmapBox(&font.info, glyph, scale, scale);
-    return .{ .id = @intCast(glyph), .w = (box.x1 - box.x0) + 1, .h = (box.y1 - box.y0) + 1 };
+    const glyph_index = stb.tt.findGlyphIndex(&font.info, codepoint);
+    const box = stb.tt.getGlyphBitmapBox(&font.info, glyph_index, scale, scale);
+    return .{ .id = @intCast(glyph_index), .w = (box.x1 - box.x0) + 1, .h = (box.y1 - box.y0) + 1 };
 }
 
 /// This also adds it to the glyph hash map

@@ -250,6 +250,9 @@ fn drawFrame() !void {
 
         r2d.beginFrame(cb);
 
+        const line1 = "}<abc def-_ old~AVA";
+        const line2 = "}<abc def-_ new~AVA";
+
         // const spos = window.getCursorPos();
         var batch = r2d.beginBatch(cb, &camera_2d);
         {
@@ -260,8 +263,8 @@ fn drawFrame() !void {
             // batch.drawDebugLine(Vec2.scalar(0), wpos, .{});
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
-            batch.drawText(test_font_ttf, Vec2.new(0, line_height), "}<abc def-_ old~", .{});
-            batch.drawText(test_font_ttf, Vec2.new(0, 0), "}<abc def-_ new~", .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, line_height), line1, .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, 0), line2, .{});
         }
         batch.end();
 
@@ -271,8 +274,8 @@ fn drawFrame() !void {
             // ui_batch.drawDebugLine(Vec2.scalar(100), ui_pos, .{ .color = Vec4.new(1, 0, 0, 1) });
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
-            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10), "}<abc def old~", .{});
-            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), "}<abc def new~", .{});
+            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10), line1, .{});
+            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), line2, .{});
 
             ui_batch.drawRect(Rect.new(Vec2.new(10, 10 + (2 * line_height)), test_font_ttf.texture.getSize()), .{ .texture = test_font_ttf.texture });
         }
