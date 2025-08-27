@@ -782,6 +782,11 @@ pub fn transitionImageLayout(_: *@This(), cb: vk.CommandBufferProxy, image: vk.I
         .dst_access_mask = .{ .shader_read_bit = true },
         .src_stage = .{ .transfer_bit = true },
         .dst_stage = .{ .fragment_shader_bit = true },
+    } else if (old_layout == .shader_read_only_optimal and new_layout == .transfer_dst_optimal) .{
+        .src_access_mask = .{ .shader_read_bit = true },
+        .dst_access_mask = .{ .transfer_write_bit = true },
+        .src_stage = .{ .fragment_shader_bit = true },
+        .dst_stage = .{ .transfer_bit = true },
     } else {
         @panic("Invalid image transition");
     };

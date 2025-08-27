@@ -156,6 +156,50 @@ pub fn init(bitmap: Bitmap, options: InitOptions) InitError!*Texture {
     return result;
 }
 
+pub const UpdateError = gfx.Device.CreateBufferError ||
+    vk.DeviceProxy.MapMemoryError ||
+    error{VulkanMapMemory};
+
+pub fn update(this: *Texture, bitmap: Bitmap, options: InitOptions) UpdateError!void {
+    const vkd = &gfx.device.device;
+
+    log.info("Updating texture: '{s}' - {}x{} - {} - {}", .{
+        options.debug_name orelse "",
+        bitmap.size.x,
+        bitmap.size.y,
+        bitmap.format,
+        this.filter,
+    });
+
+    var staging_buffer_memory: vk.DeviceMemory = .null_handle;
+    const staging_buffer = try gfx.device.createBuffer(
+        bitmap.data.len,
+        .{ .transfer_src_bit = true },
+        .{ .host_visible_bit = true, .host_coherent_bit = true },
+        &staging_buffer_memory,
+    );
+    defer {
+        vkd.destroyBuffer(staging_buffer, null);
+        vkd.freeMemory(staging_buffer_memory, null);
+    }
+
+    const staging_data_opt = try vkd.mapMemory(staging_buffer_memory, 0, bitmap.data.len, .{});
+    const staging_data = staging_data_opt orelse return error.VulkanMapMemory;
+    const staging_mapped = @as([*]u8, @ptrCast(staging_data))[0..bitmap.data.len];
+    @memcpy(staging_mapped, bitmap.data);
+    vkd.unmapMemory(staging_buffer_memory);
+
+    assert(this.format == bitmap.format);
+    const format = bitmap.format.toVulkan();
+    this.format = bitmap.format;
+
+    const cb = gfx.device.beginSingleTimeCommands();
+    gfx.device.transitionImageLayout(cb, this.image, format, .shader_read_only_optimal, .transfer_dst_optimal);
+    gfx.device.copyBufferToImage(cb, staging_buffer, this.image, bitmap.size.x, bitmap.size.y);
+    gfx.device.transitionImageLayout(cb, this.image, format, .transfer_dst_optimal, .shader_read_only_optimal);
+    gfx.device.endSingleTimeCommands(cb);
+}
+
 pub fn deinit(this: *Texture) void {
     const vkd = &gfx.device.device;
 

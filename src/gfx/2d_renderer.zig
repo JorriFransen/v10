@@ -450,7 +450,7 @@ pub const Batch = struct {
         for (text, 0..) |char, i| {
             assert(char != 0);
 
-            const glyph = font.getGlyph(char);
+            const glyph = font.getGlyph(char) catch @panic("getGlyph error");
             const vi = i * 4;
             const glyph_vertices = text_vertices[vi .. vi + 4];
             const uv_rect = glyph.uv_rect;
@@ -503,7 +503,7 @@ pub const Batch = struct {
             };
 
             for (text, 0..) |char, i| {
-                const glyph = font.getGlyph(char);
+                const glyph = font.getGlyph(char) catch @panic("getGlyph error");
 
                 var kern_advance: f32 = 0;
                 if (last_glyph) |last| {
@@ -690,5 +690,9 @@ pub const Batch = struct {
 
         cb.drawIndexed(batch_index_count, 1, renderer.index_offset, 0, 0);
         renderer.index_offset += batch_index_count;
+
+        if (current_texture != renderer.default_white_texture) {
+            renderer.default_white_texture.bind(cb, renderer.layout);
+        }
     }
 };

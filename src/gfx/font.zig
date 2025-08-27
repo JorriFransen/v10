@@ -18,7 +18,7 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.font);
 
 pub const default_ranges = [_]GlyphRange{
-    .init(' ', '~'), // Basic Latin (ascii)
+    .init(' ', '~' - 1), // Basic Latin (ascii)
     .init(0x80, 0xff), // Latin-1 Supplement
 };
 
@@ -112,15 +112,15 @@ pub const LoadOptions = struct {
 
 pub const LoadError =
     res.LoadError ||
-    TtfInitError;
+    PackError;
 
 pub fn load(name: []const u8, options: LoadOptions) LoadError!*Font {
     // TODO: hash with size
-    if (res.cache.get(name)) |ptr| {
-        const font: *Font = @ptrCast(@alignCast(ptr));
-        log.info("Loading cached font: '{s}' - {}", .{ name, font.size });
-        return font;
-    }
+    // if (res.cache.get(name)) |ptr| {
+    //     const font: *Font = @ptrCast(@alignCast(ptr));
+    //     log.info("Loading cached font: '{s}' - {}", .{ name, font.size });
+    //     return font;
+    // }
 
     const resource = try res.load(mem.font_arena.allocator(), name);
     switch (resource.type) {
@@ -142,13 +142,13 @@ pub const InitOptions = struct {
     name: []const u8,
 };
 
-pub const TtfInitError =
+pub const PackError =
     stb.tt.Error ||
     Texture.InitError ||
     mem.Arena.Error ||
     error{OutOfMemory};
 
-pub fn initTtf(ttf_data: []const u8, options: InitOptions) TtfInitError!*Font {
+pub fn initTtf(ttf_data: []const u8, options: InitOptions) PackError!*Font {
     // This must be large enough to store the glyph table, and noting else can be allocated from it!
     const arena = try mem.Arena.init(.{ .virtual = .{} });
 
@@ -183,16 +183,14 @@ pub fn deinit(this: *Font) void {
     this.arena.deinit();
 }
 
-pub fn packRanges(this: *Font, ranges: []const GlyphRange) !void {
+pub fn packRanges(this: *Font, ranges: []const GlyphRange) PackError!void {
     const bitmap_size = 1024;
     var bitmap: [bitmap_size * bitmap_size]u8 = undefined;
     @memset(bitmap[0..], 0);
 
-    if (this.ranges.len > 0) {
-        this.texture.deinit();
-    }
     this.arena.used = 0;
 
+    const new_texture = this.ranges.len == 0;
     this.ranges = try this.arena.allocator().alloc(GlyphRange, ranges.len);
     @memcpy(this.ranges, ranges);
     var total_glyph_count: u32 = 0;
@@ -235,18 +233,40 @@ pub fn packRanges(this: *Font, ranges: []const GlyphRange) !void {
         try this.renderPackedGlyph(rect, codepoint, &bitmap, bitmap_size);
     }
 
-    const texture = try Texture.init(.{
-        .format = .u8_u_r,
-        .size = Vec2u32.scalar(bitmap_size),
-        .data = &bitmap,
-    }, .{ .filter = .nearest, .debug_name = this.name });
+    if (!new_texture) {
+        try this.texture.update(.{
+            .format = .u8_u_r,
+            .size = Vec2u32.scalar(bitmap_size),
+            .data = &bitmap,
+        }, .{ .filter = this.texture.filter, .debug_name = this.name });
+    } else {
+        const texture = try Texture.init(.{
+            .format = .u8_u_r,
+            .size = Vec2u32.scalar(bitmap_size),
+            .data = &bitmap,
+        }, .{ .filter = .nearest, .debug_name = this.name });
 
-    this.texture = texture;
+        this.texture = texture;
+    }
+
     this.invalid_glyph_codepoint = invalid_glyph_codepoint;
 }
 
-pub fn getGlyph(this: *Font, codepoint: u32) *const Glyph {
+pub fn getGlyph(this: *Font, codepoint: u32) PackError!*const Glyph {
     if (this.glyphs.getPtr(codepoint)) |g| return g;
+
+    if (stb.tt.findGlyphIndex(&this.info, codepoint) != this.invalid_glyph_codepoint) {
+        var tmp = mem.get_temp();
+        defer tmp.release();
+
+        const ranges = try tmp.allocator().alloc(GlyphRange, this.ranges.len + 1);
+        @memcpy(ranges[0 .. ranges.len - 1], this.ranges);
+        ranges[ranges.len - 1] = .{ .first = codepoint, .count = 1 };
+
+        try this.packRanges(ranges);
+        log.debug("Repack!", .{});
+        if (this.glyphs.getPtr(codepoint)) |g| return g;
+    }
     return this.glyphs.getPtr(this.invalid_glyph_codepoint) orelse @panic("Missing invalid glyph");
 }
 
