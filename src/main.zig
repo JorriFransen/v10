@@ -93,7 +93,6 @@ var entities: []Entity = &.{};
 var entity: *Entity = undefined;
 
 var test_font_ttf: *Font = undefined;
-var test_font_ttf2: *Font = undefined;
 
 var test_tile_texture: *Texture = undefined;
 var test_texture: *Texture = undefined;
@@ -108,6 +107,8 @@ var test_sprite_sub_tl: Sprite = undefined;
 var test_sprite_sub_tr: Sprite = undefined;
 var test_sprite_sub_bl: Sprite = undefined;
 var test_sprite_sub_br: Sprite = undefined;
+
+var t_was_down = false;
 
 fn run() !void {
     const width = 1920;
@@ -154,9 +155,6 @@ fn run() !void {
     test_font_ttf = try Font.load("res/fonts/DejaVuSans/DejaVuSans.ttf", .{ .size = 72 });
     // test_font_ttf = try Font.load( "res/fonts/IBM_Plex_Sans/static/IBMPlexSans-Regular.ttf", .{.size=72});
     defer test_font_ttf.deinit();
-
-    test_font_ttf2 = try Font.load("res/fonts/DejaVuSans/DejaVuSans.ttf", .{ .size = 72 });
-    defer test_font_ttf2.deinit();
 
     test_tile_texture = try Texture.load("res/textures/test_tile.png", .{ .filter = .nearest });
     _ = try Texture.load("res/textures/test_tile.png", .{ .filter = .nearest });
@@ -220,8 +218,6 @@ fn run() !void {
     try gfx.device.device.deviceWaitIdle();
 }
 
-var t_was_down = false;
-
 fn update(dt: f32) void {
     if (!t_was_down and glfw.getKey(window.handle, .t) == .press) {
         Renderer2D.font_debug_lines = !Renderer2D.font_debug_lines;
@@ -266,7 +262,7 @@ fn drawFrame() !void {
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap) / camera_2d.ppu;
             batch.drawText(test_font_ttf, Vec2.new(0, line_height), line1, .{});
-            batch.drawText(test_font_ttf2, Vec2.new(0, 0), line2, .{});
+            batch.drawText(test_font_ttf, Vec2.new(0, 0), line2, .{});
         }
         batch.end();
 
@@ -277,11 +273,9 @@ fn drawFrame() !void {
 
             const line_height: f32 = std.math.round(test_font_ttf.line_height + test_font_ttf.line_gap);
             ui_batch.drawText(test_font_ttf, Vec2.new(10, 10), line1, .{});
-            ui_batch.drawText(test_font_ttf2, Vec2.new(10, 10 + line_height), line2, .{});
+            ui_batch.drawText(test_font_ttf, Vec2.new(10, 10 + line_height), line2, .{});
 
-            const t1size = test_font_ttf.texture.getSize().divScalar(2);
-            ui_batch.drawRect(Rect.new(Vec2.new(10, 10 + (2 * line_height)), t1size), .{ .texture = test_font_ttf.texture });
-            ui_batch.drawRect(Rect.new(Vec2.new(20 + t1size.x, 10 + (2 * line_height)), t1size), .{ .texture = test_font_ttf2.texture });
+            ui_batch.drawRect(Rect.new(Vec2.new(10, 10 + (2 * line_height)), test_font_ttf.texture.getSize()), .{ .texture = test_font_ttf.texture });
         }
         ui_batch.end();
 

@@ -231,7 +231,8 @@ pub const truetype = struct {
     }
 
     pub fn findGlyphIndex(font_info: *const FontInfo, codepoint: u32) u32 {
-        return @intCast(stbtt_FindGlyphIndex(font_info, @intCast(codepoint)));
+        const result = stbtt_FindGlyphIndex(font_info, @intCast(codepoint));
+        return @intCast(result);
     }
 
     pub const BitmapBox = struct {

@@ -18,8 +18,11 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.font);
 
 pub const default_ranges = [_]GlyphRange{
-    .init(' ', '~' - 1), // Basic Latin (ascii)
-    .init(0x80, 0xff), // Latin-1 Supplement
+    .init(' ', '~'), // Basic Latin (ascii)
+    .init(0xa0, 0xff), // Latin-1 Supplement (0x80-0x9f c1 controls (non print))
+    .init(0x20a0, 0x20cf), // Currency symbols
+    .init(0x2000, 0x206f), // General punctuation
+    .init(0x2190, 0x2193), // Basic arrows
 };
 
 size: f32,
@@ -252,22 +255,43 @@ pub fn packRanges(this: *Font, ranges: []const GlyphRange) PackError!void {
     this.invalid_glyph_codepoint = invalid_glyph_codepoint;
 }
 
-pub fn getGlyph(this: *Font, codepoint: u32) PackError!*const Glyph {
-    if (this.glyphs.getPtr(codepoint)) |g| return g;
+// TODO: Move the final position calculations from the renderer here (add separate user facing glyph type)
+pub fn collectGlyphs(this: *Font, allocator: Allocator, text: []const u8) []*const Glyph {
+    const result = allocator.alloc(*const Glyph, text.len) catch @panic("Font.collectGlyphs: OOM");
 
-    if (stb.tt.findGlyphIndex(&this.info, codepoint) != this.invalid_glyph_codepoint) {
-        var tmp = mem.get_temp();
-        defer tmp.release();
+    var tmp = mem.get_scratch(@ptrCast(@alignCast(allocator.ptr)));
+    defer tmp.release();
 
-        const ranges = try tmp.allocator().alloc(GlyphRange, this.ranges.len + 1);
-        @memcpy(ranges[0 .. ranges.len - 1], this.ranges);
-        ranges[ranges.len - 1] = .{ .first = codepoint, .count = 1 };
+    var missing_map = std.AutoHashMap(u32, void).init(tmp.allocator());
 
-        try this.packRanges(ranges);
-        log.debug("Repack!", .{});
-        if (this.glyphs.getPtr(codepoint)) |g| return g;
+    for (text) |cp| {
+        if (!this.glyphs.contains(cp)) {
+            missing_map.put(cp, {}) catch @panic("Font.collectGlyphs: OOM");
+        }
     }
-    return this.glyphs.getPtr(this.invalid_glyph_codepoint) orelse @panic("Missing invalid glyph");
+
+    const missing_count = missing_map.count();
+
+    if (missing_count > 0) {
+        var ranges = tmp.allocator().alloc(GlyphRange, this.ranges.len + missing_count) catch @panic("Font.collectGlyphs: OOM");
+        @memcpy(ranges[0..this.ranges.len], this.ranges);
+
+        var missing_it = missing_map.keyIterator();
+
+        for (ranges[this.ranges.len..]) |*dest| {
+            const cp = missing_it.next() orelse @panic("Font.collectGlyphs: mismatching range/missing counts");
+            dest.* = .{ .first = cp.*, .count = 1 };
+        }
+
+        log.debug("Repack!", .{});
+        this.packRanges(ranges) catch @panic("Font.collectGlyphs: packRanges error");
+    }
+
+    for (result, text) |*dest, cp| {
+        dest.* = this.glyphs.getPtr(cp) orelse unreachable;
+    }
+
+    return result;
 }
 
 pub fn kernAdvance(this: *Font, glyph1: *const Glyph, glyph2: *const Glyph) ?f32 {
@@ -278,6 +302,7 @@ pub fn kernAdvance(this: *Font, glyph1: *const Glyph, glyph2: *const Glyph) ?f32
 
 fn makeGlyphPackRect(font: *const Font, codepoint: u32) stb.c.stbrp_rect {
     const glyph_index = stb.tt.findGlyphIndex(&font.info, codepoint);
+
     const box = stb.tt.getGlyphBitmapBox(&font.info, glyph_index, font.scale, font.scale);
     return .{ .id = @intCast(glyph_index), .w = (box.x1 - box.x0) + 1, .h = (box.y1 - box.y0) + 1 };
 }

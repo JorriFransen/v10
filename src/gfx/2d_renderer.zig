@@ -446,19 +446,21 @@ pub const Batch = struct {
         if (vstart + vcount > vbuf.len) @panic("Vertex buffer full");
         const text_vertices = vbuf[vstart .. vstart + vcount];
 
-        var last_glyph: ?*const Font.Glyph = null;
-        for (text, 0..) |char, i| {
-            assert(char != 0);
+        var tmp = mem.get_temp();
+        defer tmp.release();
 
-            const glyph = font.getGlyph(char) catch @panic("getGlyph error");
+        const glyphs = font.collectGlyphs(tmp.allocator(), text);
+
+        for (glyphs, 0..) |glyph, i| {
             const vi = i * 4;
             const glyph_vertices = text_vertices[vi .. vi + 4];
             const uv_rect = glyph.uv_rect;
             const color = white;
 
             var kern_advance: f32 = 0;
-            if (last_glyph) |last| {
-                if (font.kernAdvance(last, glyph)) |ka| {
+            if (i > 0) {
+                const last_glyph = glyphs[i - 1];
+                if (font.kernAdvance(last_glyph, glyph)) |ka| {
                     kern_advance = ka * ppu_factor;
                 }
             }
@@ -476,8 +478,6 @@ pub const Batch = struct {
             glyph_vertices[3] = .{ .pos = glyph_pos.add(.{ .y = glyph_size.y }), .uv = uv_rect.tl(), .color = color };
 
             cursor_pos.x += glyph.x_advance * ppu_factor;
-
-            last_glyph = glyph;
         }
 
         renderer.vertex_offset += vcount;
@@ -494,7 +494,6 @@ pub const Batch = struct {
 
         // Debug lines
         if (font_debug_lines) {
-            last_glyph = null;
             cursor_pos = pos;
 
             const base: f32 = switch (batch.camera.origin) {
@@ -502,12 +501,11 @@ pub const Batch = struct {
                 .bottom_left, .center => pos.y + (font.line_height - font.base_height) * ppu_factor,
             };
 
-            for (text, 0..) |char, i| {
-                const glyph = font.getGlyph(char) catch @panic("getGlyph error");
-
+            for (glyphs, 0..) |glyph, i| {
                 var kern_advance: f32 = 0;
-                if (last_glyph) |last| {
-                    if (font.kernAdvance(last, glyph)) |ka| {
+                if (i > 0) {
+                    const last_glyph = glyphs[i - 1];
+                    if (font.kernAdvance(last_glyph, glyph)) |ka| {
                         kern_advance = ka * ppu_factor;
                     }
                 }
@@ -530,8 +528,6 @@ pub const Batch = struct {
                 }
 
                 cursor_pos.x += x_advance;
-
-                last_glyph = glyph;
             }
 
             batch.drawDebugLine(Vec2.new(pos.x, base), Vec2.new(cursor_pos.x, base), .{ .color = Vec4.new(0, 1, 0, 1) });
