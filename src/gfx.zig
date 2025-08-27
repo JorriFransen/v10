@@ -24,18 +24,21 @@ pub const Camera3D = camera.Camera3D;
 pub const Renderer2D = @import("gfx/2d_renderer.zig");
 pub const Renderer3D = @import("gfx/3d_renderer.zig");
 
-pub var system: System = undefined;
-pub const System = struct {
-    vkb: vk.BaseWrapper,
-    vki: vk.InstanceWrapper,
-    vkd: vk.DeviceWrapper,
+pub var vkb: vk.BaseWrapper = undefined;
+pub var vki: vk.InstanceWrapper = undefined;
+pub var vkd: vk.DeviceWrapper = undefined;
 
-    pub fn init() !void {
-        const FnType = *const fn (vk.Instance, [*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction;
-        system = .{
-            .vkb = vk.BaseWrapper.load(@as(FnType, @ptrCast(glfw.getInstanceProcAddress))),
-            .vki = undefined,
-            .vkd = undefined,
-        };
-    }
-};
+pub var device: Device = .{};
+
+const Window = @import("window.zig");
+
+pub fn init(window: *const Window) !void {
+    const FnType = *const fn (vk.Instance, [*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction;
+    vkb = vk.BaseWrapper.load(@as(FnType, @ptrCast(glfw.getInstanceProcAddress)));
+
+    device = try Device.init(window);
+}
+
+pub fn deinit() void {
+    device.deinit();
+}

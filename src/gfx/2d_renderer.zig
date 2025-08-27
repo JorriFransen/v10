@@ -6,7 +6,6 @@ const math = @import("../math.zig");
 const mem = @import("memory");
 
 const Renderer = @This();
-const Device = gfx.Device;
 const Pipeline = gfx.Pipeline;
 const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
@@ -31,7 +30,6 @@ const white = Vec4.scalar(1);
 
 pub var font_debug_lines = false;
 
-device: *Device = undefined,
 layout: vk.PipelineLayout = .null_handle,
 triangle_pipeline: Pipeline = .{},
 text_pipeline: Pipeline = .{},
@@ -113,10 +111,8 @@ pub const DrawCommand = struct {
     vertex_count: u32,
 };
 
-pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void {
-    this.device = device;
-
-    this.layout = try this.createPipelineLayout(device);
+pub fn init(this: *Renderer, render_pass: vk.RenderPass) !void {
+    this.layout = try createPipelineLayout();
     try this.createPipelines(render_pass, Pipeline.ConfigInfo.default2d());
 
     this.arena = try mem.Arena.init(.{ .virtual = .{ .reserved_capacity = arena_cap } });
@@ -127,21 +123,21 @@ pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void 
     const total_vertex_count = buffer_init_cap / @sizeOf(Vertex);
     this.vertex_buffer_size = @sizeOf(Vertex) * total_vertex_count;
 
-    this.vertex_buffer = device.createBuffer(
+    this.vertex_buffer = gfx.device.createBuffer(
         this.vertex_buffer_size,
         .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
         .{ .device_local_bit = true },
         &this.vertex_buffer_memory,
     ) catch return error.VulkanUnexpected;
 
-    this.vertex_staging_buffer = device.createBuffer(
+    this.vertex_staging_buffer = gfx.device.createBuffer(
         this.vertex_buffer_size,
         .{ .transfer_src_bit = true },
         .{ .host_visible_bit = true, .host_coherent_bit = true },
         &this.vertex_staging_buffer_memory,
     ) catch return error.VulkanUnexpected;
 
-    const vertex_data_opt = device.device.mapMemory(this.vertex_staging_buffer_memory, 0, this.vertex_buffer_size, .{}) catch return error.VulkanMapMemory;
+    const vertex_data_opt = gfx.device.device.mapMemory(this.vertex_staging_buffer_memory, 0, this.vertex_buffer_size, .{}) catch return error.VulkanMapMemory;
     const vertex_data = vertex_data_opt orelse return error.VulkanMapMemory;
 
     const vertices_mapped: [*]Vertex = @ptrCast(@alignCast(vertex_data));
@@ -150,31 +146,31 @@ pub fn init(this: *Renderer, device: *Device, render_pass: vk.RenderPass) !void 
     const total_index_count = buffer_init_cap / @sizeOf(Index);
     this.index_buffer_size = @sizeOf(Index) * total_index_count;
 
-    this.index_buffer = device.createBuffer(
+    this.index_buffer = gfx.device.createBuffer(
         this.index_buffer_size,
         .{ .transfer_dst_bit = true, .index_buffer_bit = true },
         .{ .device_local_bit = true },
         &this.index_buffer_memory,
     ) catch return error.VulkanUnexpected;
 
-    this.index_staging_buffer = device.createBuffer(
+    this.index_staging_buffer = gfx.device.createBuffer(
         this.index_buffer_size,
         .{ .transfer_src_bit = true },
         .{ .host_visible_bit = true, .host_coherent_bit = true },
         &this.index_staging_buffer_memory,
     ) catch return error.VulkanUnexpected;
 
-    const index_data_opt = device.device.mapMemory(this.index_staging_buffer_memory, 0, this.index_buffer_size, .{}) catch return error.VulkanMapMemory;
+    const index_data_opt = gfx.device.device.mapMemory(this.index_staging_buffer_memory, 0, this.index_buffer_size, .{}) catch return error.VulkanMapMemory;
     const index_data = index_data_opt orelse return error.VulkanMapMemory;
 
     const indices_mapped: [*]Index = @ptrCast(@alignCast(index_data));
     this.index_staging_buffer_mapped = indices_mapped[0..total_index_count];
 
-    this.default_white_texture = try Texture.initDefaultWhite(device);
+    this.default_white_texture = try Texture.initDefaultWhite();
 }
 
 pub fn destroy(this: *Renderer) void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     vkd.destroyPipelineLayout(this.layout, null);
     this.text_pipeline.destroy();
@@ -195,11 +191,11 @@ pub fn destroy(this: *Renderer) void {
     vkd.destroyBuffer(this.index_staging_buffer, null);
     vkd.freeMemory(this.index_staging_buffer_memory, null);
 
-    this.default_white_texture.deinit(this.device);
+    this.default_white_texture.deinit();
 }
 
-fn createPipelineLayout(this: *Renderer, device: *Device) !vk.PipelineLayout {
-    const descriptor_set_layout = device.texture_sampler_set_layout;
+fn createPipelineLayout() !vk.PipelineLayout {
+    const descriptor_set_layout = gfx.device.texture_sampler_set_layout;
 
     const push_constant_ranges = [_]vk.PushConstantRange{.{
         .offset = 0,
@@ -214,7 +210,7 @@ fn createPipelineLayout(this: *Renderer, device: *Device) !vk.PipelineLayout {
         .p_push_constant_ranges = &push_constant_ranges,
     };
 
-    return try this.device.device.createPipelineLayout(&pipeline_layout_info, null);
+    return try gfx.device.device.createPipelineLayout(&pipeline_layout_info, null);
 }
 
 fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: Pipeline.ConfigInfo) !void {
@@ -226,7 +222,6 @@ fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: 
     triangle_config.vertex_attribute_descriptions = &Vertex.attribute_descriptions;
 
     this.triangle_pipeline = try Pipeline.create(
-        this.device,
         "shaders/simple_2d.vert.spv",
         "shaders/simple_2d.frag.spv",
         triangle_config,
@@ -235,7 +230,6 @@ fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: 
     const text_config = triangle_config;
 
     this.text_pipeline = try Pipeline.create(
-        this.device,
         "shaders/text.vert.spv",
         "shaders/text.frag.spv",
         text_config,
@@ -260,7 +254,6 @@ fn createPipelines(this: *Renderer, render_pass: vk.RenderPass, default_config: 
     };
 
     this.line_pipeline = try Pipeline.create(
-        this.device,
         "shaders/line.vert.spv",
         "shaders/line.frag.spv",
         line_config,
@@ -290,10 +283,10 @@ pub fn endFrame(this: *Renderer) void {
     if (vertex_buffer_size == 0) {
         assert(index_buffer_size == 0);
     } else {
-        const ccb = this.device.beginSingleTimeCommands();
-        this.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
-        this.device.copyBuffer(ccb, this.index_staging_buffer, this.index_buffer, index_buffer_size);
-        this.device.endSingleTimeCommands(ccb);
+        const ccb = gfx.device.beginSingleTimeCommands();
+        gfx.device.copyBuffer(ccb, this.vertex_staging_buffer, this.vertex_buffer, vertex_buffer_size);
+        gfx.device.copyBuffer(ccb, this.index_staging_buffer, this.index_buffer, index_buffer_size);
+        gfx.device.endSingleTimeCommands(ccb);
     }
 }
 

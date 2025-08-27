@@ -10,7 +10,6 @@ const math = @import("../math.zig");
 const Texture = @This();
 
 const Bitmap = gfx.Bitmap;
-const Device = gfx.Device;
 const Vec2 = math.Vec2;
 
 const log = std.log.scoped(.gpu_texture);
@@ -54,7 +53,7 @@ pub const LoadError =
     InitError;
 
 // TODO: Should this return a pointer?
-pub fn load(device: *Device, name: []const u8, options_: InitOptions) LoadError!*Texture {
+pub fn load(name: []const u8, options_: InitOptions) LoadError!*Texture {
     if (res.cache.get(name)) |ptr| {
         const texture: *Texture = @ptrCast(@alignCast(ptr));
         const size = texture.getSize();
@@ -69,7 +68,7 @@ pub fn load(device: *Device, name: []const u8, options_: InitOptions) LoadError!
 
     var options = options_;
     if (options.debug_name == null) options.debug_name = name;
-    const result = try init(device, cpu_texture, options);
+    const result = try init(cpu_texture, options);
 
     try res.cache.put(name, result);
 
@@ -77,14 +76,14 @@ pub fn load(device: *Device, name: []const u8, options_: InitOptions) LoadError!
 }
 
 pub const InitError = error{VulkanMapMemory} ||
-    Device.CreateBufferError ||
-    Device.CreateImageError ||
+    gfx.Device.CreateBufferError ||
+    gfx.Device.CreateImageError ||
     CreateDescriptorSetError ||
     vk.DeviceProxy.MapMemoryError ||
     error{OutOfMemory};
 
-pub fn init(device: *Device, bitmap: Bitmap, options: InitOptions) InitError!*Texture {
-    const vkd = &device.device;
+pub fn init(bitmap: Bitmap, options: InitOptions) InitError!*Texture {
+    const vkd = &gfx.device.device;
 
     log.info("Creating texture: '{s}' - {}x{} - {} - {}", .{
         options.debug_name orelse "",
@@ -95,7 +94,7 @@ pub fn init(device: *Device, bitmap: Bitmap, options: InitOptions) InitError!*Te
     });
 
     var staging_buffer_memory: vk.DeviceMemory = .null_handle;
-    const staging_buffer = try device.createBuffer(
+    const staging_buffer = try gfx.device.createBuffer(
         bitmap.data.len,
         .{ .transfer_src_bit = true },
         .{ .host_visible_bit = true, .host_coherent_bit = true },
@@ -115,7 +114,7 @@ pub fn init(device: *Device, bitmap: Bitmap, options: InitOptions) InitError!*Te
     const format = bitmap.format.toVulkan();
 
     var image_mem: vk.DeviceMemory = .null_handle;
-    const image = try device.createImageWithInfo(
+    const image = try gfx.device.createImageWithInfo(
         &.{
             .image_type = .@"2d",
             .extent = .{ .width = bitmap.size.x, .height = bitmap.size.y, .depth = 1 },
@@ -133,15 +132,15 @@ pub fn init(device: *Device, bitmap: Bitmap, options: InitOptions) InitError!*Te
         &image_mem,
     );
 
-    const cb = device.beginSingleTimeCommands();
-    device.transitionImageLayout(cb, image, format, .undefined, .transfer_dst_optimal);
-    device.copyBufferToImage(cb, staging_buffer, image, bitmap.size.x, bitmap.size.y);
-    device.transitionImageLayout(cb, image, format, .transfer_dst_optimal, .shader_read_only_optimal);
-    device.endSingleTimeCommands(cb);
+    const cb = gfx.device.beginSingleTimeCommands();
+    gfx.device.transitionImageLayout(cb, image, format, .undefined, .transfer_dst_optimal);
+    gfx.device.copyBufferToImage(cb, staging_buffer, image, bitmap.size.x, bitmap.size.y);
+    gfx.device.transitionImageLayout(cb, image, format, .transfer_dst_optimal, .shader_read_only_optimal);
+    gfx.device.endSingleTimeCommands(cb);
 
-    const image_view = try device.createImageView(image, format);
+    const image_view = try gfx.device.createImageView(image, format);
 
-    const descriptor_set = try createDescriptorSet(device, image_view, options.filter);
+    const descriptor_set = try createDescriptorSet(image_view, options.filter);
 
     const result = try mem.texture_arena.allocator().create(Texture);
     result.* = .{
@@ -157,8 +156,8 @@ pub fn init(device: *Device, bitmap: Bitmap, options: InitOptions) InitError!*Te
     return result;
 }
 
-pub fn deinit(this: *Texture, device: *Device) void {
-    const vkd = &device.device;
+pub fn deinit(this: *Texture) void {
+    const vkd = &gfx.device.device;
 
     vkd.destroyImage(this.image, null);
     vkd.freeMemory(this.image_memory, null);
@@ -168,13 +167,13 @@ pub fn deinit(this: *Texture, device: *Device) void {
 pub const CreateDescriptorSetError = error{} ||
     vk.DeviceProxy.AllocateDescriptorSetsError;
 
-fn createDescriptorSet(device: *Device, image_view: vk.ImageView, filter: Filter) CreateDescriptorSetError!vk.DescriptorSet {
-    const vkd = &device.device;
+fn createDescriptorSet(image_view: vk.ImageView, filter: Filter) CreateDescriptorSetError!vk.DescriptorSet {
+    const vkd = &gfx.device.device;
 
     const alloc_info = vk.DescriptorSetAllocateInfo{
-        .descriptor_pool = device.descriptor_pool,
+        .descriptor_pool = gfx.device.descriptor_pool,
         .descriptor_set_count = 1,
-        .p_set_layouts = @ptrCast(&device.texture_sampler_set_layout),
+        .p_set_layouts = @ptrCast(&gfx.device.texture_sampler_set_layout),
     };
 
     var result: vk.DescriptorSet = .null_handle;
@@ -184,8 +183,8 @@ fn createDescriptorSet(device: *Device, image_view: vk.ImageView, filter: Filter
         .image_layout = .shader_read_only_optimal,
         .image_view = image_view,
         .sampler = switch (filter) {
-            .nearest => device.nearest_sampler,
-            .linear => device.linear_sampler,
+            .nearest => gfx.device.nearest_sampler,
+            .linear => gfx.device.linear_sampler,
         },
     };
 
@@ -213,11 +212,11 @@ pub inline fn getSize(this: *const Texture) Vec2 {
     return .{ .x = @floatFromInt(this.width), .y = @floatFromInt(this.height) };
 }
 
-pub fn initDefaultWhite(device: *Device) InitError!*Texture {
+pub fn initDefaultWhite() InitError!*Texture {
     const bitmap = Bitmap{
         .format = .u8_s_rgba,
         .size = .{ .x = 1, .y = 1 },
         .data = &[_]u8{ 255, 255, 255, 255 },
     };
-    return init(device, bitmap, .{ .filter = .nearest, .debug_name = "default_white" });
+    return init(bitmap, .{ .filter = .nearest, .debug_name = "default_white" });
 }

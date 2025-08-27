@@ -14,7 +14,6 @@ const Vec2u32 = math.Vec(2, u32);
 
 pub const MAX_FRAMES_IN_FLIGHT = 2;
 
-device: *Device = undefined,
 window_extent: Vec2u32 = undefined,
 
 swapchain: vk.SwapchainKHR = undefined,
@@ -40,8 +39,7 @@ pub const SwapchainOptions = struct {
     old_swapchain: vk.SwapchainKHR = .null_handle,
 };
 
-pub fn init(this: *@This(), device: *Device, options: SwapchainOptions) !void {
-    this.device = device;
+pub fn init(this: *@This(), options: SwapchainOptions) !void {
     this.window_extent = options.extent;
 
     var arena = &mem.swapchain_arena;
@@ -56,7 +54,7 @@ pub fn init(this: *@This(), device: *Device, options: SwapchainOptions) !void {
 }
 
 pub fn destroy(this: *@This(), destroy_sync_objects: bool) void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     if (destroy_sync_objects) {
         for (this.image_available_semaphores) |ias| vkd.destroySemaphore(ias, null);
@@ -78,7 +76,7 @@ pub fn destroy(this: *@This(), destroy_sync_objects: bool) void {
 }
 
 pub fn acquireNextImage(this: *@This(), image_index: *u32, current_frame_index: usize) !vk.Result {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     const R = vk.DeviceWrapper.AcquireNextImageKHRResult;
     const result = vkd.acquireNextImageKHR(this.swapchain, std.math.maxInt(u64), this.image_available_semaphores[current_frame_index], .null_handle) catch |err| switch (err) {
@@ -92,7 +90,7 @@ pub fn acquireNextImage(this: *@This(), image_index: *u32, current_frame_index: 
 
 // TODO: Does image_index still need to be a pointer here?
 pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_index: *u32, frame_index: usize) !vk.Result {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     const wait_semaphores = [_]vk.Semaphore{this.image_available_semaphores[frame_index]};
     const wait_stage = vk.PipelineStageFlags{ .color_attachment_output_bit = true };
@@ -111,7 +109,7 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
 
     try vkd.resetFences(1, @ptrCast(&this.in_flight_fences[frame_index]));
 
-    try this.device.graphics_queue.submit(1, @ptrCast(&submit_info), this.in_flight_fences[frame_index]);
+    try gfx.device.graphics_queue.submit(1, @ptrCast(&submit_info), this.in_flight_fences[frame_index]);
 
     this.images_in_flight[image_index.*] = this.in_flight_fences[frame_index];
 
@@ -123,7 +121,7 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
         .p_image_indices = @ptrCast(image_index),
     };
 
-    const result = this.device.present_queue.presentKHR(&present_info) catch |err| switch (err) {
+    const result = gfx.device.present_queue.presentKHR(&present_info) catch |err| switch (err) {
         error.OutOfDateKHR => vk.Result.error_out_of_date_khr,
         else => return err,
     };
@@ -132,13 +130,13 @@ pub fn submitCommandBuffers(this: *@This(), buffer: vk.CommandBuffer, image_inde
 }
 
 fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocator) !void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
-    const swapchain_support = &this.device.device_info.swapchain_support;
+    const swapchain_support = &gfx.device.device_info.swapchain_support;
     swapchain_support.capabilities =
-        try this.device.vki.getPhysicalDeviceSurfaceCapabilitiesKHR(
-            this.device.device_info.physical_device,
-            this.device.surface,
+        try gfx.device.vki.getPhysicalDeviceSurfaceCapabilitiesKHR(
+            gfx.device.device_info.physical_device,
+            gfx.device.surface,
         );
 
     const surface_format = this.chooseSwapSurfaceFormat(swapchain_support.formats);
@@ -157,12 +155,12 @@ fn createSwapchain(this: *@This(), options: SwapchainOptions, allocator: Allocat
 
     // log.debug("Swapchain image count: {}", .{image_count});
 
-    const indices = this.device.device_info.queue_family_indices;
+    const indices = gfx.device.device_info.queue_family_indices;
     const queue_indices = .{ indices.graphics_family.?, indices.present_family.? };
     const same_queue = queue_indices[0] == queue_indices[1];
 
     const create_info = vk.SwapchainCreateInfoKHR{
-        .surface = this.device.surface,
+        .surface = gfx.device.surface,
         .min_image_count = image_count,
         .image_format = surface_format.format,
         .image_color_space = surface_format.color_space,
@@ -203,12 +201,12 @@ fn createImageViews(this: *@This(), allocator: Allocator) !void {
     this.image_views = try allocator.alloc(vk.ImageView, this.images.len);
 
     for (this.images, this.image_views) |image, *view| {
-        view.* = try this.device.createImageView(image, this.image_format);
+        view.* = try gfx.device.createImageView(image, this.image_format);
     }
 }
 
 fn createRenderPass(this: *@This()) !void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     const color_attachment = vk.AttachmentDescription{
         .format = this.image_format,
@@ -226,7 +224,7 @@ fn createRenderPass(this: *@This()) !void {
         .layout = .color_attachment_optimal,
     };
 
-    this.depth_format = try this.findDepthFormat();
+    this.depth_format = try findDepthFormat();
 
     const depth_attachment = vk.AttachmentDescription{
         .format = this.depth_format,
@@ -275,7 +273,7 @@ fn createRenderPass(this: *@This()) !void {
 }
 
 fn createDepthResources(this: *@This(), allocator: Allocator) !void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     assert(this.depth_images.len == 0);
     assert(this.depth_image_memories.len == 0);
@@ -304,7 +302,7 @@ fn createDepthResources(this: *@This(), allocator: Allocator) !void {
             .flags = vk.ImageCreateFlags.fromInt(0),
         };
 
-        depth_image.* = try this.device.createImageWithInfo(
+        depth_image.* = try gfx.device.createImageWithInfo(
             &image_info,
             .{ .device_local_bit = true },
             image_memory,
@@ -323,7 +321,7 @@ fn createDepthResources(this: *@This(), allocator: Allocator) !void {
 }
 
 fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     assert(this.framebuffers.len == 0);
     this.framebuffers = try allocator.alloc(vk.Framebuffer, this.images.len);
@@ -345,7 +343,7 @@ fn createFramebuffers(this: *@This(), allocator: Allocator) !void {
 }
 
 fn createSyncObjects(this: *@This(), allocator: Allocator) !void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     const semaphore_info = vk.SemaphoreCreateInfo{};
     const fence_info = vk.FenceCreateInfo{ .flags = .{ .signaled_bit = true } };
@@ -433,8 +431,8 @@ fn chooseSwapExtent(this: *@This(), caps: vk.SurfaceCapabilitiesKHR) Vec2u32 {
     return actual_extent;
 }
 
-fn findDepthFormat(this: *@This()) !vk.Format {
-    return try this.device.findSupportedFormat(
+fn findDepthFormat() !vk.Format {
+    return try gfx.device.findSupportedFormat(
         &.{
             .d32_sfloat,
             .d32_sfloat_s8_uint,

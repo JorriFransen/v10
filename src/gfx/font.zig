@@ -7,7 +7,6 @@ const stb = @import("../stb/stb.zig");
 
 const Font = @This();
 const Texture = gfx.Texture;
-const Device = gfx.Device;
 const Allocator = std.mem.Allocator;
 const Rect = math.Rect;
 const Vec2 = math.Vec2;
@@ -18,11 +17,13 @@ const GlyphMap = std.HashMap(u32, Glyph, Glyph.MapContext, std.hash_map.default_
 const assert = std.debug.assert;
 const log = std.log.scoped(.font);
 
+pub const default_ranges = [_]GlyphRange{
+    .init(' ', '~'), // Basic Latin (ascii)
+    .init(0x80, 0xff), // Latin-1 Supplement
+};
+
 size: f32,
 scale: f32,
-texture: *Texture,
-glyphs: GlyphMap,
-invalid_glyph_codepoint: u32,
 
 /// Distance of the baseline from the top of the line
 base_height: f32,
@@ -31,8 +32,16 @@ line_gap: f32,
 
 ttf_data: []const u8,
 info: stb.tt.FontInfo,
-/// Used for the glyph cache hash table. Dont'f free and don't use for anything else!
+
+ranges: []GlyphRange,
+glyphs: GlyphMap,
+invalid_glyph_codepoint: u32,
+texture: *Texture,
+
+/// Used for storing ranges, and the glyph hash table. When adding ranges, the glyph hash table is recreated.
 arena: mem.Arena,
+
+name: []const u8,
 
 pub const Glyph = struct {
     pixel_width: u32,
@@ -96,11 +105,16 @@ pub const GlyphRangesIterator = struct {
     }
 };
 
+pub const LoadOptions = struct {
+    size: f32,
+    ranges: []const GlyphRange = &default_ranges,
+};
+
 pub const LoadError =
     res.LoadError ||
     TtfInitError;
 
-pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
+pub fn load(name: []const u8, options: LoadOptions) LoadError!*Font {
     // TODO: hash with size
     if (res.cache.get(name)) |ptr| {
         const font: *Font = @ptrCast(@alignCast(ptr));
@@ -117,10 +131,16 @@ pub fn load(device: *Device, name: []const u8, size: f32) LoadError!*Font {
         },
     }
 
-    const result = try initTtf(device, resource.data, size, name);
+    const result = try initTtf(resource.data, .{ .name = name, .size = options.size, .ranges = options.ranges });
     try res.cache.put(name, result);
     return result;
 }
+
+pub const InitOptions = struct {
+    size: f32,
+    ranges: []const GlyphRange = &default_ranges,
+    name: []const u8,
+};
 
 pub const TtfInitError =
     stb.tt.Error ||
@@ -128,43 +148,58 @@ pub const TtfInitError =
     mem.Arena.Error ||
     error{OutOfMemory};
 
-pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u8) TtfInitError!*Font {
-    const bitmap_size = 1024;
-    var bitmap: [bitmap_size * bitmap_size]u8 = undefined;
-    @memset(bitmap[0..], 0);
-
-    const ranges = [_]GlyphRange{
-        .init(' ', '~'), // Basic Latin (ascii)
-        .init(0x80, 0xff), // Latin-1 Supplement
-        .init(0x20a0, 0x20b9), // Currency Symbols
-    };
-    var total_glyph_count: u32 = 0;
-    for (ranges) |r| total_glyph_count += r.count;
-
+pub fn initTtf(ttf_data: []const u8, options: InitOptions) TtfInitError!*Font {
     // This must be large enough to store the glyph table, and noting else can be allocated from it!
-    var arena = try mem.Arena.init(.{ .virtual = .{} });
+    const arena = try mem.Arena.init(.{ .virtual = .{} });
 
     var font_info = try stb.tt.initFont(ttf_data, 0);
-    const scale = stb.tt.scaleForMappingEmToPixels(&font_info, size);
+    const scale = stb.tt.scaleForMappingEmToPixels(&font_info, options.size);
     const vmetrics = stb.tt.getFontVMetrics(&font_info);
     const ascent = @as(f32, @floatFromInt(vmetrics.ascent)) * scale;
     const descent = @as(f32, @floatFromInt(vmetrics.descent)) * scale;
     const line_gap = @as(f32, @floatFromInt(vmetrics.linegap)) * scale;
     const base = ascent;
-    const line_height = ascent + -descent;
 
     const result = try mem.font_arena.allocator().create(Font);
+    result.name = options.name;
+    result.arena = arena;
     result.ttf_data = ttf_data;
     result.info = font_info;
-    result.size = size;
+    result.size = options.size;
     result.scale = scale;
     result.base_height = base;
-    result.line_height = line_height;
+    result.line_height = ascent - descent;
     result.line_gap = line_gap;
     result.arena = arena;
+    result.base_height = base;
+    result.ranges = &.{};
 
-    result.glyphs = GlyphMap.init(arena.allocator());
-    try result.glyphs.ensureTotalCapacity(total_glyph_count);
+    try result.packRanges(options.ranges);
+    return result;
+}
+
+pub fn deinit(this: *Font) void {
+    this.texture.deinit();
+    this.arena.deinit();
+}
+
+pub fn packRanges(this: *Font, ranges: []const GlyphRange) !void {
+    const bitmap_size = 1024;
+    var bitmap: [bitmap_size * bitmap_size]u8 = undefined;
+    @memset(bitmap[0..], 0);
+
+    if (this.ranges.len > 0) {
+        this.texture.deinit();
+    }
+    this.arena.used = 0;
+
+    this.ranges = try this.arena.allocator().alloc(GlyphRange, ranges.len);
+    @memcpy(this.ranges, ranges);
+    var total_glyph_count: u32 = 0;
+    for (this.ranges) |r| total_glyph_count += r.count;
+
+    this.glyphs = GlyphMap.init(this.arena.allocator());
+    try this.glyphs.ensureTotalCapacity(total_glyph_count);
 
     var tmp = mem.get_temp();
     defer tmp.release();
@@ -177,14 +212,14 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
 
     // Invalid glyph
     const invalid_glyph_codepoint = 0;
-    rects[0] = makeGlyphPackRect(result, invalid_glyph_codepoint, scale);
+    rects[0] = makeGlyphPackRect(this, invalid_glyph_codepoint);
     assert(rects[0].id >= 0);
     codepoints[0] = invalid_glyph_codepoint;
 
-    var range_it = GlyphRangesIterator.init(&ranges);
+    var range_it = GlyphRangesIterator.init(ranges);
     var used_glyph_count: usize = 1;
     while (range_it.next()) |codepoint| {
-        const glyph_rect = makeGlyphPackRect(result, codepoint, scale);
+        const glyph_rect = makeGlyphPackRect(this, codepoint);
         if (glyph_rect.id != 0) {
             rects[used_glyph_count] = glyph_rect;
             codepoints[used_glyph_count] = codepoint;
@@ -197,35 +232,17 @@ pub fn initTtf(device: *Device, ttf_data: []const u8, size: f32, name: []const u
 
     for (rects[0..used_glyph_count], codepoints[0..used_glyph_count]) |rect, codepoint| {
         assert(rect.was_packed != 0);
-        try result.renderPackedGlyph(rect, codepoint, &bitmap, bitmap_size);
+        try this.renderPackedGlyph(rect, codepoint, &bitmap, bitmap_size);
     }
 
-    // // Invalid glyph
-    // try result.renderPackedGlyph(rects[0], invalid_glyph_codepoint, &bitmap, bitmap_size);
-    //
-    // range_it = GlyphRangesIterator.init(&ranges);
-    // for (rects[1..used_glyph_count]) |rect| {
-    //     const codepoint = range_it.next() orelse @panic("Invalid rects or invalid ranges");
-    //     assert(rect.was_packed != 0);
-    //     try result.renderPackedGlyph(rect, codepoint, &bitmap, bitmap_size);
-    // }
-
-    const texture = try Texture.init(device, .{
+    const texture = try Texture.init(.{
         .format = .u8_u_r,
         .size = Vec2u32.scalar(bitmap_size),
         .data = &bitmap,
-    }, .{ .filter = .nearest, .debug_name = name });
+    }, .{ .filter = .nearest, .debug_name = this.name });
 
-    result.texture = texture;
-    result.invalid_glyph_codepoint = invalid_glyph_codepoint;
-    result.base_height = base;
-    result.line_height = line_height;
-    return result;
-}
-
-pub fn deinit(this: *Font, device: *Device) void {
-    this.texture.deinit(device);
-    this.arena.deinit();
+    this.texture = texture;
+    this.invalid_glyph_codepoint = invalid_glyph_codepoint;
 }
 
 pub fn getGlyph(this: *Font, codepoint: u32) *const Glyph {
@@ -239,9 +256,9 @@ pub fn kernAdvance(this: *Font, glyph1: *const Glyph, glyph2: *const Glyph) ?f32
     return @as(f32, @floatFromInt(i_kern)) * this.scale;
 }
 
-fn makeGlyphPackRect(font: *const Font, codepoint: u32, scale: f32) stb.c.stbrp_rect {
+fn makeGlyphPackRect(font: *const Font, codepoint: u32) stb.c.stbrp_rect {
     const glyph_index = stb.tt.findGlyphIndex(&font.info, codepoint);
-    const box = stb.tt.getGlyphBitmapBox(&font.info, glyph_index, scale, scale);
+    const box = stb.tt.getGlyphBitmapBox(&font.info, glyph_index, font.scale, font.scale);
     return .{ .id = @intCast(glyph_index), .w = (box.x1 - box.x0) + 1, .h = (box.y1 - box.y0) + 1 };
 }
 

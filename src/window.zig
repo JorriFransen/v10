@@ -92,7 +92,7 @@ pub fn init(this: *Window, logical_width: i32, logical_height: i32, name: [:0]co
     _ = glfw.setCursorPosCallback(handle, cursorPosCallback);
 }
 
-pub fn destroy(this: *Window) void {
+pub fn deinit(this: *Window) void {
     glfw.destroyWindow(this.handle);
     if (builtin.os.tag != .windows) c.FcFini();
     glfw.terminate();

@@ -5,12 +5,10 @@ const mem = @import("memory");
 const vklog = std.log.scoped(.vulkan);
 
 const Pipeline = @This();
-const Device = gfx.Device;
 const Allocator = std.mem.Allocator;
 
 const assert = std.debug.assert;
 
-device: *Device = undefined,
 config: ConfigInfo = .{},
 graphics_pipeline: vk.Pipeline = .null_handle,
 vert_shader_module: vk.ShaderModule = .null_handle,
@@ -215,6 +213,7 @@ const ReadFileAllocError = error{
 };
 
 fn readShaderFile(allocator: Allocator, path: []const u8) ReadFileAllocError![:0]align(4) const u8 {
+    // TODO: use resource system
     const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
         else => return error.Unexpected,
         error.FileNotFound => {
@@ -238,31 +237,27 @@ fn readShaderFile(allocator: Allocator, path: []const u8) ReadFileAllocError![:0
     return @ptrCast(buf[0..read]);
 }
 
-pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !Pipeline {
+pub fn create(vert_path: []const u8, frag_path: []const u8, config: ConfigInfo) !Pipeline {
     assert(config.pipeline_layout != .null_handle);
     assert(config.render_pass != .null_handle);
 
-    const vkd = &device.device;
+    const vkd = &gfx.device.device;
 
     var tmp = mem.get_temp();
     defer tmp.release();
 
     const vert_code = try readShaderFile(tmp.allocator(), vert_path);
-    vklog.debug("vert_code.len: {}", .{vert_code.len});
-
     const frag_code = try readShaderFile(tmp.allocator(), frag_path);
-    vklog.debug("frag_code.len: {}", .{frag_code.len});
 
     var this = Pipeline{
-        .device = device,
         .config = config,
         .graphics_pipeline = .null_handle,
         .vert_shader_module = .null_handle,
         .frag_shader_module = .null_handle,
     };
 
-    this.vert_shader_module = try this.createShaderModule(vert_code);
-    this.frag_shader_module = try this.createShaderModule(frag_code);
+    this.vert_shader_module = try createShaderModule(vert_code);
+    this.frag_shader_module = try createShaderModule(frag_code);
 
     const shader_stage_infos = [2]vk.PipelineShaderStageCreateInfo{
         .{
@@ -319,7 +314,7 @@ pub fn create(device: *Device, vert_path: []const u8, frag_path: []const u8, con
 }
 
 pub fn destroy(this: *Pipeline) void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     vkd.destroyShaderModule(this.vert_shader_module, null);
     vkd.destroyShaderModule(this.frag_shader_module, null);
@@ -327,8 +322,8 @@ pub fn destroy(this: *Pipeline) void {
     vkd.destroyPipeline(this.graphics_pipeline, null);
 }
 
-fn createShaderModule(this: *Pipeline, code: []const u8) !vk.ShaderModule {
-    const vkd = &this.device.device;
+fn createShaderModule(code: []const u8) !vk.ShaderModule {
+    const vkd = &gfx.device.device;
 
     const create_info = vk.ShaderModuleCreateInfo{
         .code_size = code.len,

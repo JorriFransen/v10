@@ -10,7 +10,6 @@ const obj_parser = @import("../obj_parser.zig");
 const Model = @This();
 const Mesh = gfx.Mesh;
 
-const Device = gfx.Device;
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -63,7 +62,7 @@ pub const LoadError =
     InitError;
 
 // TODO: Return pointer
-pub fn load(device: *Device, name: []const u8) LoadError!*Model {
+pub fn load(name: []const u8) LoadError!*Model {
     if (res.cache.get(name)) |ptr| {
         const model: *Model = @ptrCast(@alignCast(ptr));
         log.info("Loading cached model: '{s}'", .{name});
@@ -73,13 +72,13 @@ pub fn load(device: *Device, name: []const u8) LoadError!*Model {
     defer tmp.release();
 
     const mesh = try Mesh.load(tmp.allocator(), name);
-    const result = try init(device, buildIndexed(mesh.vertices, mesh.indices));
+    const result = try init(buildIndexed(mesh.vertices, mesh.indices));
     try res.cache.put(name, result);
     return result;
 }
 
-pub fn deinit(this: *Model, device: *Device) void {
-    const vkd = &device.device;
+pub fn deinit(this: *Model) void {
+    const vkd = &gfx.device.device;
 
     vkd.destroyBuffer(this.vertex_buffer, null);
     vkd.freeMemory(this.vertex_buffer_memory, null);
@@ -137,18 +136,18 @@ pub const InitError = error{
     OutOfMemory,
 };
 
-pub fn init(device: *Device, builder: anytype) InitError!*Model {
+pub fn init(builder: anytype) InitError!*Model {
     const IndexType = @TypeOf(builder).IndexType;
     assert(builder.vertices.len >= 3);
 
-    const vkd = &device.device;
+    const vkd = &gfx.device.device;
 
     const result = try mem.model_arena.allocator().create(Model);
     result.vertex_count = @intCast(builder.vertices.len);
 
     const vertex_buffer_size: vk.DeviceSize = @sizeOf(@TypeOf(builder.vertices[0])) * builder.vertices.len;
     var vertex_staging_buffer_memory: vk.DeviceMemory = .null_handle;
-    const vertex_staging_buffer = device.createBuffer(
+    const vertex_staging_buffer = gfx.device.createBuffer(
         vertex_buffer_size,
         .{ .transfer_src_bit = true },
         .{ .host_visible_bit = true, .host_coherent_bit = true },
@@ -167,15 +166,15 @@ pub fn init(device: *Device, builder: anytype) InitError!*Model {
     @memcpy(vertices_mapped, builder.vertices);
     vkd.unmapMemory(vertex_staging_buffer_memory);
 
-    result.vertex_buffer = device.createBuffer(
+    result.vertex_buffer = gfx.device.createBuffer(
         vertex_buffer_size,
         .{ .transfer_dst_bit = true, .vertex_buffer_bit = true },
         .{ .device_local_bit = true },
         &result.vertex_buffer_memory,
     ) catch return error.VulkanUnexpected;
 
-    const cb = device.beginSingleTimeCommands();
-    device.copyBuffer(cb, vertex_staging_buffer, result.vertex_buffer, vertex_buffer_size);
+    const cb = gfx.device.beginSingleTimeCommands();
+    gfx.device.copyBuffer(cb, vertex_staging_buffer, result.vertex_buffer, vertex_buffer_size);
 
     var index_staging_buffer: vk.Buffer = .null_handle;
     var index_staging_buffer_memory: vk.DeviceMemory = .null_handle;
@@ -192,7 +191,7 @@ pub fn init(device: *Device, builder: anytype) InitError!*Model {
         };
 
         const index_buffer_size: vk.DeviceSize = @sizeOf(IndexType) * indices.len;
-        index_staging_buffer = device.createBuffer(
+        index_staging_buffer = gfx.device.createBuffer(
             index_buffer_size,
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
@@ -206,19 +205,19 @@ pub fn init(device: *Device, builder: anytype) InitError!*Model {
         @memcpy(indices_mapped, indices);
         vkd.unmapMemory(index_staging_buffer_memory);
 
-        result.index_buffer = device.createBuffer(
+        result.index_buffer = gfx.device.createBuffer(
             index_buffer_size,
             .{ .transfer_dst_bit = true, .index_buffer_bit = true },
             .{ .device_local_bit = true },
             &result.index_buffer_memory,
         ) catch return error.VulkanUnexpected;
 
-        device.copyBuffer(cb, index_staging_buffer, result.index_buffer, index_buffer_size);
+        gfx.device.copyBuffer(cb, index_staging_buffer, result.index_buffer, index_buffer_size);
     } else {
         assert(IndexType == void);
     }
 
-    device.endSingleTimeCommands(cb);
+    gfx.device.endSingleTimeCommands(cb);
     if (builder.indices != null) {
         vkd.destroyBuffer(index_staging_buffer, null);
         vkd.freeMemory(index_staging_buffer_memory, null);

@@ -25,7 +25,6 @@ const debug_messenger_create_info = vk.DebugUtilsMessengerCreateInfoEXT{
     .p_user_data = null,
 };
 
-system: *gfx.System = undefined,
 window: *const Window = undefined,
 vki: vk.InstanceProxy = undefined,
 debug_messenger: vk.DebugUtilsMessengerEXT = .null_handle,
@@ -130,9 +129,8 @@ pub const SwapchainSupportDetails = struct {
     }
 };
 
-pub fn create(system: *gfx.System, window: *const Window) !@This() {
+pub fn init(window: *const Window) !@This() {
     var this = @This(){
-        .system = system,
         .window = window,
     };
 
@@ -156,7 +154,7 @@ pub fn create(system: *gfx.System, window: *const Window) !@This() {
     return this;
 }
 
-pub fn destroy(this: *@This()) void {
+pub fn deinit(this: *@This()) void {
     const device = this.device;
     const vki = this.vki;
 
@@ -177,9 +175,9 @@ pub fn destroy(this: *@This()) void {
 }
 
 fn createInstance(this: *@This()) !void {
-    const vkb = this.system.vkb;
+    const vkb = gfx.vkb;
 
-    if (enable_validation_layers and !try this.checkValidationLayerSupport()) {
+    if (enable_validation_layers and !try checkValidationLayerSupport()) {
         return error.vulkanValidationLayersUnavailable;
     }
 
@@ -201,7 +199,7 @@ fn createInstance(this: *@This()) !void {
         vklog.debug("required_extensions[{}]: {s}", .{ i, r_ext });
     }
 
-    if (!try this.hasGlfwRequiredInstanceExtensions(extensions)) {
+    if (!try hasGlfwRequiredInstanceExtensions(extensions)) {
         return error.requirdExtensionUnavailable;
     }
 
@@ -217,8 +215,8 @@ fn createInstance(this: *@This()) !void {
     };
 
     const instance = try vkb.createInstance(&create_info, null);
-    this.system.vki = vk.InstanceWrapper.load(instance, vkb.dispatch.vkGetInstanceProcAddr.?);
-    this.vki = vk.InstanceProxy.init(instance, &this.system.vki);
+    gfx.vki = vk.InstanceWrapper.load(instance, vkb.dispatch.vkGetInstanceProcAddr.?);
+    this.vki = vk.InstanceProxy.init(instance, &gfx.vki);
     vklog.debug("Instance created", .{});
     if (enable_validation_layers) vklog.debug("validation layers enabled", .{});
 }
@@ -337,13 +335,13 @@ fn createLogicalDevice(this: *@This()) !void {
     };
 
     const device = try this.vki.createDevice(this.device_info.physical_device, &create_info, null);
-    this.system.vkd = vk.DeviceWrapper.load(device, this.system.vki.dispatch.vkGetDeviceProcAddr.?);
-    this.device = vk.DeviceProxy.init(device, &this.system.vkd);
+    gfx.vkd = vk.DeviceWrapper.load(device, gfx.vki.dispatch.vkGetDeviceProcAddr.?);
+    this.device = vk.DeviceProxy.init(device, &gfx.vkd);
 
     const graphics_queue = this.device.getDeviceQueue(indices.graphics_family.?, 0);
-    this.graphics_queue = vk.QueueProxy.init(graphics_queue, &this.system.vkd);
+    this.graphics_queue = vk.QueueProxy.init(graphics_queue, &gfx.vkd);
     const present_queue = this.device.getDeviceQueue(indices.present_family.?, 0);
-    this.present_queue = vk.QueueProxy.init(present_queue, &this.system.vkd);
+    this.present_queue = vk.QueueProxy.init(present_queue, &gfx.vkd);
 }
 
 fn createCommandPool(this: *@This()) !void {
@@ -422,8 +420,8 @@ fn createDescriptorPool(this: *@This()) CreateDescriptorPoolError!void {
     this.descriptor_pool = try this.device.createDescriptorPool(&pool_info, null);
 }
 
-fn checkValidationLayerSupport(this: *@This()) !bool {
-    const vkb = this.system.vkb;
+fn checkValidationLayerSupport() !bool {
+    const vkb = gfx.vkb;
 
     var layer_count: u32 = undefined;
     if (try vkb.enumerateInstanceLayerProperties(&layer_count, null) != .success) {
@@ -486,8 +484,8 @@ fn getRequiredExtensions(this: *const @This(), allocator: Allocator) ![]const [*
     return required_extensions;
 }
 
-fn hasGlfwRequiredInstanceExtensions(this: *@This(), required_exts: []const [*:0]const u8) !bool {
-    const vkb = this.system.vkb;
+fn hasGlfwRequiredInstanceExtensions(required_exts: []const [*:0]const u8) !bool {
+    const vkb = gfx.vkb;
 
     var extension_count: u32 = undefined;
     if (try vkb.enumerateInstanceExtensionProperties(null, &extension_count, null) != .success) {

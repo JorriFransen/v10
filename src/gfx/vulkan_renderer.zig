@@ -13,7 +13,6 @@ const PfnResizeCallback = *const fn (this: *const Renderer) void;
 const assert = std.debug.assert;
 
 window: *Window = undefined,
-device: *Device = undefined,
 swapchain: Swapchain = .{},
 command_buffers: []vk.CommandBuffer = &.{},
 current_image_index: u32 = 0,
@@ -21,12 +20,11 @@ current_frame_index: usize = 0,
 
 resize_callback: PfnResizeCallback = undefined,
 
-pub fn init(this: *Renderer, window: *Window, device: *Device, resize_callback: PfnResizeCallback) !void {
+pub fn init(this: *Renderer, window: *Window, resize_callback: PfnResizeCallback) !void {
     this.window = window;
-    this.device = device;
     this.resize_callback = resize_callback;
 
-    try this.swapchain.init(device, .{ .extent = window.size });
+    try this.swapchain.init(.{ .extent = window.size });
     try this.createCommandBuffers();
 }
 
@@ -36,14 +34,14 @@ pub fn destroy(this: *Renderer) void {
 }
 
 pub fn createCommandBuffers(this: *Renderer) !void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     assert(this.command_buffers.len == 0);
     this.command_buffers = try mem.persistent_arena.allocator().alloc(vk.CommandBuffer, Swapchain.MAX_FRAMES_IN_FLIGHT);
 
     const alloc_info = vk.CommandBufferAllocateInfo{
         .level = .primary,
-        .command_pool = this.device.command_pool,
+        .command_pool = gfx.device.command_pool,
         .command_buffer_count = @intCast(this.command_buffers.len),
     };
 
@@ -51,12 +49,12 @@ pub fn createCommandBuffers(this: *Renderer) !void {
 }
 
 pub fn freeCommandBuffers(this: *Renderer) void {
-    const vkd = &this.device.device;
-    vkd.freeCommandBuffers(this.device.command_pool, @intCast(this.command_buffers.len), this.command_buffers.ptr);
+    const vkd = &gfx.device.device;
+    vkd.freeCommandBuffers(gfx.device.command_pool, @intCast(this.command_buffers.len), this.command_buffers.ptr);
 }
 
 pub fn beginFrame(this: *Renderer) !?vk.CommandBufferProxy {
-    if (try this.device.device.waitForFences(1, @ptrCast(&this.swapchain.in_flight_fences[this.current_frame_index]), vk.TRUE, std.math.maxInt(u64)) != .success) {
+    if (try gfx.device.device.waitForFences(1, @ptrCast(&this.swapchain.in_flight_fences[this.current_frame_index]), vk.TRUE, std.math.maxInt(u64)) != .success) {
         return error.VkWaitForFencesFailed;
     }
     const result = try this.swapchain.acquireNextImage(&this.current_image_index, this.current_frame_index);
@@ -71,14 +69,14 @@ pub fn beginFrame(this: *Renderer) !?vk.CommandBufferProxy {
     }
 
     if (this.swapchain.images_in_flight[this.current_image_index] != .null_handle) {
-        if (try this.device.device.waitForFences(1, @ptrCast(&this.swapchain.images_in_flight[this.current_image_index]), vk.TRUE, std.math.maxInt(u64)) != .success) {
+        if (try gfx.device.device.waitForFences(1, @ptrCast(&this.swapchain.images_in_flight[this.current_image_index]), vk.TRUE, std.math.maxInt(u64)) != .success) {
             return error.VkWaitForFencesFailed;
         }
     }
 
-    try this.device.device.resetFences(1, @ptrCast(&this.swapchain.in_flight_fences[this.current_frame_index]));
+    try gfx.device.device.resetFences(1, @ptrCast(&this.swapchain.in_flight_fences[this.current_frame_index]));
 
-    const cb = vk.CommandBufferProxy.init(this.command_buffers[this.current_frame_index], this.device.device.wrapper);
+    const cb = vk.CommandBufferProxy.init(this.command_buffers[this.current_frame_index], gfx.device.device.wrapper);
 
     const begin_info = vk.CommandBufferBeginInfo{};
     try cb.beginCommandBuffer(&begin_info);
@@ -140,7 +138,7 @@ pub fn endRenderPass(_: *Renderer, cb: vk.CommandBufferProxy) void {
 }
 
 pub fn recreateSwapchain(this: *Renderer) !void {
-    const vkd = &this.device.device;
+    const vkd = &gfx.device.device;
 
     try vkd.deviceWaitIdle();
 
@@ -182,10 +180,7 @@ pub fn recreateSwapchain(this: *Renderer) !void {
 
     mem.swapchain_arena.reset();
 
-    try new_chain.init(this.device, .{
-        .extent = this.window.size,
-        .old_swapchain = old_chain.swapchain,
-    });
+    try new_chain.init(.{ .extent = this.window.size, .old_swapchain = old_chain.swapchain });
 
     if (!old_chain.compareSwapFormats(&new_chain)) {
         return error.swapchainImageOrDepthFormatChanged;

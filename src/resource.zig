@@ -54,6 +54,7 @@ pub fn load(allocator: Allocator, name: []const u8) LoadError!Resource {
         error.OutOfMemory => return error.OutOfMemory,
     };
 
+    // TODO: Use new reader interface
     const read_size = file.readAll(file_buf) catch return error.UnexpectedFileError;
     assert(file_size == read_size);
     file_buf[read_size] = 0;

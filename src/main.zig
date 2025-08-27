@@ -9,7 +9,6 @@ const res = @import("resource.zig");
 const Instant = std.time.Instant;
 const Window = @import("window.zig");
 const Renderer = gfx.Renderer;
-const Device = gfx.Device;
 const Model = gfx.Model;
 const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
@@ -71,7 +70,6 @@ pub const EngineConfig = struct {
 pub const config = EngineConfig{};
 
 var window: Window = undefined;
-var device: Device = .{};
 var renderer: Renderer = .{};
 var r3d: Renderer3D = .{};
 var r2d: Renderer2D = .{};
@@ -117,20 +115,18 @@ fn run() !void {
     try window.init(width, height, "v10game", .{
         .platform = cli_options.glfw_platform,
     });
-    defer window.destroy();
+    defer window.deinit();
 
-    try gfx.System.init();
+    try gfx.init(&window);
+    defer gfx.deinit();
 
-    device = try Device.create(&gfx.system, &window);
-    defer device.destroy();
-
-    try renderer.init(&window, &device, resizeCallback);
+    try renderer.init(&window, resizeCallback);
     defer renderer.destroy();
 
-    try r3d.init(&device, renderer.swapchain.render_pass);
+    try r3d.init(renderer.swapchain.render_pass);
     defer r3d.destroy();
 
-    try r2d.init(&device, renderer.swapchain.render_pass);
+    try r2d.init(renderer.swapchain.render_pass);
     defer r2d.destroy();
 
     camera_ui = Camera2D.init(.{
@@ -152,34 +148,36 @@ fn run() !void {
     });
 
     // TrueType font
-    // test_font_ttf = try Font.load(&device, "res/fonts/ProFont/ProFont.ttf", 72);
-    // test_font_ttf = try Font.load(&device, "res/fonts/Arimo/Arimo-Regular.ttf", 72);
-    test_font_ttf = try Font.load(&device, "res/fonts/DejaVuSans/DejaVuSans.ttf", 72);
-    // test_font_ttf = try Font.load(&device, "res/fonts/IBM_Plex_Sans/static/IBMPlexSans-Regular.ttf", 72);
-    defer test_font_ttf.deinit(&device);
+    // test_font_ttf = try Font.load( "res/fonts/ProFont/ProFont.ttf", .{.size=72});
+    // test_font_ttf = try Font.load( "res/fonts/Arimo/Arimo-Regular.ttf", .{.size=72});
+    test_font_ttf = try Font.load("res/fonts/DejaVuSans/DejaVuSans.ttf", .{ .size = 73 });
+    // test_font_ttf = try Font.load( "res/fonts/IBM_Plex_Sans/static/IBMPlexSans-Regular.ttf", .{.size=72});
+    defer test_font_ttf.deinit();
 
-    test_tile_texture = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
-    _ = try Texture.load(&device, "res/textures/test_tile.png", .{ .filter = .nearest });
-    defer test_tile_texture.deinit(&device);
+    test_tile_texture = try Texture.load("res/textures/test_tile.png", .{ .filter = .nearest });
+    _ = try Texture.load("res/textures/test_tile.png", .{ .filter = .nearest });
+    defer test_tile_texture.deinit();
+
     test_tile_sprite = Sprite.init(test_tile_texture, .{ .yflip = true });
     test_tile_sprite_sub_tl = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
     test_tile_sprite_sub_tr = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
     test_tile_sprite_sub_bl = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
     test_tile_sprite_sub_br = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
-    test_texture = try Texture.load(&device, "res/textures/test.png", .{ .filter = .linear });
-    defer test_texture.deinit(&device);
+    test_texture = try Texture.load("res/textures/test.png", .{ .filter = .linear });
+    defer test_texture.deinit();
+
     test_sprite = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512 });
     test_sprite_sub_tl = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
     test_sprite_sub_tr = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .x = 0.5 }, .size = Vec2.scalar(0.5) } });
     test_sprite_sub_bl = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = .{ .y = 0.5 }, .size = Vec2.scalar(0.5) } });
     test_sprite_sub_br = Sprite.init(test_texture, .{ .yflip = true, .ppu = 512, .uv_rect = .{ .pos = Vec2.scalar(0.5), .size = Vec2.scalar(0.5) } });
 
-    var smooth_vase = try Model.load(&device, "res/obj/smooth_vase.obj");
-    defer smooth_vase.deinit(&device);
+    var smooth_vase = try Model.load("res/obj/smooth_vase.obj");
+    defer smooth_vase.deinit();
 
-    // var flat_vase = try Model.load(&device, "res/obj/flat_vase.obj");
-    // defer flat_vase.deinit(&device);
+    // var flat_vase = try Model.load("res/obj/flat_vase.obj");
+    // defer flat_vase.deinit();
 
     var entities_: [1]Entity = undefined;
     for (&entities_) |*e| e.* = Entity.new();
@@ -215,7 +213,7 @@ fn run() !void {
         drawFrame() catch unreachable;
     }
 
-    try device.device.deviceWaitIdle();
+    try gfx.device.device.deviceWaitIdle();
 }
 
 var t_was_down = false;
