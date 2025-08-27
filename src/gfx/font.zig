@@ -118,13 +118,19 @@ pub const LoadError =
     PackError;
 
 pub fn load(name: []const u8, options: LoadOptions) LoadError!*Font {
-    // TODO: hash with size
-    // if (res.cache.get(name)) |ptr| {
-    //     const font: *Font = @ptrCast(@alignCast(ptr));
-    //     log.info("Loading cached font: '{s}' - {}", .{ name, font.size });
-    //     return font;
-    // }
+    var tmp = mem.get_temp();
+    defer tmp.release();
 
+    const name_and_size_tmp = try std.fmt.allocPrint(tmp.allocator(), "{s}#{}", .{ name, options.size });
+
+    if (res.cache.get(name_and_size_tmp)) |ptr| {
+        const font: *Font = @ptrCast(@alignCast(ptr));
+        log.info("Loading cached font: '{s}'", .{name_and_size_tmp});
+        return font;
+    }
+
+    const name_and_size = try mem.font_arena.allocator().alloc(u8, name_and_size_tmp.len);
+    @memcpy(name_and_size, name_and_size_tmp);
     const resource = try res.load(mem.font_arena.allocator(), name);
     switch (resource.type) {
         .ttf => {}, // ok
@@ -134,8 +140,8 @@ pub fn load(name: []const u8, options: LoadOptions) LoadError!*Font {
         },
     }
 
-    const result = try initTtf(resource.data, .{ .name = name, .size = options.size, .ranges = options.ranges });
-    try res.cache.put(name, result);
+    const result = try initTtf(resource.data, .{ .name = name_and_size, .size = options.size, .ranges = options.ranges });
+    try res.cache.put(name_and_size, result);
     return result;
 }
 

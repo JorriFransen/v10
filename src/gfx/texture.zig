@@ -203,9 +203,15 @@ pub fn update(this: *Texture, bitmap: Bitmap, options: InitOptions) UpdateError!
 pub fn deinit(this: *Texture) void {
     const vkd = &gfx.device.device;
 
-    vkd.destroyImage(this.image, null);
-    vkd.freeMemory(this.image_memory, null);
-    vkd.destroyImageView(this.image_view, null);
+    if (this.image != .null_handle) {
+        vkd.destroyImage(this.image, null);
+        vkd.freeMemory(this.image_memory, null);
+        vkd.destroyImageView(this.image_view, null);
+
+        this.image = .null_handle;
+        this.image_memory = .null_handle;
+        this.image_view = .null_handle;
+    }
 }
 
 pub const CreateDescriptorSetError = error{} ||

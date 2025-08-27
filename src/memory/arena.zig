@@ -138,7 +138,7 @@ pub const Arena = struct {
     }
 
     pub fn deinit(this: *Arena) void {
-        if (this.flags.rvas) {
+        if (this.data.len != 0 and this.flags.rvas) {
             switch (builtin.os.tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
                 .linux => posix.munmap(@alignCast(this.data)),

@@ -157,8 +157,10 @@ fn run() !void {
     defer test_font_ttf.deinit();
 
     test_tile_texture = try Texture.load("res/textures/test_tile.png", .{ .filter = .nearest });
-    _ = try Texture.load("res/textures/test_tile.png", .{ .filter = .nearest });
     defer test_tile_texture.deinit();
+
+    const another = try Texture.load("res/textures/test_tile.png", .{ .filter = .nearest });
+    defer another.deinit();
 
     test_tile_sprite = Sprite.init(test_tile_texture, .{ .yflip = true });
     test_tile_sprite_sub_tl = Sprite.init(test_tile_texture, .{ .yflip = true, .uv_rect = .{ .size = Vec2.scalar(0.5) } });
