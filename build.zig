@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) !void {
     const main_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/win32_v10.zig"),
         .link_libc = true,
     });
 
