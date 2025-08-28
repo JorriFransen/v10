@@ -1,33 +1,17 @@
 .{
     .name = .v10,
-    .version = "0.1.0",
-    .fingerprint = 0x4fb9faee53eadd66,
+    .version = "0.0.1",
     .minimum_zig_version = "0.15.1",
-
     .paths = .{
         "build.zig",
-        "build.zig.zon",
         "LICENSE.md",
         "NOTICE.txt",
-        "res",
-        "shaders",
-        "src",
-        "vendor",
+        "res/",
+        "shaders/",
+        "src/",
+        "vendor/",
     },
+    .fingerprint = 0x4fb9faee3e8a9632,
 
-    .dependencies = .{
-        .CliParse = .{ .path = "vendor/zig-CliParse" },
-        .glfw = .{ .path = "vendor/glfw-3.4" },
-        .glfw_zig = .{ .path = "vendor/glfw-zig" },
-
-        // These should match glfw!
-        .vulkan_headers = .{
-            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.313.tar.gz",
-            .hash = "N-V-__8AAPLT7gH4vgN7Xo6yZlOMrzllGbdvVxxhrwUvgI9r",
-        },
-        .vulkan = .{
-            .url = "git+https://github.com/Snektron/vulkan-zig/#93bc6f1ac3e13dd98d918e242dc892f179a0d0f5",
-            .hash = "vulkan-0.0.0-r7YtxwA_AwAU4rmOITZD_KJs11Kie1sv0t-pcMDQGIqw",
-        },
-    },
+    .dependencies =  .{},
 }
