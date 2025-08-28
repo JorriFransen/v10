@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.main);
+const log = std.log.scoped(.win32_v10);
 const win32 = @import("win32.zig");
 
 const assert = std.debug.assert;
@@ -11,7 +11,6 @@ var bitmap_handle: ?win32.HBITMAP = null;
 var bitmap_device_context: ?win32.HDC = null;
 
 pub fn main() u8 {
-    log.debug("entry", .{});
     const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
     const command_line = win32.GetCommandLineA();
 
@@ -113,7 +112,6 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
         },
 
         else => {
-            // log.debug("Unhandled window message: {}", .{message});
             result = win32.DefWindowProcA(window, message, wparam, lparam);
         },
     }
