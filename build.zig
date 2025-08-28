@@ -22,9 +22,12 @@ pub fn build(b: *std.Build) !void {
     });
     exe.linkSystemLibrary("user32");
     exe.subsystem = .Windows;
-    b.installArtifact(exe);
+
+    const exe_install = b.addInstallArtifact(exe, .{});
+    b.getInstallStep().dependOn(&exe_install.step);
 
     const run_exe = b.addRunArtifact(exe);
+    run_exe.step.dependOn(&exe_install.step);
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
     run_exe.setCwd(b.path("runtree"));

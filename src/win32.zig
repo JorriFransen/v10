@@ -6,8 +6,10 @@ pub const HINSTANCE = zig_win32.HINSTANCE;
 pub const HMODULE = zig_win32.HMODULE;
 pub const HANDLE = zig_win32.HANDLE;
 pub const HDC = zig_win32.HDC;
+pub const HBITMAP = HANDLE;
+pub const HGDIOBJ = HANDLE;
 pub const PWSTR = zig_win32.PWSTR;
-pub const LPBYTE = zig_win32.LPBYTE;
+pub const LPBYTE = *BYTE;
 pub const LPSTR = zig_win32.LPSTR;
 pub const LPCSTR = zig_win32.LPCSTR;
 pub const LPWSTR = zig_win32.LPWSTR;
@@ -26,9 +28,11 @@ pub const BOOL = zig_win32.BOOL;
 pub const BYTE = zig_win32.BYTE;
 pub const WORD = zig_win32.WORD;
 pub const DWORD = zig_win32.DWORD;
+pub const LONG = zig_win32.LONG;
 pub const LPVOID = zig_win32.LPVOID;
 pub const POINT = zig_win32.POINT;
 pub const RECT = zig_win32.RECT;
+pub const LPRECT = *RECT;
 
 pub const MB_OK: c_uint = 0x0;
 pub const MB_OKCANCEL: c_uint = 0x1;
@@ -339,12 +343,207 @@ pub const WS_VSCROLL: DWORD = 0x00200000;
 
 pub const CW_USEDEFAULT = c_translation.cast(c_int, c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
 
+pub const SRCCOPY: DWORD = 0x00CC0020;
+pub const SRCPAINT: DWORD = 0x00EE0086;
+pub const SRCAND: DWORD = 0x008800C6;
+pub const SRCINVERT: DWORD = 0x00660046;
+pub const SRCERASE: DWORD = 0x00440328;
+pub const NOTSRCCOPY: DWORD = 0x00330008;
+pub const NOTSRCERASE: DWORD = 0x001100A6;
+pub const MERGECOPY: DWORD = 0x00C000CA;
+pub const MERGEPAINT: DWORD = 0x00BB0226;
 pub const PATCOPY: DWORD = 0x00F00021;
 pub const PATPAINT: DWORD = 0x00FB0A09;
 pub const PATINVERT: DWORD = 0x005A0049;
 pub const DSTINVERT: DWORD = 0x00550009;
 pub const BLACKNESS: DWORD = 0x00000042;
 pub const WHITENESS: DWORD = 0x00FF0062;
+pub const NOMIRRORBITMAP: DWORD = 0x80000000;
+pub const CAPTUREBLT: DWORD = 0x40000000;
+
+pub const VK_LBUTTON: WPARAM = 0x01;
+pub const VK_RBUTTON: WPARAM = 0x02;
+pub const VK_CANCEL: WPARAM = 0x03;
+pub const VK_MBUTTON: WPARAM = 0x04;
+pub const VK_XBUTTON1: WPARAM = 0x05;
+pub const VK_XBUTTON2: WPARAM = 0x06;
+pub const VK_BACK: WPARAM = 0x08;
+pub const VK_TAB: WPARAM = 0x09;
+pub const VK_CLEAR: WPARAM = 0x0C;
+pub const VK_RETURN: WPARAM = 0x0D;
+pub const VK_SHIFT: WPARAM = 0x10;
+pub const VK_CONTROL: WPARAM = 0x11;
+pub const VK_MENU: WPARAM = 0x12;
+pub const VK_PAUSE: WPARAM = 0x13;
+pub const VK_CAPITAL: WPARAM = 0x14;
+pub const VK_KANA: WPARAM = 0x15;
+pub const VK_HANGUL: WPARAM = 0x15;
+pub const VK_IME_ON: WPARAM = 0x16;
+pub const VK_JUNJA: WPARAM = 0x17;
+pub const VK_FINAL: WPARAM = 0x18;
+pub const VK_HANJA: WPARAM = 0x19;
+pub const VK_KANJI: WPARAM = 0x19;
+pub const VK_IME_OFF: WPARAM = 0x1A;
+pub const VK_ESCAPE: WPARAM = 0x1B;
+pub const VK_CONVERT: WPARAM = 0x1C;
+pub const VK_NONCONVERT: WPARAM = 0x1D;
+pub const VK_ACCEPT: WPARAM = 0x1E;
+pub const VK_MODECHANGE: WPARAM = 0x1F;
+pub const VK_SPACE: WPARAM = 0x20;
+pub const VK_PRIOR: WPARAM = 0x21;
+pub const VK_NEXT: WPARAM = 0x22;
+pub const VK_END: WPARAM = 0x23;
+pub const VK_HOME: WPARAM = 0x24;
+pub const VK_LEFT: WPARAM = 0x25;
+pub const VK_UP: WPARAM = 0x26;
+pub const VK_RIGHT: WPARAM = 0x27;
+pub const VK_DOWN: WPARAM = 0x28;
+pub const VK_SELECT: WPARAM = 0x29;
+pub const VK_PRINT: WPARAM = 0x2A;
+pub const VK_EXECUTE: WPARAM = 0x2B;
+pub const VK_SNAPSHOT: WPARAM = 0x2C;
+pub const VK_INSERT: WPARAM = 0x2D;
+pub const VK_DELETE: WPARAM = 0x2E;
+pub const VK_HELP: WPARAM = 0x2F;
+pub const VK_0: WPARAM = '0';
+pub const VK_1: WPARAM = '1';
+pub const VK_2: WPARAM = '2';
+pub const VK_3: WPARAM = '3';
+pub const VK_4: WPARAM = '4';
+pub const VK_5: WPARAM = '5';
+pub const VK_6: WPARAM = '6';
+pub const VK_7: WPARAM = '7';
+pub const VK_8: WPARAM = '8';
+pub const VK_A: WPARAM = 0x41;
+pub const VK_B: WPARAM = 0x42;
+pub const VK_C: WPARAM = 0x43;
+pub const VK_D: WPARAM = 0x44;
+pub const VK_E: WPARAM = 0x45;
+pub const VK_F: WPARAM = 0x46;
+pub const VK_G: WPARAM = 0x47;
+pub const VK_H: WPARAM = 0x48;
+pub const VK_I: WPARAM = 0x49;
+pub const VK_J: WPARAM = 0x4A;
+pub const VK_K: WPARAM = 0x4B;
+pub const VK_L: WPARAM = 0x4C;
+pub const VK_M: WPARAM = 0x4D;
+pub const VK_N: WPARAM = 0x4E;
+pub const VK_O: WPARAM = 0x4F;
+pub const VK_P: WPARAM = 0x50;
+pub const VK_Q: WPARAM = 0x51;
+pub const VK_R: WPARAM = 0x52;
+pub const VK_S: WPARAM = 0x53;
+pub const VK_T: WPARAM = 0x54;
+pub const VK_U: WPARAM = 0x55;
+pub const VK_V: WPARAM = 0x56;
+pub const VK_W: WPARAM = 0x57;
+pub const VK_X: WPARAM = 0x58;
+pub const VK_Y: WPARAM = 0x59;
+pub const VK_Z: WPARAM = 0x5A;
+pub const VK_LWIN: WPARAM = 0x5B;
+pub const VK_RWIN: WPARAM = 0x5C;
+pub const VK_APPS: WPARAM = 0x5D;
+pub const VK_SLEEP: WPARAM = 0x5F;
+pub const VK_NUMPAD0: WPARAM = 0x60;
+pub const VK_NUMPAD1: WPARAM = 0x61;
+pub const VK_NUMPAD2: WPARAM = 0x62;
+pub const VK_NUMPAD3: WPARAM = 0x63;
+pub const VK_NUMPAD4: WPARAM = 0x64;
+pub const VK_NUMPAD5: WPARAM = 0x65;
+pub const VK_NUMPAD6: WPARAM = 0x66;
+pub const VK_NUMPAD7: WPARAM = 0x67;
+pub const VK_NUMPAD8: WPARAM = 0x68;
+pub const VK_NUMPAD9: WPARAM = 0x69;
+pub const VK_MULTIPLY: WPARAM = 0x6A;
+pub const VK_ADD: WPARAM = 0x6B;
+pub const VK_SEPARATOR: WPARAM = 0x6C;
+pub const VK_SUBTRACT: WPARAM = 0x6D;
+pub const VK_DECIMAL: WPARAM = 0x6E;
+pub const VK_DIVIDE: WPARAM = 0x6F;
+pub const VK_F1: WPARAM = 0x70;
+pub const VK_F2: WPARAM = 0x71;
+pub const VK_F3: WPARAM = 0x72;
+pub const VK_F4: WPARAM = 0x73;
+pub const VK_F5: WPARAM = 0x74;
+pub const VK_F6: WPARAM = 0x75;
+pub const VK_F7: WPARAM = 0x76;
+pub const VK_F8: WPARAM = 0x77;
+pub const VK_F9: WPARAM = 0x78;
+pub const VK_F10: WPARAM = 0x79;
+pub const VK_F11: WPARAM = 0x7A;
+pub const VK_F12: WPARAM = 0x7B;
+pub const VK_F13: WPARAM = 0x7C;
+pub const VK_F14: WPARAM = 0x7D;
+pub const VK_F15: WPARAM = 0x7E;
+pub const VK_F16: WPARAM = 0x7F;
+pub const VK_F17: WPARAM = 0x80;
+pub const VK_F18: WPARAM = 0x81;
+pub const VK_F19: WPARAM = 0x82;
+pub const VK_F20: WPARAM = 0x83;
+pub const VK_F21: WPARAM = 0x84;
+pub const VK_F22: WPARAM = 0x85;
+pub const VK_F23: WPARAM = 0x86;
+pub const VK_F24: WPARAM = 0x87;
+pub const VK_NUMLOCK: WPARAM = 0x90;
+pub const VK_SCROLL: WPARAM = 0x91;
+pub const VK_LSHIFT: WPARAM = 0xA0;
+pub const VK_RSHIFT: WPARAM = 0xA1;
+pub const VK_LCONTROL: WPARAM = 0xA2;
+pub const VK_RCONTROL: WPARAM = 0xA3;
+pub const VK_LMENU: WPARAM = 0xA4;
+pub const VK_RMENU: WPARAM = 0xA5;
+pub const VK_BROWSER_BACK: WPARAM = 0xA6;
+pub const VK_BROWSER_FORWARD: WPARAM = 0xA7;
+pub const VK_BROWSER_REFRESH: WPARAM = 0xA8;
+pub const VK_BROWSER_STOP: WPARAM = 0xA9;
+pub const VK_BROWSER_SEARCH: WPARAM = 0xAA;
+pub const VK_BROWSER_FAVORITES: WPARAM = 0xAB;
+pub const VK_BROWSER_HOME: WPARAM = 0xAC;
+pub const VK_VOLUME_MUTE: WPARAM = 0xAD;
+pub const VK_VOLUME_DOWN: WPARAM = 0xAE;
+pub const VK_VOLUME_UP: WPARAM = 0xAF;
+pub const VK_MEDIA_NEXT_TRACK: WPARAM = 0xB0;
+pub const VK_MEDIA_PREV_TRACK: WPARAM = 0xB1;
+pub const VK_MEDIA_STOP: WPARAM = 0xB2;
+pub const VK_MEDIA_PLAY_PAUSE: WPARAM = 0xB3;
+pub const VK_LAUNCH_MAIL: WPARAM = 0xB4;
+pub const VK_LAUNCH_MEDIA_SELECT: WPARAM = 0xB5;
+pub const VK_LAUNCH_APP1: WPARAM = 0xB6;
+pub const VK_LAUNCH_APP2: WPARAM = 0xB7;
+pub const VK_OEM_1: WPARAM = 0xBA;
+pub const VK_OEM_PLUS: WPARAM = 0xBB;
+pub const VK_OEM_COMMA: WPARAM = 0xBC;
+pub const VK_OEM_MINUS: WPARAM = 0xBD;
+pub const VK_OEM_PERIOD: WPARAM = 0xBE;
+pub const VK_OEM_2: WPARAM = 0xBF;
+pub const VK_OEM_3: WPARAM = 0xC0;
+pub const VK_OEM_4: WPARAM = 0xDB;
+pub const VK_OEM_5: WPARAM = 0xDC;
+pub const VK_OEM_6: WPARAM = 0xDD;
+pub const VK_OEM_7: WPARAM = 0xDE;
+pub const VK_OEM_8: WPARAM = 0xDF;
+pub const VK_OEM_102: WPARAM = 0xE2;
+pub const VK_PROCESSKEY: WPARAM = 0xE5;
+pub const VK_PACKET: WPARAM = 0xE7;
+pub const VK_ATTN: WPARAM = 0xF6;
+pub const VK_CRSEL: WPARAM = 0xF7;
+pub const VK_EXSEL: WPARAM = 0xF8;
+pub const VK_EREOF: WPARAM = 0xF9;
+pub const VK_PLAY: WPARAM = 0xFA;
+pub const VK_ZOOM: WPARAM = 0xFB;
+pub const VK_NONAME: WPARAM = 0xFC;
+pub const VK_PA1: WPARAM = 0xFD;
+pub const VK_OEM_CLEAR: WPARAM = 0xFE;
+
+pub const DIB_RGB_COLORS: c_int = 0;
+pub const DIB_PAL_COLORS: c_int = 1;
+
+pub const BI_RGB: c_int = 0;
+pub const BI_RLE8: c_int = 1;
+pub const BI_RLE4: c_int = 2;
+pub const BI_BITFIELDS: c_int = 3;
+pub const BI_JPEG: c_int = 4;
+pub const BI_PNG: c_int = 5;
 
 pub const WNDCLASSA = extern struct {
     style: c_uint = 0,
@@ -374,9 +573,9 @@ pub const WNDCLASSW = extern struct {
 
 pub const STARTUPINFOA = extern struct {
     cb: DWORD = 0,
-    lpReserved: LPSTR = null,
-    lpDesktop: LPSTR = null,
-    lpTitle: LPSTR = null,
+    lpReserved: ?LPSTR = null,
+    lpDesktop: ?LPSTR = null,
+    lpTitle: ?LPSTR = null,
     dwX: DWORD = 0,
     dwY: DWORD = 0,
     dwXSize: DWORD = 0,
@@ -387,10 +586,10 @@ pub const STARTUPINFOA = extern struct {
     dwFlags: DWORD = 0,
     wShowWindow: WORD = 0,
     cbReserved2: WORD = 0,
-    lpReserved2: LPBYTE = null,
-    hStdInput: HANDLE = null,
-    hStdOutput: HANDLE = null,
-    hStdError: HANDLE = null,
+    lpReserved2: ?LPBYTE = null,
+    hStdInput: ?HANDLE = null,
+    hStdOutput: ?HANDLE = null,
+    hStdError: ?HANDLE = null,
 };
 
 pub const STARTUPINFOW = extern struct {
@@ -433,6 +632,32 @@ pub const PAINTSTRUCT = extern struct {
     rgbReserved: [32]BYTE,
 };
 
+pub const BITMAPINFOHEADER = extern struct {
+    biSize: DWORD = @sizeOf(BITMAPINFOHEADER),
+    biWidth: LONG = 0,
+    biHeight: LONG = 0,
+    biPlanes: WORD = 0,
+    biBitCount: WORD = 0,
+    biCompression: DWORD = 0,
+    biSizeImage: DWORD = 0,
+    biXPelsPerMeter: LONG = 0,
+    biYPelsPerMeter: LONG = 0,
+    biClrUsed: DWORD = 0,
+    biClrImportant: DWORD = 0,
+};
+
+pub const RGBQUAD = extern struct {
+    rgbBlue: BYTE = 0,
+    rgbGreen: BYTE = 0,
+    rgbRed: BYTE = 0,
+    rgbReserved: BYTE = 0,
+};
+
+pub const BITMAPINFO = extern struct {
+    bmiHeader: BITMAPINFOHEADER = .{},
+    bmiColors: [1]RGBQUAD = std.mem.zeroes([1]RGBQUAD),
+};
+
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
 pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
@@ -452,6 +677,7 @@ pub extern "user32" fn RegisterClassA(class: *const WNDCLASSA) callconv(.winapi)
 pub extern "user32" fn RegisterClassW(class: *const WNDCLASSW) callconv(.winapi) ATOM;
 
 pub extern "user32" fn CreateWindowExA(ex_style: DWORD, class_name: ?LPCSTR, window_name: ?LPCSTR, style: DWORD, x: c_int, y: c_int, width: c_int, height: c_int, parent_window: ?HWND, menu: ?HMENU, instance: ?HINSTANCE, param: ?LPVOID) callconv(.winapi) ?HWND;
+pub extern "user32" fn DestroyWindow(hwnd: HWND) callconv(.c) BOOL;
 
 pub extern "user32" fn GetMessageA(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
 pub extern "user32" fn GetMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
@@ -459,7 +685,14 @@ pub extern "user32" fn GetMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_ui
 pub extern "user32" fn TranslateMessage(msg: *const MSG) callconv(.winapi) BOOL;
 pub extern "user32" fn DispatchMessageA(msg: *const MSG) callconv(.winapi) LRESULT;
 pub extern "user32" fn DispatchMessageW(msg: *const MSG) callconv(.winapi) LRESULT;
+pub extern "user32" fn PostQuitMessage(exit_code: c_int) callconv(.winapi) void;
 
 pub extern "user32" fn BeginPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) HDC;
 pub extern "user32" fn EndPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) BOOL;
-pub extern "gdi32" fn PatBlt(hdc: HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: DWORD) callconv(.winapi) BOOL;
+pub extern "user32" fn GetClientRect(hwnd: HWND, rect: LPRECT) callconv(.winapi) BOOL;
+pub extern "gdi32" fn PatBlt(hdc: ?HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: DWORD) callconv(.winapi) BOOL;
+pub extern "gdi32" fn CreateDIBSection(hdc: ?HDC, bitmap_info: *const BITMAPINFO, usage: c_uint, ppv_bit: **anyopaque, section: ?HANDLE, offset: DWORD) callconv(.winapi) HBITMAP;
+pub extern "gdi32" fn StretchDIBits(hdc: HDC, xdest: c_int, ydest: c_int, wdest: c_int, hdest: c_int, xsrc: c_int, ysrc: c_int, wsrc: c_int, hsrc: c_int, bits: *const anyopaque, bits_info: *const BITMAPINFO, usage: c_uint, rop: DWORD) callconv(.winapi) void;
+pub extern "gdi32" fn DeleteObject(obj: HGDIOBJ) callconv(.winapi) BOOL;
+pub extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(.winapi) HDC;
+pub extern "gdi32" fn ReleaseDC(window: ?HWND, hdc: HDC) callconv(.winapi) c_int;
