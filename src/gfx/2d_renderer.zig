@@ -11,6 +11,7 @@ const Texture = gfx.Texture;
 const Sprite = gfx.Sprite;
 const Font = gfx.Font;
 const Camera = gfx.Camera2D;
+const Vec2u16 = math.Vec(2, u16);
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Vec4 = math.Vec4;
@@ -451,11 +452,18 @@ pub const Batch = struct {
 
         const glyphs = font.collectGlyphs(tmp.allocator(), text);
 
+        assert(font.texture.width == font.texture.height);
+        const fsize: f32 = @floatFromInt(font.texture.width);
+
         for (glyphs, 0..) |glyph, i| {
             const vi = i * 4;
             const glyph_vertices = text_vertices[vi .. vi + 4];
-            const uv_rect = glyph.uv_rect;
             const color = white;
+
+            const uv_rect = Rect.new(
+                math.intToFloatVec(Vec2u16, Vec2, glyph.uv_rect.pos).divScalar(fsize),
+                math.intToFloatVec(Vec2u16, Vec2, glyph.uv_rect.size).divScalar(fsize),
+            );
 
             var kern_advance: f32 = 0;
             if (i > 0) {
@@ -470,7 +478,7 @@ pub const Batch = struct {
             const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
             var glyph_pos = cursor_pos.add(glyph.offset.mul(cam_scale)).add(.{ .y = cam_y_offset });
             if (ppu_factor == 1) glyph_pos.x = std.math.round(glyph_pos.x);
-            const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
+            const glyph_size = math.intToFloatVec(Vec2u16, Vec2, glyph.size).mul(cam_scale);
 
             glyph_vertices[0] = .{ .pos = glyph_pos, .uv = uv_rect.pos, .color = color };
             glyph_vertices[1] = .{ .pos = glyph_pos.add(.{ .x = glyph_size.x }), .uv = uv_rect.br(), .color = color };
@@ -516,7 +524,7 @@ pub const Batch = struct {
                 const cam_scale = Vec2.new(ppu_factor, cam_y_scale);
                 var glyph_pos = cursor_pos.add(glyph.offset.mul(cam_scale)).add(.{ .y = cam_y_offset });
                 if (ppu_factor == 1) glyph_pos.x = std.math.round(glyph_pos.x);
-                const glyph_size = Vec2.newI(glyph.pixel_width, glyph.pixel_height).mul(cam_scale);
+                const glyph_size = math.intToFloatVec(Vec2u16, Vec2, glyph.size).mul(cam_scale);
 
                 const x_advance = glyph.x_advance * ppu_factor;
                 const cursor_color = if (i % 2 == 0) cursor_col_1 else cursor_col_2;

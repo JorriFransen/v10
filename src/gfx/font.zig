@@ -10,6 +10,7 @@ const Texture = gfx.Texture;
 const Allocator = std.mem.Allocator;
 const Rect = math.Rect;
 const Vec2 = math.Vec2;
+const Vec2u16 = math.Vec(2, u16);
 const Vec2u32 = math.Vec(2, u32);
 
 const GlyphMap = std.HashMap(u32, Glyph, Glyph.MapContext, std.hash_map.default_max_load_percentage);
@@ -47,16 +48,14 @@ arena: mem.Arena,
 name: []const u8,
 
 pub const Glyph = struct {
-    pixel_width: u32,
-    pixel_height: u32,
-
-    uv_rect: Rect,
-
+    /// Size in pixels
+    size: Vec2u16,
     /// x offset from the cursor, y offset from the top of the cell to the top of the uvrect
     offset: Vec2,
-
     /// advance after drawing this glyph
     x_advance: f32,
+    /// uv rectangle of the glyph, in pixel space
+    uv_rect: math.RectT(u16),
 
     stb_index: u32,
 
@@ -155,7 +154,10 @@ pub const PackError =
     stb.tt.Error ||
     Texture.InitError ||
     mem.Arena.Error ||
-    error{OutOfMemory};
+    error{
+        OutOfMemory,
+        TextureTooSmall,
+    };
 
 pub fn initTtf(ttf_data: []const u8, options: InitOptions) PackError!*Font {
     // This must be large enough to store the glyph table, and noting else can be allocated from it!
@@ -234,8 +236,10 @@ pub fn packRanges(this: *Font, ranges: []const GlyphRange) PackError!void {
         }
     }
 
-    // TODO: Check result
-    _ = stb.c.stbrp_pack_rects(&pack_context, rects.ptr, @intCast(used_glyph_count));
+    if (stb.c.stbrp_pack_rects(&pack_context, rects.ptr, @intCast(used_glyph_count)) != 1) {
+        log.err("Font texture too small: '{s}'", .{this.name});
+        return error.TextureTooSmall;
+    }
 
     for (rects[0..used_glyph_count], codepoints[0..used_glyph_count]) |rect, codepoint| {
         assert(rect.was_packed != 0);
@@ -261,7 +265,6 @@ pub fn packRanges(this: *Font, ranges: []const GlyphRange) PackError!void {
     this.invalid_glyph_codepoint = invalid_glyph_codepoint;
 }
 
-// TODO: Move the final position calculations from the renderer here (add separate user facing glyph type)
 pub fn collectGlyphs(this: *Font, allocator: Allocator, text: []const u8) []*const Glyph {
     const result = allocator.alloc(*const Glyph, text.len) catch @panic("Font.collectGlyphs: OOM");
 
@@ -325,21 +328,13 @@ fn renderPackedGlyph(this: *Font, rect: stb.c.stbrp_rect, codepoint: u32, bitmap
 
     const box = stb.tt.getGlyphBitmapBox(&this.info, glyph_index, this.scale, this.scale);
 
-    const pixel_width = rect.w - 1;
-    const pixel_height = rect.h - 1;
-    const fstride: f32 = @floatFromInt(stride);
+    const pixel_width: u16 = @intCast(rect.w - 1);
+    const pixel_height: u16 = @intCast(rect.h - 1);
     const glyph = Glyph{
-        .pixel_width = @intCast(pixel_width),
-        .pixel_height = @intCast(pixel_height),
+        .size = .{ .x = pixel_width, .y = pixel_height },
         .uv_rect = .{
-            .pos = .{
-                .x = @as(f32, @floatFromInt(rect.x)) / fstride,
-                .y = @as(f32, @floatFromInt(rect.y)) / fstride,
-            },
-            .size = .{
-                .x = @as(f32, @floatFromInt(pixel_width)) / fstride,
-                .y = @as(f32, @floatFromInt(pixel_height)) / fstride,
-            },
+            .pos = .{ .x = @intCast(rect.x), .y = @intCast(rect.y) },
+            .size = .{ .x = pixel_width, .y = pixel_height },
         },
         .offset = .{
             .x = @floatFromInt(box.x0),
