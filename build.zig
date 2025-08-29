@@ -57,7 +57,7 @@ fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !*Step.
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path("src/linux_v10.zig"),
-        .link_libc = true,
+        .link_libc = true, // Required for dlopen, maybe more
     });
 
     const exe = b.addExecutable(.{
