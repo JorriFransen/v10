@@ -1,6 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.linux_v10);
-const wayland = @import("wayland.zig");
+const wayland = @import("old_wayland.zig");
 const wlc = wayland.core;
 const wlp = wayland.protocol;
 
