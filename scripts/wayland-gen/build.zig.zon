@@ -1,0 +1,16 @@
+.{
+    .name = .wayland_gen,
+    .version = "0.0.0",
+    .fingerprint = 0x4604b0b27f1acc5a, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .dependencies = .{
+        .zig_xml = .{
+            .path = "zig-xml",
+        },
+    },
+}

@@ -1,8 +1,0 @@
-canonical resource names
-
-static update time
-
-move stb headers (/implementation.c?) to vendor/
-
-rename memory.get_scratch and memory.get_temp
-make memory.get_scratch take an opaque pointer
