@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.linux_v10);
-const wl = @import("wayland.zig");
+const wayland = @import("wayland.zig");
+const wlc = wayland.core;
+const wlp = wayland.protocol;
 
 const assert = std.debug.assert;
 
@@ -10,27 +12,27 @@ pub fn main() !void {
     var lwl = try std.DynLib.open("libwayland-client.so.0");
     defer lwl.close();
 
-    try wl.load(&lwl);
+    try wayland.load(&lwl);
 
-    if (wl.display_connect(null)) |display| {
-        defer wl.display_disconnect(display);
+    if (wlc.display_connect(null)) |display| {
+        defer wlc.display_disconnect(display);
         log.debug("display connected", .{});
 
-        const registry = wl.get_registry(display) orelse unreachable;
-        const listener = wl.RegistryListener{
+        const registry = wlp.get_registry(display) orelse unreachable;
+        const listener = wlp.RegistryListener{
             .global = wlGlobal,
             .global_remove = wlGlobalRemove,
         };
-        wl.registry_add_listener(registry, &listener, null);
-        _ = wl.display_roundtrip(display);
-        wl.registry_destroy(registry);
+        wlp.registry_add_listener(registry, &listener, null);
+        _ = wlc.display_roundtrip(display);
+        wlp.registry_destroy(registry);
     } else {
         log.err("wl_display_connect failed", .{});
         return error.DisplayConnectionFailed;
     }
 }
 
-fn wlGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
+fn wlGlobal(data: ?*anyopaque, registry: *wlc.Registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
     _ = data;
     _ = registry;
     _ = version;
@@ -38,7 +40,7 @@ fn wlGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, interface: [*c
     log.debug("wlGlobal: {} - {s}", .{ name, interface });
 }
 
-fn wlGlobalRemove(registry: *wl.Registry, name: u32) callconv(.c) void {
+fn wlGlobalRemove(registry: *wlc.Registry, name: u32) callconv(.c) void {
     _ = registry;
     _ = name;
     unreachable;

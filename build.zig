@@ -64,6 +64,7 @@ fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !*Step.
         .name = "v10",
         .root_module = main_module,
     });
+    exe.linkSystemLibrary("wayland-client");
 
     return exe;
 }
