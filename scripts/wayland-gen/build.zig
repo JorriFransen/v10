@@ -6,6 +6,12 @@ pub fn build(b: *std.Build) void {
 
     const zig_xml_dep = b.dependency("zig_xml", .{});
 
+    const mem_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("../../src/memory/memory.zig"),
+    });
+
     const exe = b.addExecutable(.{
         .name = "wayland_gen",
         .root_module = b.createModule(.{
@@ -14,6 +20,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "xml", .module = zig_xml_dep.module("xml") },
+                .{ .name = "mem", .module = mem_module },
             },
         }),
         .use_llvm = true,

@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.@"wayland-gen.parser");
 const xml = @import("xml");
 const types = @import("types.zig");
+const mem = @import("mem");
 
 const Parser = @This();
 const Allocator = std.mem.Allocator;
@@ -104,7 +105,7 @@ fn parseProtocol(this: *Parser) !Protocol {
         xmlErr(this, reader.location(), "Expected 'name' attribute, got '{s}'", .{attr_name});
     }
 
-    const protocol_name = this.copyString(try reader.attributeValue(0));
+    const protocol_name = copyString(this.allocator, try reader.attributeValue(0));
 
     var interfaces = std.ArrayList(Interface){};
 
@@ -172,7 +173,7 @@ fn parseInterface(this: *Parser) !Interface {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "name")) {
-            name = this.copyString(value);
+            name = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "version")) {
             version = try std.fmt.parseInt(u32, value, 10);
         } else {
@@ -255,7 +256,7 @@ fn parseRequest(this: *Parser) !Request {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "name")) {
-            name = this.copyString(value);
+            name = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "type")) {
             destructor = std.mem.eql(u8, value, "destructor");
         } else if (std.mem.eql(u8, attr_name, "since")) {
@@ -333,7 +334,7 @@ fn parseEvent(this: *Parser) !?Event {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "name")) {
-            name = this.copyString(value);
+            name = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "type")) {
             if (std.mem.eql(u8, value, "destructor")) {
                 destructor = true;
@@ -425,7 +426,7 @@ fn parseEnum(this: *Parser) !Enum {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "name")) {
-            name = this.copyString(value);
+            name = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "bitfield")) {
             bitfield = std.mem.eql(u8, value, "true");
         } else if (std.mem.eql(u8, attr_name, "since")) {
@@ -503,7 +504,7 @@ fn parseArg(this: *Parser) !Arg {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "name")) {
-            name = this.copyString(value);
+            name = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "type")) {
             arg_type = std.meta.stringToEnum(Type, value) orelse {
                 this.xmlErr(reader.location(), "Invalid type '{s}'", .{value});
@@ -512,11 +513,11 @@ fn parseArg(this: *Parser) !Arg {
         } else if (std.mem.eql(u8, attr_name, "allow-null")) {
             allow_null = std.mem.eql(u8, value, "true");
         } else if (std.mem.eql(u8, attr_name, "interface")) {
-            interface = this.copyString(value);
+            interface = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "enum")) {
-            enum_name = this.copyString(value);
+            enum_name = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "summary")) {
-            summary = this.copyString(value);
+            summary = copyString(this.allocator, value);
         } else {
             this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
             return error.MalformedXml;
@@ -567,14 +568,14 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "name")) {
-            name = this.copyString(value);
-            value_str = this.copyString(value);
+            name = copyString(this.allocator, value);
+            value_str = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "since")) {
             since = try std.fmt.parseInt(u32, value, 10);
         } else if (std.mem.eql(u8, attr_name, "value")) {
-            value_str = this.copyString(value);
+            value_str = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "summary")) {
-            summary = this.copyString(value);
+            summary = copyString(this.allocator, value);
         } else {
             this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
             return error.MalformedXml;
@@ -617,7 +618,7 @@ fn parseDescription(this: *Parser) !Description {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "summary")) {
-            summary = this.copyString(value);
+            summary = copyString(this.allocator, value);
         } else {
             this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
             return error.MalformedXml;
@@ -635,8 +636,9 @@ fn parseDescription(this: *Parser) !Description {
                 this.xmlErr(reader.location(), "Unexpected eof", .{});
                 return error.MalformedXml;
             },
+
             .text => {
-                text = this.copyString(try reader.text());
+                text = copyString(this.allocator, try reader.text());
             },
 
             .element_end => {
@@ -662,8 +664,10 @@ fn skipElement(this: *Parser) !void {
     const reader = this.getXmlReader();
 
     // TODO: Temp alloc
-    const start_name = this.copyString(reader.elementName());
-    defer this.allocator.free(start_name);
+    var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
+    defer tmp.release();
+
+    const start_name = copyString(tmp.allocator(), reader.elementName());
 
     var node = try nextNode(this);
     while (true) {
@@ -723,8 +727,8 @@ fn printErr(this: *Parser, comptime msg: []const u8, args: anytype) void {
     writer.flush() catch @panic("Flush failed");
 }
 
-fn copyString(this: *Parser, str: []const u8) []const u8 {
-    const buf = this.allocator.alloc(u8, str.len) catch @panic("OOM");
+fn copyString(allocator: Allocator, str: []const u8) []const u8 {
+    const buf = allocator.alloc(u8, str.len) catch @panic("OOM");
     @memcpy(buf, str);
     return buf;
 }
