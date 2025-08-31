@@ -40,6 +40,8 @@ pub const Enum = struct {
     description: []const u8,
     entries: []Entry,
 
+    resolved_type: ?Type,
+
     pub const Entry = struct {
         name: []const u8,
         since: u32,
@@ -51,9 +53,9 @@ pub const Enum = struct {
 pub const Arg = struct {
     name: []const u8,
     type: Type,
+    enum_name: ?[]const u8,
     allow_null: bool,
     interface: ?[]const u8,
-    enum_name: ?[]const u8,
     summary: []const u8,
 };
 

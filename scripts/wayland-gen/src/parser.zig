@@ -23,28 +23,14 @@ allocator: Allocator,
 
 stderr_writer: std.fs.File.Writer,
 
+current_interface_name: []const u8,
+
 read_buf: [4096]u8,
 stderr_write_buf: [512]u8,
 
 /// Used for zig-xml and error printing
 var gpa_data = std.heap.DebugAllocator(.{}).init;
 const gpa = gpa_data.allocator();
-
-pub fn init(allocator: Allocator, xml_path: []const u8) !Parser {
-    var result: Parser = undefined;
-
-    result.xml_file_path = xml_path;
-    var xml_file = try std.fs.cwd().openFile(xml_path, .{ .mode = .read_only });
-
-    result.xml_file_reader = xml_file.reader(&result.read_buf);
-    result.xml_reader = xml.Reader.Streaming.init(gpa, &result.xml_file_reader.interface, .{ .namespace_aware = false, .assume_valid_utf8 = true });
-
-    result.allocator = allocator;
-
-    result.stderr_writer = std.fs.File.stderr().writer(&result.stderr_write_buf);
-
-    return result;
-}
 
 pub fn deinit(this: *Parser) void {
     this.xml_reader.deinit();
@@ -61,15 +47,35 @@ const Description = struct {
     }
 };
 
-pub fn parse(this: *Parser) !Protocol {
-    const reader = this.getXmlReader();
+pub fn parse(allocator: Allocator, xml_path: []const u8) !Protocol {
+    var parser: Parser = .{
+        .xml_file_path = xml_path,
+        .xml_file_reader = undefined,
+        .xml_reader = undefined,
+        .allocator = allocator,
+        .stderr_writer = undefined,
+        .read_buf = undefined,
+        .stderr_write_buf = undefined,
+        .current_interface_name = undefined,
+    };
+
+    var xml_file = try std.fs.cwd().openFile(xml_path, .{ .mode = .read_only });
+    defer xml_file.close();
+
+    parser.xml_file_reader = xml_file.reader(&parser.read_buf);
+    parser.xml_reader = xml.Reader.Streaming.init(gpa, &parser.xml_file_reader.interface, .{ .namespace_aware = false, .assume_valid_utf8 = true });
+    defer parser.xml_reader.deinit();
+
+    parser.stderr_writer = std.fs.File.stderr().writer(&parser.stderr_write_buf);
+
+    const reader = parser.getXmlReader();
 
     while (true) {
-        const node = try this.nextNode();
+        const node = try parser.nextNode();
 
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node type '{s}'", .{@tagName(node)});
+                parser.xmlErr(reader.location(), "Unexpected xml node type '{s}'", .{@tagName(node)});
                 unreachable;
             },
             .eof => break,
@@ -78,16 +84,16 @@ pub fn parse(this: *Parser) !Protocol {
             .element_start => {
                 const name = reader.elementName();
                 if (!std.mem.eql(u8, name, "protocol")) {
-                    this.xmlErr(reader.location(), "Invalid element: '{s}', expected 'protocol'", .{name});
+                    parser.xmlErr(reader.location(), "Invalid element: '{s}', expected 'protocol'", .{name});
                     return error.MalformedXml;
                 }
 
-                return try this.parseProtocol();
+                return try parser.parseProtocol();
             },
         }
     }
 
-    this.printErr("Did not find protocol definition", .{});
+    parser.printErr("Did not find protocol definition", .{});
     return error.MalformedXml;
 }
 
@@ -156,7 +162,7 @@ fn parseProtocol(this: *Parser) !Protocol {
 fn parseInterface(this: *Parser) !Interface {
     const reader = this.getXmlReader();
 
-    var name: []const u8 = undefined;
+    var name_opt: ?[]const u8 = null;
     var version: u32 = 0;
     var description: Description = .{};
     var requests: std.ArrayList(Request) = .{};
@@ -165,7 +171,7 @@ fn parseInterface(this: *Parser) !Interface {
 
     const attr_count = reader.attributeCount();
     if (attr_count < 1) {
-        this.xmlErr(reader.location(), "Missing name attribute", .{});
+        this.xmlErr(reader.location(), "Invalid attribute count", .{});
     }
 
     for (0..attr_count) |i| {
@@ -173,7 +179,7 @@ fn parseInterface(this: *Parser) !Interface {
         const value = try reader.attributeValue(i);
 
         if (std.mem.eql(u8, attr_name, "name")) {
-            name = copyString(this.allocator, value);
+            name_opt = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "version")) {
             version = try std.fmt.parseInt(u32, value, 10);
         } else {
@@ -181,6 +187,12 @@ fn parseInterface(this: *Parser) !Interface {
             return error.MalformedXml;
         }
     }
+
+    const name = name_opt orelse {
+        this.xmlErr(reader.location(), "Missing name attirbute", .{});
+        return error.MalformedXml;
+    };
+    this.current_interface_name = name;
 
     while (true) {
         const node = try this.nextNode();
@@ -481,6 +493,7 @@ fn parseEnum(this: *Parser) !Enum {
         .summary = description.summary,
         .description = description.text,
         .entries = try entries.toOwnedSlice(this.allocator),
+        .resolved_type = null,
     };
 }
 
@@ -491,7 +504,7 @@ fn parseArg(this: *Parser) !Arg {
     var arg_type: ?Type = null;
     var allow_null = false;
     var interface: ?[]const u8 = null;
-    var enum_name: ?[]const u8 = null;
+    var enum_name_opt: ?[]const u8 = null;
     var summary: []const u8 = "";
 
     const attr_count = reader.attributeCount();
@@ -515,7 +528,7 @@ fn parseArg(this: *Parser) !Arg {
         } else if (std.mem.eql(u8, attr_name, "interface")) {
             interface = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "enum")) {
-            enum_name = copyString(this.allocator, value);
+            enum_name_opt = copyString(this.allocator, value);
         } else if (std.mem.eql(u8, attr_name, "summary")) {
             summary = copyString(this.allocator, value);
         } else {
@@ -543,9 +556,9 @@ fn parseArg(this: *Parser) !Arg {
     return .{
         .name = name.?,
         .type = arg_type.?,
+        .enum_name = enum_name_opt,
         .allow_null = allow_null,
         .interface = interface,
-        .enum_name = enum_name,
         .summary = summary,
     };
 }

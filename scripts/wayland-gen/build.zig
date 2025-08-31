@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "mem", .module = mem_module },
             },
         }),
-        .use_llvm = true,
+        .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
     });
     const exe_install = b.addInstallArtifact(exe, .{});
     b.getInstallStep().dependOn(&exe_install.step);
