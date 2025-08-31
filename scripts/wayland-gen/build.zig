@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "xml", .module = zig_xml_dep.module("xml") },
             },
         }),
+        .use_llvm = true,
     });
     const exe_install = b.addInstallArtifact(exe, .{});
     b.getInstallStep().dependOn(&exe_install.step);
