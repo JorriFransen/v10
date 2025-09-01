@@ -17,7 +17,7 @@ pub fn main() !void {
 
     var wayland_protocol = try parser.parse(parse_arena.allocator(), xml_path);
 
-    const result = generator.generate(gen_arena.allocator(), &wayland_protocol);
+    const result = try generator.generate(gen_arena.allocator(), &wayland_protocol);
     parse_arena.reset();
 
     log.debug("result:\n{s}", .{result});

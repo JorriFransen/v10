@@ -47,6 +47,7 @@ pub const Enum = struct {
         since: u32,
         value_str: []const u8,
         summary: []const u8,
+        generated: bool = false,
     };
 };
 
