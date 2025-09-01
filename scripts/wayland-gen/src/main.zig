@@ -20,5 +20,12 @@ pub fn main() !void {
     const result = try generator.generate(gen_arena.allocator(), &wayland_protocol);
     parse_arena.reset();
 
-    log.debug("result:\n{s}", .{result});
+    // log.debug("result:\n{s}", .{result});
+
+    var stdout_buf: [1024]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&stdout_buf);
+    const stdout = &writer.interface;
+
+    try stdout.print("{s}", .{result});
+    try stdout.flush();
 }
