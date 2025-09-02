@@ -326,7 +326,6 @@ fn genImplicitRequests(this: *Generator, interface: *const Interface) void {
         \\            return proxy_get_version(@ptrCast(self));
         \\        }}
         \\
-        \\
     , .{ name, name, name });
 
     // More exceptions!
@@ -337,7 +336,6 @@ fn genImplicitRequests(this: *Generator, interface: *const Interface) void {
             \\        pub inline fn destroy(self: *{s}) void {{
             \\            proxy_destroy(@ptrCast(self));
             \\        }}
-            \\
             \\
         , .{name});
     }

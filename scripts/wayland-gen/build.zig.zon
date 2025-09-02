@@ -9,8 +9,7 @@
         "src",
     },
     .dependencies = .{
-        .zig_xml = .{
-            .path = "zig-xml",
-        },
+        .zig_xml = .{ .path = "zig-xml" },
+        .zig_cli_parse = .{ .path = "../../vendor/zig-CliParse" },
     },
 }

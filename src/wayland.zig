@@ -30,7 +30,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Display) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn sync(self: *Display) ?*Callback {
             const version = proxy_get_version(@ptrCast(self));
             const result = proxy_marshal_flags(@ptrCast(self), 0, interfaces.callback, version, 0, NULL);
@@ -65,11 +64,9 @@ pub const wl = struct {
         pub inline fn get_version(self: *Registry) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Registry) void {
             proxy_destroy(@ptrCast(self));
         }
-
         pub inline fn bind(self: *Registry, name: u32, interface: *const Interface, version: u32) *opaque {} {
             const result = proxy_marshal_flags(@ptrCast(self), 0, interface, version, 0, name, interface.name.ptr, version, NULL);
             return @ptrCast(result);
@@ -96,11 +93,9 @@ pub const wl = struct {
         pub inline fn get_version(self: *Callback) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Callback) void {
             proxy_destroy(@ptrCast(self));
         }
-
     };
 
     pub const Compositor = opaque {
@@ -115,7 +110,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Compositor) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn create_surface(self: *Compositor) ?*Surface {
             const version = proxy_get_version(@ptrCast(self));
             const result = proxy_marshal_flags(@ptrCast(self), 0, interfaces.surface, version, 0, NULL);
@@ -141,7 +135,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *ShmPool) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn create_buffer(self: *ShmPool, offset: i32, width: i32, height: i32, stride: i32, format: u32) ?*Buffer {
             const version = proxy_get_version(@ptrCast(self));
             const result = proxy_marshal_flags(@ptrCast(self), 0, interfaces.buffer, version, 0, NULL, offset, width, height, stride, format);
@@ -311,7 +304,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Shm) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn create_pool(self: *Shm, fd: u32, size: i32) ?*ShmPool {
             const version = proxy_get_version(@ptrCast(self));
             const result = proxy_marshal_flags(@ptrCast(self), 0, interfaces.shm_pool, version, 0, NULL, fd, size);
@@ -344,7 +336,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Buffer) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Buffer) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -380,7 +371,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *DataOffer) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn accept(self: *DataOffer, serial: u32, mime_type: [*:0]const u8) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, 0, serial, mime_type);
@@ -437,7 +427,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *DataSource) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn offer(self: *DataSource, mime_type: [*:0]const u8) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, 0, mime_type);
@@ -484,7 +473,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *DataDevice) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn start_drag(self: *DataDevice, source: ?*DataSource, origin: ?*Surface, icon: ?*Surface, serial: u32) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, 0, source, origin, icon, serial);
@@ -522,7 +510,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *DataDeviceManager) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn create_data_source(self: *DataDeviceManager) ?*DataSource {
             const version = proxy_get_version(@ptrCast(self));
             const result = proxy_marshal_flags(@ptrCast(self), 0, interfaces.data_source, version, 0, NULL);
@@ -552,7 +539,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Shell) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn get_shell_surface(self: *Shell, surface: ?*Surface) ?*ShellSurface {
             const version = proxy_get_version(@ptrCast(self));
             const result = proxy_marshal_flags(@ptrCast(self), 0, interfaces.shell_surface, version, 0, NULL, surface);
@@ -609,7 +595,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *ShellSurface) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn pong(self: *ShellSurface, serial: u32) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, 0, serial);
@@ -692,7 +677,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Surface) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Surface) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -783,7 +767,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Seat) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn get_pointer(self: *Seat) ?*Pointer {
             const version = proxy_get_version(@ptrCast(self));
             const result = proxy_marshal_flags(@ptrCast(self), 0, interfaces.pointer, version, 0, NULL);
@@ -863,7 +846,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Pointer) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn set_cursor(self: *Pointer, serial: u32, surface: ?*Surface, hotspot_x: i32, hotspot_y: i32) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, 0, serial, surface, hotspot_x, hotspot_y);
@@ -911,7 +893,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Keyboard) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn release(self: *Keyboard) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -944,7 +925,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Touch) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn release(self: *Touch) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -1003,7 +983,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Output) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn release(self: *Output) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -1022,7 +1001,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Region) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Region) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -1056,7 +1034,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Subcompositor) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Subcompositor) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -1085,7 +1062,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Subsurface) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Subsurface) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);
@@ -1129,7 +1105,6 @@ pub const wl = struct {
         pub inline fn get_version(self: *Fixes) u32 {
             return proxy_get_version(@ptrCast(self));
         }
-
         pub inline fn destroy(self: *Fixes) void {
             const version = proxy_get_version(@ptrCast(self));
             _ = proxy_marshal_flags(@ptrCast(self), 0, null, version, WL_MARSHAL_FLAG_DESTROY);

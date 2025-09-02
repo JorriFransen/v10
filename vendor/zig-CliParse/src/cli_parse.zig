@@ -90,8 +90,9 @@ pub fn option(default: anytype, name: [:0]const u8, short: ?u8, description: ?[]
 /// When specifying options by their short name (-o) a '=' between the name
 /// and value is optional. When the option is a boolean the value may be
 /// omitted,in which case it will be set to the inverse of the default value.
-pub fn OptionParser(comptime options: []const Option) type {
+pub fn OptionParser(program_name: []const u8, comptime options: []const Option) type {
     const Info = struct {
+        program_name: []const u8,
         fields: [options.len]std.builtin.Type.StructField,
         options: [options.len]Option,
     };
@@ -139,7 +140,7 @@ pub fn OptionParser(comptime options: []const Option) type {
             };
         }
 
-        break :blk .{ .fields = fields, .options = options_copy };
+        break :blk .{ .program_name = program_name, .fields = fields, .options = options_copy };
     };
 
     const OptionStruct = @Type(.{ .@"struct" = .{
@@ -309,7 +310,7 @@ pub fn OptionParser(comptime options: []const Option) type {
             var writer = file.writer(&buffer);
             const w = &writer.interface;
 
-            try w.print("Usage: v10game [OPTION]...", .{});
+            try w.print("Usage: {s} [OPTION]...", .{info.program_name});
             try w.print("\nOptions\n", .{});
 
             var name_pad: [max_name_length]u8 = undefined;

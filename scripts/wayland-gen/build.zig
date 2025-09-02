@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const zig_xml_dep = b.dependency("zig_xml", .{});
+    const cli_parse_dep = b.dependency("zig_cli_parse", .{});
 
     const mem_module = b.createModule(.{
         .target = target,
@@ -21,6 +22,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "xml", .module = zig_xml_dep.module("xml") },
                 .{ .name = "mem", .module = mem_module },
+                .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },
         }),
         .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
