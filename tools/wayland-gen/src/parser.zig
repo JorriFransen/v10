@@ -59,7 +59,12 @@ pub fn parse(allocator: Allocator, xml_path: []const u8) !Protocol {
         .current_interface_name = undefined,
     };
 
-    var xml_file = try std.fs.cwd().openFile(xml_path, .{ .mode = .read_only });
+    var xml_file = std.fs.cwd().openFile(xml_path, .{ .mode = .read_only }) catch |e| switch (e) {
+        else => {
+            log.err("Unable to open file: '{s}'", .{xml_path});
+            return e;
+        },
+    };
     defer xml_file.close();
 
     parser.xml_file_reader = xml_file.reader(&parser.read_buf);

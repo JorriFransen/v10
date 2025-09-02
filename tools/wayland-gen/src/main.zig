@@ -12,6 +12,7 @@ var gpa_data = std.heap.DebugAllocator(.{}){};
 const gpa = gpa_data.allocator();
 
 const OptionParser = clip.OptionParser("wayland-gen", &.{
+    clip.option(@as([]const u8, ""), "wayland", 'w', "Wayland protocol xml path"),
     clip.option(@as([]const u8, ""), "out", 'o', "Output file path"),
     clip.option(false, "help", 'h', "Print this help message"),
 });
@@ -25,20 +26,29 @@ pub fn main() !void {
     const options = try OptionParser.parse(gpa, tmp.allocator());
     if (options.help) {
         try OptionParser.usage(std.fs.File.stdout());
+        std.process.exit(0);
+    }
+
+    var args_valid = true;
+    if (options.wayland.len == 0) {
+        log.err("Missing --wayland option", .{});
+        args_valid = false;
     }
 
     if (options.out.len == 0) {
         log.err("Missing --out option", .{});
+        args_valid = false;
+    }
+
+    if (!args_valid) {
         try OptionParser.usage(std.fs.File.stderr());
         std.process.exit(1);
     }
 
-    const xml_path = "wayland.xml";
-
     var parse_arena = try mem.Arena.init(.{ .virtual = .{} });
     var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
 
-    var wayland_protocol = try parser.parse(parse_arena.allocator(), xml_path);
+    var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
 
     const result = try generator.generate(gen_arena.allocator(), &wayland_protocol);
     parse_arena.reset();

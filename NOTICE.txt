@@ -10,3 +10,7 @@ deps/glfw/
 
 res/fonts/ProFontWindows (license in directory)
  - Renamed ProFontWindows.ttf -> ProFont.ttf
+
+vendor/wayland/wayland.xml (MIT license in file)
+
+tools/wayland-gen/zig-xml (Zero Clause BSD License in directory)

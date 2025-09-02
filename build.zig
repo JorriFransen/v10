@@ -5,23 +5,28 @@ const OptimizeMode = std.builtin.OptimizeMode;
 const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
-    const os = target.result.os.tag;
 
     std.fs.cwd().makeDir("runtree") catch |e| switch (e) {
         error.PathAlreadyExists => {},
         else => return e,
     };
 
-    const buildForTarget = switch (os) {
-        else => return error.PlatformNotSupported,
-        .windows => &buildWindows,
-        .linux => &buildLinux,
-    };
+    const tools = try buildTools(b, optimize, target);
 
-    const exe = try buildForTarget(b, optimize, target);
+    _ = try buildEngine(b, optimize, target, &tools);
+}
+
+fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: *const Tools) !*Step.Compile {
+    const os = target.result.os.tag;
+
+    const exe = switch (os) {
+        else => return error.PlatformNotSupported,
+        .windows => try buildWindows(b, optimize, target, tools),
+        .linux => try buildLinux(b, optimize, target, tools),
+    };
 
     const exe_install = b.addInstallArtifact(exe, .{});
     b.getInstallStep().dependOn(&exe_install.step);
@@ -32,9 +37,13 @@ pub fn build(b: *std.Build) !void {
     run_step.dependOn(&run_exe.step);
     run_exe.setCwd(b.path("runtree"));
     if (b.args) |a| run_exe.addArgs(a);
+
+    return exe;
 }
 
-fn buildWindows(b: *std.Build, optimize: OptimizeMode, target: ResolvedTarget) !*Step.Compile {
+fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: *const Tools) !*Step.Compile {
+    _ = tools;
+
     const main_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
@@ -52,12 +61,15 @@ fn buildWindows(b: *std.Build, optimize: OptimizeMode, target: ResolvedTarget) !
     return exe;
 }
 
-fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !*Step.Compile {
+fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: *const Tools) !*Step.Compile {
     const main_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path("src/linux_v10.zig"),
         .link_libc = true, // Required for dlopen, maybe more
+        .imports = &.{
+            .{ .name = "wayland", .module = tools.wayland_module },
+        },
     });
 
     const exe = b.addExecutable(.{
@@ -67,4 +79,51 @@ fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !*Step.
     exe.linkSystemLibrary("wayland-client");
 
     return exe;
+}
+
+const Tools = struct {
+    wayland_module: *Build.Module,
+};
+
+fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools {
+    const zig_xml_dep = b.dependency("zig_xml", .{});
+    const cli_parse_dep = b.dependency("zig_cli_parse", .{});
+
+    const mem_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/memory/memory.zig"),
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "wayland-gen",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/wayland-gen/src/main.zig"),
+            .target = target,
+            .optimize = .Debug, // Building takes longer than generating for now...
+            .imports = &.{
+                .{ .name = "xml", .module = zig_xml_dep.module("xml") },
+                .{ .name = "mem", .module = mem_module },
+                .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
+            },
+        }),
+        // .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
+        // after moving the build code from tools/wayland-gen into the main build.zig this works again???
+    });
+
+    const run_exe = b.addRunArtifact(exe);
+    const run_step = b.step("wayland-gen", "Generate wayland bindings");
+    run_step.dependOn(&run_exe.step);
+    run_exe.setCwd(b.path("."));
+
+    _ = run_exe.addPrefixedFileArg("--wayland=", b.path("vendor/wayland/wayland.xml"));
+    const wayland_source = run_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
+
+    return .{
+        .wayland_module = b.createModule(.{
+            .optimize = optimize,
+            .target = target,
+            .root_source_file = wayland_source,
+        }),
+    };
 }

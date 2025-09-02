@@ -1,6 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.linux_v10);
-const wayland = @import("wayland.zig");
+const wayland = @import("wayland");
 const wl = wayland.wl;
 
 const assert = std.debug.assert;
@@ -36,7 +36,9 @@ fn wlGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32, interface: [*
     _ = registry;
     _ = version;
 
-    log.debug("wlGlobal: {} - {s}", .{ name, interface });
+    _ = name;
+    _ = interface;
+    // log.debug("wlGlobal: {} - {s}", .{ name, interface });
 }
 
 fn wlGlobalRemove(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) callconv(.c) void {
