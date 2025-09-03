@@ -100,14 +100,14 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/wayland-gen/src/main.zig"),
             .target = target,
-            .optimize = .Debug, // Building takes longer than generating for now...
+            .optimize = optimize,
             .imports = &.{
                 .{ .name = "xml", .module = zig_xml_dep.module("xml") },
                 .{ .name = "mem", .module = mem_module },
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },
         }),
-        // .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
+        .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
         // after moving the build code from tools/wayland-gen into the main build.zig this works again???
     });
 
@@ -117,6 +117,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
     run_exe.setCwd(b.path("."));
 
     _ = run_exe.addPrefixedFileArg("--wayland=", b.path("vendor/wayland/wayland.xml"));
+    _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
     const wayland_source = run_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
 
     return .{

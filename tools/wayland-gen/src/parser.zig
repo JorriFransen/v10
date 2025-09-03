@@ -4,6 +4,8 @@ const xml = @import("xml");
 const types = @import("types.zig");
 const mem = @import("mem");
 
+const assert = std.debug.assert;
+
 const Parser = @This();
 const Allocator = std.mem.Allocator;
 
@@ -575,6 +577,7 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
     var since: u32 = 0;
     var value_str: ?[]const u8 = null;
     var summary: []const u8 = "";
+    var description: []const u8 = "";
 
     const attr_count = reader.attributeCount();
     if (attr_count < 2) {
@@ -610,9 +613,20 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
         return error.MalformedXml;
     }
 
-    const end_node = try this.nextNode();
+    var node = try this.nextNode();
+    if (node == .element_start and std.mem.eql(u8, reader.elementName(), "description")) {
+        const desc = try this.parseDescription();
+        if (summary.len > 0) {
+            assert(std.mem.eql(u8, summary, desc.summary));
+        } else {
+            summary = desc.summary;
+        }
+        description = desc.text;
+        node = try this.nextNode();
+    }
+
     const end_name = reader.elementName();
-    if (end_node != .element_end or !std.mem.eql(u8, end_name, "entry")) {
+    if (node != .element_end or !std.mem.eql(u8, end_name, "entry")) {
         this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected 'entry'", .{end_name});
     }
 
@@ -621,6 +635,7 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
         .since = since,
         .value_str = value_str.?,
         .summary = summary,
+        .description = description,
     };
 }
 
@@ -717,15 +732,27 @@ fn skipElement(this: *Parser) !void {
 fn nextNode(this: *Parser) !xml.Reader.Node {
     const reader = this.getXmlReader();
 
-    const node = reader.read() catch |e| switch (e) {
-        error.MalformedXml => {
-            const loc = reader.errorLocation();
-            xmlErr(this, loc, "{}", .{reader.errorCode()});
-            return error.MalformedXml;
-        },
-        else => return e,
-    };
-    return node;
+    while (true) {
+        const node = reader.read() catch |e| switch (e) {
+            error.MalformedXml => {
+                const loc = reader.errorLocation();
+                xmlErr(this, loc, "{}", .{reader.errorCode()});
+                return error.MalformedXml;
+            },
+            else => return e,
+        };
+
+        if (node == .text and isWhite(try reader.text())) {
+            // skip
+        } else {
+            return node;
+        }
+    }
+}
+
+fn isWhite(str: []const u8) bool {
+    for (str) |c| if (!std.ascii.isWhitespace(c)) return false;
+    return true;
 }
 
 fn getXmlReader(this: *Parser) *xml.Reader {

@@ -20,11 +20,11 @@ allocator: Allocator,
 protocol: *const Protocol,
 buf: std.ArrayList(u8),
 
-pub fn generate(allocator: Allocator, protocol: *const Protocol) ![]const u8 {
+pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols: []const Protocol) ![]const u8 {
     var generator = Generator{
         .allocator = allocator,
         .buf = std.ArrayList(u8){},
-        .protocol = protocol,
+        .protocol = core_protocol,
     };
 
     generator.append(
@@ -35,10 +35,12 @@ pub fn generate(allocator: Allocator, protocol: *const Protocol) ![]const u8 {
         \\
     );
 
-    for (protocol.interfaces, 0..) |*interface, i| {
+    for (core_protocol.interfaces, 0..) |*interface, i| {
         try generator.genInterface(interface);
-        if (i < protocol.interfaces.len - 1) generator.append("\n");
+        if (i < core_protocol.interfaces.len - 1) generator.append("\n");
     }
+
+    if (core_protocol.interfaces.len > 0) generator.append("\n");
 
     generator.append(
         \\    pub const EventQueue = opaque {};
@@ -112,18 +114,31 @@ pub fn generate(allocator: Allocator, protocol: *const Protocol) ![]const u8 {
         \\
         \\        try interfaces.load(lib);
         \\    }
-        \\
-        \\    const WL_MARSHAL_FLAG_DESTROY = (1 << 0);
-        \\    const NULL: usize = 0;
-        \\
         \\};
         \\
         \\
     );
 
-    generator.genInterfaceDefinitions(protocol);
+    generator.append("pub const interfaces = struct {\n");
+    generator.genCoreInterfaceLoader(core_protocol);
+    // generator.genInterfaceData(protocols);
+    generator.append("};\n");
+
+    if (protocols.len > 0) generator.append("\n");
+
+    for (protocols) |*protocol| {
+        generator.appendf("pub const {s} = struct {{\n", .{protocol.name});
+        for (protocol.interfaces, 0..) |*interface, ii| {
+            try generator.genInterface(interface);
+            if (ii < protocol.interfaces.len - 1) generator.append("\n");
+        }
+        generator.append("};\n");
+    }
 
     generator.append(
+        \\
+        \\    const WL_MARSHAL_FLAG_DESTROY = (1 << 0);
+        \\    const NULL: usize = 0;
         \\
         \\const Interface = extern struct {
         \\    name: [*:0]const u8,
@@ -167,8 +182,7 @@ pub fn generate(allocator: Allocator, protocol: *const Protocol) ![]const u8 {
     return generator.buf.items;
 }
 
-fn genInterfaceDefinitions(this: *Generator, protocol: *const Protocol) void {
-    this.append("pub const interfaces = struct {\n");
+fn genCoreInterfaceLoader(this: *Generator, protocol: *const Protocol) void {
     for (protocol.interfaces) |interface| {
         assert(std.mem.startsWith(u8, interface.name, "wl_"));
         const name = interface.name[3..];
@@ -191,7 +205,6 @@ fn genInterfaceDefinitions(this: *Generator, protocol: *const Protocol) void {
         \\    }
         \\
     );
-    this.append("};\n");
 }
 
 fn genInterface(this: *Generator, interface: *const Interface) !void {
@@ -201,9 +214,9 @@ fn genInterface(this: *Generator, interface: *const Interface) !void {
     this.appendf("    pub const {s} = opaque {{\n", .{zigInterfaceTypeName(&tmp, interface.name)});
     for (interface.enums, 0..) |*enm, i| {
         if (enm.bitfield) {
-            try this.genBitfield(interface.name, enm);
+            try this.genBitfield(enm);
         } else {
-            this.genEnum(interface.name, enm);
+            this.genEnum(enm);
         }
         if (i < interface.enums.len - 1) this.append("\n");
     }
@@ -222,7 +235,10 @@ fn genInterface(this: *Generator, interface: *const Interface) !void {
     this.append("    };\n");
 }
 
-fn genEnum(this: *Generator, interface_name: []const u8, enm: *const Enum) void {
+fn genEnum(this: *Generator, enm: *const Enum) void {
+    var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
+    defer tmp.release();
+
     var enum_type: []const u8 = "c_uint";
     for (enm.entries) |e| {
         if (std.mem.startsWith(u8, e.value_str, "-")) {
@@ -231,15 +247,18 @@ fn genEnum(this: *Generator, interface_name: []const u8, enm: *const Enum) void 
         }
     }
 
-    this.appendf("        pub const {s}_{s} = enum({s}) {{\n", .{ interface_name, enm.name, enum_type });
+    this.appendf("        pub const {s} = enum({s}) {{\n", .{ zigTypeName(&tmp, enm.name), enum_type });
     for (enm.entries) |entry| {
         this.appendf("            {f} = {s},\n", .{ std.zig.fmtId(entry.name), entry.value_str });
     }
     this.append("        };\n");
 }
 
-fn genBitfield(this: *Generator, interface_name: []const u8, enm: *const Enum) !void {
-    this.appendf("        pub const {s}_{s} = packed struct(u32) {{\n", .{ interface_name, enm.name });
+fn genBitfield(this: *Generator, enm: *const Enum) !void {
+    var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
+    defer tmp.release();
+
+    this.appendf("        pub const {s} = packed struct(u32) {{\n", .{zigTypeName(&tmp, enm.name)});
 
     var ei: usize = 0;
     if (enm.entries.len > 1 and try parseEnumEntryValue(enm.entries[0].value_str) == 0) {
@@ -294,7 +313,7 @@ fn genBitfield(this: *Generator, interface_name: []const u8, enm: *const Enum) !
         }
     }
 
-    this.append("        };\n\n");
+    this.append("        };\n");
 }
 
 fn parseEnumEntryValue(value: []const u8) !c_uint {
@@ -315,15 +334,15 @@ fn genImplicitRequests(this: *Generator, interface: *const Interface) void {
 
     this.appendf(
         \\        pub inline fn set_user_data(self: *{s}, user_data: *anyopaque) void {{
-        \\            proxy_set_user_data(@ptrCast(self), user_data);
+        \\            wl.proxy_set_user_data(@ptrCast(self), user_data);
         \\        }}
         \\
         \\        pub inline fn get_user_data(self: *{s}) ?*anyopaque {{
-        \\            return proxy_get_user_data(@ptrCast(self));
+        \\            return wl.proxy_get_user_data(@ptrCast(self));
         \\        }}
         \\
         \\        pub inline fn get_version(self: *{s}) u32 {{
-        \\            return proxy_get_version(@ptrCast(self));
+        \\            return wl.proxy_get_version(@ptrCast(self));
         \\        }}
         \\
     , .{ name, name, name });
@@ -334,7 +353,7 @@ fn genImplicitRequests(this: *Generator, interface: *const Interface) void {
     {
         this.appendf(
             \\        pub inline fn destroy(self: *{s}) void {{
-            \\            proxy_destroy(@ptrCast(self));
+            \\            wl.proxy_destroy(@ptrCast(self));
             \\        }}
             \\
         , .{name});
@@ -374,23 +393,22 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     const opcode = index;
 
     if (constructor) {
-        assert(std.mem.startsWith(u8, constructor_interface, "wl_"));
-        const interface_def = tmpPrint(&tmp, "interfaces.{s}", .{constructor_interface[3..]});
-        this.append("            const version = proxy_get_version(@ptrCast(self));\n");
-        this.appendf("            const result = proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
+        const interface_def = tmpPrint(&tmp, "interfaces.{s}", .{zigInterfaceArgName(constructor_interface)});
+        this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
+        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
         for (request.args[1..]) |arg| {
             this.appendf(", {s}", .{arg.name});
         }
         this.append(");\n");
         this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
-        this.appendf("            const result = proxy_marshal_flags(@ptrCast(self), {}, interface, version, 0, name, interface.name.ptr, version, NULL);\n", .{opcode});
+        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, interface, version, 0, name, interface.name.ptr, version, NULL);\n", .{opcode});
         this.append("            return @ptrCast(result);\n");
     } else {
-        this.append("            const version = proxy_get_version(@ptrCast(self));\n");
+        this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         const flags = if (request.destructor) "WL_MARSHAL_FLAG_DESTROY" else "0";
         const optional_null = if (request.args.len == 0 and !request.destructor) ", NULL" else "";
-        this.appendf("            _ = proxy_marshal_flags(@ptrCast(self), {}, null, version, {s}{s}", .{ opcode, flags, optional_null });
+        this.appendf("            _ = wl.proxy_marshal_flags(@ptrCast(self), {}, null, version, {s}{s}", .{ opcode, flags, optional_null });
         for (request.args) |arg| {
             this.appendf(", {s}", .{arg.name});
         }
@@ -428,16 +446,15 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
     this.appendf(
         \\
         \\        pub inline fn add_listener({f}: *{s}, listener: *const Listener, data: ?*anyopaque) void {{
-        \\            proxy_add_listener(@ptrCast({f}), @ptrCast(@constCast(listener)), data);
+        \\            wl.proxy_add_listener(@ptrCast({f}), @ptrCast(@constCast(listener)), data);
         \\        }}
         \\
     , .{ iface_arg, iface_type, iface_arg });
 }
 
-fn zigInterfaceTypeName(tmp: *mem.TempArena, name_: []const u8) []const u8 {
+fn zigTypeName(tmp: *mem.TempArena, name: []const u8) []const u8 {
     const ta = tmp.allocator();
     var result = std.ArrayList(u8){};
-    const name = if (std.mem.startsWith(u8, name_, "wl_")) name_[3..] else name_;
 
     result.append(ta, std.ascii.toUpper(name[0])) catch @panic("OOM");
     var cap_next = false;
@@ -458,9 +475,37 @@ fn zigInterfaceTypeName(tmp: *mem.TempArena, name_: []const u8) []const u8 {
     return result.items;
 }
 
-fn zigInterfaceArgName(name_: []const u8) []const u8 {
-    assert(std.mem.startsWith(u8, name_, "wl_"));
-    return name_[3..];
+fn zigInterfaceTypeName(tmp: *mem.TempArena, name_: []const u8) []const u8 {
+    const ta = tmp.allocator();
+    var result = std.ArrayList(u8){};
+
+    const idx = std.mem.indexOfScalar(u8, name_, '_') orelse @panic("Unexpected interface name format");
+    assert(name_.len > idx);
+    const name = name_[idx + 1 ..];
+
+    result.append(ta, std.ascii.toUpper(name[0])) catch @panic("OOM");
+    var cap_next = false;
+    for (name[1..]) |c| {
+        if (c == '_') {
+            cap_next = true;
+            continue;
+        }
+
+        if (cap_next) {
+            result.append(ta, std.ascii.toUpper(c)) catch @panic("OOM");
+            cap_next = false;
+        } else {
+            result.append(ta, c) catch @panic("OOM");
+        }
+    }
+
+    return result.items;
+}
+
+fn zigInterfaceArgName(name: []const u8) []const u8 {
+    const idx = std.mem.indexOfScalar(u8, name, '_') orelse @panic("Unexpected interface name format");
+    assert(name.len > idx);
+    return name[idx + 1 ..];
 }
 
 fn zigType(this: *Generator, wl_type: Type, interface_name_opt: ?[]const u8) []const u8 {

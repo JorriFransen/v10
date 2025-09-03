@@ -5,6 +5,7 @@ const clip = @import("clip");
 
 const parser = @import("parser.zig");
 const generator = @import("generator.zig");
+const types = @import("types.zig");
 
 const assert = std.debug.assert;
 
@@ -12,7 +13,8 @@ var gpa_data = std.heap.DebugAllocator(.{}){};
 const gpa = gpa_data.allocator();
 
 const OptionParser = clip.OptionParser("wayland-gen", &.{
-    clip.option(@as([]const u8, ""), "wayland", 'w', "Wayland protocol xml path"),
+    clip.option(@as([]const u8, ""), "wayland", 'w', "Wayland xml path"),
+    clip.option(@as([]const u8, ""), "protocol", 'p', "Protocol xml path"),
     clip.option(@as([]const u8, ""), "out", 'o', "Output file path"),
     clip.option(false, "help", 'h', "Print this help message"),
 });
@@ -50,7 +52,12 @@ pub fn main() !void {
 
     var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
 
-    const result = try generator.generate(gen_arena.allocator(), &wayland_protocol);
+    const protocols: []const types.Protocol = if (options.protocol.len > 0)
+        &[_]types.Protocol{try parser.parse(parse_arena.allocator(), options.protocol)}
+    else
+        &[_]types.Protocol{};
+
+    const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
     parse_arena.reset();
 
     const out_file = try std.fs.cwd().createFile(options.out, .{ .read = false });
