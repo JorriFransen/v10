@@ -107,9 +107,11 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },
         }),
-        .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
+        // .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
         // after moving the build code from tools/wayland-gen into the main build.zig this works again???
     });
+
+    b.installArtifact(exe);
 
     const run_exe = b.addRunArtifact(exe);
     const run_step = b.step("wayland-gen", "Generate wayland bindings");

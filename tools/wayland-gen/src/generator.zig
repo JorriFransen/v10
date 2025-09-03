@@ -111,8 +111,6 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
         \\                }
         \\            }
         \\        }
-        \\
-        \\        try interfaces.load(lib);
         \\    }
         \\};
         \\
@@ -120,8 +118,8 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
     );
 
     generator.append("pub const interfaces = struct {\n");
-    generator.genCoreInterfaceLoader(core_protocol);
-    // generator.genInterfaceData(protocols);
+    generator.genInterfaceData(@as([*]const Protocol, @ptrCast(core_protocol))[0..1]);
+    generator.genInterfaceData(protocols);
     generator.append("};\n");
 
     if (protocols.len > 0) generator.append("\n");
@@ -182,29 +180,112 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
     return generator.buf.items;
 }
 
-fn genCoreInterfaceLoader(this: *Generator, protocol: *const Protocol) void {
-    for (protocol.interfaces) |interface| {
-        assert(std.mem.startsWith(u8, interface.name, "wl_"));
-        const name = interface.name[3..];
-        this.appendf("    pub var {f} :*const Interface = undefined;\n", .{std.zig.fmtId(name)});
+fn genInterfaceData(this: *Generator, protocols: []const Protocol) void {
+    var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
+    defer tmp.release();
+
+    if (protocols.len > 0) this.append("\n");
+
+    for (protocols) |*protocol| {
+        for (protocol.interfaces) |*interface| {
+            this.appendf(
+                \\    pub const {s}: Interface = .{{
+                \\        .name = "{s}",
+                \\        .version = {},
+                \\        .method_count = {},
+                \\        .methods = &.{{
+                \\
+            , .{
+                interface.name,
+                interface.name,
+                interface.version,
+                interface.requests.len,
+            });
+
+            for (interface.requests) |*request| {
+                this.appendf(
+                    \\            .{{
+                    \\                .name = "{s}",
+                    \\                .signature = "
+                , .{request.name});
+
+                this.genSignature(request.args);
+
+                this.append(
+                    \\",
+                    \\                .types = 
+                );
+
+                this.genArgTypes(request.args, interface.name);
+
+                this.append(
+                    \\
+                    \\            },
+                    \\
+                );
+            }
+
+            this.append("        },\n");
+
+            this.appendf(
+                \\        .event_count = {},
+                \\        .events = &.{{
+                \\
+            , .{interface.events.len});
+
+            for (interface.events) |*event| {
+                this.appendf(
+                    \\            .{{
+                    \\                .name = "{s}",
+                    \\                .signature = "
+                , .{event.name});
+
+                this.genSignature(event.args);
+
+                this.append(
+                    \\",
+                    \\                .types = 
+                );
+
+                this.genArgTypes(event.args, interface.name);
+
+                this.append("\n            },\n");
+            }
+            this.append("        },\n");
+
+            this.append("    };\n");
+
+            if (protocol.interfaces.len > 0) this.append("\n");
+        }
     }
-    this.append(
-        \\
-        \\    pub fn load(lib: *std.DynLib) !void {
-        \\        inline for (@typeInfo(@This()).@"struct".decls) |decl| {
-        \\            const decl_type = @TypeOf(@field(@This(), decl.name));
-        \\            if (decl_type == *const Interface) {
-        \\                if (lib.lookup(decl_type, "wl_" ++ decl.name ++ "_interface")) |sym| {
-        \\                    @field(interfaces, decl.name) = sym;
-        \\                } else {
-        \\                    log.err("Failed to load wayland symbol: wl_{s}", .{decl.name});
-        \\                    return error.SymbolLoadFailed;
-        \\                }
-        \\            }
-        \\        }
-        \\    }
-        \\
-    );
+}
+
+fn genSignature(this: *Generator, args: []const Arg) void {
+    for (args) |arg| switch (arg.type) {
+        .int => this.append("i"),
+        .uint => this.append("u"),
+        .fixed => this.append("f"),
+        .string => this.append("s"),
+        .object => this.append("o"),
+        .new_id => this.append("n"),
+        .array => this.append("a"),
+        .fd => this.append("h"),
+    };
+}
+
+fn genArgTypes(this: *Generator, args: []const Arg, interface_name: []const u8) void {
+    if (args.len > 0) {
+        this.append("&.{\n");
+        for (args) |arg| switch (arg.type) {
+            else => this.append("                    null,\n"),
+            .object, .new_id => {
+                this.appendf("                    &{s},\n", .{arg.interface orelse interface_name});
+            },
+        };
+        this.append("                },");
+    } else {
+        this.append("null,");
+    }
 }
 
 fn genInterface(this: *Generator, interface: *const Interface) !void {
@@ -393,7 +474,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     const opcode = index;
 
     if (constructor) {
-        const interface_def = tmpPrint(&tmp, "interfaces.{s}", .{zigInterfaceArgName(constructor_interface)});
+        const interface_def = tmpPrint(&tmp, "&interfaces.{s}", .{constructor_interface});
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
         for (request.args[1..]) |arg| {

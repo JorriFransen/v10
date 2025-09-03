@@ -5,7 +5,7 @@ const wl = wayland.wl;
 
 const assert = std.debug.assert;
 
-var running = false;
+var wl_compositor: *wl.Compositor = undefined;
 
 pub fn main() !void {
     var lwl = try std.DynLib.open("libwayland-client.so.0");
@@ -13,33 +13,41 @@ pub fn main() !void {
 
     try wl.load(&lwl);
 
-    if (wl.display_connect(null)) |display| {
-        defer wl.display_disconnect(display);
-        log.debug("display connected", .{});
-
-        const registry = display.get_registry() orelse unreachable;
-        const listener = wl.Registry.Listener{
-            .global = wlGlobal,
-            .global_remove = wlGlobalRemove,
-        };
-        wl.Registry.add_listener(registry, &listener, null);
-        _ = wl.display_roundtrip(display);
-        wl.Registry.destroy(registry);
-    } else {
+    const display = wl.display_connect(null) orelse {
         log.err("wl_display_connect failed", .{});
-        return error.DisplayConnectionFailed;
-    }
+        return error.UnexpectedWayland;
+    };
+
+    log.debug("Display connected", .{});
+
+    const registry = display.get_registry() orelse {
+        log.err("wl_display_get_registry failed", .{});
+        return error.UnexpectedWayland;
+    };
+
+    const registry_listener = wl.Registry.Listener{
+        .global = wlRegGlobal,
+        .global_remove = wlRegGlobalRemove,
+    };
+    registry.add_listener(&registry_listener, null);
+
+    _ = wl.display_roundtrip(display);
+    log.debug("Display roundtrip finished", .{});
+
+    registry.destroy();
 }
 
-fn wlGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32, interface: [*:0]const u8, version: u32) callconv(.c) void {
+fn wlRegGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface: [*:0]const u8, version: u32) callconv(.c) void {
     _ = data;
-    _ = registry;
-    _ = version;
+    _ = registry_opt;
 
-    log.debug("wlGlobal: {} - {s}", .{ name, interface });
+    // const registry = registry_opt orelse unreachable;
+    // const iface_name = std.mem.span(interface);
+
+    log.debug("global: {} - {s} - {}", .{ name, interface, version });
 }
 
-fn wlGlobalRemove(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) callconv(.c) void {
+fn wlRegGlobalRemove(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) callconv(.c) void {
     _ = data;
     _ = registry;
     _ = name;
