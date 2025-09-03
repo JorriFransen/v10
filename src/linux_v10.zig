@@ -36,9 +36,7 @@ fn wlGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32, interface: [*
     _ = registry;
     _ = version;
 
-    _ = name;
-    _ = interface;
-    // log.debug("wlGlobal: {} - {s}", .{ name, interface });
+    log.debug("wlGlobal: {} - {s}", .{ name, interface });
 }
 
 fn wlGlobalRemove(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) callconv(.c) void {

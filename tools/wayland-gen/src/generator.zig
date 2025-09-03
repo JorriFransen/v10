@@ -211,7 +211,7 @@ fn genInterface(this: *Generator, interface: *const Interface) !void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    this.appendf("    pub const {s} = opaque {{\n", .{zigInterfaceTypeName(&tmp, interface.name)});
+    this.appendf("    pub const {s} = opaque {{\n", .{zigInterfaceTypeName(&tmp, interface.name, interface)});
     for (interface.enums, 0..) |*enm, i| {
         if (enm.bitfield) {
             try this.genBitfield(enm);
@@ -330,7 +330,7 @@ fn genImplicitRequests(this: *Generator, interface: *const Interface) void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    const name = zigInterfaceTypeName(&tmp, interface.name);
+    const name = zigInterfaceTypeName(&tmp, interface.name, interface);
 
     this.appendf(
         \\        pub inline fn set_user_data(self: *{s}, user_data: *anyopaque) void {{
@@ -364,7 +364,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    this.appendf("        pub inline fn {s}(self: *{s}", .{ request.name, zigInterfaceTypeName(&tmp, interface.name) });
+    this.appendf("        pub inline fn {s}(self: *{s}", .{ request.name, zigInterfaceTypeName(&tmp, interface.name, interface) });
 
     var constructor = false;
     var registry_bind = false;
@@ -380,10 +380,10 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         for (request.args) |arg| {
             if (arg.type == .new_id) {
                 constructor_interface = arg.interface orelse interface.name;
-                return_type = this.zigType(arg.type, constructor_interface);
+                return_type = this.zigType(arg.type, constructor_interface, interface);
                 constructor = true;
             } else {
-                this.appendf(", {s}: {s}", .{ arg.name, this.zigType(arg.type, arg.interface) });
+                this.appendf(", {s}: {s}", .{ arg.name, this.zigType(arg.type, arg.interface, interface) });
             }
         }
 
@@ -422,7 +422,7 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
     defer tmp.release();
 
     const iface_arg = std.zig.fmtId(zigInterfaceArgName(interface.name));
-    const iface_type = zigInterfaceTypeName(&tmp, interface.name);
+    const iface_type = zigInterfaceTypeName(&tmp, interface.name, interface);
 
     this.append("        pub const Listener = extern struct {\n");
     for (interface.events) |event| {
@@ -435,7 +435,7 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
         for (event.args) |arg| {
             this.appendf(", {f}: {s}", .{
                 std.zig.fmtId(arg.name),
-                this.zigType(arg.type, null),
+                this.zigType(arg.type, null, interface),
             });
         }
 
@@ -475,13 +475,19 @@ fn zigTypeName(tmp: *mem.TempArena, name: []const u8) []const u8 {
     return result.items;
 }
 
-fn zigInterfaceTypeName(tmp: *mem.TempArena, name_: []const u8) []const u8 {
+fn zigInterfaceTypeName(tmp: *mem.TempArena, name_: []const u8, from_interface: *const Interface) []const u8 {
     const ta = tmp.allocator();
     var result = std.ArrayList(u8){};
 
     const idx = std.mem.indexOfScalar(u8, name_, '_') orelse @panic("Unexpected interface name format");
     assert(name_.len > idx);
+    const prefix = name_[0..idx];
     const name = name_[idx + 1 ..];
+
+    if (!std.mem.startsWith(u8, from_interface.name, prefix)) {
+        result.appendSlice(ta, prefix) catch @panic("OOM");
+        result.append(ta, '.') catch @panic("OOM");
+    }
 
     result.append(ta, std.ascii.toUpper(name[0])) catch @panic("OOM");
     var cap_next = false;
@@ -508,7 +514,7 @@ fn zigInterfaceArgName(name: []const u8) []const u8 {
     return name[idx + 1 ..];
 }
 
-fn zigType(this: *Generator, wl_type: Type, interface_name_opt: ?[]const u8) []const u8 {
+fn zigType(this: *Generator, wl_type: Type, interface_name_opt: ?[]const u8, from_interface: *const Interface) []const u8 {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
@@ -519,7 +525,7 @@ fn zigType(this: *Generator, wl_type: Type, interface_name_opt: ?[]const u8) []c
         .string => "[*:0]const u8",
         .object, .new_id => blk: {
             if (interface_name_opt) |interface_name| {
-                const iname = zigInterfaceTypeName(&tmp, interface_name);
+                const iname = zigInterfaceTypeName(&tmp, interface_name, from_interface);
                 break :blk tmpPrint(&tmp, "?*{s}", .{iname});
             } else break :blk "?*Object";
         },
