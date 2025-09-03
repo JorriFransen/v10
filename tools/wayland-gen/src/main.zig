@@ -14,7 +14,7 @@ const gpa = gpa_data.allocator();
 
 const OptionParser = clip.OptionParser("wayland-gen", &.{
     clip.option(@as([]const u8, ""), "wayland", 'w', "Wayland xml path"),
-    clip.option(@as([]const u8, ""), "protocol", 'p', "Protocol xml path"),
+    clip.arrayOption([]const u8, "protocol", 'p', "Protocol xml path"),
     clip.option(@as([]const u8, ""), "out", 'o', "Output file path"),
     clip.option(false, "help", 'h', "Print this help message"),
 });
@@ -52,10 +52,10 @@ pub fn main() !void {
 
     var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
 
-    const protocols: []const types.Protocol = if (options.protocol.len > 0)
-        &[_]types.Protocol{try parser.parse(parse_arena.allocator(), options.protocol)}
-    else
-        &[_]types.Protocol{};
+    const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);
+    for (options.protocol.items, protocols) |protocol_xml_file, *dst| {
+        dst.* = try parser.parse(parse_arena.allocator(), protocol_xml_file);
+    }
 
     const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
     parse_arena.reset();
