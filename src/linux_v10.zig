@@ -14,7 +14,6 @@ var xdg_shell: *xdg.WmBase = undefined;
 var xdg_toplevel: *xdg.Toplevel = undefined;
 
 // TODO: WLGEN
-//  - Put interfaces back in their corresponding opaque types: 'wl.Display.Interface' (or in their protocols: 'wl.display_interface')
 //  - Use defined enums for enum arguments
 
 pub fn main() !void {
@@ -107,21 +106,21 @@ fn resize(width: u32, height: u32) void {
     _ = std.c.close(fd);
 }
 
-fn wlRegGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface: [*:0]const u8, version: u32) callconv(.c) void {
+fn wlRegGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: [*:0]const u8, version: u32) callconv(.c) void {
     _ = data;
 
     const registry = registry_opt orelse unreachable;
-    const interface_name = std.mem.span(interface);
+    const iface_name = std.mem.span(interface_name);
 
-    if (std.mem.eql(u8, interface_name, std.mem.span(wayland.interfaces.wl_compositor.name))) {
+    if (std.mem.eql(u8, iface_name, std.mem.span(wl.Compositor.interface.name))) {
         log.debug("Binding wl_compositor version {}", .{version});
-        wl_compositor = @ptrCast(registry.bind(name, &wayland.interfaces.wl_compositor, version));
-    } else if (std.mem.eql(u8, interface_name, std.mem.span(wayland.interfaces.wl_shm.name))) {
+        wl_compositor = @ptrCast(registry.bind(name, wl.Compositor.interface, version));
+    } else if (std.mem.eql(u8, iface_name, std.mem.span(wl.Shm.interface.name))) {
         log.debug("Binding wl_shm version {}", .{version});
-        wl_shm = @ptrCast(registry.bind(name, &wayland.interfaces.wl_shm, version));
-    } else if (std.mem.eql(u8, interface_name, std.mem.span(wayland.interfaces.xdg_wm_base.name))) {
+        wl_shm = @ptrCast(registry.bind(name, wl.Shm.interface, version));
+    } else if (std.mem.eql(u8, iface_name, std.mem.span(xdg.WmBase.interface.name))) {
         log.debug("Binding xdg_wm_base version {}", .{version});
-        xdg_shell = @ptrCast(registry.bind(name, &wayland.interfaces.xdg_wm_base, version));
+        xdg_shell = @ptrCast(registry.bind(name, xdg.WmBase.interface, version));
     }
 }
 

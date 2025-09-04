@@ -293,6 +293,8 @@ fn genInterface(this: *Generator, interface: *const Interface) !void {
     defer tmp.release();
 
     this.appendf("    pub const {s} = opaque {{\n", .{zigInterfaceTypeName(&tmp, interface.name, interface)});
+    this.appendf("        pub const interface: *const Interface = &interfaces.{s};\n", .{interface.name});
+    if (interface.enums.len > 0 or interface.events.len > 0 or interface.requests.len > 0) this.append("\n");
     for (interface.enums, 0..) |*enm, i| {
         if (enm.bitfield) {
             try this.genBitfield(enm);
@@ -454,7 +456,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     // wl_registry_bind is a special case!
     if (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind")) {
         registry_bind = true;
-        this.append(", name: u32, interface: *const Interface, version: u32) *opaque {} {\n");
+        this.append(", name: u32, iface: *const Interface, version: u32) *opaque {} {\n");
     } else {
         var return_type: []const u8 = "void";
 
@@ -474,7 +476,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     const opcode = index;
 
     if (constructor) {
-        const interface_def = tmpPrint(&tmp, "&interfaces.{s}", .{constructor_interface});
+        const interface_def = tmpPrint(&tmp, "{s}.interface", .{zigInterfaceTypeName(&tmp, constructor_interface, interface)});
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
         for (request.args[1..]) |arg| {
@@ -483,7 +485,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         this.append(");\n");
         this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
-        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, interface, version, 0, name, interface.name, version, NULL);\n", .{opcode});
+        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, iface, version, 0, name, iface.name, version, NULL);\n", .{opcode});
         this.append("            return @ptrCast(result);\n");
     } else {
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
