@@ -49,7 +49,7 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
         \\    pub const Object = opaque {};
         \\
         \\    pub var event_queue_destroy: *const fn (queue: *EventQueue) callconv(.c) void = undefined;
-        \\    pub var proxy_marshal_flags: *const fn (proxy: *Proxy, opcode: u32, interface: *const Interface, version: u32, flags: u32, ...) callconv(.c) *Proxy = undefined;
+        \\    pub var proxy_marshal_flags: *const fn (proxy: *Proxy, opcode: u32, interface: ?*const Interface, version: u32, flags: u32, ...) callconv(.c) *Proxy = undefined;
         \\    pub var proxy_marshal_array_flags: *const fn (proxy: *Proxy, opcode: u32, interface: *const Interface, version: u32, flags: u32, args: ?[*]Argument) callconv(.c) *Proxy = undefined;
         \\    pub var proxy_marshal: *const fn (proxy: *Proxy, opcode: u32, ...) callconv(.c) void = undefined;
         \\    pub var proxy_marshal_array: *const fn (proxy: *Proxy, opcode: u32, args: ?[*]Argument) callconv(.c) void = undefined;
@@ -135,8 +135,8 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
 
     generator.append(
         \\
-        \\    const WL_MARSHAL_FLAG_DESTROY = (1 << 0);
-        \\    const NULL: usize = 0;
+        \\const WL_MARSHAL_FLAG_DESTROY = (1 << 0);
+        \\const NULL: usize = 0;
         \\
         \\const Interface = extern struct {
         \\    name: [*:0]const u8,
@@ -483,7 +483,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         this.append(");\n");
         this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
-        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, interface, version, 0, name, interface.name.ptr, version, NULL);\n", .{opcode});
+        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, interface, version, 0, name, interface.name, version, NULL);\n", .{opcode});
         this.append("            return @ptrCast(result);\n");
     } else {
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
@@ -611,7 +611,7 @@ fn zigType(this: *Generator, wl_type: Type, interface_name_opt: ?[]const u8, fro
             } else break :blk "?*Object";
         },
         .array => "Array",
-        .fd => "u32",
+        .fd => "std.c.fd_t",
     };
 }
 
