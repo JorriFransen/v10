@@ -448,6 +448,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
+    this.genDocComment("        ", request.description);
     this.appendf("        pub inline fn {s}(self: *{s}", .{ request.name, zigInterfaceTypeName(&tmp, interface.name, interface) });
 
     var constructor = false;
@@ -457,7 +458,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     // wl_registry_bind is a special case!
     if (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind")) {
         registry_bind = true;
-        this.append(", name: u32, iface: *const Interface, version: u32) *opaque {} {\n");
+        this.append(", name: u32, comptime IType: type, version: u32) ?*IType {\n");
     } else {
         var return_type: []const u8 = "void";
 
@@ -495,7 +496,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         this.append(");\n");
         this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
-        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, iface, version, 0, name, iface.name, version, NULL);\n", .{opcode});
+        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, IType.interface, version, 0, name, IType.interface.name, version, NULL);\n", .{opcode});
         this.append("            return @ptrCast(result);\n");
     } else {
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
@@ -641,6 +642,14 @@ fn zigType(tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, 
         .array => "Array",
         .fd => "std.c.fd_t",
     };
+}
+
+fn genDocComment(this: *Generator, indent: []const u8, desc: []const u8) void {
+    var it = std.mem.splitAny(u8, desc, &.{ '\r', '\n' });
+
+    while (it.next()) |line| {
+        this.appendf("{s}/// {s}\n", .{ indent, std.mem.trimStart(u8, line, &std.ascii.whitespace) });
+    }
 }
 
 inline fn append(this: *Generator, str: []const u8) void {
