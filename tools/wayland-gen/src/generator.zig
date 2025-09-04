@@ -213,7 +213,7 @@ fn genInterfaceData(this: *Generator, protocols: []const Protocol) void {
 
                 this.append(
                     \\",
-                    \\                .types = 
+                    \\                .types =
                 );
 
                 this.genArgTypes(request.args, interface.name);
@@ -244,7 +244,7 @@ fn genInterfaceData(this: *Generator, protocols: []const Protocol) void {
 
                 this.append(
                     \\",
-                    \\                .types = 
+                    \\                .types =
                 );
 
                 this.genArgTypes(event.args, interface.name);
@@ -275,7 +275,7 @@ fn genSignature(this: *Generator, args: []const Arg) void {
 
 fn genArgTypes(this: *Generator, args: []const Arg, interface_name: []const u8) void {
     if (args.len > 0) {
-        this.append("&.{\n");
+        this.append(" &.{\n");
         for (args) |arg| switch (arg.type) {
             else => this.append("                    null,\n"),
             .object, .new_id => {
@@ -284,7 +284,7 @@ fn genArgTypes(this: *Generator, args: []const Arg, interface_name: []const u8) 
         };
         this.append("                },");
     } else {
-        this.append("null,");
+        this.append(" null,");
     }
 }
 
@@ -310,6 +310,7 @@ fn genInterface(this: *Generator, interface: *const Interface) !void {
 
     if (interface.enums.len > 0 or (interface.events.len > 0)) this.append("\n");
     this.genImplicitRequests(interface);
+    if (interface.requests.len > 0) this.append("\n");
     for (interface.requests, 0..) |*request, i| {
         this.genRequest(interface, request, i);
         if (i < interface.requests.len - 1) this.append("\n");
@@ -463,10 +464,15 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         for (request.args) |arg| {
             if (arg.type == .new_id) {
                 constructor_interface = arg.interface orelse interface.name;
-                return_type = this.zigType(arg.type, constructor_interface, interface);
+                return_type = zigType(&tmp, arg.type, constructor_interface, interface);
                 constructor = true;
             } else {
-                this.appendf(", {s}: {s}", .{ arg.name, this.zigType(arg.type, arg.interface, interface) });
+                const arg_type = if (arg.enum_name) |ename|
+                    zigEnumName(&tmp, ename, interface)
+                else
+                    zigType(&tmp, arg.type, arg.interface, interface);
+
+                this.appendf(", {s}: {s}", .{ arg.name, arg_type });
             }
         }
 
@@ -480,7 +486,11 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
         for (request.args[1..]) |arg| {
-            this.appendf(", {s}", .{arg.name});
+            if (arg.enum_name != null) {
+                this.appendf(", @intFromEnum({s})", .{arg.name});
+            } else {
+                this.appendf(", {s}", .{arg.name});
+            }
         }
         this.append(");\n");
         this.append("            return @ptrCast(result);\n");
@@ -493,7 +503,11 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         const optional_null = if (request.args.len == 0 and !request.destructor) ", NULL" else "";
         this.appendf("            _ = wl.proxy_marshal_flags(@ptrCast(self), {}, null, version, {s}{s}", .{ opcode, flags, optional_null });
         for (request.args) |arg| {
-            this.appendf(", {s}", .{arg.name});
+            if (arg.enum_name != null) {
+                this.appendf(", @intFromEnum({s})", .{arg.name});
+            } else {
+                this.appendf(", {s}", .{arg.name});
+            }
         }
         this.append(");\n");
     }
@@ -518,7 +532,7 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
         for (event.args) |arg| {
             this.appendf(", {f}: {s}", .{
                 std.zig.fmtId(arg.name),
-                this.zigType(arg.type, null, interface),
+                zigType(&tmp, arg.type, null, interface),
             });
         }
 
@@ -533,6 +547,21 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
         \\        }}
         \\
     , .{ iface_arg, iface_type, iface_arg });
+}
+
+fn zigEnumName(tmp: *mem.TempArena, name: []const u8, from_interface: *const Interface) []const u8 {
+    const ta = tmp.allocator();
+    var result = std.ArrayList(u8){};
+
+    if (std.mem.indexOfScalar(u8, name, '.')) |idx| {
+        result.appendSlice(ta, zigInterfaceTypeName(tmp, name[0..idx], from_interface)) catch @panic("OOM");
+        result.append(ta, '.') catch @panic("OOM");
+        result.appendSlice(ta, zigTypeName(tmp, name[idx + 1 ..])) catch @panic("OOM");
+    } else {
+        return zigTypeName(tmp, name);
+    }
+
+    return result.items;
 }
 
 fn zigTypeName(tmp: *mem.TempArena, name: []const u8) []const u8 {
@@ -597,10 +626,7 @@ fn zigInterfaceArgName(name: []const u8) []const u8 {
     return name[idx + 1 ..];
 }
 
-fn zigType(this: *Generator, wl_type: Type, interface_name_opt: ?[]const u8, from_interface: *const Interface) []const u8 {
-    var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
-    defer tmp.release();
-
+fn zigType(tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, from_interface: *const Interface) []const u8 {
     return switch (wl_type) {
         .int => "i32",
         .uint => "u32",
@@ -608,8 +634,8 @@ fn zigType(this: *Generator, wl_type: Type, interface_name_opt: ?[]const u8, fro
         .string => "[*:0]const u8",
         .object, .new_id => blk: {
             if (interface_name_opt) |interface_name| {
-                const iname = zigInterfaceTypeName(&tmp, interface_name, from_interface);
-                break :blk tmpPrint(&tmp, "?*{s}", .{iname});
+                const iname = zigInterfaceTypeName(tmp, interface_name, from_interface);
+                break :blk tmpPrint(tmp, "?*{s}", .{iname});
             } else break :blk "?*Object";
         },
         .array => "Array",

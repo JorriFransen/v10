@@ -13,9 +13,6 @@ var pixels: *u8 = undefined;
 var xdg_shell: *xdg.WmBase = undefined;
 var xdg_toplevel: *xdg.Toplevel = undefined;
 
-// TODO: WLGEN
-//  - Use defined enums for enum arguments
-
 pub fn main() !void {
     var lwl = try std.DynLib.open("libwayland-client.so.0");
     defer lwl.close();
@@ -98,7 +95,7 @@ fn resize(width: u32, height: u32) void {
     const pool = wl_shm.create_pool(fd, @intCast(size)) orelse {
         @panic("wl_shm_create_pool failed");
     };
-    wl_buffer = pool.create_buffer(0, @intCast(width), @intCast(height), @intCast(width * 4), @intFromEnum(wl.Shm.Format.argb8888)) orelse {
+    wl_buffer = pool.create_buffer(0, @intCast(width), @intCast(height), @intCast(width * 4), .argb8888) orelse {
         @panic("wl_shm_pool_create_buffer failed");
     };
     pool.destroy();
