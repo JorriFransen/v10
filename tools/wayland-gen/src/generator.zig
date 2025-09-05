@@ -155,7 +155,7 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
         \\
         \\const Fixed = enum(u32) {};
         \\
-        \\const Array = extern struct {
+        \\pub const Array = extern struct {
         \\    size: usize,
         \\    alloc: usize,
         \\    data: *anyopaque,
@@ -209,14 +209,30 @@ fn genInterfaceData(this: *Generator, protocols: []const Protocol) void {
                     \\                .signature = "
                 , .{request.name});
 
-                this.genSignature(request.args);
+                const registry_bind = (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind"));
+                if (registry_bind) {
+                    this.append("usun");
+                } else {
+                    this.genSignature(request.args);
+                }
 
                 this.append(
                     \\",
                     \\                .types =
                 );
 
-                this.genArgTypes(request.args, interface.name);
+                if (registry_bind) {
+                    this.append(
+                        \\ &.{
+                        \\                    null,
+                        \\                    null,
+                        \\                    null,
+                        \\                    null,
+                        \\                },
+                    );
+                } else {
+                    this.genArgTypes(request.args, interface.name);
+                }
 
                 this.append(
                     \\
@@ -523,8 +539,9 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
     const iface_type = zigInterfaceTypeName(&tmp, interface.name, interface);
 
     this.append("        pub const Listener = extern struct {\n");
-    for (interface.events) |event| {
-        this.appendf("            {f}: *const fn (data: ?*anyopaque, {f}: ?*{s}", .{
+    for (interface.events, 0..) |event, i| {
+        this.genDocComment("            ", event.description);
+        this.appendf("            {f}: ?*const fn (data: ?*anyopaque, {f}: ?*{s}", .{
             std.zig.fmtId(event.name),
             iface_arg,
             iface_type,
@@ -533,11 +550,15 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
         for (event.args) |arg| {
             this.appendf(", {f}: {s}", .{
                 std.zig.fmtId(arg.name),
-                zigType(&tmp, arg.type, null, interface),
+                if (arg.enum_name) |ename|
+                    zigEnumName(&tmp, ename, interface)
+                else
+                    zigType(&tmp, arg.type, null, interface),
             });
         }
 
         this.append(") callconv(.c) void,\n");
+        if (i < interface.events.len - 1) this.append("\n");
     }
     this.append("        };\n");
 

@@ -5,9 +5,13 @@ const OptimizeMode = std.builtin.OptimizeMode;
 const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
+var force_llvm: bool = undefined;
+
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
+
+    force_llvm = b.option(bool, "llvm", "Use the llvm backend") orelse false;
 
     std.fs.cwd().makeDir("runtree") catch |e| switch (e) {
         error.PathAlreadyExists => {},
@@ -54,6 +58,7 @@ fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools
     const exe = b.addExecutable(.{
         .name = "v10",
         .root_module = main_module,
+        .use_llvm = force_llvm,
     });
     exe.linkSystemLibrary("user32");
     exe.subsystem = .Windows;
@@ -75,6 +80,7 @@ fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: 
     const exe = b.addExecutable(.{
         .name = "v10",
         .root_module = main_module,
+        .use_llvm = force_llvm,
     });
     exe.linkSystemLibrary("wayland-client");
 
@@ -107,6 +113,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },
         }),
+        .use_llvm = force_llvm,
         // .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
         // after moving the build code from tools/wayland-gen into the main build.zig this works again???
     });
