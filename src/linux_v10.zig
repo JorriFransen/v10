@@ -20,6 +20,7 @@ const WlInitData = struct {
     xdg_wm_base: ?*xdg.WmBase = null,
 
     argb8888: bool = false,
+    seat_capabilities: wl.Seat.Capability = .{},
 };
 
 const Pixel = extern struct {
@@ -41,6 +42,7 @@ const WlData = struct {
     wm_base: *xdg.WmBase = undefined,
     xdg_surface: *xdg.Surface = undefined,
     toplevel: *xdg.Toplevel = undefined,
+    keyboard: *wl.Keyboard = undefined,
 
     width: i32 = -1,
     height: i32 = -1,
@@ -95,6 +97,24 @@ var wl_callback_listener = wl.Callback.Listener{
     .done = handleWlCallbackDone,
 };
 
+var wl_buffer_listener = wl.Buffer.Listener{
+    .release = handleWlBufferRelease,
+};
+
+var wl_seat_listener = wl.Seat.Listener{
+    .capabilities = handleWlSeatCapabilities,
+    .name = @ptrCast(&nop),
+};
+
+var wl_keyboard_listener = wl.Keyboard.Listener{
+    .key = handleWlKey,
+    .enter = @ptrCast(&nop),
+    .leave = @ptrCast(&nop),
+    .modifiers = @ptrCast(&nop),
+    .repeat_info = @ptrCast(&nop),
+    .keymap = @ptrCast(&nop),
+};
+
 pub fn main() !void {
     var lwl = try std.DynLib.open("libwayland-client.so");
     defer lwl.close();
@@ -143,10 +163,28 @@ pub fn main() !void {
         return error.UnexpectedWayland;
     }
 
-    // for format events
+    // for format events, seat
     wld.shm.add_listener(&wl_shm_listener, &wli);
+    wld.seat.add_listener(&wl_seat_listener, &wli);
     _ = wl.display_roundtrip(display);
     log.debug("Format available", .{});
+    log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
+
+    if (wli.seat_capabilities.keyboard == false) {
+        log.debug("keyboard not available", .{});
+        return error.UnexpectedWayland;
+    }
+    if (wli.seat_capabilities.pointer == false) {
+        log.debug("mouse not available", .{});
+        return error.UnexpectedWayland;
+    }
+
+    wld.keyboard = wld.seat.get_keyboard() orelse {
+        log.debug("wl_seat_get_keyboard failed", .{});
+        return error.UnexpectedWayland;
+    };
+
+    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
 
     if (wli.argb8888 == false) {
         log.err("argb8888 format not avaliable", .{});
@@ -173,74 +211,27 @@ pub fn main() !void {
     };
     wld.toplevel.add_listener(&xdg_toplevel_listener, &wld);
     wld.toplevel.set_min_size(initial_window_width, initial_window_height);
+    wld.toplevel.set_app_id("v10");
+    wld.toplevel.set_title("v10");
 
     wld.surface.commit();
-    log.debug("Initial commit", .{});
-    while (wl.display_dispatch(display) != -1 and wld.running) {
-        // _ = wl.display_dispatch_pending(display); // Need this for frame callbacks
 
+    while (wld.pending_resize == null) {
+        if (wl.display_dispatch(display) == -1) {
+            log.debug("wl_display_dispatch failed", .{});
+            return error.UnexpectedWayland;
+        }
+    }
+    resize(&wld, wld.pending_resize.?);
+    log.debug("Initial config done", .{});
+
+    while (wl.display_dispatch(display) != -1 and wld.running) {
         if (wld.pending_resize) |r| {
             if (r.serial != 0) {
-                if (r.width == wld.width and r.height == wld.height) {
-                    wld.xdg_surface.ack_configure(r.serial);
-                    wld.surface.commit();
-                    wld.pending_resize = null;
-                    continue;
-                }
-
-                if (wld.buffer) |buffer| {
-                    buffer.destroy();
-                    wld.pool.destroy();
-                    const old_size = @as(usize, @intCast(wld.width * wld.height)) * @sizeOf(Pixel);
-                    _ = std.c.munmap(@ptrCast(@alignCast(wld.shm_ptr)), old_size);
-                } else {
-                    const callback = wld.surface.frame();
-                    callback.?.add_listener(&wl_callback_listener, &wld); //TODO: This should happen after commit of the first frame. Move this and the entire initial handshake to a separate loop.
-                }
-
-                if (r.width == 0 and r.height == 0) {
-                    wld.width = initial_window_width;
-                    wld.height = initial_window_height;
-                } else {
-                    wld.width = r.width;
-                    wld.height = r.height;
-                }
-
-                const stride = wld.width * @sizeOf(Pixel);
-                const new_size = stride * wld.height;
-
-                const fd = alloc_shm(new_size);
-                defer _ = std.c.close(fd);
-
-                const prot = std.c.PROT.READ | std.c.PROT.WRITE;
-                const map = std.c.MAP{ .TYPE = .SHARED };
-                const mapped = std.c.mmap(null, @intCast(new_size), prot, map, fd, 0);
-                if (mapped == std.c.MAP_FAILED) {
-                    // TODO: Better error handling
-                    unreachable;
-                }
-                wld.shm_ptr = @ptrCast(mapped);
-
-                wld.pool = wld.shm.create_pool(fd, new_size) orelse {
-                    log.err("wl_shm_create_pool_failed", .{});
-                    unreachable;
-                };
-
-                wld.buffer = wld.pool.create_buffer(0, wld.width, wld.height, stride, .argb8888) orelse {
-                    log.err("wl_pool_create_buffer_failed", .{});
-                    unreachable;
-                };
-
-                draw(wld.shm_ptr, wld.width, wld.height);
-
-                wld.xdg_surface.ack_configure(r.serial);
-                wld.surface.attach(wld.buffer, 0, 0);
-                wld.surface.damage(0, 0, wld.width, wld.height);
-                wld.surface.commit();
-                _ = wl.display_flush(display);
-                wld.pending_resize = null;
+                resize(&wld, r);
             }
         }
+
         if (wld.should_draw) {
             draw(wld.shm_ptr, wld.width, wld.height);
 
@@ -252,7 +243,71 @@ pub fn main() !void {
             _ = wl.display_flush(display);
             wld.should_draw = false;
         }
+
+        _ = wl.display_flush(display);
     }
+}
+
+fn resize(wld: *WlData, r: PendingResize) void {
+    if (r.width == wld.width and r.height == wld.height) {
+        wld.xdg_surface.ack_configure(r.serial);
+        wld.surface.commit();
+        wld.pending_resize = null;
+        return;
+    }
+
+    if (wld.buffer) |buffer| {
+        buffer.destroy();
+        wld.pool.destroy();
+        const old_size = @as(usize, @intCast(wld.width * wld.height)) * @sizeOf(Pixel);
+        _ = std.c.munmap(@ptrCast(@alignCast(wld.shm_ptr)), old_size);
+    }
+
+    if (r.width == 0 and r.height == 0) {
+        wld.width = initial_window_width;
+        wld.height = initial_window_height;
+    } else {
+        wld.width = r.width;
+        wld.height = r.height;
+    }
+
+    const stride = wld.width * @sizeOf(Pixel);
+    const new_size = stride * wld.height;
+
+    const fd = alloc_shm(new_size);
+    defer _ = std.c.close(fd);
+
+    const prot = std.c.PROT.READ | std.c.PROT.WRITE;
+    const map = std.c.MAP{ .TYPE = .SHARED };
+    const mapped = std.c.mmap(null, @intCast(new_size), prot, map, fd, 0);
+    if (mapped == std.c.MAP_FAILED) {
+        // TODO: Better error handling
+        unreachable;
+    }
+    wld.shm_ptr = @ptrCast(mapped);
+
+    wld.pool = wld.shm.create_pool(fd, new_size) orelse {
+        log.err("wl_shm_create_pool_failed", .{});
+        unreachable;
+    };
+
+    const buffer = wld.pool.create_buffer(0, wld.width, wld.height, stride, .argb8888) orelse {
+        log.err("wl_pool_create_buffer_failed", .{});
+        unreachable;
+    };
+    buffer.add_listener(&wl_buffer_listener, wld);
+    wld.buffer = buffer;
+
+    draw(wld.shm_ptr, wld.width, wld.height);
+
+    wld.xdg_surface.ack_configure(r.serial);
+    wld.surface.attach(wld.buffer, 0, 0);
+    wld.surface.damage(0, 0, wld.width, wld.height);
+    wld.surface.commit();
+    const callback = wld.surface.frame();
+    callback.?.add_listener(&wl_callback_listener, wld);
+    _ = wl.display_flush(wld.display);
+    wld.pending_resize = null;
 }
 
 fn alloc_shm(size: std.c.off_t) std.c.fd_t {
@@ -318,9 +373,8 @@ fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg.WmBase, serial: u32) callconv
 
 fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg.Surface, serial: u32) callconv(.c) void {
     const wld: *WlData = @ptrCast(@alignCast(data));
-    if (wld.pending_resize) |*resize| {
-        log.debug("resize serial: {}", .{serial});
-        resize.serial = serial;
+    if (wld.pending_resize) |*r| {
+        r.serial = serial;
     } else {
         log.warn("xdg surface configure without pending resize from toplevel", .{});
         surface.?.ack_configure(serial);
@@ -330,6 +384,8 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg.Surface, serial: 
 fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg.Toplevel, width: i32, height: i32, states: wayland.Array) callconv(.c) void {
     _ = toplevel;
     _ = states;
+
+    log.debug("toplevel configure: {},{}", .{ width, height });
 
     const wld: *WlData = @ptrCast(@alignCast(data));
 
@@ -372,8 +428,38 @@ fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_dat
     _ = callback_data;
     callback.?.destroy();
 
+    log.debug("frame callback", .{});
     const wld: *WlData = @ptrCast(@alignCast(data));
     wld.should_draw = true;
+}
+
+fn handleWlBufferRelease(data: ?*anyopaque, buffer: ?*wl.Buffer) callconv(.c) void {
+    _ = data;
+    _ = buffer;
+    log.debug("Buffer release", .{});
+    unreachable;
+}
+
+fn handleWlSeatCapabilities(data: ?*anyopaque, seat: ?*wl.Seat, capabilities: wl.Seat.Capability) callconv(.c) void {
+    _ = seat;
+
+    const wli: *WlInitData = @ptrCast(@alignCast(data));
+    wli.seat_capabilities = capabilities;
+}
+
+fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u32, key: u32, state: wl.Keyboard.KeyState) callconv(.c) void {
+    _ = keyboard;
+    _ = time;
+    _ = serial;
+    _ = state;
+
+    const wld: *WlData = @ptrCast(@alignCast(data));
+
+    // TODO: Do this via the keymap with xkb!
+    // 1 = esc, 58 = caps
+    if (key == 1 or key == 58) {
+        wld.running = false;
+    }
 }
 
 var ry: usize = 0;
