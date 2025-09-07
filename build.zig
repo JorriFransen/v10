@@ -58,7 +58,8 @@ fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools
     const exe = b.addExecutable(.{
         .name = "v10",
         .root_module = main_module,
-        .use_llvm = force_llvm,
+        // .use_llvm = force_llvm,
+        .use_llvm = true,
     });
     exe.linkSystemLibrary("user32");
     exe.subsystem = .Windows;
