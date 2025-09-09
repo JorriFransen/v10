@@ -50,6 +50,9 @@ pub fn main() !void {
     var parse_arena = try mem.Arena.init(.{ .virtual = .{} });
     var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
 
+    const Xml = @import("xml");
+    _ = try Xml.parse(parse_arena.allocator(), "vendor/wayland/wayland.xml");
+
     var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
 
     const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);

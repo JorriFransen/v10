@@ -102,6 +102,12 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
         .root_source_file = b.path("src/memory/memory.zig"),
     });
 
+    const xml_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/xml.zig"),
+    });
+
     const exe = b.addExecutable(.{
         .name = "wayland-gen",
         .root_module = b.createModule(.{
@@ -109,7 +115,8 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "xml", .module = zig_xml_dep.module("xml") },
+                .{ .name = "zig_xml", .module = zig_xml_dep.module("xml") },
+                .{ .name = "xml", .module = xml_module },
                 .{ .name = "mem", .module = mem_module },
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },

@@ -1,6 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.@"wayland-gen.parser");
-const xml = @import("xml");
+const xml = @import("zig_xml");
 const types = @import("types.zig");
 const mem = @import("mem");
 
