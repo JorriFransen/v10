@@ -51,14 +51,15 @@ pub fn main() !void {
     // var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
 
     {
-        const xml_file = try std.fs.cwd().openFile("vendor/wayland/wayland.xml", .{});
+        const xml_path = "vendor/wayland/wayland.xml";
+        const xml_file = try std.fs.cwd().openFile(xml_path, .{});
         defer xml_file.close();
 
         var read_buf: [512]u8 = undefined;
         var reader = xml_file.reader(&read_buf);
 
         const Xml = @import("xml");
-        var xml_reader = Xml.Reader.init(&reader.interface);
+        var xml_reader = Xml.Reader.init(&reader.interface, xml_path);
 
         while (!xml_reader.done()) {
             const node = try xml_reader.next();
