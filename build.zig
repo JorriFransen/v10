@@ -106,6 +106,9 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path("src/xml.zig"),
+        .imports = &.{
+            .{ .name = "mem", .module = mem_module },
+        },
     });
 
     const exe = b.addExecutable(.{
