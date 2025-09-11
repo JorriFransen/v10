@@ -47,6 +47,7 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
+    var xml_arena = try mem.Arena.init(.{ .virtual = .{} });
     var parse_arena = try mem.Arena.init(.{ .virtual = .{} });
     var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
 
@@ -67,16 +68,11 @@ pub fn main() !void {
     //     }
     // }
 
-    const wlp_p_st = std.time.nanoTimestamp();
-    var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
-    const wlp_p_et = std.time.nanoTimestamp();
+    var wayland_protocol = try parser.parse(parse_arena.allocator(), &xml_arena, options.wayland);
 
     const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);
-    const ppts = try parse_arena.allocator().alloc([2]i128, options.protocol.items.len);
-    for (options.protocol.items, protocols, ppts) |protocol_xml_file, *dst, *t| {
-        t.*[0] = std.time.nanoTimestamp();
-        dst.* = try parser.parse(parse_arena.allocator(), protocol_xml_file);
-        t.*[1] = std.time.nanoTimestamp();
+    for (options.protocol.items, protocols) |protocol_xml_file, *dst| {
+        dst.* = try parser.parse(parse_arena.allocator(), &xml_arena, protocol_xml_file);
     }
 
     const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
@@ -87,42 +83,4 @@ pub fn main() !void {
     var out_buf: [mem.KiB * 8]u8 = undefined;
     var out_writer = out_file.writer(&out_buf);
     _ = try out_writer.interface.write(result);
-
-    const wlp_p = wlp_p_et - wlp_p_st;
-    log.info("\n\n", .{});
-
-    log.info("parse: {f} {: >10} ({:.5}s)", .{ truncPath(50, options.wayland), wlp_p, sec(wlp_p) });
-    var total_parse = wlp_p;
-    for (options.protocol.items, ppts) |protocol_path, pt| {
-        const p = pt[1] - pt[0];
-        log.info("parse: {f} {: >10} ({:.5}s)", .{ truncPath(50, protocol_path), p, sec(p) });
-        total_parse += p;
-    }
-    log.info("Total parse time: {s: <39} {: >10} ({:.5}s)", .{ "", total_parse, sec(total_parse) });
-}
-
-fn truncPath(n: usize, p: []const u8) TruncPath {
-    return .{ .n = n, .p = p };
-}
-
-const TruncPath = struct {
-    n: usize,
-    p: []const u8,
-    pub fn format(this: *const TruncPath, w: *std.Io.Writer) !void {
-        if (this.p.len > this.n) {
-            _ = try w.write("...");
-            assert(this.n > 3);
-            const n = this.n - 3;
-            _ = try w.write(this.p[this.p.len - n ..]);
-        } else {
-            _ = try w.write(this.p);
-            for (this.p.len..this.n) |_| _ = try w.write(" ");
-        }
-
-        try w.flush();
-    }
-};
-
-inline fn sec(ns: i128) f64 {
-    return @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;
 }

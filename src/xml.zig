@@ -17,6 +17,7 @@ pub const Reader = struct {
         xml_decl,
         tag,
         in_tag,
+        in_selfclosing_tag,
         text,
         eof,
     };
@@ -46,41 +47,6 @@ pub const Reader = struct {
             name: []const u8,
             value: []const u8,
         };
-
-        pub fn format(this: *const Node, w: *std.Io.Writer) !void {
-            var tmp = mem.getTemp();
-            defer tmp.release();
-            const ta = tmp.allocator();
-
-            _ = try w.write(@tagName(this.*));
-            const info_str = switch (this.*) {
-                .start, .eof => "",
-
-                .xml_decl => |d| std.fmt.allocPrint(ta, ": version: '{s}', encoding: '{s}', standalone: '{s}'", .{
-                    d.version, d.encoding, d.standalone,
-                }) catch @panic("OOM"),
-
-                .tag_open => |t| blk: {
-                    const prefix = std.fmt.allocPrint(ta, ": name: '{s}', self_closing: {}", .{ t.name, t.self_closing }) catch @panic("OOM");
-                    _ = try w.write(prefix);
-                    if (t.attributes.len > 0) {
-                        _ = try w.write(", attributes:");
-                        for (t.attributes) |attr| {
-                            const a_str = std.fmt.allocPrint(ta, " {s}='{s}'", .{ attr.name, attr.value }) catch @panic("OOM");
-                            _ = try w.write(a_str);
-                        }
-                    }
-                    break :blk "";
-                },
-
-                .tag_close => |t| std.fmt.allocPrint(ta, ": name: '{s}'", .{t}) catch @panic("OOM"),
-                .text => |t| std.fmt.allocPrint(ta, ": \"{s}\"", .{t}) catch @panic("OOM"),
-                .comment => |t| std.fmt.allocPrint(ta, ": \"{s}\"", .{t}) catch @panic("OOM"),
-            };
-
-            _ = try w.write(info_str);
-            try w.flush();
-        }
     };
 
     pub const Location = struct {
@@ -90,18 +56,26 @@ pub const Reader = struct {
     };
 
     /// The path is only used for location info
-    pub fn init(reader: *std.Io.Reader, path: []const u8) Reader {
+    ///
+    /// The arena is used for the current nodes data.
+    /// It will be reset for each node, so don't use it for anyting else!
+    ///
+    pub fn init(reader: *std.Io.Reader, path: []const u8, arena: *mem.Arena) Reader {
         return .{
             .state = .start,
             .reader = reader,
             .current_node = .{ .start = {} },
-            .node_tmp = mem.getTemp(),
+            .node_tmp = mem.TempArena.init(arena),
             .location = .{
                 .path = path,
                 .line = 1,
                 .column = 1,
             },
         };
+    }
+
+    pub fn deinit(this: *Reader) void {
+        this.node_tmp.release();
     }
 
     pub const Error =
@@ -165,8 +139,6 @@ pub const Reader = struct {
 
                         var attributes = std.ArrayList(Node.Attribute){};
 
-                        this.skipWhitespace();
-
                         var self_closing = false;
                         while (!try this.match(">")) {
                             const attr_name = try this.parseIdentifier();
@@ -191,7 +163,12 @@ pub const Reader = struct {
                             .attributes = attributes.items,
                             .self_closing = self_closing,
                         } };
-                        this.state = .in_tag;
+
+                        if (self_closing) {
+                            this.state = .in_selfclosing_tag;
+                        } else {
+                            this.state = .in_tag;
+                        }
                         return this.current_node;
                     }
                 },
@@ -210,6 +187,21 @@ pub const Reader = struct {
                         this.state = .text;
                         continue;
                     }
+                },
+
+                .in_selfclosing_tag => {
+                    assert(this.current_node == .tag_open);
+                    assert(this.current_node.tag_open.self_closing);
+
+                    // HACK: NOTE: Technically the node nome has been freed by the release
+                    //              in the top of this function, but we don't allocate
+                    //              anyting in this state. Als long as this is the case,
+                    //              this should be ok...
+                    const name = this.current_node.tag_open.name;
+                    this.current_node = .{ .tag_close = name };
+
+                    this.state = .in_tag;
+                    return this.current_node;
                 },
 
                 .text => {

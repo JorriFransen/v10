@@ -1,7 +1,7 @@
 .{
     .name = .v10,
     .version = "0.0.1",
-    .minimum_zig_version = "0.16.0-dev.205+4c0127566",
+    .minimum_zig_version = "0.16.0-dev.225+0b75a2a1b",
     .paths = .{
         "build.zig",
         "LICENSE.md",
@@ -14,7 +14,6 @@
     .fingerprint = 0x4fb9faee3e8a9632,
 
     .dependencies =  .{
-        .zig_xml = .{ .path = "vendor/zig-xml" },
         .zig_cli_parse = .{ .path = "vendor/zig-CliParse" },
     },
 }

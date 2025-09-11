@@ -99,7 +99,6 @@ const Tools = struct {
 };
 
 fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools {
-    const zig_xml_dep = b.dependency("zig_xml", .{});
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
 
     const mem_module = b.createModule(.{
@@ -124,18 +123,15 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "zig_xml", .module = zig_xml_dep.module("xml") },
                 .{ .name = "xml", .module = xml_module },
                 .{ .name = "mem", .module = mem_module },
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },
         }),
         .use_llvm = force_llvm,
-        // .use_llvm = true, // zig-xml (or maybe zig?) doesn't work with the new backend...
-        // after moving the build code from tools/wayland-gen into the main build.zig this works again???
     });
 
-    b.installArtifact(exe);
+    // b.installArtifact(exe);
 
     const run_exe = b.addRunArtifact(exe);
     const run_step = b.step("wayland-gen", "Generate wayland bindings");
@@ -143,11 +139,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
     run_exe.setCwd(b.path("."));
 
     _ = run_exe.addPrefixedFileArg("--wayland=", b.path("vendor/wayland/wayland.xml"));
-    // _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
-    // _ = run_exe.addPrefixedFileArg("--protocol=", b.path("../wayland-protocols/stable/tablet/tablet-v2.xml"));
-    // _ = run_exe.addPrefixedFileArg("--protocol=", b.path("../wayland-protocols/unstable/tablet/tablet-unstable-v2.xml"));
-
-    try addProtocols(b, run_exe, "/home/jorri/dev/wayland-protocols");
+    _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
 
     const wayland_source = run_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
 
@@ -158,20 +150,4 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
             .root_source_file = wayland_source,
         }),
     };
-}
-
-fn addProtocols(b: *Build, run: *Step.Run, path: []const u8) !void {
-    var dir = try std.fs.openDirAbsolute(path, .{ .iterate = true, .access_sub_paths = true });
-    defer dir.close();
-
-    var walker = try dir.walk(b.allocator);
-    defer walker.deinit();
-
-    while (try walker.next()) |e| {
-        if (e.kind == .file and std.mem.endsWith(u8, e.path, ".xml")) {
-            // std.log.debug("Adding xml: {s}", .{e.path});
-            const file_path = Build.LazyPath{ .cwd_relative = b.pathJoin(&.{ path, e.path }) };
-            run.addPrefixedFileArg("--protocol=", file_path);
-        }
-    }
 }

@@ -1,6 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.@"wayland-gen.parser");
-const xml = @import("zig_xml");
+const xml = @import("xml");
 const types = @import("types.zig");
 const mem = @import("mem");
 
@@ -19,7 +19,7 @@ const Type = types.Type;
 
 xml_file_path: []const u8,
 xml_file_reader: std.fs.File.Reader,
-xml_reader: xml.Reader.Streaming,
+xml_reader: xml.Reader,
 
 allocator: Allocator,
 
@@ -49,7 +49,9 @@ const Description = struct {
     }
 };
 
-pub fn parse(allocator: Allocator, xml_path: []const u8) !Protocol {
+/// xml_temp_arena is used by the xml parser.
+/// It will be reset for each node, so don't use it for anyting else!
+pub fn parse(allocator: Allocator, xml_temp_arena: *mem.Arena, xml_path: []const u8) !Protocol {
     var parser: Parser = .{
         .xml_file_path = xml_path,
         .xml_file_reader = undefined,
@@ -70,28 +72,25 @@ pub fn parse(allocator: Allocator, xml_path: []const u8) !Protocol {
     defer xml_file.close();
 
     parser.xml_file_reader = xml_file.reader(&parser.read_buf);
-    parser.xml_reader = xml.Reader.Streaming.init(gpa, &parser.xml_file_reader.interface, .{ .namespace_aware = false, .assume_valid_utf8 = true });
+    parser.xml_reader = .init(&parser.xml_file_reader.interface, xml_path, xml_temp_arena);
     defer parser.xml_reader.deinit();
 
     parser.stderr_writer = std.fs.File.stderr().writer(&parser.stderr_write_buf);
-
-    const reader = parser.getXmlReader();
 
     while (true) {
         const node = try parser.nextNode();
 
         switch (node) {
             else => {
-                parser.xmlErr(reader.location(), "Unexpected xml node type '{s}'", .{@tagName(node)});
+                parser.xmlErr("Unexpected xml node type '{s}'", .{@tagName(node)});
                 unreachable;
             },
             .eof => break,
 
-            .xml_declaration, .text => {}, // skip
-            .element_start => {
-                const name = reader.elementName();
-                if (!std.mem.eql(u8, name, "protocol")) {
-                    parser.xmlErr(reader.location(), "Invalid element: '{s}', expected 'protocol'", .{name});
+            .xml_decl, .text => {}, // skip
+            .tag_open => |tag| {
+                if (!std.mem.eql(u8, tag.name, "protocol")) {
+                    parser.xmlErr("Invalid element: '{s}', expected 'protocol'", .{tag.name});
                     return error.MalformedXml;
                 }
 
@@ -105,20 +104,18 @@ pub fn parse(allocator: Allocator, xml_path: []const u8) !Protocol {
 }
 
 fn parseProtocol(this: *Parser) !Protocol {
-    const reader = this.getXmlReader();
-    const attr_count = reader.attributeCount();
-
-    if (attr_count != 1) {
-        this.xmlErr(reader.location(), "Invalid attribute count", .{});
+    const protocol_tag = this.xml_reader.current_node.tag_open;
+    if (protocol_tag.attributes.len != 1) {
+        this.xmlErr("Invalid attribute count", .{});
         return error.MalformedXml;
     }
 
-    const attr_name = reader.attributeName(0);
-    if (!std.mem.eql(u8, attr_name, "name")) {
-        xmlErr(this, reader.location(), "Expected 'name' attribute, got '{s}'", .{attr_name});
+    const attr = protocol_tag.attributes[0];
+    if (!std.mem.eql(u8, attr.name, "name")) {
+        this.xmlErr("Expected 'name' attribute, got '{s}'", .{attr.name});
     }
 
-    const protocol_name = copyString(this.allocator, try reader.attributeValue(0));
+    const protocol_name = copyString(this.allocator, attr.value);
     var interfaces = std.ArrayList(Interface){};
     var description: Description = .{};
 
@@ -126,35 +123,33 @@ fn parseProtocol(this: *Parser) !Protocol {
         const node = try this.nextNode();
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node type '{s}'", .{@tagName(node)});
+                this.xmlErr("Unexpected xml node type '{s}'", .{@tagName(node)});
                 unreachable;
             },
 
             .eof => {
-                this.xmlErr(reader.location(), "Unexpected eof", .{});
+                this.xmlErr("Unexpected eof", .{});
                 return error.MalformedXml;
             },
 
             .comment, .text => {}, // skip
 
-            .element_start => {
-                const elem_name = reader.elementName();
-                if (std.mem.eql(u8, elem_name, "copyright")) {
-                    try skipElement(this);
-                } else if (std.mem.eql(u8, elem_name, "interface")) {
-                    try interfaces.append(this.allocator, try parseInterface(this));
-                } else if (std.mem.eql(u8, elem_name, "description")) {
+            .tag_open => |tag| {
+                if (std.mem.eql(u8, tag.name, "copyright")) {
+                    try this.skipElement();
+                } else if (std.mem.eql(u8, tag.name, "interface")) {
+                    try interfaces.append(this.allocator, try this.parseInterface());
+                } else if (std.mem.eql(u8, tag.name, "description")) {
                     description = try this.parseDescription();
                 } else {
-                    this.xmlErr(reader.location(), "Unexpected element: '{s}'", .{elem_name});
+                    this.xmlErr("Unexpected element: '{s}'", .{tag.name});
                     return error.MalformedXml;
                 }
             },
 
-            .element_end => {
-                const elem_name = reader.elementName();
-                if (!std.mem.eql(u8, elem_name, "protocol")) {
-                    this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected: 'request'", .{elem_name});
+            .tag_close => |tag| {
+                if (!std.mem.eql(u8, tag, "protocol")) {
+                    this.xmlErr("Unexpected closing element '{s}', expected: 'request'", .{tag});
                     return error.MalformedXml;
                 }
                 break;
@@ -171,8 +166,6 @@ fn parseProtocol(this: *Parser) !Protocol {
 }
 
 fn parseInterface(this: *Parser) !Interface {
-    const reader = this.getXmlReader();
-
     var name_opt: ?[]const u8 = null;
     var version: u32 = 0;
     var description: Description = .{};
@@ -180,27 +173,25 @@ fn parseInterface(this: *Parser) !Interface {
     var events: std.ArrayList(Event) = .{};
     var enums: std.ArrayList(Enum) = .{};
 
-    const attr_count = reader.attributeCount();
-    if (attr_count < 1) {
-        this.xmlErr(reader.location(), "Invalid attribute count", .{});
+    const interface_tag = this.xml_reader.current_node.tag_open;
+
+    if (interface_tag.attributes.len < 1) {
+        this.xmlErr("Invalid attribute count", .{});
     }
 
-    for (0..attr_count) |i| {
-        const attr_name = reader.attributeName(i);
-        const value = try reader.attributeValue(i);
-
-        if (std.mem.eql(u8, attr_name, "name")) {
-            name_opt = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "version")) {
-            version = try std.fmt.parseInt(u32, value, 10);
+    for (interface_tag.attributes) |attr| {
+        if (std.mem.eql(u8, attr.name, "name")) {
+            name_opt = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "version")) {
+            version = try std.fmt.parseInt(u32, attr.value, 10);
         } else {
-            this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
+            this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
         }
     }
 
     const name = name_opt orelse {
-        this.xmlErr(reader.location(), "Missing name attirbute", .{});
+        this.xmlErr("Missing name attirbute", .{});
         return error.MalformedXml;
     };
     this.current_interface_name = name;
@@ -209,39 +200,36 @@ fn parseInterface(this: *Parser) !Interface {
         const node = try this.nextNode();
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node: '{s}'", .{@tagName(node)});
+                this.xmlErr("Unexpected xml node: '{s}'", .{@tagName(node)});
                 unreachable;
             },
             .eof => {
-                this.xmlErr(reader.location(), "Unexpected eof", .{});
+                this.xmlErr("Unexpected eof", .{});
                 return error.MalformedXml;
             },
 
             .text, .comment => {}, // skip
 
-            .element_start => {
-                const elem_name = reader.elementName();
-
-                if (std.mem.eql(u8, elem_name, "description")) {
+            .tag_open => |tag| {
+                if (std.mem.eql(u8, tag.name, "description")) {
                     description = try this.parseDescription();
-                } else if (std.mem.eql(u8, elem_name, "request")) {
+                } else if (std.mem.eql(u8, tag.name, "request")) {
                     try requests.append(this.allocator, try this.parseRequest());
-                } else if (std.mem.eql(u8, elem_name, "event")) {
+                } else if (std.mem.eql(u8, tag.name, "event")) {
                     if (try this.parseEvent()) |event| {
                         try events.append(this.allocator, event);
                     }
-                } else if (std.mem.eql(u8, elem_name, "enum")) {
+                } else if (std.mem.eql(u8, tag.name, "enum")) {
                     try enums.append(this.allocator, try this.parseEnum());
                 } else {
-                    this.xmlErr(reader.location(), "Unexpected element in interface: '{s}'", .{elem_name});
+                    this.xmlErr("Unexpected element in interface: '{s}'", .{tag.name});
                     return error.MalformedXml;
                 }
             },
 
-            .element_end => {
-                const elem_name = reader.elementName();
-                if (!std.mem.eql(u8, elem_name, "interface")) {
-                    this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected: 'request'", .{elem_name});
+            .tag_close => |tag| {
+                if (!std.mem.eql(u8, tag, "interface")) {
+                    this.xmlErr("Unexpected closing element '{s}', expected: 'request'", .{tag});
                     return error.MalformedXml;
                 }
                 break;
@@ -261,31 +249,27 @@ fn parseInterface(this: *Parser) !Interface {
 }
 
 fn parseRequest(this: *Parser) !Request {
-    const reader = this.getXmlReader();
-
     var name: []const u8 = "";
     var destructor = false;
     var since: u32 = 0;
     var description = Description{};
     var args = std.ArrayList(Arg){};
 
-    const attr_count = reader.attributeCount();
-    if (attr_count < 1) {
-        this.xmlErr(reader.location(), "Missing name attribute", .{});
+    const req_tag = this.xml_reader.current_node.tag_open;
+
+    if (req_tag.attributes.len < 1) {
+        this.xmlErr("Missing name attribute", .{});
     }
 
-    for (0..attr_count) |i| {
-        const attr_name = reader.attributeName(i);
-        const value = try reader.attributeValue(i);
-
-        if (std.mem.eql(u8, attr_name, "name")) {
-            name = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "type")) {
-            destructor = std.mem.eql(u8, value, "destructor");
-        } else if (std.mem.eql(u8, attr_name, "since")) {
-            since = try std.fmt.parseInt(u32, value, 10);
+    for (req_tag.attributes) |attr| {
+        if (std.mem.eql(u8, attr.name, "name")) {
+            name = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "type")) {
+            destructor = std.mem.eql(u8, attr.value, "destructor");
+        } else if (std.mem.eql(u8, attr.name, "since")) {
+            since = try std.fmt.parseInt(u32, attr.value, 10);
         } else {
-            this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
+            this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
         }
     }
@@ -294,32 +278,29 @@ fn parseRequest(this: *Parser) !Request {
         const node = try this.nextNode();
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node type: '{s}'", .{@tagName(node)});
+                this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
                 unreachable;
             },
             .eof => {
-                this.xmlErr(reader.location(), "Unexpected eof", .{});
+                this.xmlErr("Unexpected eof", .{});
                 return error.MalformedXml;
             },
             .text => {}, // skip
 
-            .element_start => {
-                const elem_name = reader.elementName();
-
-                if (std.mem.eql(u8, elem_name, "description")) {
+            .tag_open => |tag| {
+                if (std.mem.eql(u8, tag.name, "description")) {
                     description = try this.parseDescription();
-                } else if (std.mem.eql(u8, elem_name, "arg")) {
+                } else if (std.mem.eql(u8, tag.name, "arg")) {
                     try args.append(this.allocator, try this.parseArg());
                 } else {
-                    this.xmlErr(reader.location(), "Unexpected element in request: '{s}'", .{elem_name});
+                    this.xmlErr("Unexpected element in request: '{s}'", .{tag.name});
                     return error.MalformedXml;
                 }
             },
 
-            .element_end => {
-                const elem_name = reader.elementName();
-                if (!std.mem.eql(u8, elem_name, "request")) {
-                    this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected: 'request'", .{elem_name});
+            .tag_close => |tag| {
+                if (!std.mem.eql(u8, tag, "request")) {
+                    this.xmlErr("Unexpected closing element '{s}', expected: 'request'", .{tag});
                     return error.MalformedXml;
                 }
                 break;
@@ -338,8 +319,6 @@ fn parseRequest(this: *Parser) !Request {
 }
 
 fn parseEvent(this: *Parser) !?Event {
-    const reader = this.getXmlReader();
-
     var name: []const u8 = "";
     var destructor = false;
     var since: u32 = 0;
@@ -347,30 +326,28 @@ fn parseEvent(this: *Parser) !?Event {
     var description = Description{};
     var args = std.ArrayList(Arg){};
 
-    const attr_count = reader.attributeCount();
-    if (attr_count < 1) {
-        this.xmlErr(reader.location(), "Missing name attribute", .{});
+    const event_tag = this.xml_reader.current_node.tag_open;
+
+    if (event_tag.attributes.len < 1) {
+        this.xmlErr("Missing name attribute", .{});
     }
 
-    for (0..attr_count) |i| {
-        const attr_name = reader.attributeName(i);
-        const value = try reader.attributeValue(i);
-
-        if (std.mem.eql(u8, attr_name, "name")) {
-            name = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "type")) {
-            if (std.mem.eql(u8, value, "destructor")) {
+    for (event_tag.attributes) |attr| {
+        if (std.mem.eql(u8, attr.name, "name")) {
+            name = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "type")) {
+            if (std.mem.eql(u8, attr.value, "destructor")) {
                 destructor = true;
             } else {
-                this.xmlErr(reader.location(), "Invalid enum type attribute '{s}'", .{value});
+                this.xmlErr("Invalid enum type attribute '{s}'", .{attr.value});
                 return error.MalformedXml;
             }
-        } else if (std.mem.eql(u8, attr_name, "since")) {
-            since = try std.fmt.parseInt(u32, value, 10);
-        } else if (std.mem.eql(u8, attr_name, "deprecated-since")) {
+        } else if (std.mem.eql(u8, attr.name, "since")) {
+            since = try std.fmt.parseInt(u32, attr.value, 10);
+        } else if (std.mem.eql(u8, attr.name, "deprecated-since")) {
             deprecated = true;
         } else {
-            this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
+            this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
         }
     }
@@ -379,33 +356,30 @@ fn parseEvent(this: *Parser) !?Event {
         const node = try this.nextNode();
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node type: '{s}'", .{@tagName(node)});
+                this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
                 unreachable;
             },
             .eof => {
-                this.xmlErr(reader.location(), "Unexpected eof", .{});
+                this.xmlErr("Unexpected eof", .{});
                 return error.MalformedXml;
             },
 
             .text, .comment => {}, // skip
 
-            .element_start => {
-                const elem_name = reader.elementName();
-
-                if (std.mem.eql(u8, elem_name, "description")) {
+            .tag_open => |tag| {
+                if (std.mem.eql(u8, tag.name, "description")) {
                     description = try this.parseDescription();
-                } else if (std.mem.eql(u8, elem_name, "arg")) {
+                } else if (std.mem.eql(u8, tag.name, "arg")) {
                     try args.append(this.allocator, try this.parseArg());
                 } else {
-                    this.xmlErr(reader.location(), "Unexpected element in request: '{s}'", .{elem_name});
+                    this.xmlErr("Unexpected element in request: '{s}'", .{tag.name});
                     return error.MalformedXml;
                 }
             },
 
-            .element_end => {
-                const elem_name = reader.elementName();
-                if (!std.mem.eql(u8, elem_name, "event")) {
-                    this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected: 'event'", .{elem_name});
+            .tag_close => |tag| {
+                if (!std.mem.eql(u8, tag, "event")) {
+                    this.xmlErr("Unexpected closing element '{s}', expected: 'event'", .{tag});
                     return error.MalformedXml;
                 }
                 break;
@@ -431,31 +405,27 @@ fn parseEvent(this: *Parser) !?Event {
 }
 
 fn parseEnum(this: *Parser) !Enum {
-    const reader = this.getXmlReader();
-
     var name: []const u8 = "";
     var bitfield = false;
     var since: u32 = 0;
     var description = Description{};
     var entries = std.ArrayList(Enum.Entry){};
 
-    const attr_count = reader.attributeCount();
-    if (attr_count < 1) {
-        this.xmlErr(reader.location(), "Missing name attribute", .{});
+    const enum_tag = this.xml_reader.current_node.tag_open;
+
+    if (enum_tag.attributes.len < 1) {
+        this.xmlErr("Missing name attribute", .{});
     }
 
-    for (0..attr_count) |i| {
-        const attr_name = reader.attributeName(i);
-        const value = try reader.attributeValue(i);
-
-        if (std.mem.eql(u8, attr_name, "name")) {
-            name = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "bitfield")) {
-            bitfield = std.mem.eql(u8, value, "true");
-        } else if (std.mem.eql(u8, attr_name, "since")) {
-            since = try std.fmt.parseInt(u32, value, 10);
+    for (enum_tag.attributes) |attr| {
+        if (std.mem.eql(u8, attr.name, "name")) {
+            name = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "bitfield")) {
+            bitfield = std.mem.eql(u8, attr.value, "true");
+        } else if (std.mem.eql(u8, attr.name, "since")) {
+            since = try std.fmt.parseInt(u32, attr.value, 10);
         } else {
-            this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
+            this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
         }
     }
@@ -464,32 +434,29 @@ fn parseEnum(this: *Parser) !Enum {
         const node = try this.nextNode();
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node type: '{s}'", .{@tagName(node)});
+                this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
                 unreachable;
             },
             .eof => {
-                this.xmlErr(reader.location(), "Unexpected eof", .{});
+                this.xmlErr("Unexpected eof", .{});
                 return error.MalformedXml;
             },
             .text, .comment => {}, // skip
 
-            .element_start => {
-                const elem_name = reader.elementName();
-
-                if (std.mem.eql(u8, elem_name, "description")) {
+            .tag_open => |tag| {
+                if (std.mem.eql(u8, tag.name, "description")) {
                     description = try this.parseDescription();
-                } else if (std.mem.eql(u8, elem_name, "entry")) {
+                } else if (std.mem.eql(u8, tag.name, "entry")) {
                     try entries.append(this.allocator, try this.parseEnumEntry());
                 } else {
-                    this.xmlErr(reader.location(), "Unexpected element in request: '{s}'", .{elem_name});
+                    this.xmlErr("Unexpected element in request: '{s}'", .{tag.name});
                     return error.MalformedXml;
                 }
             },
 
-            .element_end => {
-                const elem_name = reader.elementName();
-                if (!std.mem.eql(u8, elem_name, "enum")) {
-                    this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected: 'enum'", .{elem_name});
+            .tag_close => |tag| {
+                if (!std.mem.eql(u8, tag, "enum")) {
+                    this.xmlErr("Unexpected closing element '{s}', expected: 'enum'", .{tag});
                     return error.MalformedXml;
                 }
                 break;
@@ -509,8 +476,6 @@ fn parseEnum(this: *Parser) !Enum {
 }
 
 fn parseArg(this: *Parser) !Arg {
-    const reader = this.getXmlReader();
-
     var name: ?[]const u8 = "";
     var arg_type: ?Type = null;
     var allow_null = false;
@@ -518,50 +483,52 @@ fn parseArg(this: *Parser) !Arg {
     var enum_name_opt: ?[]const u8 = null;
     var summary: []const u8 = "";
 
-    const attr_count = reader.attributeCount();
-    if (attr_count < 2) {
-        this.xmlErr(reader.location(), "Invalid attribute count", .{});
+    const arg_tag = this.xml_reader.current_node.tag_open;
+    if (!arg_tag.self_closing) {
+        this.xmlErr("Expected self closing arg tag", .{});
+        return error.MalformedXml;
     }
 
-    for (0..attr_count) |i| {
-        const attr_name = reader.attributeName(i);
-        const value = try reader.attributeValue(i);
+    if (arg_tag.attributes.len < 2) {
+        this.xmlErr("Invalid attribute count", .{});
+    }
 
-        if (std.mem.eql(u8, attr_name, "name")) {
-            name = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "type")) {
-            arg_type = std.meta.stringToEnum(Type, value) orelse {
-                this.xmlErr(reader.location(), "Invalid type '{s}'", .{value});
+    for (arg_tag.attributes) |attr| {
+        if (std.mem.eql(u8, attr.name, "name")) {
+            name = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "type")) {
+            arg_type = std.meta.stringToEnum(Type, attr.value) orelse {
+                this.xmlErr("Invalid type '{s}'", .{attr.value});
                 return error.MalformedXml;
             };
-        } else if (std.mem.eql(u8, attr_name, "allow-null")) {
-            allow_null = std.mem.eql(u8, value, "true");
-        } else if (std.mem.eql(u8, attr_name, "interface")) {
-            interface = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "enum")) {
-            enum_name_opt = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "summary")) {
-            summary = copyString(this.allocator, value);
+        } else if (std.mem.eql(u8, attr.name, "allow-null")) {
+            allow_null = std.mem.eql(u8, attr.value, "true");
+        } else if (std.mem.eql(u8, attr.name, "interface")) {
+            interface = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "enum")) {
+            enum_name_opt = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "summary")) {
+            summary = copyString(this.allocator, attr.value);
         } else {
-            this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
+            this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
         }
     }
 
     if (name == null) {
-        this.xmlErr(reader.location(), "Missing name attribute", .{});
+        this.xmlErr("Missing name attribute", .{});
         return error.MalformedXml;
     }
 
     if (arg_type == null) {
-        this.xmlErr(reader.location(), "Missing type attribute", .{});
+        this.xmlErr("Missing type attribute", .{});
         return error.MalformedXml;
     }
 
     const end_node = try this.nextNode();
-    const end_name = reader.elementName();
-    if (end_node != .element_end or !std.mem.eql(u8, end_name, "arg")) {
-        this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected 'arg'", .{end_name});
+    if (end_node != .tag_close or !std.mem.eql(u8, end_node.tag_close, "arg")) {
+        this.xmlErr("Unexpected closing element '{s}', expected 'arg'", .{end_node.tag_close});
+        return error.MalformedXml;
     }
 
     return .{
@@ -575,50 +542,46 @@ fn parseArg(this: *Parser) !Arg {
 }
 
 fn parseEnumEntry(this: *Parser) !Enum.Entry {
-    const reader = this.getXmlReader();
-
     var name: ?[]const u8 = "";
     var since: u32 = 0;
     var value_str: ?[]const u8 = null;
     var summary: []const u8 = "";
     var description: []const u8 = "";
 
-    const attr_count = reader.attributeCount();
-    if (attr_count < 2) {
-        this.xmlErr(reader.location(), "Invalid attribute count", .{});
+    const entry_tag = this.xml_reader.current_node.tag_open;
+
+    if (entry_tag.attributes.len < 2) {
+        this.xmlErr("Invalid attribute count", .{});
     }
 
-    for (0..attr_count) |i| {
-        const attr_name = reader.attributeName(i);
-        const value = try reader.attributeValue(i);
-
-        if (std.mem.eql(u8, attr_name, "name")) {
-            name = copyString(this.allocator, value);
-            value_str = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "since")) {
-            since = try std.fmt.parseInt(u32, value, 10);
-        } else if (std.mem.eql(u8, attr_name, "value")) {
-            value_str = copyString(this.allocator, value);
-        } else if (std.mem.eql(u8, attr_name, "summary")) {
-            summary = copyString(this.allocator, value);
+    for (entry_tag.attributes) |attr| {
+        if (std.mem.eql(u8, attr.name, "name")) {
+            name = copyString(this.allocator, attr.value);
+            value_str = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "since")) {
+            since = try std.fmt.parseInt(u32, attr.value, 10);
+        } else if (std.mem.eql(u8, attr.name, "value")) {
+            value_str = copyString(this.allocator, attr.value);
+        } else if (std.mem.eql(u8, attr.name, "summary")) {
+            summary = copyString(this.allocator, attr.value);
         } else {
-            this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
+            this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
         }
     }
 
     if (name == null) {
-        this.xmlErr(reader.location(), "Missing name attribute", .{});
+        this.xmlErr("Missing name attribute", .{});
         return error.MalformedXml;
     }
 
     if (value_str == null) {
-        this.xmlErr(reader.location(), "Missing value attribute", .{});
+        this.xmlErr("Missing value attribute", .{});
         return error.MalformedXml;
     }
 
     var node = try this.nextNode();
-    if (node == .element_start and std.mem.eql(u8, reader.elementName(), "description")) {
+    if (node == .tag_open and std.mem.eql(u8, node.tag_open.name, "description")) {
         const desc = try this.parseDescription();
         if (summary.len > 0) {
             assert(std.mem.eql(u8, summary, desc.summary));
@@ -629,9 +592,8 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
         node = try this.nextNode();
     }
 
-    const end_name = reader.elementName();
-    if (node != .element_end or !std.mem.eql(u8, end_name, "entry")) {
-        this.xmlErr(reader.location(), "Unexpected closing element '{s}', expected 'entry'", .{end_name});
+    if (node != .tag_close or !std.mem.eql(u8, node.tag_close, "entry")) {
+        this.xmlErr("Unexpected closing element '{s}', expected 'entry'", .{node.tag_close});
     }
 
     return .{
@@ -644,20 +606,16 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
 }
 
 fn parseDescription(this: *Parser) !Description {
-    const reader = this.getXmlReader();
-
     var summary: []const u8 = "";
     var text: []const u8 = "";
 
-    const attr_count = reader.attributeCount();
-    for (0..attr_count) |i| {
-        const attr_name = reader.attributeName(i);
-        const value = try reader.attributeValue(i);
+    const desc_tag = this.xml_reader.current_node.tag_open;
 
-        if (std.mem.eql(u8, attr_name, "summary")) {
-            summary = copyString(this.allocator, value);
+    for (desc_tag.attributes) |attr| {
+        if (std.mem.eql(u8, attr.name, "summary")) {
+            summary = copyString(this.allocator, attr.value);
         } else {
-            this.xmlErr(reader.location(), "Invalid attribute: '{s}'", .{attr_name});
+            this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
         }
     }
@@ -666,23 +624,22 @@ fn parseDescription(this: *Parser) !Description {
         const node = try this.nextNode();
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node type: '{s}'", .{@tagName(node)});
+                this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
                 unreachable;
             },
             .comment => {}, // skip
             .eof => {
-                this.xmlErr(reader.location(), "Unexpected eof", .{});
+                this.xmlErr("Unexpected eof", .{});
                 return error.MalformedXml;
             },
 
-            .text => {
-                text = copyString(this.allocator, try reader.text());
+            .text => |t| {
+                text = copyString(this.allocator, t);
             },
 
-            .element_end => {
-                const name = reader.elementName();
-                if (!std.mem.eql(u8, name, "description")) {
-                    this.xmlErr(reader.location(), "Expected closing description element, got '{s}'", .{name});
+            .tag_close => |tag| {
+                if (!std.mem.eql(u8, tag, "description")) {
+                    this.xmlErr("Expected closing description element, got '{s}'", .{tag});
                     return error.MalformedXml;
                 }
                 break;
@@ -696,58 +653,48 @@ fn parseDescription(this: *Parser) !Description {
     };
 }
 
-/// Skip the current element. Assumes the current node is element_start.
-/// Returns the next node
+/// Skip the current element. Assumes the current node is tag_open.
 fn skipElement(this: *Parser) !void {
-    const reader = this.getXmlReader();
-
-    // TODO: Temp alloc
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    const start_name = copyString(tmp.allocator(), reader.elementName());
+    const first_node = this.xml_reader.current_node.tag_open;
 
-    var node = try nextNode(this);
+    const start_name = copyString(tmp.allocator(), first_node.name);
+
+    var node = try this.nextNode();
     while (true) {
         switch (node) {
             else => {
-                this.xmlErr(reader.location(), "Unexpected xml node type: '{s}'", .{@tagName(node)});
+                this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
                 unreachable;
             },
 
             .eof => {
-                xmlErr(this, reader.location(), "Unexpected eof", .{});
+                this.xmlErr("Unexpected eof", .{});
                 return error.MalformedXml;
             },
 
-            .entity_reference, .text => {}, // skip
+            // .entity_reference => {}, // skip
+            .text => {}, // skip
 
-            .element_end => {
-                const end_name = reader.elementName();
-                if (std.mem.eql(u8, start_name, end_name)) {
+            .tag_close => |tag| {
+                const eq = std.mem.eql(u8, start_name, tag);
+                if (eq) {
                     break;
                 }
             },
         }
 
-        node = try nextNode(this);
+        node = try this.nextNode();
     }
 }
 
 fn nextNode(this: *Parser) !xml.Reader.Node {
-    const reader = this.getXmlReader();
-
     while (true) {
-        const node = reader.read() catch |e| switch (e) {
-            error.MalformedXml => {
-                const loc = reader.errorLocation();
-                xmlErr(this, loc, "{}", .{reader.errorCode()});
-                return error.MalformedXml;
-            },
-            else => return e,
-        };
+        const node = try this.xml_reader.next();
 
-        if (node == .text and isWhite(try reader.text())) {
+        if (node == .text and isWhite(node.text)) {
             // skip
         } else {
             return node;
@@ -760,13 +707,10 @@ fn isWhite(str: []const u8) bool {
     return true;
 }
 
-fn getXmlReader(this: *Parser) *xml.Reader {
-    return &this.xml_reader.interface;
-}
-
-fn xmlErr(this: *Parser, loc: xml.Location, comptime fmt: []const u8, args: anytype) void {
+fn xmlErr(this: *Parser, comptime fmt: []const u8, args: anytype) void {
     const msg = std.fmt.allocPrint(gpa, fmt, args) catch @panic("OOM");
 
+    const loc = this.xml_reader.location;
     this.printErr("{s}:{}:{}: error: {s}\n", .{ this.xml_file_path, loc.line, loc.column, msg });
 }
 
