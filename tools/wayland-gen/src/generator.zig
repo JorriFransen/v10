@@ -19,24 +19,34 @@ const Type = types.Type;
 allocator: Allocator,
 protocol: *const Protocol,
 buf: std.ArrayList(u8),
+interface_protocol_map: std.StringHashMapUnmanaged([]const u8),
 
 pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols: []const Protocol) ![]const u8 {
     var generator = Generator{
         .allocator = allocator,
-        .buf = std.ArrayList(u8){},
         .protocol = core_protocol,
+        .buf = std.ArrayList(u8){},
+        .interface_protocol_map = std.StringHashMapUnmanaged([]const u8){},
     };
 
-    generator.append(
+    for (core_protocol.interfaces) |i| {
+        try generator.interface_protocol_map.put(allocator, i.name, "wl");
+    }
+    for (protocols) |*p| for (p.interfaces) |i| {
+        try generator.interface_protocol_map.put(allocator, i.name, p.name);
+    };
+
+    generator.appendf(
         \\const std = @import("std");
         \\const log = std.log.scoped(.wayland);
         \\
-        \\pub const wl = struct {
+        \\pub const wl = {s};
+        \\pub const {s} = struct {{
         \\
-    );
+    , .{ core_protocol.name, core_protocol.name });
 
     for (core_protocol.interfaces, 0..) |*interface, i| {
-        try generator.genInterface(interface);
+        try generator.genInterface(core_protocol, interface);
         if (i < core_protocol.interfaces.len - 1) generator.append("\n");
     }
 
@@ -117,17 +127,10 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
         \\
     );
 
-    generator.append("pub const interfaces = struct {\n");
-    generator.genInterfaceData(@as([*]const Protocol, @ptrCast(core_protocol))[0..1]);
-    generator.genInterfaceData(protocols);
-    generator.append("};\n");
-
-    if (protocols.len > 0) generator.append("\n");
-
     for (protocols, 0..) |*protocol, i| {
         generator.appendf("pub const {s} = struct {{\n", .{protocol.name});
         for (protocol.interfaces, 0..) |*interface, ii| {
-            try generator.genInterface(interface);
+            try generator.genInterface(protocol, interface);
             if (ii < protocol.interfaces.len - 1) generator.append("\n");
         }
         generator.append("};\n");
@@ -181,100 +184,90 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
     return generator.buf.items;
 }
 
-fn genInterfaceData(this: *Generator, protocols: []const Protocol) void {
+fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *const Interface) void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    if (protocols.len > 0) this.append("\n");
+    this.appendf(
+        \\        pub const interface: Interface = .{{
+        \\            .name = "{s}",
+        \\            .version = {},
+        \\            .method_count = {},
+        \\            .methods = &.{{
+        \\    
+    , .{
+        interface.name,
+        interface.version,
+        interface.requests.len,
+    });
 
-    for (protocols) |*protocol| {
-        for (protocol.interfaces) |*interface| {
-            this.appendf(
-                \\    pub const {s}: Interface = .{{
-                \\        .name = "{s}",
-                \\        .version = {},
-                \\        .method_count = {},
-                \\        .methods = &.{{
-                \\
-            , .{
-                interface.name,
-                interface.name,
-                interface.version,
-                interface.requests.len,
-            });
+    for (interface.requests) |*request| {
+        this.appendf(
+            \\            .{{
+            \\                    .name = "{s}",
+            \\                    .signature = "
+        , .{request.name});
 
-            for (interface.requests) |*request| {
-                this.appendf(
-                    \\            .{{
-                    \\                .name = "{s}",
-                    \\                .signature = "
-                , .{request.name});
-
-                const registry_bind = (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind"));
-                if (registry_bind) {
-                    this.append("usun");
-                } else {
-                    this.genSignature(request.args);
-                }
-
-                this.append(
-                    \\",
-                    \\                .types =
-                );
-
-                if (registry_bind) {
-                    this.append(
-                        \\ &.{
-                        \\                    null,
-                        \\                    null,
-                        \\                    null,
-                        \\                    null,
-                        \\                },
-                    );
-                } else {
-                    this.genArgTypes(request.args, interface.name);
-                }
-
-                this.append(
-                    \\
-                    \\            },
-                    \\
-                );
-            }
-
-            this.append("        },\n");
-
-            this.appendf(
-                \\        .event_count = {},
-                \\        .events = &.{{
-                \\
-            , .{interface.events.len});
-
-            for (interface.events) |*event| {
-                this.appendf(
-                    \\            .{{
-                    \\                .name = "{s}",
-                    \\                .signature = "
-                , .{event.name});
-
-                this.genSignature(event.args);
-
-                this.append(
-                    \\",
-                    \\                .types =
-                );
-
-                this.genArgTypes(event.args, interface.name);
-
-                this.append("\n            },\n");
-            }
-            this.append("        },\n");
-
-            this.append("    };\n");
-
-            if (protocol.interfaces.len > 0) this.append("\n");
+        const registry_bind = (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind"));
+        if (registry_bind) {
+            this.append("usun");
+        } else {
+            this.genSignature(request.args);
         }
+
+        this.append(
+            \\",
+            \\                    .types =
+        );
+
+        if (registry_bind) {
+            this.append(
+                \\ &.{
+                \\                        null,
+                \\                        null,
+                \\                        null,
+                \\                        null,
+                \\                    },
+            );
+        } else {
+            this.genArgTypes(&tmp, protocol, request.args);
+        }
+
+        this.append(
+            \\
+            \\                },
+            \\    
+        );
     }
+
+    this.append("        },\n");
+
+    this.appendf(
+        \\            .event_count = {},
+        \\            .events = &.{{
+        \\
+    , .{interface.events.len});
+
+    for (interface.events) |*event| {
+        this.appendf(
+            \\                .{{
+            \\                    .name = "{s}",
+            \\                    .signature = "
+        , .{event.name});
+
+        this.genSignature(event.args);
+
+        this.append(
+            \\",
+            \\                    .types =
+        );
+
+        this.genArgTypes(&tmp, protocol, event.args);
+
+        this.append("\n                },\n");
+    }
+    this.append("            },\n");
+    this.append("        };\n");
 }
 
 fn genSignature(this: *Generator, args: []const Arg) void {
@@ -290,27 +283,36 @@ fn genSignature(this: *Generator, args: []const Arg) void {
     };
 }
 
-fn genArgTypes(this: *Generator, args: []const Arg, interface_name: []const u8) void {
+fn genArgTypes(this: *Generator, tmp: *mem.TempArena, in_protocol: *const Protocol, args: []const Arg) void {
     if (args.len > 0) {
         this.append(" &.{\n");
         for (args) |arg| switch (arg.type) {
-            else => this.append("                    null,\n"),
+            else => this.append("                        null,\n"),
             .object, .new_id => {
-                this.appendf("                    &{s},\n", .{arg.interface orelse interface_name});
+                var name: []const u8 = undefined;
+                if (arg.interface) |ai| {
+                    const interface_name = this.zigInterfaceTypeName(tmp, in_protocol, ai);
+                    name = tmpPrint(tmp, "{s}.interface", .{interface_name});
+                } else {
+                    name = "interface";
+                }
+                this.appendf("                        &{s},\n", .{name});
             },
         };
-        this.append("                },");
+        this.append("                    },");
     } else {
         this.append(" null,");
     }
 }
 
-fn genInterface(this: *Generator, interface: *const Interface) !void {
+fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const Interface) !void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    this.appendf("    pub const {s} = opaque {{\n", .{zigInterfaceTypeName(&tmp, interface.name, interface)});
-    this.appendf("        pub const interface: *const Interface = &interfaces.{s};\n", .{interface.name});
+    this.appendf("    pub const {s} = opaque {{\n", .{this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
+
+    this.genInterfaceData(protocol, interface);
+
     if (interface.enums.len > 0 or interface.events.len > 0 or interface.requests.len > 0) this.append("\n");
     for (interface.enums, 0..) |*enm, i| {
         if (enm.bitfield) {
@@ -323,13 +325,13 @@ fn genInterface(this: *Generator, interface: *const Interface) !void {
 
     if (interface.enums.len > 0 and (interface.events.len > 0)) this.append("\n");
 
-    if (interface.events.len > 0) try this.genListener(interface);
+    if (interface.events.len > 0) try this.genListener(protocol, interface);
 
     if (interface.enums.len > 0 or (interface.events.len > 0)) this.append("\n");
-    this.genImplicitRequests(interface);
+    this.genImplicitRequests(protocol, interface);
     if (interface.requests.len > 0) this.append("\n");
     for (interface.requests, 0..) |*request, i| {
-        this.genRequest(interface, request, i);
+        this.genRequest(protocol, interface, request, i);
         if (i < interface.requests.len - 1) this.append("\n");
     }
 
@@ -427,11 +429,11 @@ fn parseEnumEntryValue(value: []const u8) !c_uint {
     return std.fmt.parseInt(c_uint, str, base);
 }
 
-fn genImplicitRequests(this: *Generator, interface: *const Interface) void {
+fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *const Interface) void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    const name = zigInterfaceTypeName(&tmp, interface.name, interface);
+    const name = this.zigInterfaceTypeName(&tmp, protocol, interface.name);
 
     this.appendf(
         \\        pub inline fn set_user_data(self: *{s}, user_data: *anyopaque) void {{
@@ -461,12 +463,15 @@ fn genImplicitRequests(this: *Generator, interface: *const Interface) void {
     }
 }
 
-fn genRequest(this: *Generator, interface: *const Interface, request: *const Request, index: usize) void {
+fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Interface, request: *const Request, index: usize) void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
     this.genDocComment("        ", request.description);
-    this.appendf("        pub inline fn {s}(self: *{s}", .{ request.name, zigInterfaceTypeName(&tmp, interface.name, interface) });
+    this.appendf("        pub inline fn {f}(self: *{s}", .{
+        std.zig.fmtId(request.name),
+        this.zigInterfaceTypeName(&tmp, protocol, interface.name),
+    });
 
     var constructor = false;
     var registry_bind = false;
@@ -482,13 +487,13 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         for (request.args) |arg| {
             if (arg.type == .new_id) {
                 constructor_interface = arg.interface orelse interface.name;
-                return_type = zigType(&tmp, arg.type, constructor_interface, interface);
+                return_type = this.zigType(&tmp, arg.type, constructor_interface, protocol);
                 constructor = true;
             } else {
                 const arg_type = if (arg.enum_name) |ename|
-                    zigEnumName(&tmp, ename, interface)
+                    this.zigEnumName(&tmp, ename, protocol)
                 else
-                    zigType(&tmp, arg.type, arg.interface, interface);
+                    this.zigType(&tmp, arg.type, arg.interface, protocol);
 
                 this.appendf(", {s}: {s}", .{ arg.name, arg_type });
             }
@@ -500,7 +505,7 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     const opcode = index;
 
     if (constructor) {
-        const interface_def = tmpPrint(&tmp, "{s}.interface", .{zigInterfaceTypeName(&tmp, constructor_interface, interface)});
+        const interface_def = tmpPrint(&tmp, "&{s}.interface", .{this.zigInterfaceTypeName(&tmp, protocol, constructor_interface)});
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
         for (request.args) |arg| if (arg.type != .new_id) {
@@ -510,17 +515,10 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
                 this.appendf(", {s}", .{arg.name});
             }
         };
-        // for (request.args[1..]) |arg| {
-        //     if (arg.enum_name != null) {
-        //         this.appendf(", @intFromEnum({s})", .{arg.name});
-        //     } else {
-        //         this.appendf(", {s}", .{arg.name});
-        //     }
-        // }
         this.append(");\n");
         this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
-        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, IType.interface, version, 0, name, IType.interface.name, version, NULL);\n", .{opcode});
+        this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, &IType.interface, version, 0, name, IType.interface.name, version, NULL);\n", .{opcode});
         this.append("            return @ptrCast(result);\n");
     } else {
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
@@ -539,14 +537,14 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
     this.append("        }\n");
 }
 
-fn genListener(this: *Generator, interface: *const Interface) !void {
+fn genListener(this: *Generator, protocol: *const Protocol, interface: *const Interface) !void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
     const iface_arg = std.zig.fmtId(zigInterfaceArgName(interface.name));
-    const iface_type = zigInterfaceTypeName(&tmp, interface.name, interface);
+    const iface_type = this.zigInterfaceTypeName(&tmp, protocol, interface.name);
 
-    this.append("       pub const Listener = extern struct {\n");
+    this.append("        pub const Listener = extern struct {\n");
     for (interface.events, 0..) |event, i| {
         this.genDocComment("            ", event.description);
         this.appendf("            {f}: ?*const fn (data: ?*anyopaque, {f}: ?*{s}", .{
@@ -559,9 +557,9 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
             this.appendf(", {f}: {s}", .{
                 std.zig.fmtId(arg.name),
                 if (arg.enum_name) |ename|
-                    zigEnumName(&tmp, ename, interface)
+                    this.zigEnumName(&tmp, ename, protocol)
                 else
-                    zigType(&tmp, arg.type, null, interface),
+                    this.zigType(&tmp, arg.type, null, protocol),
             });
         }
 
@@ -579,12 +577,13 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
     , .{iface_type});
 }
 
-fn zigEnumName(tmp: *mem.TempArena, name: []const u8, from_interface: *const Interface) []const u8 {
+fn zigEnumName(this: *Generator, tmp: *mem.TempArena, name: []const u8, protocol: *const Protocol) []const u8 {
     const ta = tmp.allocator();
     var result = std.ArrayList(u8){};
 
     if (std.mem.indexOfScalar(u8, name, '.')) |idx| {
-        result.appendSlice(ta, zigInterfaceTypeName(tmp, name[0..idx], from_interface)) catch @panic("OOM");
+        const enum_interface = name[0..idx];
+        result.appendSlice(ta, this.zigInterfaceTypeName(tmp, protocol, enum_interface)) catch @panic("OOM");
         result.append(ta, '.') catch @panic("OOM");
         result.appendSlice(ta, zigTypeName(tmp, name[idx + 1 ..])) catch @panic("OOM");
     } else {
@@ -617,19 +616,22 @@ fn zigTypeName(tmp: *mem.TempArena, name: []const u8) []const u8 {
     return result.items;
 }
 
-fn zigInterfaceTypeName(tmp: *mem.TempArena, name_: []const u8, from_interface: *const Interface) []const u8 {
+/// in_protocol is the protocol where this name will be used.
+fn zigInterfaceTypeName(this: *Generator, tmp: *mem.TempArena, in_protocol: *const Protocol, interface_name: []const u8) []const u8 {
     const ta = tmp.allocator();
     var result = std.ArrayList(u8){};
 
-    const idx = std.mem.indexOfScalar(u8, name_, '_') orelse @panic("Unexpected interface name format");
-    assert(name_.len > idx);
-    const prefix = name_[0..idx];
-    const name = name_[idx + 1 ..];
-
-    if (!std.mem.startsWith(u8, from_interface.name, prefix)) {
-        result.appendSlice(ta, prefix) catch @panic("OOM");
+    const interface_protocol_name = this.interface_protocol_map.get(interface_name).?;
+    if ((in_protocol.name.ptr != interface_protocol_name.ptr) and
+        !(std.mem.eql(u8, in_protocol.name, "wayland") and std.mem.eql(u8, interface_protocol_name, "wl")))
+    {
+        result.appendSlice(ta, interface_protocol_name) catch @panic("OOM");
         result.append(ta, '.') catch @panic("OOM");
     }
+
+    const idx = std.mem.indexOfScalar(u8, interface_name, '_') orelse @panic("Unexpected interface name format");
+    assert(interface_name.len > idx);
+    const name = interface_name[idx + 1 ..];
 
     result.append(ta, std.ascii.toUpper(name[0])) catch @panic("OOM");
     var cap_next = false;
@@ -679,7 +681,7 @@ fn zigInterfaceArgName(name_: []const u8) []const u8 {
     return name;
 }
 
-fn zigType(tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, from_interface: *const Interface) []const u8 {
+fn zigType(this: *Generator, tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, protocol: *const Protocol) []const u8 {
     return switch (wl_type) {
         .int => "i32",
         .uint => "u32",
@@ -687,9 +689,9 @@ fn zigType(tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, 
         .string => "[*:0]const u8",
         .object, .new_id => blk: {
             if (interface_name_opt) |interface_name| {
-                const iname = zigInterfaceTypeName(tmp, interface_name, from_interface);
+                const iname = this.zigInterfaceTypeName(tmp, protocol, interface_name);
                 break :blk tmpPrint(tmp, "?*{s}", .{iname});
-            } else if (std.mem.startsWith(u8, from_interface.name, "wl_")) {
+            } else if (std.mem.eql(u8, protocol.name, "wayland")) {
                 break :blk "?*Object";
             } else {
                 break :blk "?*wl.Object";

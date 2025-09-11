@@ -720,7 +720,7 @@ fn skipElement(this: *Parser) !void {
                 return error.MalformedXml;
             },
 
-            .text => {}, // skip
+            .entity_reference, .text => {}, // skip
 
             .element_end => {
                 const end_name = reader.elementName();

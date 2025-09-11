@@ -67,15 +67,19 @@ pub fn main() !void {
     //     }
     // }
 
+    const wlp_p_st = std.time.nanoTimestamp();
     var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
+    const wlp_p_et = std.time.nanoTimestamp();
 
     const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);
-    for (options.protocol.items, protocols) |protocol_xml_file, *dst| {
+    const ppts = try parse_arena.allocator().alloc([2]i128, options.protocol.items.len);
+    for (options.protocol.items, protocols, ppts) |protocol_xml_file, *dst, *t| {
+        t.*[0] = std.time.nanoTimestamp();
         dst.* = try parser.parse(parse_arena.allocator(), protocol_xml_file);
+        t.*[1] = std.time.nanoTimestamp();
     }
 
     const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
-    parse_arena.reset();
 
     const out_file = try std.fs.cwd().createFile(options.out, .{ .read = false });
     defer out_file.close();
@@ -83,4 +87,18 @@ pub fn main() !void {
     var out_buf: [1024]u8 = undefined;
     var out_writer = out_file.writer(&out_buf);
     _ = try out_writer.interface.write(result);
+
+    const wlp_p = wlp_p_et - wlp_p_st;
+    log.info("parse: {s: <60} {: >10} ({:.5}s)", .{ options.wayland, wlp_p, sec(wlp_p) });
+    var total_parse = wlp_p;
+    for (options.protocol.items, ppts) |pn, pt| {
+        const p = pt[1] - pt[0];
+        log.info("parse: {s: <60} {: >10} ({:.5}s)", .{ pn, p, sec(p) });
+        total_parse += p;
+    }
+    log.info("Total parse time: {s: <69} {: >10} ({:.5}s)", .{ "", total_parse, sec(total_parse) });
+}
+
+inline fn sec(ns: i128) f64 {
+    return @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;
 }
