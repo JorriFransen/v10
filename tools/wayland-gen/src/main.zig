@@ -84,20 +84,44 @@ pub fn main() !void {
     const out_file = try std.fs.cwd().createFile(options.out, .{ .read = false });
     defer out_file.close();
 
-    var out_buf: [1024]u8 = undefined;
+    var out_buf: [mem.KiB * 8]u8 = undefined;
     var out_writer = out_file.writer(&out_buf);
     _ = try out_writer.interface.write(result);
 
     const wlp_p = wlp_p_et - wlp_p_st;
-    log.info("parse: {s: <60} {: >10} ({:.5}s)", .{ options.wayland, wlp_p, sec(wlp_p) });
+    log.info("\n\n", .{});
+
+    log.info("parse: {f} {: >10} ({:.5}s)", .{ truncPath(50, options.wayland), wlp_p, sec(wlp_p) });
     var total_parse = wlp_p;
-    for (options.protocol.items, ppts) |pn, pt| {
+    for (options.protocol.items, ppts) |protocol_path, pt| {
         const p = pt[1] - pt[0];
-        log.info("parse: {s: <60} {: >10} ({:.5}s)", .{ pn, p, sec(p) });
+        log.info("parse: {f} {: >10} ({:.5}s)", .{ truncPath(50, protocol_path), p, sec(p) });
         total_parse += p;
     }
-    log.info("Total parse time: {s: <69} {: >10} ({:.5}s)", .{ "", total_parse, sec(total_parse) });
+    log.info("Total parse time: {s: <39} {: >10} ({:.5}s)", .{ "", total_parse, sec(total_parse) });
 }
+
+fn truncPath(n: usize, p: []const u8) TruncPath {
+    return .{ .n = n, .p = p };
+}
+
+const TruncPath = struct {
+    n: usize,
+    p: []const u8,
+    pub fn format(this: *const TruncPath, w: *std.Io.Writer) !void {
+        if (this.p.len > this.n) {
+            _ = try w.write("...");
+            assert(this.n > 3);
+            const n = this.n - 3;
+            _ = try w.write(this.p[this.p.len - n ..]);
+        } else {
+            _ = try w.write(this.p);
+            for (this.p.len..this.n) |_| _ = try w.write(" ");
+        }
+
+        try w.flush();
+    }
+};
 
 inline fn sec(ns: i128) f64 {
     return @as(f64, @floatFromInt(ns)) / std.time.ns_per_s;

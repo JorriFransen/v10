@@ -27,8 +27,8 @@ stderr_writer: std.fs.File.Writer,
 
 current_interface_name: []const u8,
 
-read_buf: [4096]u8,
-stderr_write_buf: [512]u8,
+read_buf: [mem.KiB * 8]u8,
+stderr_write_buf: [mem.KiB]u8,
 
 /// Used for zig-xml and error printing
 var gpa_data = std.heap.DebugAllocator(.{}).init;

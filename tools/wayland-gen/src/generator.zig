@@ -19,21 +19,44 @@ const Type = types.Type;
 allocator: Allocator,
 protocol: *const Protocol,
 buf: std.ArrayList(u8),
-interface_protocol_map: std.StringHashMapUnmanaged([]const u8),
+interface_protocol_map: std.StringHashMapUnmanaged(*Protocol),
 
-pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols: []const Protocol) ![]const u8 {
+pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Protocol) ![]const u8 {
     var generator = Generator{
         .allocator = allocator,
         .protocol = core_protocol,
         .buf = std.ArrayList(u8){},
-        .interface_protocol_map = std.StringHashMapUnmanaged([]const u8){},
+        .interface_protocol_map = std.StringHashMapUnmanaged(*Protocol){},
     };
 
     for (core_protocol.interfaces) |i| {
-        try generator.interface_protocol_map.put(allocator, i.name, "wl");
+        try generator.interface_protocol_map.put(allocator, i.name, core_protocol);
     }
     for (protocols) |*p| for (p.interfaces) |i| {
-        try generator.interface_protocol_map.put(allocator, i.name, p.name);
+        const r = try generator.interface_protocol_map.getOrPut(allocator, i.name);
+        if (r.found_existing) {
+            if (!p.skip_generation and !r.value_ptr.*.skip_generation) {
+                log.warn("Interface collision: '{s}.{s}' and '{s}.{s}'", .{ p.name, i.name, r.value_ptr.*.name, i.name });
+            }
+
+            if (std.mem.indexOf(u8, r.value_ptr.*.name, "unstable") != null) {
+                if (!r.value_ptr.*.skip_generation) {
+                    log.info("Using '{s}.{s}'. Skipping generation for '{s}'.", .{ p.name, i.name, r.value_ptr.*.name });
+                }
+                r.value_ptr.*.skip_generation = true;
+                r.value_ptr.* = p;
+            } else if (std.mem.indexOf(u8, p.name, "unstable") != null) {
+                if (!p.skip_generation) {
+                    log.info("Using '{s}.{s}'. Skipping generation for '{s}'.", .{ r.value_ptr.*.name, i.name, p.name });
+                }
+                p.skip_generation = true;
+            } else {
+                log.err("Unable to resolve collision", .{});
+                return error.ProtocolCollision;
+            }
+        } else {
+            r.value_ptr.* = p;
+        }
     };
 
     generator.appendf(
@@ -128,13 +151,15 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
     );
 
     for (protocols, 0..) |*protocol, i| {
-        generator.appendf("pub const {s} = struct {{\n", .{protocol.name});
-        for (protocol.interfaces, 0..) |*interface, ii| {
-            try generator.genInterface(protocol, interface);
-            if (ii < protocol.interfaces.len - 1) generator.append("\n");
+        if (!protocol.skip_generation) {
+            generator.appendf("pub const {s} = struct {{\n", .{protocol.name});
+            for (protocol.interfaces, 0..) |*interface, ii| {
+                try generator.genInterface(protocol, interface);
+                if (ii < protocol.interfaces.len - 1) generator.append("\n");
+            }
+            generator.append("};\n");
+            if (i < protocols.len - 1) generator.append("\n");
         }
-        generator.append("};\n");
-        if (i < protocols.len - 1) generator.append("\n");
     }
 
     generator.append(
@@ -308,6 +333,7 @@ fn genArgTypes(this: *Generator, tmp: *mem.TempArena, in_protocol: *const Protoc
 fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const Interface) !void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
+    const ta = tmp.allocator();
 
     this.appendf("    pub const {s} = opaque {{\n", .{this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
 
@@ -330,8 +356,13 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
     if (interface.enums.len > 0 or (interface.events.len > 0)) this.append("\n");
     this.genImplicitRequests(protocol, interface);
     if (interface.requests.len > 0) this.append("\n");
+
+    var fn_names = std.StringHashMapUnmanaged(void){};
+    try fn_names.ensureTotalCapacity(ta, @intCast(interface.requests.len));
+    for (interface.requests) |r| try fn_names.putNoClobber(ta, r.name, {});
+
     for (interface.requests, 0..) |*request, i| {
-        this.genRequest(protocol, interface, request, i);
+        this.genRequest(protocol, interface, request, i, &fn_names);
         if (i < interface.requests.len - 1) this.append("\n");
     }
 
@@ -463,7 +494,7 @@ fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *
     }
 }
 
-fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Interface, request: *const Request, index: usize) void {
+fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Interface, request: *const Request, index: usize, fn_names: *std.StringHashMapUnmanaged(void)) void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
@@ -495,7 +526,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
                 else
                     this.zigType(&tmp, arg.type, arg.interface, protocol);
 
-                this.appendf(", {s}: {s}", .{ arg.name, arg_type });
+                this.appendf(", {s}: {s}", .{ safeArgName(&tmp, fn_names, arg.name), arg_type });
             }
         }
 
@@ -509,10 +540,11 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
         for (request.args) |arg| if (arg.type != .new_id) {
+            const name = safeArgName(&tmp, fn_names, arg.name);
             if (arg.enum_name != null) {
-                this.appendf(", @intFromEnum({s})", .{arg.name});
+                this.appendf(", @intFromEnum({s})", .{name});
             } else {
-                this.appendf(", {s}", .{arg.name});
+                this.appendf(", {s}", .{name});
             }
         };
         this.append(");\n");
@@ -526,15 +558,24 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         const optional_null = if (request.args.len == 0 and !request.destructor) ", NULL" else "";
         this.appendf("            _ = wl.proxy_marshal_flags(@ptrCast(self), {}, null, version, {s}{s}", .{ opcode, flags, optional_null });
         for (request.args) |arg| {
+            const name = safeArgName(&tmp, fn_names, arg.name);
             if (arg.enum_name != null) {
-                this.appendf(", @intFromEnum({s})", .{arg.name});
+                this.appendf(", @intFromEnum({s})", .{name});
             } else {
-                this.appendf(", {s}", .{arg.name});
+                this.appendf(", {s}", .{name});
             }
         }
         this.append(");\n");
     }
     this.append("        }\n");
+}
+
+fn safeArgName(tmp: *mem.TempArena, fn_names: *std.StringHashMapUnmanaged(void), name: []const u8) []const u8 {
+    if (fn_names.contains(name)) {
+        return tmpPrint(tmp, "{s}_arg", .{name});
+    }
+
+    return name;
 }
 
 fn genListener(this: *Generator, protocol: *const Protocol, interface: *const Interface) !void {
@@ -621,11 +662,11 @@ fn zigInterfaceTypeName(this: *Generator, tmp: *mem.TempArena, in_protocol: *con
     const ta = tmp.allocator();
     var result = std.ArrayList(u8){};
 
-    const interface_protocol_name = this.interface_protocol_map.get(interface_name).?;
-    if ((in_protocol.name.ptr != interface_protocol_name.ptr) and
-        !(std.mem.eql(u8, in_protocol.name, "wayland") and std.mem.eql(u8, interface_protocol_name, "wl")))
+    const interface_protocol = this.interface_protocol_map.get(interface_name).?;
+    if ((in_protocol != interface_protocol) and
+        !(std.mem.eql(u8, in_protocol.name, "wayland") and std.mem.eql(u8, interface_protocol.name, "wl")))
     {
-        result.appendSlice(ta, interface_protocol_name) catch @panic("OOM");
+        result.appendSlice(ta, interface_protocol.name) catch @panic("OOM");
         result.append(ta, '.') catch @panic("OOM");
     }
 

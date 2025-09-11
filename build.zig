@@ -21,6 +21,12 @@ pub fn build(b: *Build) !void {
     const tools = try buildTools(b, optimize, target);
 
     _ = try buildEngine(b, optimize, target, &tools);
+
+    const clean_step = b.step("clean", "Clean build and cache");
+    const rm_zig_out = b.addRemoveDirTree(b.path("zig-out"));
+    const rm_cache = b.addRemoveDirTree(b.path(".zig-cache"));
+    clean_step.dependOn(&rm_zig_out.step);
+    clean_step.dependOn(&rm_cache.step);
 }
 
 fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: *const Tools) !*Step.Compile {
@@ -137,7 +143,12 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
     run_exe.setCwd(b.path("."));
 
     _ = run_exe.addPrefixedFileArg("--wayland=", b.path("vendor/wayland/wayland.xml"));
-    _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
+    // _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
+    // _ = run_exe.addPrefixedFileArg("--protocol=", b.path("../wayland-protocols/stable/tablet/tablet-v2.xml"));
+    // _ = run_exe.addPrefixedFileArg("--protocol=", b.path("../wayland-protocols/unstable/tablet/tablet-unstable-v2.xml"));
+
+    try addProtocols(b, run_exe, "/home/jorri/dev/wayland-protocols");
+
     const wayland_source = run_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
 
     return .{
@@ -147,4 +158,20 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
             .root_source_file = wayland_source,
         }),
     };
+}
+
+fn addProtocols(b: *Build, run: *Step.Run, path: []const u8) !void {
+    var dir = try std.fs.openDirAbsolute(path, .{ .iterate = true, .access_sub_paths = true });
+    defer dir.close();
+
+    var walker = try dir.walk(b.allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |e| {
+        if (e.kind == .file and std.mem.endsWith(u8, e.path, ".xml")) {
+            // std.log.debug("Adding xml: {s}", .{e.path});
+            const file_path = Build.LazyPath{ .cwd_relative = b.pathJoin(&.{ path, e.path }) };
+            run.addPrefixedFileArg("--protocol=", file_path);
+        }
+    }
 }

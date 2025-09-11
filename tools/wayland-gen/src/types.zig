@@ -3,6 +3,8 @@ pub const Protocol = struct {
     interfaces: []Interface,
     summary: []const u8,
     description: []const u8,
+
+    skip_generation: bool = false,
 };
 
 pub const Interface = struct {
