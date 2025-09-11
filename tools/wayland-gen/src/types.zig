@@ -1,6 +1,8 @@
 pub const Protocol = struct {
     name: []const u8,
     interfaces: []Interface,
+    summary: []const u8,
+    description: []const u8,
 };
 
 pub const Interface = struct {

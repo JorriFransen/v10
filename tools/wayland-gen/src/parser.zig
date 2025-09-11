@@ -119,8 +119,8 @@ fn parseProtocol(this: *Parser) !Protocol {
     }
 
     const protocol_name = copyString(this.allocator, try reader.attributeValue(0));
-
     var interfaces = std.ArrayList(Interface){};
+    var description: Description = .{};
 
     while (true) {
         const node = try this.nextNode();
@@ -135,7 +135,7 @@ fn parseProtocol(this: *Parser) !Protocol {
                 return error.MalformedXml;
             },
 
-            .text => {}, // skip
+            .comment, .text => {}, // skip
 
             .element_start => {
                 const elem_name = reader.elementName();
@@ -143,6 +143,8 @@ fn parseProtocol(this: *Parser) !Protocol {
                     try skipElement(this);
                 } else if (std.mem.eql(u8, elem_name, "interface")) {
                     try interfaces.append(this.allocator, try parseInterface(this));
+                } else if (std.mem.eql(u8, elem_name, "description")) {
+                    description = try this.parseDescription();
                 } else {
                     this.xmlErr(reader.location(), "Unexpected element: '{s}'", .{elem_name});
                     return error.MalformedXml;
@@ -163,6 +165,8 @@ fn parseProtocol(this: *Parser) !Protocol {
     return .{
         .name = protocol_name,
         .interfaces = try interfaces.toOwnedSlice(this.allocator),
+        .summary = description.summary,
+        .description = description.text,
     };
 }
 
@@ -665,6 +669,7 @@ fn parseDescription(this: *Parser) !Description {
                 this.xmlErr(reader.location(), "Unexpected xml node type: '{s}'", .{@tagName(node)});
                 unreachable;
             },
+            .comment => {}, // skip
             .eof => {
                 this.xmlErr(reader.location(), "Unexpected eof", .{});
                 return error.MalformedXml;

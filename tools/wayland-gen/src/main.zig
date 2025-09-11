@@ -25,62 +25,62 @@ pub fn main() !void {
     var tmp = mem.getTemp();
     defer tmp.release();
 
-    // const options = try OptionParser.parse(gpa, tmp.allocator());
-    // if (options.help) {
-    //     try OptionParser.usage(std.fs.File.stdout());
-    //     std.process.exit(0);
-    // }
-    //
-    // var args_valid = true;
-    // if (options.wayland.len == 0) {
-    //     log.err("Missing --wayland option", .{});
-    //     args_valid = false;
-    // }
-    //
-    // if (options.out.len == 0) {
-    //     log.err("Missing --out option", .{});
-    //     args_valid = false;
-    // }
-    //
-    // if (!args_valid) {
-    //     try OptionParser.usage(std.fs.File.stderr());
-    //     std.process.exit(1);
-    // }
-
-    // var parse_arena = try mem.Arena.init(.{ .virtual = .{} });
-    // var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
-
-    {
-        const xml_path = "vendor/wayland/wayland.xml";
-        const xml_file = try std.fs.cwd().openFile(xml_path, .{});
-        defer xml_file.close();
-
-        var read_buf: [512]u8 = undefined;
-        var reader = xml_file.reader(&read_buf);
-
-        const Xml = @import("xml");
-        var xml_reader = Xml.Reader.init(&reader.interface, xml_path);
-
-        while (!xml_reader.done()) {
-            const node = try xml_reader.next();
-            log.debug("node: {f}", .{node});
-        }
+    const options = try OptionParser.parse(gpa, tmp.allocator());
+    if (options.help) {
+        try OptionParser.usage(std.fs.File.stdout());
+        std.process.exit(0);
     }
 
-    // var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
+    var args_valid = true;
+    if (options.wayland.len == 0) {
+        log.err("Missing --wayland option", .{});
+        args_valid = false;
+    }
+
+    if (options.out.len == 0) {
+        log.err("Missing --out option", .{});
+        args_valid = false;
+    }
+
+    if (!args_valid) {
+        try OptionParser.usage(std.fs.File.stderr());
+        std.process.exit(1);
+    }
+
+    var parse_arena = try mem.Arena.init(.{ .virtual = .{} });
+    var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
+
+    // {
+    //     const xml_path = "vendor/wayland/wayland.xml";
+    //     const xml_file = try std.fs.cwd().openFile(xml_path, .{});
+    //     defer xml_file.close();
     //
-    // const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);
-    // for (options.protocol.items, protocols) |protocol_xml_file, *dst| {
-    //     dst.* = try parser.parse(parse_arena.allocator(), protocol_xml_file);
+    //     var read_buf: [512]u8 = undefined;
+    //     var reader = xml_file.reader(&read_buf);
+    //
+    //     const Xml = @import("xml");
+    //     var xml_reader = Xml.Reader.init(&reader.interface, xml_path);
+    //
+    //     while (!xml_reader.done()) {
+    //         const node = try xml_reader.next();
+    //         log.debug("node: {f}", .{node});
+    //     }
     // }
-    //
-    // const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
-    // parse_arena.reset();
-    //
-    // const out_file = try std.fs.cwd().createFile(options.out, .{ .read = false });
-    // defer out_file.close();
-    //
-    // var out_buf: [1024]u8 = undefined;
-    // var out_writer = out_file.writer(&out_buf);
-    // _ = try out_writer.interface.write(result);
+
+    var wayland_protocol = try parser.parse(parse_arena.allocator(), options.wayland);
+
+    const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);
+    for (options.protocol.items, protocols) |protocol_xml_file, *dst| {
+        dst.* = try parser.parse(parse_arena.allocator(), protocol_xml_file);
+    }
+
+    const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
+    parse_arena.reset();
+
+    const out_file = try std.fs.cwd().createFile(options.out, .{ .read = false });
+    defer out_file.close();
+
+    var out_buf: [1024]u8 = undefined;
+    var out_writer = out_file.writer(&out_buf);
+    _ = try out_writer.interface.write(result);
 }

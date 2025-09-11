@@ -124,13 +124,14 @@ pub fn generate(allocator: Allocator, core_protocol: *const Protocol, protocols:
 
     if (protocols.len > 0) generator.append("\n");
 
-    for (protocols) |*protocol| {
+    for (protocols, 0..) |*protocol, i| {
         generator.appendf("pub const {s} = struct {{\n", .{protocol.name});
         for (protocol.interfaces, 0..) |*interface, ii| {
             try generator.genInterface(interface);
             if (ii < protocol.interfaces.len - 1) generator.append("\n");
         }
         generator.append("};\n");
+        if (i < protocols.len - 1) generator.append("\n");
     }
 
     generator.append(
@@ -502,13 +503,20 @@ fn genRequest(this: *Generator, interface: *const Interface, request: *const Req
         const interface_def = tmpPrint(&tmp, "{s}.interface", .{zigInterfaceTypeName(&tmp, constructor_interface, interface)});
         this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
-        for (request.args[1..]) |arg| {
+        for (request.args) |arg| if (arg.type != .new_id) {
             if (arg.enum_name != null) {
                 this.appendf(", @intFromEnum({s})", .{arg.name});
             } else {
                 this.appendf(", {s}", .{arg.name});
             }
-        }
+        };
+        // for (request.args[1..]) |arg| {
+        //     if (arg.enum_name != null) {
+        //         this.appendf(", @intFromEnum({s})", .{arg.name});
+        //     } else {
+        //         this.appendf(", {s}", .{arg.name});
+        //     }
+        // }
         this.append(");\n");
         this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
@@ -538,7 +546,7 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
     const iface_arg = std.zig.fmtId(zigInterfaceArgName(interface.name));
     const iface_type = zigInterfaceTypeName(&tmp, interface.name, interface);
 
-    this.append("        pub const Listener = extern struct {\n");
+    this.append("       pub const Listener = extern struct {\n");
     for (interface.events, 0..) |event, i| {
         this.genDocComment("            ", event.description);
         this.appendf("            {f}: ?*const fn (data: ?*anyopaque, {f}: ?*{s}", .{
@@ -564,11 +572,11 @@ fn genListener(this: *Generator, interface: *const Interface) !void {
 
     this.appendf(
         \\
-        \\        pub inline fn add_listener({f}: *{s}, listener: *const Listener, data: ?*anyopaque) void {{
-        \\            wl.proxy_add_listener(@ptrCast({f}), @ptrCast(@constCast(listener)), data);
+        \\        pub inline fn add_listener(self: *{s}, listener: *const Listener, data: ?*anyopaque) void {{
+        \\            wl.proxy_add_listener(@ptrCast(self), @ptrCast(@constCast(listener)), data);
         \\        }}
         \\
-    , .{ iface_arg, iface_type, iface_arg });
+    , .{iface_type});
 }
 
 fn zigEnumName(tmp: *mem.TempArena, name: []const u8, from_interface: *const Interface) []const u8 {
@@ -642,10 +650,33 @@ fn zigInterfaceTypeName(tmp: *mem.TempArena, name_: []const u8, from_interface: 
     return result.items;
 }
 
-fn zigInterfaceArgName(name: []const u8) []const u8 {
-    const idx = std.mem.indexOfScalar(u8, name, '_') orelse @panic("Unexpected interface name format");
-    assert(name.len > idx);
-    return name[idx + 1 ..];
+fn zigInterfaceArgName(name_: []const u8) []const u8 {
+    // strip prefix
+    const idx = std.mem.indexOfScalar(u8, name_, '_') orelse @panic("Unexpected interface name format");
+    assert(name_.len > idx);
+    var name = name_[idx + 1 ..];
+
+    // optionally strip version postfix
+    if (std.mem.lastIndexOfScalar(u8, name, '_')) |last_idx| {
+        if (name.len - 1 > last_idx + 1 and name[last_idx + 1] == 'v') {
+            const version = name[last_idx + 2 ..];
+            assert(version.len > 0);
+
+            var is_version = true;
+            for (version) |c| {
+                if (!std.ascii.isDigit(c)) {
+                    is_version = false;
+                    break;
+                }
+            }
+
+            if (is_version) {
+                name = name[0 .. name.len - (version.len + 2)];
+            }
+        }
+    }
+
+    return name;
 }
 
 fn zigType(tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, from_interface: *const Interface) []const u8 {
@@ -658,7 +689,11 @@ fn zigType(tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, 
             if (interface_name_opt) |interface_name| {
                 const iname = zigInterfaceTypeName(tmp, interface_name, from_interface);
                 break :blk tmpPrint(tmp, "?*{s}", .{iname});
-            } else break :blk "?*Object";
+            } else if (std.mem.startsWith(u8, from_interface.name, "wl_")) {
+                break :blk "?*Object";
+            } else {
+                break :blk "?*wl.Object";
+            }
         },
         .array => "Array",
         .fd => "std.c.fd_t",
