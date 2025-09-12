@@ -4,6 +4,8 @@ const wayland = @import("wayland");
 const wl = wayland.wl;
 const xdg = wayland.xdg_shell;
 
+// TODO: Fix crash when disconnecting external display (maybe just unreachable in handler)
+
 const assert = std.debug.assert;
 
 const c = @cImport({
@@ -270,21 +272,10 @@ pub fn main() !void {
     wld.toplevel.set_title("v10");
 
     wld.surface.commit();
-    if (wld.toplevel == .default) {
-        while (wld.pending_resize == null) {
-            if (wl.display_dispatch(display) == -1) {
-                log.debug("wl_display_dispatch failed", .{});
-                return error.UnexpectedWayland;
-            }
-        }
-        const r = wld.pending_resize.?;
-        resize(&wld, r.width, r.height);
-        draw(&wld);
-    }
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
         if (wld.pending_resize) |r| {
-            resize(&wld, r.width, r.height);
+            try resize(&wld, r.width, r.height);
         }
 
         if (wld.should_draw and wld.free_buffers > 0) {
@@ -297,7 +288,15 @@ pub fn main() !void {
     }
 }
 
-fn resize(wld: *WlData, width: i32, height: i32) void {
+const ResizeError =
+    PosixShmError ||
+    error{
+        MmapFailed,
+        WlShmCreatePoolFailed,
+        WlPoolCreateBufferFailed,
+    };
+
+fn resize(wld: *WlData, width: i32, height: i32) ResizeError!void {
     if (!(width == wld.width and height == wld.height)) {
         if (wld.buffers) |buffers| {
             const old_size = @as(usize, @intCast(wld.width * wld.height)) * @sizeOf(Pixel);
@@ -321,34 +320,34 @@ fn resize(wld: *WlData, width: i32, height: i32) void {
         const buffer_size = stride * wld.height;
         const new_size = buffer_size * 2;
 
-        const fd = alloc_shm(new_size);
+        const fd = try alloc_shm(new_size);
         defer _ = std.c.close(fd);
 
         const prot = std.c.PROT.READ | std.c.PROT.WRITE;
         const map = std.c.MAP{ .TYPE = .SHARED };
         const mapped = std.c.mmap(null, @intCast(new_size), prot, map, fd, 0);
         if (mapped == std.c.MAP_FAILED) {
-            // TODO: Better error handling
-            unreachable;
+            log.err("mmap call failed during buffer resize", .{});
+            return error.MmapFailed;
         }
         wld.buffer_data[0] = @ptrCast(mapped);
         wld.buffer_data[1] = @ptrCast(@as([*]u8, @ptrCast(mapped)) + @as(usize, @intCast(buffer_size)));
 
         wld.pool = wld.shm.create_pool(fd, new_size) orelse {
             log.err("wl_shm_create_pool_failed", .{});
-            unreachable;
+            return error.WlShmCreatePoolFailed;
         };
 
         var buffers: [2]*wl.Buffer = undefined;
         buffers[0] = wld.pool.create_buffer(0, wld.width, wld.height, stride, .argb8888) orelse {
             log.err("wl_pool_create_buffer_failed", .{});
-            unreachable;
+            return error.WlPoolCreateBufferFailed;
         };
         buffers[0].add_listener(&wl_buffer_listener, wld);
 
         buffers[1] = wld.pool.create_buffer(buffer_size, wld.width, wld.height, stride, .argb8888) orelse {
             log.err("wl_pool_create_buffer_failed", .{});
-            unreachable;
+            return error.WlPoolCreateBufferFailed;
         };
         buffers[1].add_listener(&wl_buffer_listener, wld);
 
@@ -360,7 +359,13 @@ fn resize(wld: *WlData, width: i32, height: i32) void {
     wld.pending_resize = null;
 }
 
-fn alloc_shm(size: std.c.off_t) std.c.fd_t {
+const PosixShmError = error{
+    ShmOpenFailed,
+    ShmUnlinkFailed,
+    FtruncateFailed,
+};
+
+fn alloc_shm(size: std.c.off_t) PosixShmError!std.c.fd_t {
     const S = std.posix.S;
 
     var name_buf: [16]u8 = undefined;
@@ -376,8 +381,20 @@ fn alloc_shm(size: std.c.off_t) std.c.fd_t {
     const mode: std.c.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
     // TODO: Check for shm_open error
     const fd = std.c.shm_open(name, @bitCast(open_flags), mode);
-    if (fd >= 0) _ = std.c.shm_unlink(name);
-    _ = std.c.ftruncate(fd, size);
+    if (fd < 0) {
+        log.err("shm_open failed, errno: {}", .{std.posix.errno(fd)});
+        return error.ShmOpenFailed;
+    }
+
+    if (std.c.shm_unlink(name) != 0) {
+        log.err("shm_unlink failed, errno: {}", .{std.posix.errno(-1)});
+        return error.ShmUnlinkFailed;
+    }
+
+    if (std.c.ftruncate(fd, size) != 0) {
+        log.err("ftruncate failed, errno: {}", .{std.posix.errno(-1)});
+        return error.FtruncateFailed;
+    }
 
     return fd;
 }
@@ -388,16 +405,12 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     const iface_name = std.mem.span(interface_name);
 
     if (std.mem.eql(u8, iface_name, std.mem.span(wl.Shm.interface.name))) {
-        log.debug("Binding {s} version {}", .{ iface_name, version });
         wli.wl_shm = registry.bind(name, wl.Shm, version) orelse @panic("Failed to bind wl_shm");
     } else if (std.mem.eql(u8, iface_name, std.mem.span(wl.Seat.interface.name))) {
-        log.debug("Binding {s} version {}", .{ iface_name, version });
         wli.wl_seat = registry.bind(name, wl.Seat, version) orelse @panic("Failed to bind wl_seat");
     } else if (std.mem.eql(u8, iface_name, std.mem.span(wl.Compositor.interface.name))) {
-        log.debug("Binding {s} version {}", .{ iface_name, version });
         wli.wl_compositor = registry.bind(name, wl.Compositor, version) orelse @panic("Failed to bind wl_compositor");
     } else if (std.mem.eql(u8, iface_name, std.mem.span(xdg.WmBase.interface.name))) {
-        log.debug("Binding {s} version {}", .{ iface_name, version });
         wli.xdg_wm_base = registry.bind(name, xdg.WmBase, version);
     }
 }
@@ -517,7 +530,12 @@ fn handleLibdecorConfigure(frame: ?*c.libdecor_frame, config: ?*c.libdecor_confi
     c.libdecor_frame_commit(frame, state, config);
     c.libdecor_state_free(state);
 
-    resize(wld, width, height);
+    resize(wld, width, height) catch |e| {
+        log.err("Error during resize: {}", .{e});
+        log.err("Unable to handle resize error in handleLibdecorConfigure, stopping application", .{});
+        wld.running = false;
+        return;
+    };
 }
 
 fn handleLibdecorCommit(frame: ?*c.libdecor_frame, data: ?*anyopaque) callconv(.c) void {

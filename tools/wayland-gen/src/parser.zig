@@ -17,18 +17,15 @@ const Enum = types.Enum;
 const Arg = types.Arg;
 const Type = types.Type;
 
+allocator: Allocator,
+
 xml_file_path: []const u8,
 xml_file_reader: std.fs.File.Reader,
 xml_reader: xml.Reader,
 
-allocator: Allocator,
-
-stderr_writer: std.fs.File.Writer,
-
-current_interface_name: []const u8,
+err_writer: ?*std.Io.Writer,
 
 read_buf: [mem.KiB * 8]u8,
-stderr_write_buf: [mem.KiB]u8,
 
 /// Used for zig-xml and error printing
 var gpa_data = std.heap.DebugAllocator(.{}).init;
@@ -49,33 +46,33 @@ const Description = struct {
     }
 };
 
+pub const Error =
+    std.fs.File.OpenError ||
+    std.fmt.ParseIntError ||
+    xml.Reader.Error ||
+    error{};
+
 /// xml_temp_arena is used by the xml parser.
 /// It will be reset for each node, so don't use it for anyting else!
-pub fn parse(allocator: Allocator, xml_temp_arena: *mem.Arena, xml_path: []const u8) !Protocol {
+pub fn parse(allocator: Allocator, xml_temp_arena: *mem.Arena, xml_path: []const u8, err_writer: ?*std.Io.Writer) Error!Protocol {
     var parser: Parser = .{
+        .allocator = allocator,
         .xml_file_path = xml_path,
         .xml_file_reader = undefined,
         .xml_reader = undefined,
-        .allocator = allocator,
-        .stderr_writer = undefined,
+        .err_writer = err_writer,
         .read_buf = undefined,
-        .stderr_write_buf = undefined,
-        .current_interface_name = undefined,
     };
 
-    var xml_file = std.fs.cwd().openFile(xml_path, .{ .mode = .read_only }) catch |e| switch (e) {
-        else => {
-            log.err("Unable to open file: '{s}'", .{xml_path});
-            return e;
-        },
+    var xml_file = std.fs.cwd().openFile(xml_path, .{ .mode = .read_only }) catch |e| {
+        log.err("Unable to open file: '{s}'", .{xml_path});
+        return e;
     };
     defer xml_file.close();
 
     parser.xml_file_reader = xml_file.reader(&parser.read_buf);
-    parser.xml_reader = .init(&parser.xml_file_reader.interface, xml_path, xml_temp_arena);
+    parser.xml_reader = .init(&parser.xml_file_reader.interface, xml_path, xml_temp_arena, err_writer);
     defer parser.xml_reader.deinit();
-
-    parser.stderr_writer = std.fs.File.stderr().writer(&parser.stderr_write_buf);
 
     while (true) {
         const node = try parser.nextNode();
@@ -83,7 +80,7 @@ pub fn parse(allocator: Allocator, xml_temp_arena: *mem.Arena, xml_path: []const
         switch (node) {
             else => {
                 parser.xmlErr("Unexpected xml node type '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
             .eof => break,
 
@@ -103,7 +100,7 @@ pub fn parse(allocator: Allocator, xml_temp_arena: *mem.Arena, xml_path: []const
     return error.MalformedXml;
 }
 
-fn parseProtocol(this: *Parser) !Protocol {
+fn parseProtocol(this: *Parser) Error!Protocol {
     const protocol_tag = this.xml_reader.current_node.tag_open;
     if (protocol_tag.attributes.len != 1) {
         this.xmlErr("Invalid attribute count", .{});
@@ -115,7 +112,7 @@ fn parseProtocol(this: *Parser) !Protocol {
         this.xmlErr("Expected 'name' attribute, got '{s}'", .{attr.name});
     }
 
-    const protocol_name = copyString(this.allocator, attr.value);
+    const protocol_name = try copyString(this.allocator, attr.value);
     var interfaces = std.ArrayList(Interface){};
     var description: Description = .{};
 
@@ -124,7 +121,7 @@ fn parseProtocol(this: *Parser) !Protocol {
         switch (node) {
             else => {
                 this.xmlErr("Unexpected xml node type '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
 
             .eof => {
@@ -165,7 +162,7 @@ fn parseProtocol(this: *Parser) !Protocol {
     };
 }
 
-fn parseInterface(this: *Parser) !Interface {
+fn parseInterface(this: *Parser) Error!Interface {
     var name_opt: ?[]const u8 = null;
     var version: u32 = 0;
     var description: Description = .{};
@@ -181,7 +178,7 @@ fn parseInterface(this: *Parser) !Interface {
 
     for (interface_tag.attributes) |attr| {
         if (std.mem.eql(u8, attr.name, "name")) {
-            name_opt = copyString(this.allocator, attr.value);
+            name_opt = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "version")) {
             version = try std.fmt.parseInt(u32, attr.value, 10);
         } else {
@@ -194,14 +191,13 @@ fn parseInterface(this: *Parser) !Interface {
         this.xmlErr("Missing name attirbute", .{});
         return error.MalformedXml;
     };
-    this.current_interface_name = name;
 
     while (true) {
         const node = try this.nextNode();
         switch (node) {
             else => {
                 this.xmlErr("Unexpected xml node: '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
             .eof => {
                 this.xmlErr("Unexpected eof", .{});
@@ -248,7 +244,7 @@ fn parseInterface(this: *Parser) !Interface {
     };
 }
 
-fn parseRequest(this: *Parser) !Request {
+fn parseRequest(this: *Parser) Error!Request {
     var name: []const u8 = "";
     var destructor = false;
     var since: u32 = 0;
@@ -263,7 +259,7 @@ fn parseRequest(this: *Parser) !Request {
 
     for (req_tag.attributes) |attr| {
         if (std.mem.eql(u8, attr.name, "name")) {
-            name = copyString(this.allocator, attr.value);
+            name = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "type")) {
             destructor = std.mem.eql(u8, attr.value, "destructor");
         } else if (std.mem.eql(u8, attr.name, "since")) {
@@ -279,7 +275,7 @@ fn parseRequest(this: *Parser) !Request {
         switch (node) {
             else => {
                 this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
             .eof => {
                 this.xmlErr("Unexpected eof", .{});
@@ -318,7 +314,7 @@ fn parseRequest(this: *Parser) !Request {
     };
 }
 
-fn parseEvent(this: *Parser) !?Event {
+fn parseEvent(this: *Parser) Error!?Event {
     var name: []const u8 = "";
     var destructor = false;
     var since: u32 = 0;
@@ -334,7 +330,7 @@ fn parseEvent(this: *Parser) !?Event {
 
     for (event_tag.attributes) |attr| {
         if (std.mem.eql(u8, attr.name, "name")) {
-            name = copyString(this.allocator, attr.value);
+            name = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "type")) {
             if (std.mem.eql(u8, attr.value, "destructor")) {
                 destructor = true;
@@ -357,7 +353,7 @@ fn parseEvent(this: *Parser) !?Event {
         switch (node) {
             else => {
                 this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
             .eof => {
                 this.xmlErr("Unexpected eof", .{});
@@ -404,7 +400,7 @@ fn parseEvent(this: *Parser) !?Event {
     }
 }
 
-fn parseEnum(this: *Parser) !Enum {
+fn parseEnum(this: *Parser) Error!Enum {
     var name: []const u8 = "";
     var bitfield = false;
     var since: u32 = 0;
@@ -419,7 +415,7 @@ fn parseEnum(this: *Parser) !Enum {
 
     for (enum_tag.attributes) |attr| {
         if (std.mem.eql(u8, attr.name, "name")) {
-            name = copyString(this.allocator, attr.value);
+            name = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "bitfield")) {
             bitfield = std.mem.eql(u8, attr.value, "true");
         } else if (std.mem.eql(u8, attr.name, "since")) {
@@ -435,7 +431,7 @@ fn parseEnum(this: *Parser) !Enum {
         switch (node) {
             else => {
                 this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
             .eof => {
                 this.xmlErr("Unexpected eof", .{});
@@ -475,7 +471,7 @@ fn parseEnum(this: *Parser) !Enum {
     };
 }
 
-fn parseArg(this: *Parser) !Arg {
+fn parseArg(this: *Parser) Error!Arg {
     var name: ?[]const u8 = "";
     var arg_type: ?Type = null;
     var allow_null = false;
@@ -495,7 +491,7 @@ fn parseArg(this: *Parser) !Arg {
 
     for (arg_tag.attributes) |attr| {
         if (std.mem.eql(u8, attr.name, "name")) {
-            name = copyString(this.allocator, attr.value);
+            name = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "type")) {
             arg_type = std.meta.stringToEnum(Type, attr.value) orelse {
                 this.xmlErr("Invalid type '{s}'", .{attr.value});
@@ -504,11 +500,11 @@ fn parseArg(this: *Parser) !Arg {
         } else if (std.mem.eql(u8, attr.name, "allow-null")) {
             allow_null = std.mem.eql(u8, attr.value, "true");
         } else if (std.mem.eql(u8, attr.name, "interface")) {
-            interface = copyString(this.allocator, attr.value);
+            interface = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "enum")) {
-            enum_name_opt = copyString(this.allocator, attr.value);
+            enum_name_opt = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "summary")) {
-            summary = copyString(this.allocator, attr.value);
+            summary = try copyString(this.allocator, attr.value);
         } else {
             this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
@@ -541,7 +537,7 @@ fn parseArg(this: *Parser) !Arg {
     };
 }
 
-fn parseEnumEntry(this: *Parser) !Enum.Entry {
+fn parseEnumEntry(this: *Parser) Error!Enum.Entry {
     var name: ?[]const u8 = "";
     var since: u32 = 0;
     var value_str: ?[]const u8 = null;
@@ -556,14 +552,14 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
 
     for (entry_tag.attributes) |attr| {
         if (std.mem.eql(u8, attr.name, "name")) {
-            name = copyString(this.allocator, attr.value);
-            value_str = copyString(this.allocator, attr.value);
+            name = try copyString(this.allocator, attr.value);
+            value_str = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "since")) {
             since = try std.fmt.parseInt(u32, attr.value, 10);
         } else if (std.mem.eql(u8, attr.name, "value")) {
-            value_str = copyString(this.allocator, attr.value);
+            value_str = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "summary")) {
-            summary = copyString(this.allocator, attr.value);
+            summary = try copyString(this.allocator, attr.value);
         } else {
             this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
@@ -605,7 +601,7 @@ fn parseEnumEntry(this: *Parser) !Enum.Entry {
     };
 }
 
-fn parseDescription(this: *Parser) !Description {
+fn parseDescription(this: *Parser) Error!Description {
     var summary: []const u8 = "";
     var text: []const u8 = "";
 
@@ -613,7 +609,7 @@ fn parseDescription(this: *Parser) !Description {
 
     for (desc_tag.attributes) |attr| {
         if (std.mem.eql(u8, attr.name, "summary")) {
-            summary = copyString(this.allocator, attr.value);
+            summary = try copyString(this.allocator, attr.value);
         } else {
             this.xmlErr("Invalid attribute: '{s}'", .{attr.name});
             return error.MalformedXml;
@@ -625,7 +621,7 @@ fn parseDescription(this: *Parser) !Description {
         switch (node) {
             else => {
                 this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
             .comment => {}, // skip
             .eof => {
@@ -634,7 +630,7 @@ fn parseDescription(this: *Parser) !Description {
             },
 
             .text => |t| {
-                text = copyString(this.allocator, t);
+                text = try copyString(this.allocator, t);
             },
 
             .tag_close => |tag| {
@@ -654,20 +650,20 @@ fn parseDescription(this: *Parser) !Description {
 }
 
 /// Skip the current element. Assumes the current node is tag_open.
-fn skipElement(this: *Parser) !void {
+fn skipElement(this: *Parser) Error!void {
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
     const first_node = this.xml_reader.current_node.tag_open;
 
-    const start_name = copyString(tmp.allocator(), first_node.name);
+    const start_name = try copyString(tmp.allocator(), first_node.name);
 
     var node = try this.nextNode();
     while (true) {
         switch (node) {
             else => {
                 this.xmlErr("Unexpected xml node type: '{s}'", .{@tagName(node)});
-                unreachable;
+                return error.MalformedXml;
             },
 
             .eof => {
@@ -690,7 +686,7 @@ fn skipElement(this: *Parser) !void {
     }
 }
 
-fn nextNode(this: *Parser) !xml.Reader.Node {
+fn nextNode(this: *Parser) xml.Reader.Error!xml.Reader.Node {
     while (true) {
         const node = try this.xml_reader.next();
 
@@ -715,14 +711,14 @@ fn xmlErr(this: *Parser, comptime fmt: []const u8, args: anytype) void {
 }
 
 fn printErr(this: *Parser, comptime msg: []const u8, args: anytype) void {
-    const writer = &this.stderr_writer.interface;
-
-    writer.print(msg, args) catch @panic("Write failed");
-    writer.flush() catch @panic("Flush failed");
+    if (this.err_writer) |w| {
+        w.print(msg, args) catch @panic("Write failed");
+        w.flush() catch @panic("Flush failed");
+    }
 }
 
-fn copyString(allocator: Allocator, str: []const u8) []const u8 {
-    const buf = allocator.alloc(u8, str.len) catch @panic("OOM");
+fn copyString(allocator: Allocator, str: []const u8) Allocator.Error![]const u8 {
+    const buf = try allocator.alloc(u8, str.len);
     @memcpy(buf, str);
     return buf;
 }
