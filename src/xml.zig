@@ -11,6 +11,7 @@ pub const Reader = struct {
     current_node: Node,
     node_tmp: mem.TempArena,
     location: Location,
+    err_writer: ?*std.Io.Writer,
 
     const State = enum {
         start,
@@ -60,7 +61,7 @@ pub const Reader = struct {
     /// The arena is used for the current nodes data.
     /// It will be reset for each node, so don't use it for anyting else!
     ///
-    pub fn init(reader: *std.Io.Reader, path: []const u8, arena: *mem.Arena) Reader {
+    pub fn init(reader: *std.Io.Reader, path: []const u8, arena: *mem.Arena, err_writer: ?*std.Io.Writer) Reader {
         return .{
             .state = .start,
             .reader = reader,
@@ -71,6 +72,7 @@ pub const Reader = struct {
                 .line = 1,
                 .column = 1,
             },
+            .err_writer = err_writer,
         };
     }
 
@@ -145,10 +147,10 @@ pub const Reader = struct {
                             try this.expect("=");
                             const attr_value = try this.parseString();
 
-                            attributes.append(
+                            try attributes.append(
                                 this.node_tmp.allocator(),
                                 .{ .name = attr_name, .value = attr_value },
-                            ) catch @panic("OOM");
+                            );
 
                             this.skipWhitespace();
 
@@ -231,9 +233,6 @@ pub const Reader = struct {
     }
 
     fn parseIdentifier(this: *Reader) Error![]const u8 {
-        var tmp = mem.getScratch(this.node_tmp.arena);
-        defer tmp.release();
-
         var buffer = std.ArrayList(u8){};
 
         const first = this.reader.peekByte() catch |e| switch (e) {
@@ -244,7 +243,7 @@ pub const Reader = struct {
             this.printFatalError("Invalid character in identifier: '{c}'", .{first});
             return error.MalformedXml;
         }
-        buffer.append(tmp.allocator(), first) catch @panic("OOM");
+        try buffer.append(this.node_tmp.allocator(), first);
         this.toss(1);
 
         while (true) {
@@ -257,11 +256,11 @@ pub const Reader = struct {
                 c == '-' or
                 c == ':' or
                 c == '.')) break;
-            buffer.append(tmp.allocator(), c) catch @panic("OOM");
+            try buffer.append(this.node_tmp.allocator(), c);
             this.toss(1);
         }
 
-        return this.dupe(buffer.items);
+        return buffer.items;
     }
 
     fn parseString(this: *Reader) Error![]const u8 {
@@ -368,26 +367,21 @@ pub const Reader = struct {
         }
     }
 
-    fn dupe(this: *Reader, data: []const u8) []const u8 {
-        const new = this.node_tmp.allocator().alloc(u8, data.len) catch @panic("OOM");
-        @memcpy(new, data);
-        return new;
-    }
-
     fn printFatalError(this: *Reader, comptime fmt: []const u8, args: anytype) void {
-        const tmp = &this.node_tmp;
-        var write_buf: [512]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&write_buf);
+        if (this.err_writer) |w| {
+            const tmp = &this.node_tmp;
+            defer tmp.release();
 
-        _ = writer.interface.write(
-            tmpPrint(tmp, "{s}:{}:{}: ", .{
-                this.location.path,
-                this.location.line,
-                this.location.column,
-            }),
-        ) catch unreachable;
-        _ = writer.interface.write(tmpPrint(tmp, fmt, args)) catch unreachable;
-        writer.interface.flush() catch unreachable;
+            _ = w.write(
+                tmpPrint(tmp, "{s}:{}:{}: ", .{
+                    this.location.path,
+                    this.location.line,
+                    this.location.column,
+                }),
+            ) catch @panic("Write failed");
+            _ = w.write(tmpPrint(tmp, fmt, args)) catch @panic("Write failed");
+            w.flush() catch @panic("Flush failed");
+        }
     }
 };
 

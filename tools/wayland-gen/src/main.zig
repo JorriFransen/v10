@@ -51,31 +51,19 @@ pub fn main() !void {
     var parse_arena = try mem.Arena.init(.{ .virtual = .{} });
     var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
 
-    // {
-    //     const xml_path = "vendor/wayland/wayland.xml";
-    //     const xml_file = try std.fs.cwd().openFile(xml_path, .{});
-    //     defer xml_file.close();
-    //
-    //     var read_buf: [512]u8 = undefined;
-    //     var reader = xml_file.reader(&read_buf);
-    //
-    //     const Xml = @import("xml");
-    //     var xml_reader = Xml.Reader.init(&reader.interface, xml_path);
-    //
-    //     while (!xml_reader.done()) {
-    //         const node = try xml_reader.next();
-    //         log.debug("node: {f}", .{node});
-    //     }
-    // }
+    var stderr_buf: [mem.KiB]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
 
-    var wayland_protocol = try parser.parse(parse_arena.allocator(), &xml_arena, options.wayland);
+    var wayland_protocol = try parser.parse(parse_arena.allocator(), &xml_arena, options.wayland, &stderr_writer.interface);
 
     const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);
     for (options.protocol.items, protocols) |protocol_xml_file, *dst| {
-        dst.* = try parser.parse(parse_arena.allocator(), &xml_arena, protocol_xml_file);
+        dst.* = try parser.parse(parse_arena.allocator(), &xml_arena, protocol_xml_file, &stderr_writer.interface);
     }
 
     const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
+
+    try stderr_writer.interface.flush();
 
     const out_file = try std.fs.cwd().createFile(options.out, .{ .read = false });
     defer out_file.close();
@@ -83,4 +71,5 @@ pub fn main() !void {
     var out_buf: [mem.KiB * 8]u8 = undefined;
     var out_writer = out_file.writer(&out_buf);
     _ = try out_writer.interface.write(result);
+    try out_writer.interface.flush();
 }
