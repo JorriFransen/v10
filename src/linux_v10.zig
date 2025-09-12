@@ -6,8 +6,13 @@ const xdg = wayland.xdg_shell;
 
 const assert = std.debug.assert;
 
+const c = @cImport({
+    @cInclude("libdecor.h");
+});
+
 const initial_window_width: i32 = 800;
 const initial_window_height: i32 = 600;
+const use_decor = true;
 
 const WlInitData = struct {
     wl_shm: ?*wl.Shm = null,
@@ -42,9 +47,9 @@ const WlData = struct {
     seat: *wl.Seat = undefined,
     surface: *wl.Surface = undefined,
     wm_base: *xdg.WmBase = undefined,
-    xdg_surface: *xdg.Surface = undefined,
-    toplevel: *xdg.Toplevel = undefined,
     keyboard: *wl.Keyboard = undefined,
+
+    toplevel: Toplevel = undefined,
 
     width: i32 = -1,
     height: i32 = -1,
@@ -54,10 +59,35 @@ const WlData = struct {
     pending_resize: ?PendingResize = null,
 };
 
+const Toplevel = union(enum) {
+    default: struct {
+        xdg_surface: *xdg.Surface = undefined,
+        xdg_toplevel: *xdg.Toplevel = undefined,
+    },
+
+    libdecor: struct {
+        decor: *c.libdecor = undefined,
+        frame: *c.libdecor_frame = undefined,
+    },
+
+    fn set_app_id(this: Toplevel, id: [*:0]const u8) void {
+        switch (this) {
+            .default => |n| n.xdg_toplevel.set_app_id(id),
+            .libdecor => |d| c.libdecor_frame_set_app_id(d.frame, id),
+        }
+    }
+
+    fn set_title(this: Toplevel, id: [*:0]const u8) void {
+        switch (this) {
+            .default => |n| n.xdg_toplevel.set_title(id),
+            .libdecor => |d| c.libdecor_frame_set_title(d.frame, id),
+        }
+    }
+};
+
 const PendingResize = struct {
     width: i32,
     height: i32,
-    serial: u32,
 };
 
 var wl_registry_listener = wl.Registry.Listener{
@@ -111,6 +141,13 @@ var wl_keyboard_listener = wl.Keyboard.Listener{
     .modifiers = @ptrCast(&nop),
     .repeat_info = @ptrCast(&nop),
     .keymap = @ptrCast(&nop),
+};
+
+var libdecor_listener = c.libdecor_frame_interface{
+    .configure = handleLibdecorConfigure,
+    .commit = handleLibdecorCommit,
+    .close = handleLibdecorClose,
+    .dismiss_popup = handleLibdecorDismissPopup,
 };
 
 pub fn main() !void {
@@ -197,38 +234,57 @@ pub fn main() !void {
     };
     wld.surface.add_listener(&wl_surface_listener, null);
 
-    wld.xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
-        log.err("xdg_wm_base_get_xdg_surface failed", .{});
-        return error.UnexpectedWayland;
-    };
-    wld.xdg_surface.add_listener(&xdg_surface_listener, &wld);
+    wld.toplevel = decor: {
+        if (use_decor) {
+            log.debug("Using libdecor", .{});
+            const libdecor = c.libdecor_new(@ptrCast(display), null) orelse {
+                log.err("libdecor_new failed", .{});
+                return error.UnexpectedLibDecor;
+            };
 
-    wld.toplevel = wld.xdg_surface.get_toplevel() orelse {
-        log.err("xdg_surface_get_top_level failed", .{});
-        return error.UnexpectedWayland;
+            const frame = c.libdecor_decorate(libdecor, @ptrCast(wld.surface), &libdecor_listener, &wld) orelse {
+                log.err("libdecor decorate failed", .{});
+                return error.UnexpectedLibDecor;
+            };
+
+            break :decor .{ .libdecor = .{ .decor = libdecor, .frame = frame } };
+        } else {
+            log.debug("Using no decorations", .{});
+            const xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
+                log.err("xdg_wm_base_get_xdg_surface failed", .{});
+                return error.UnexpectedWayland;
+            };
+            xdg_surface.add_listener(&xdg_surface_listener, &wld);
+
+            const toplevel = xdg_surface.get_toplevel() orelse {
+                log.err("xdg_surface_get_top_level failed", .{});
+                return error.UnexpectedWayland;
+            };
+            toplevel.add_listener(&xdg_toplevel_listener, &wld);
+
+            break :decor .{ .default = .{ .xdg_surface = xdg_surface, .xdg_toplevel = toplevel } };
+        }
     };
-    wld.toplevel.add_listener(&xdg_toplevel_listener, &wld);
-    // wld.toplevel.set_min_size(initial_window_width, initial_window_height);
+
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
     wld.surface.commit();
-
-    while (wld.pending_resize == null) {
-        if (wl.display_dispatch(display) == -1) {
-            log.debug("wl_display_dispatch failed", .{});
-            return error.UnexpectedWayland;
+    if (wld.toplevel == .default) {
+        while (wld.pending_resize == null) {
+            if (wl.display_dispatch(display) == -1) {
+                log.debug("wl_display_dispatch failed", .{});
+                return error.UnexpectedWayland;
+            }
         }
+        const r = wld.pending_resize.?;
+        resize(&wld, r.width, r.height);
+        draw(&wld);
     }
-    resize(&wld, wld.pending_resize.?);
-    draw(&wld);
-    log.debug("Initial config done", .{});
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
         if (wld.pending_resize) |r| {
-            if (r.serial != 0) {
-                resize(&wld, r);
-            }
+            resize(&wld, r.width, r.height);
         }
 
         if (wld.should_draw and wld.free_buffers > 0) {
@@ -241,8 +297,8 @@ pub fn main() !void {
     }
 }
 
-fn resize(wld: *WlData, r: PendingResize) void {
-    if (!(r.width == wld.width and r.height == wld.height)) {
+fn resize(wld: *WlData, width: i32, height: i32) void {
+    if (!(width == wld.width and height == wld.height)) {
         if (wld.buffers) |buffers| {
             const old_size = @as(usize, @intCast(wld.width * wld.height)) * @sizeOf(Pixel);
             _ = std.c.munmap(@ptrCast(@alignCast(wld.buffer_data[0])), old_size * 2);
@@ -253,12 +309,12 @@ fn resize(wld: *WlData, r: PendingResize) void {
             wld.pool.destroy();
         }
 
-        if (r.width == 0 and r.height == 0) {
+        if (width == 0 and height == 0) {
             wld.width = initial_window_width;
             wld.height = initial_window_height;
         } else {
-            wld.width = r.width;
-            wld.height = r.height;
+            wld.width = width;
+            wld.height = height;
         }
 
         const stride = wld.width * @sizeOf(Pixel);
@@ -300,7 +356,6 @@ fn resize(wld: *WlData, r: PendingResize) void {
         wld.buffers = buffers;
     }
 
-    wld.xdg_surface.ack_configure(r.serial);
     wld.should_draw = true;
     wld.pending_resize = null;
 }
@@ -367,13 +422,9 @@ fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg.WmBase, serial: u32) callconv
 }
 
 fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg.Surface, serial: u32) callconv(.c) void {
+    _ = surface;
     const wld: *WlData = @ptrCast(@alignCast(data));
-    if (wld.pending_resize) |*r| {
-        r.serial = serial;
-    } else {
-        log.warn("xdg surface configure without pending resize from toplevel", .{});
-        surface.?.ack_configure(serial);
-    }
+    wld.toplevel.default.xdg_surface.ack_configure(serial);
 }
 
 fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg.Toplevel, width: i32, height: i32, states: wayland.Array) callconv(.c) void {
@@ -389,7 +440,6 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg.Toplevel, width
         wld.pending_resize = .{
             .width = width,
             .height = height,
-            .serial = 0,
         };
     }
 }
@@ -414,7 +464,6 @@ fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg.Toplevel) callconv(
 
     const wld: *WlData = @ptrCast(@alignCast(data));
     wld.running = false;
-    log.debug("xdg toplevel close", .{});
 }
 
 fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_data: u32) callconv(.c) void {
@@ -454,6 +503,41 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
     }
 }
 
+fn handleLibdecorConfigure(frame: ?*c.libdecor_frame, config: ?*c.libdecor_configuration, data: ?*anyopaque) callconv(.c) void {
+    const wld: *WlData = @ptrCast(@alignCast(data));
+
+    var width: c_int = undefined;
+    var height: c_int = undefined;
+    if (!c.libdecor_configuration_get_content_size(config, frame, &width, &height)) {
+        width = initial_window_width;
+        height = initial_window_height;
+    }
+
+    const state = c.libdecor_state_new(width, height);
+    c.libdecor_frame_commit(frame, state, config);
+    c.libdecor_state_free(state);
+
+    resize(wld, width, height);
+}
+
+fn handleLibdecorCommit(frame: ?*c.libdecor_frame, data: ?*anyopaque) callconv(.c) void {
+    _ = frame;
+    _ = data;
+    log.debug("handleLibdecorCommit", .{});
+}
+
+fn handleLibdecorClose(frame: ?*c.libdecor_frame, data: ?*anyopaque) callconv(.c) void {
+    _ = frame;
+    const wld: *WlData = @ptrCast(@alignCast(data));
+    wld.running = false;
+}
+
+fn handleLibdecorDismissPopup(frame: ?*c.libdecor_frame, seat_name: [*c]const u8, data: ?*anyopaque) callconv(.c) void {
+    _ = frame;
+    _ = data;
+    log.debug("handleLibdecorDismissPopup seat: {s}", .{seat_name});
+}
+
 var rv: i32 = 5;
 var ry: i32 = 0;
 fn draw(wld: *WlData) void {
@@ -486,7 +570,7 @@ fn draw(wld: *WlData) void {
     wld.buffer_index = 1 - wld.buffer_index;
 }
 
-fn drawRect(wld: *WlData, pixels: []Pixel, x: i32, y: i32, w: i32, h: i32, c: Pixel) void {
+fn drawRect(wld: *WlData, pixels: []Pixel, x: i32, y: i32, w: i32, h: i32, color: Pixel) void {
     const ux_min: usize = @max(0, x);
     const ux_max: usize = @intCast(@min(wld.width - 1, x + w));
     const uy_min: usize = @max(0, y);
@@ -494,7 +578,7 @@ fn drawRect(wld: *WlData, pixels: []Pixel, x: i32, y: i32, w: i32, h: i32, c: Pi
 
     for (ux_min..ux_max) |bx| {
         for (uy_min..uy_max) |by| {
-            pixels[bx + (by * @as(usize, @intCast(wld.width)))] = c;
+            pixels[bx + (by * @as(usize, @intCast(wld.width)))] = color;
         }
     }
 }
