@@ -2,8 +2,10 @@ const std = @import("std");
 const log = std.log.scoped(.linux_v10);
 const wayland = @import("wayland");
 const wl = wayland.wl;
-const xdg = wayland.xdg_shell;
+const xdg_shell = wayland.xdg_shell;
+const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
+// TODO: Check if preferred_buffer_scale is relevant
 // TODO: Fix crash when disconnecting external display (maybe just unreachable in handler)
 
 const assert = std.debug.assert;
@@ -14,13 +16,13 @@ const c = @cImport({
 
 const initial_window_width: i32 = 800;
 const initial_window_height: i32 = 600;
-const use_decor = true;
 
 const WlInitData = struct {
     wl_shm: ?*wl.Shm = null,
     wl_compositor: ?*wl.Compositor = null,
     wl_seat: ?*wl.Seat = null,
-    xdg_wm_base: ?*xdg.WmBase = null,
+    xdg_wm_base: ?*xdg_shell.WmBase = null,
+    xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
 
     argb8888: bool = false,
     seat_capabilities: wl.Seat.Capability = .{},
@@ -48,7 +50,7 @@ const WlData = struct {
     compositor: *wl.Compositor = undefined,
     seat: *wl.Seat = undefined,
     surface: *wl.Surface = undefined,
-    wm_base: *xdg.WmBase = undefined,
+    wm_base: *xdg_shell.WmBase = undefined,
     keyboard: *wl.Keyboard = undefined,
 
     toplevel: Toplevel = undefined,
@@ -63,18 +65,26 @@ const WlData = struct {
 
 const Toplevel = union(enum) {
     default: struct {
-        xdg_surface: *xdg.Surface = undefined,
-        xdg_toplevel: *xdg.Toplevel = undefined,
+        xdg_surface: *xdg_shell.Surface,
+        xdg_toplevel: *xdg_shell.Toplevel,
+    },
+
+    xdg_decoration: struct {
+        xdg_surface: *xdg_shell.Surface,
+        xdg_toplevel: *xdg_shell.Toplevel,
+        xdg_toplevel_decoration: *xdg_decoration.ToplevelDecorationV1,
+        supports_ssd: bool,
     },
 
     libdecor: struct {
-        decor: *c.libdecor = undefined,
-        frame: *c.libdecor_frame = undefined,
+        decor: *c.libdecor,
+        frame: *c.libdecor_frame,
     },
 
     fn set_app_id(this: Toplevel, id: [*:0]const u8) void {
         switch (this) {
-            .default => |n| n.xdg_toplevel.set_app_id(id),
+            .default => |d| d.xdg_toplevel.set_app_id(id),
+            .xdg_decoration => |d| d.xdg_toplevel.set_app_id(id),
             .libdecor => |d| c.libdecor_frame_set_app_id(d.frame, id),
         }
     }
@@ -82,6 +92,7 @@ const Toplevel = union(enum) {
     fn set_title(this: Toplevel, id: [*:0]const u8) void {
         switch (this) {
             .default => |n| n.xdg_toplevel.set_title(id),
+            .xdg_decoration => |n| n.xdg_toplevel.set_title(id),
             .libdecor => |d| c.libdecor_frame_set_title(d.frame, id),
         }
     }
@@ -92,51 +103,51 @@ const PendingResize = struct {
     height: i32,
 };
 
-var wl_registry_listener = wl.Registry.Listener{
+const wl_registry_listener = wl.Registry.Listener{
     .global = handleWlRegisterGlobal,
     .global_remove = handleWlRemoveGlobal,
 };
 
-var wl_shm_listener = wl.Shm.Listener{
+const wl_shm_listener = wl.Shm.Listener{
     .format = handleWlShmFormat,
 };
 
-var wl_surface_listener = wl.Surface.Listener{
+const wl_surface_listener = wl.Surface.Listener{
     .enter = @ptrCast(&nop),
     .leave = @ptrCast(&nop),
     .preferred_buffer_scale = @ptrCast(&nop),
     .preferred_buffer_transform = @ptrCast(&nop),
 };
 
-var xdg_wm_base_listener = xdg.WmBase.Listener{
+const xdg_wm_base_listener = xdg_shell.WmBase.Listener{
     .ping = handleXdgPing,
 };
 
-var xdg_surface_listener = xdg.Surface.Listener{
+const xdg_surface_listener = xdg_shell.Surface.Listener{
     .configure = handleXdgSurfaceConfigure,
 };
 
-var xdg_toplevel_listener = xdg.Toplevel.Listener{
+const xdg_toplevel_listener = xdg_shell.Toplevel.Listener{
     .configure = handleXdgToplevelConfigure,
     .configure_bounds = handleXdgToplevelConfigureBounds,
     .wm_capabilities = handleXdgToplevelWmCapabilities,
     .close = handleXdgToplevelClose,
 };
 
-var wl_callback_listener = wl.Callback.Listener{
+const wl_callback_listener = wl.Callback.Listener{
     .done = handleWlCallbackDone,
 };
 
-var wl_buffer_listener = wl.Buffer.Listener{
+const wl_buffer_listener = wl.Buffer.Listener{
     .release = handleWlBufferRelease,
 };
 
-var wl_seat_listener = wl.Seat.Listener{
+const wl_seat_listener = wl.Seat.Listener{
     .capabilities = handleWlSeatCapabilities,
     .name = @ptrCast(&nop),
 };
 
-var wl_keyboard_listener = wl.Keyboard.Listener{
+const wl_keyboard_listener = wl.Keyboard.Listener{
     .key = handleWlKey,
     .enter = @ptrCast(&nop),
     .leave = @ptrCast(&nop),
@@ -145,11 +156,15 @@ var wl_keyboard_listener = wl.Keyboard.Listener{
     .keymap = @ptrCast(&nop),
 };
 
-var libdecor_listener = c.libdecor_frame_interface{
+const libdecor_listener = c.libdecor_frame_interface{
     .configure = handleLibdecorConfigure,
-    .commit = handleLibdecorCommit,
+    .commit = @ptrCast(&nop), // This should be safe to ignore, since we continuously redraw
     .close = handleLibdecorClose,
     .dismiss_popup = handleLibdecorDismissPopup,
+};
+
+const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{
+    .configure = handleXdgDecorationConfigure,
 };
 
 pub fn main() !void {
@@ -236,42 +251,159 @@ pub fn main() !void {
     };
     wld.surface.add_listener(&wl_surface_listener, null);
 
-    wld.toplevel = decor: {
-        if (use_decor) {
-            log.debug("Using libdecor", .{});
-            const libdecor = c.libdecor_new(@ptrCast(display), null) orelse {
-                log.err("libdecor_new failed", .{});
-                return error.UnexpectedLibDecor;
-            };
+    // wld.toplevel = switch (toplevel_type) {
+    //     .default => blk: {
+    //         const xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
+    //             log.err("xdg_wm_base_get_xdg_surface failed", .{});
+    //             return error.UnexpectedWayland;
+    //         };
+    //         xdg_surface.add_listener(&xdg_surface_listener, &wld);
+    //
+    //         const toplevel = xdg_surface.get_toplevel() orelse {
+    //             log.err("xdg_surface_get_top_level failed", .{});
+    //             return error.UnexpectedWayland;
+    //         };
+    //         toplevel.add_listener(&xdg_toplevel_listener, &wld);
+    //
+    //         wld.surface.commit();
+    //         _ = wl.display_roundtrip(display);
+    //         assert(wld.pending_resize != null);
+    //         const r = wld.pending_resize.?;
+    //         try resize(&wld, r.width, r.height);
+    //         draw(&wld);
+    //
+    //         break :blk .{ .default = .{ .xdg_surface = xdg_surface, .xdg_toplevel = toplevel } };
+    //     },
+    //
+    //     .xdg_decoration => blk: {
+    //         const xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
+    //             log.err("xdg_wm_base_get_xdg_surface failed", .{});
+    //             return error.UnexpectedWayland;
+    //         };
+    //         xdg_surface.add_listener(&xdg_surface_listener, &wld);
+    //
+    //         const toplevel = xdg_surface.get_toplevel() orelse {
+    //             log.err("xdg_surface_get_top_level failed", .{});
+    //             return error.UnexpectedWayland;
+    //         };
+    //         toplevel.add_listener(&xdg_toplevel_listener, &wld);
+    //
+    //         const toplevel_decoration = wli.xdg_decoration_manager.?.get_toplevel_decoration(toplevel) orelse {
+    //             log.err("zxdg_decoration_manager_v1_get_toplevel_decoration failed", .{});
+    //             return error.UnexpectedWayland;
+    //         };
+    //         toplevel_decoration.set_mode(.server_side);
+    //
+    //         var mode: xdg_decoration.ToplevelDecorationV1.Mode = undefined;
+    //         toplevel_decoration.add_listener(&xdg_decoration_listener, &mode);
+    //
+    //         wld.surface.commit();
+    //         _ = wl.display_roundtrip(display);
+    //         assert(wld.pending_resize != null);
+    //         const r = wld.pending_resize.?;
+    //         try resize(&wld, r.width, r.height);
+    //         draw(&wld);
+    //
+    //         break :blk .{
+    //             .xdg_decoration = .{
+    //                 .xdg_surface = xdg_surface,
+    //                 .xdg_toplevel = toplevel,
+    //                 .xdg_toplevel_decoration = toplevel_decoration,
+    //             },
+    //         };
+    //     },
+    //     .libdecor => blk: {
+    //         const libdecor = c.libdecor_new(@ptrCast(display), null) orelse {
+    //             log.err("libdecor_new failed", .{});
+    //             return error.UnexpectedLibDecor;
+    //         };
+    //
+    //         const frame = c.libdecor_decorate(libdecor, @ptrCast(wld.surface), &libdecor_listener, &wld) orelse {
+    //             log.err("libdecor decorate failed", .{});
+    //             return error.UnexpectedLibDecor;
+    //         };
+    //
+    //         wld.surface.commit();
+    //
+    //         break :blk .{ .libdecor = .{ .decor = libdecor, .frame = frame } };
+    //     },
+    // };
 
-            const frame = c.libdecor_decorate(libdecor, @ptrCast(wld.surface), &libdecor_listener, &wld) orelse {
-                log.err("libdecor decorate failed", .{});
-                return error.UnexpectedLibDecor;
-            };
+    var xdg_decor_toplevel: Toplevel = undefined;
+    if (wli.xdg_decoration_manager) |manager| {
+        const xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
+            log.err("xdg_wm_base_get_xdg_surface failed", .{});
+            return error.UnexpectedWayland;
+        };
+        xdg_surface.add_listener(&xdg_surface_listener, &wld);
 
-            break :decor .{ .libdecor = .{ .decor = libdecor, .frame = frame } };
-        } else {
-            log.debug("Using no decorations", .{});
-            const xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
-                log.err("xdg_wm_base_get_xdg_surface failed", .{});
-                return error.UnexpectedWayland;
-            };
-            xdg_surface.add_listener(&xdg_surface_listener, &wld);
+        const xdg_toplevel = xdg_surface.get_toplevel() orelse {
+            log.err("xdg_surface_get_top_level failed", .{});
+            return error.UnexpectedWayland;
+        };
+        xdg_toplevel.add_listener(&xdg_toplevel_listener, &wld);
 
-            const toplevel = xdg_surface.get_toplevel() orelse {
-                log.err("xdg_surface_get_top_level failed", .{});
-                return error.UnexpectedWayland;
-            };
-            toplevel.add_listener(&xdg_toplevel_listener, &wld);
+        const toplevel_decoration = manager.get_toplevel_decoration(xdg_toplevel) orelse {
+            log.err("zxdg_decoration_manager_v1_get_toplevel_decoration failed", .{});
+            return error.UnexpectedWayland;
+        };
+        toplevel_decoration.set_mode(.server_side);
 
-            break :decor .{ .default = .{ .xdg_surface = xdg_surface, .xdg_toplevel = toplevel } };
+        var mode: xdg_decoration.ToplevelDecorationV1.Mode = undefined;
+        toplevel_decoration.add_listener(&xdg_decoration_listener, &mode);
+
+        wld.surface.commit();
+        _ = wl.display_roundtrip(display);
+
+        if (mode == .server_side) {
+            log.debug("Using xdg_decoration", .{});
+            assert(wld.pending_resize != null);
+            const r = wld.pending_resize.?;
+            try resize(&wld, r.width, r.height);
+            draw(&wld);
         }
+
+        xdg_decor_toplevel = .{
+            .xdg_decoration = .{
+                .xdg_surface = xdg_surface,
+                .xdg_toplevel = xdg_toplevel,
+                .xdg_toplevel_decoration = toplevel_decoration,
+                .supports_ssd = mode == .server_side,
+            },
+        };
+    }
+
+    const use_xdg_decoration = wli.xdg_decoration_manager != null and
+        xdg_decor_toplevel.xdg_decoration.supports_ssd;
+
+    wld.toplevel = if (use_xdg_decoration) xdg_decor_toplevel else blk: {
+        // TODO: Runtime load libdecor, fallback to no decorations
+        log.debug("xdg_decoration not supported, falling back to libdecor", .{});
+
+        // TODO: Only do this if libdecor is available, "no decorations" still need this
+        if (wli.xdg_decoration_manager != null) {
+            xdg_decor_toplevel.xdg_decoration.xdg_toplevel_decoration.destroy();
+            xdg_decor_toplevel.xdg_decoration.xdg_toplevel.destroy();
+            xdg_decor_toplevel.xdg_decoration.xdg_surface.destroy();
+        }
+
+        const libdecor = c.libdecor_new(@ptrCast(display), null) orelse {
+            log.err("libdecor_new failed", .{});
+            return error.UnexpectedLibDecor;
+        };
+
+        const frame = c.libdecor_decorate(libdecor, @ptrCast(wld.surface), @ptrCast(@constCast(&libdecor_listener)), &wld) orelse {
+            log.err("libdecor decorate failed", .{});
+            return error.UnexpectedLibDecor;
+        };
+
+        wld.surface.commit();
+
+        break :blk .{ .libdecor = .{ .decor = libdecor, .frame = frame } };
     };
 
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
-
-    wld.surface.commit();
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
         if (wld.pending_resize) |r| {
@@ -402,16 +534,23 @@ fn alloc_shm(size: std.c.off_t) PosixShmError!std.c.fd_t {
 fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: [*:0]const u8, version: u32) callconv(.c) void {
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     const registry = registry_opt.?;
-    const iface_name = std.mem.span(interface_name);
 
-    if (std.mem.eql(u8, iface_name, std.mem.span(wl.Shm.interface.name))) {
-        wli.wl_shm = registry.bind(name, wl.Shm, version) orelse @panic("Failed to bind wl_shm");
-    } else if (std.mem.eql(u8, iface_name, std.mem.span(wl.Seat.interface.name))) {
-        wli.wl_seat = registry.bind(name, wl.Seat, version) orelse @panic("Failed to bind wl_seat");
-    } else if (std.mem.eql(u8, iface_name, std.mem.span(wl.Compositor.interface.name))) {
-        wli.wl_compositor = registry.bind(name, wl.Compositor, version) orelse @panic("Failed to bind wl_compositor");
-    } else if (std.mem.eql(u8, iface_name, std.mem.span(xdg.WmBase.interface.name))) {
-        wli.xdg_wm_base = registry.bind(name, xdg.WmBase, version);
+    const eq = struct {
+        pub inline fn eq(a: [*:0]const u8, b: anytype) bool {
+            return std.mem.eql(u8, std.mem.span(a), std.mem.span(b.interface.name));
+        }
+    }.eq;
+
+    if (eq(interface_name, wl.Shm)) {
+        wli.wl_shm = registry.bind(name, wl.Shm, version);
+    } else if (eq(interface_name, wl.Seat)) {
+        wli.wl_seat = registry.bind(name, wl.Seat, version);
+    } else if (eq(interface_name, wl.Compositor)) {
+        wli.wl_compositor = registry.bind(name, wl.Compositor, version);
+    } else if (eq(interface_name, xdg_shell.WmBase)) {
+        wli.xdg_wm_base = registry.bind(name, xdg_shell.WmBase, version);
+    } else if (eq(interface_name, xdg_decoration.DecorationManagerV1)) {
+        wli.xdg_decoration_manager = registry.bind(name, xdg_decoration.DecorationManagerV1, version);
     }
 }
 
@@ -419,7 +558,7 @@ fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) c
     _ = data;
     _ = registry;
     _ = name;
-    unreachable;
+    // unreachable;
 }
 
 fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) callconv(.c) void {
@@ -429,18 +568,17 @@ fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) ca
     if (format == .argb8888) wli.argb8888 = true;
 }
 
-fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg.WmBase, serial: u32) callconv(.c) void {
+fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) callconv(.c) void {
     _ = data;
     wm_base.?.pong(serial);
 }
 
-fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg.Surface, serial: u32) callconv(.c) void {
-    _ = surface;
-    const wld: *WlData = @ptrCast(@alignCast(data));
-    wld.toplevel.default.xdg_surface.ack_configure(serial);
+fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, serial: u32) callconv(.c) void {
+    _ = data;
+    surface.?.ack_configure(serial);
 }
 
-fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg.Toplevel, width: i32, height: i32, states: wayland.Array) callconv(.c) void {
+fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states: wayland.Array) callconv(.c) void {
     _ = toplevel;
     _ = states;
 
@@ -457,7 +595,7 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg.Toplevel, width
     }
 }
 
-fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg.Toplevel, width: i32, height: i32) callconv(.c) void {
+fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32) callconv(.c) void {
     _ = toplevel;
 
     const wld: *WlData = @ptrCast(@alignCast(data));
@@ -466,13 +604,13 @@ fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg.Toplevel,
     log.debug("xdg toplevel configure bounds {},{}", .{ width, height });
 }
 
-fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg.Toplevel, capabilities: wayland.Array) callconv(.c) void {
+fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, capabilities: wayland.Array) callconv(.c) void {
     _ = data;
     _ = toplevel;
     log.debug("xdg toplevel capabilities count {}", .{capabilities.size});
 }
 
-fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg.Toplevel) callconv(.c) void {
+fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) callconv(.c) void {
     _ = toplevel;
 
     const wld: *WlData = @ptrCast(@alignCast(data));
@@ -538,12 +676,6 @@ fn handleLibdecorConfigure(frame: ?*c.libdecor_frame, config: ?*c.libdecor_confi
     };
 }
 
-fn handleLibdecorCommit(frame: ?*c.libdecor_frame, data: ?*anyopaque) callconv(.c) void {
-    _ = frame;
-    _ = data;
-    log.debug("handleLibdecorCommit", .{});
-}
-
 fn handleLibdecorClose(frame: ?*c.libdecor_frame, data: ?*anyopaque) callconv(.c) void {
     _ = frame;
     const wld: *WlData = @ptrCast(@alignCast(data));
@@ -554,6 +686,14 @@ fn handleLibdecorDismissPopup(frame: ?*c.libdecor_frame, seat_name: [*c]const u8
     _ = frame;
     _ = data;
     log.debug("handleLibdecorDismissPopup seat: {s}", .{seat_name});
+}
+
+fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) callconv(.c) void {
+    _ = toplevel_decoration;
+    log.debug("xdg_decoration configure: {}", .{mode});
+
+    const mode_ptr: *xdg_decoration.ToplevelDecorationV1.Mode = @ptrCast(@alignCast(data));
+    mode_ptr.* = mode;
 }
 
 var rv: i32 = 5;
@@ -592,7 +732,7 @@ fn drawRect(wld: *WlData, pixels: []Pixel, x: i32, y: i32, w: i32, h: i32, color
     const ux_min: usize = @max(0, x);
     const ux_max: usize = @intCast(@min(wld.width - 1, x + w));
     const uy_min: usize = @max(0, y);
-    const uy_max: usize = @intCast(@min(wld.height - 1, y + h));
+    const uy_max: usize = @intCast(@abs(@min(wld.height - 1, y + h)));
 
     for (ux_min..ux_max) |bx| {
         for (uy_min..uy_max) |by| {
