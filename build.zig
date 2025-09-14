@@ -89,7 +89,6 @@ fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: 
         .root_module = main_module,
         .use_llvm = force_llvm,
     });
-    exe.linkSystemLibrary("libdecor-0");
 
     return exe;
 }
