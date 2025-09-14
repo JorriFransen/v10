@@ -7,7 +7,6 @@ const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const libdecor = @import("libdecor.zig");
 
 // TODO: Check if preferred_buffer_scale is relevant
-// TODO: Fix crash when disconnecting external display (maybe just unreachable in handler)
 
 const assert = std.debug.assert;
 
@@ -15,6 +14,7 @@ const initial_window_width: i32 = 800;
 const initial_window_height: i32 = 600;
 
 const WlInitData = struct {
+    wld: *WlData,
     wl_shm: ?*wl.Shm = null,
     wl_compositor: ?*wl.Compositor = null,
     wl_seat: ?*wl.Seat = null,
@@ -36,11 +36,8 @@ const WlData = struct {
     running: bool = true,
     should_draw: bool = false,
 
-    free_buffers: u8 = 0,
-    buffer_index: usize = 0,
-    pool: *wl.ShmPool = undefined,
-    buffers: ?[2]*wl.Buffer = null,
-    buffer_data: [2][*]u8 = undefined,
+    pool: ?*wl.ShmPool = undefined,
+    buffers: [3]Buffer = undefined,
 
     display: *wl.Display = undefined,
     shm: *wl.Shm = undefined,
@@ -56,8 +53,22 @@ const WlData = struct {
     height: i32 = -1,
     bound_width: i32 = undefined,
     bound_height: i32 = undefined,
+    max_width: i32 = undefined,
+    max_height: i32 = undefined,
+    should_resize_shm: bool = undefined,
+    shm_size: usize = undefined,
+    shm_ptr: [*]u8 = undefined,
 
     pending_resize: ?PendingResize = null,
+};
+
+const Buffer = struct {
+    wld: *WlData,
+    handle: ?*wl.Buffer,
+    offset: i32,
+    free: bool,
+    width: i32,
+    height: i32,
 };
 
 const Toplevel = union(enum) {
@@ -164,6 +175,15 @@ const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{
     .configure = handleXdgDecorationConfigure,
 };
 
+const wl_output_listener = wl.Output.Listener{
+    .geometry = @ptrCast(&nop),
+    .mode = handleWlOutputMode,
+    .done = handleWlOutputDone,
+    .scale = handleWlOutputScale,
+    .name = @ptrCast(&nop),
+    .description = @ptrCast(&nop),
+};
+
 pub fn main() !void {
     var lwl = try std.DynLib.open("libwayland-client.so");
     defer lwl.close();
@@ -182,18 +202,18 @@ pub fn main() !void {
         return error.UnexpectedWayland;
     };
 
-    var wli = WlInitData{};
+    var wld: WlData = .{
+        .running = true,
+        .display = display,
+    };
+
+    var wli = WlInitData{ .wld = &wld };
     wl_registry.add_listener(&wl_registry_listener, &wli);
     if (wl.display_roundtrip(display) == -1) {
         log.err("wl_display_roundtrip failed", .{});
         return error.UnexpectedWayland;
     }
     defer wl_registry.destroy();
-
-    var wld: WlData = .{
-        .running = true,
-        .display = display,
-    };
 
     if (wli.wl_shm) |shm| wld.shm = shm else {
         log.err("wl_shm not available", .{});
@@ -212,12 +232,15 @@ pub fn main() !void {
         return error.UnexpectedWayland;
     }
 
-    // for format events, seat
+    // for format events, seat, outputs
     wld.shm.add_listener(&wl_shm_listener, &wli);
     wld.seat.add_listener(&wl_seat_listener, &wli);
     _ = wl.display_roundtrip(display);
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
+    log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
+
+    try resize_shm(&wld);
 
     if (wli.seat_capabilities.keyboard == false) {
         log.debug("keyboard not available", .{});
@@ -280,7 +303,8 @@ pub fn main() !void {
             assert(wld.pending_resize != null);
             const r = wld.pending_resize.?;
             try resize(&wld, r.width, r.height);
-            draw(&wld);
+            const buffer = aquireFreeBuffer(&wld).?;
+            draw(&wld, buffer);
         }
 
         xdg_decor_toplevel = .{
@@ -334,7 +358,8 @@ pub fn main() !void {
             if (wld.pending_resize) |r| {
                 try resize(&wld, r.width, r.height);
             }
-            draw(&wld);
+            const buffer = aquireFreeBuffer(&wld).?;
+            draw(&wld, buffer);
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         } else {
@@ -367,94 +392,30 @@ pub fn main() !void {
             try resize(&wld, r.width, r.height);
         }
 
-        if (wld.should_draw and wld.free_buffers > 0) {
-            draw(&wld);
-
-            wld.should_draw = false;
+        if (wld.should_draw) {
+            if (aquireFreeBuffer(&wld)) |buffer| {
+                draw(&wld, buffer);
+            } else {
+                _ = wl.display_roundtrip(display);
+                continue;
+            }
         }
 
         _ = wl.display_flush(display);
     }
 }
 
-const ResizeError =
-    PosixShmError ||
-    error{
-        MmapFailed,
-        WlShmCreatePoolFailed,
-        WlPoolCreateBufferFailed,
-    };
-
-fn resize(wld: *WlData, width: i32, height: i32) ResizeError!void {
-    if (!(width == wld.width and height == wld.height)) {
-        if (wld.buffers) |buffers| {
-            const old_size = @as(usize, @intCast(wld.width * wld.height)) * @sizeOf(Pixel);
-            _ = std.c.munmap(@ptrCast(@alignCast(wld.buffer_data[0])), old_size * 2);
-            for (buffers) |buffer| {
-                buffer.destroy();
-            }
-
-            wld.pool.destroy();
-        }
-
-        if (width == 0 and height == 0) {
-            wld.width = initial_window_width;
-            wld.height = initial_window_height;
-        } else {
-            wld.width = width;
-            wld.height = height;
-        }
-
-        const stride = wld.width * @sizeOf(Pixel);
-        const buffer_size = stride * wld.height;
-        const new_size = buffer_size * 2;
-
-        const fd = try alloc_shm(new_size);
-        defer _ = std.c.close(fd);
-
-        const prot = std.c.PROT.READ | std.c.PROT.WRITE;
-        const map = std.c.MAP{ .TYPE = .SHARED };
-        const mapped = std.c.mmap(null, @intCast(new_size), prot, map, fd, 0);
-        if (mapped == std.c.MAP_FAILED) {
-            log.err("mmap call failed during buffer resize", .{});
-            return error.MmapFailed;
-        }
-        wld.buffer_data[0] = @ptrCast(mapped);
-        wld.buffer_data[1] = @ptrCast(@as([*]u8, @ptrCast(mapped)) + @as(usize, @intCast(buffer_size)));
-
-        wld.pool = wld.shm.create_pool(fd, new_size) orelse {
-            log.err("wl_shm_create_pool_failed", .{});
-            return error.WlShmCreatePoolFailed;
-        };
-
-        var buffers: [2]*wl.Buffer = undefined;
-        buffers[0] = wld.pool.create_buffer(0, wld.width, wld.height, stride, .argb8888) orelse {
-            log.err("wl_pool_create_buffer_failed", .{});
-            return error.WlPoolCreateBufferFailed;
-        };
-        buffers[0].add_listener(&wl_buffer_listener, wld);
-
-        buffers[1] = wld.pool.create_buffer(buffer_size, wld.width, wld.height, stride, .argb8888) orelse {
-            log.err("wl_pool_create_buffer_failed", .{});
-            return error.WlPoolCreateBufferFailed;
-        };
-        buffers[1].add_listener(&wl_buffer_listener, wld);
-
-        wld.free_buffers = 2;
-        wld.buffers = buffers;
-    }
-
-    wld.should_draw = true;
-    wld.pending_resize = null;
-}
-
 const PosixShmError = error{
     ShmOpenFailed,
     ShmUnlinkFailed,
     FtruncateFailed,
+    MmapFailed,
+    WlShmCreatePoolFailed,
+    WlPoolCreateBufferFailed,
 };
 
-fn alloc_shm(size: std.c.off_t) PosixShmError!std.c.fd_t {
+fn resize_shm(wld: *WlData) PosixShmError!void {
+    log.debug("resize_shm", .{});
     const S = std.posix.S;
 
     var name_buf: [16]u8 = undefined;
@@ -468,24 +429,111 @@ fn alloc_shm(size: std.c.off_t) PosixShmError!std.c.fd_t {
 
     const open_flags = std.posix.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
     const mode: std.c.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
-    // TODO: Check for shm_open error
     const fd = std.c.shm_open(name, @bitCast(open_flags), mode);
     if (fd < 0) {
         log.err("shm_open failed, errno: {}", .{std.posix.errno(fd)});
         return error.ShmOpenFailed;
     }
+    defer _ = std.c.close(fd);
 
     if (std.c.shm_unlink(name) != 0) {
         log.err("shm_unlink failed, errno: {}", .{std.posix.errno(-1)});
         return error.ShmUnlinkFailed;
     }
 
-    if (std.c.ftruncate(fd, size) != 0) {
+    const pixel_count: usize = @intCast(wld.max_width * wld.max_height);
+    const buffer_size: usize = pixel_count * @sizeOf(Pixel);
+    log.debug("Buffer size: {}", .{buffer_size});
+    wld.shm_size = buffer_size * wld.buffers.len;
+    log.debug("Allocating shm: {}", .{wld.shm_size});
+
+    if (std.c.ftruncate(fd, @intCast(wld.shm_size)) != 0) {
         log.err("ftruncate failed, errno: {}", .{std.posix.errno(-1)});
         return error.FtruncateFailed;
     }
 
-    return fd;
+    const prot = std.c.PROT.READ | std.c.PROT.WRITE;
+    const map = std.c.MAP{ .TYPE = .SHARED };
+
+    const mapped = std.c.mmap(null, @intCast(wld.shm_size), prot, map, fd, 0);
+    if (mapped == std.c.MAP_FAILED) {
+        log.err("mmap call failed during buffer resize", .{});
+        return error.MmapFailed;
+    }
+    wld.shm_ptr = @ptrCast(mapped);
+
+    if (wld.pool) |p| p.destroy();
+
+    const pool = wld.shm.create_pool(fd, @intCast(wld.shm_size)) orelse {
+        log.err("wl_shm_create_pool failed", .{});
+        return error.WlShmCreatePoolFailed;
+    };
+    wld.pool = pool;
+
+    var width = wld.width;
+    var height = wld.height;
+    if (width == -1 and height == -1) {
+        width = initial_window_width;
+        height = initial_window_height;
+    }
+    const stride = width * @sizeOf(Pixel);
+
+    var offset: i32 = 0;
+    for (&wld.buffers) |*buffer| {
+        const handle = pool.create_buffer(offset, width, height, stride, .argb8888) orelse {
+            log.err("wl_pool_create_buffer failed", .{});
+            return error.WlPoolCreateBufferFailed;
+        };
+
+        buffer.* = .{
+            .wld = wld,
+            .handle = handle,
+            .offset = offset,
+            .free = true,
+            .width = width,
+            .height = height,
+        };
+        handle.add_listener(&wl_buffer_listener, buffer);
+
+        offset += @intCast(buffer_size);
+    }
+
+    wld.should_resize_shm = false;
+    // TODO: Signal a buffer resize is required!
+}
+
+fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}!void {
+    if (width == 0 and height == 0) {
+        wld.width = initial_window_width;
+        wld.height = initial_window_height;
+    } else {
+        wld.width = width;
+        wld.height = height;
+    }
+
+    wld.should_draw = true;
+    wld.pending_resize = null;
+}
+
+fn aquireFreeBuffer(wld: *WlData) ?*Buffer {
+    for (&wld.buffers) |*buffer| {
+        if (buffer.free) {
+            if (buffer.handle == null or buffer.width != wld.width or buffer.height != wld.height) {
+                if (buffer.handle) |h| h.destroy();
+
+                const new_buf = wld.pool.?.create_buffer(buffer.offset, wld.width, wld.height, wld.width * @sizeOf(Pixel), .argb8888) orelse @panic("Buffer recreation failed");
+                new_buf.add_listener(&wl_buffer_listener, buffer);
+                buffer.handle = new_buf;
+                buffer.width = wld.width;
+                buffer.height = wld.height;
+            }
+
+            buffer.free = false;
+            return buffer;
+        }
+    }
+
+    return null;
 }
 
 fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: [*:0]const u8, version: u32) callconv(.c) void {
@@ -508,14 +556,17 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
         wli.xdg_wm_base = registry.bind(name, xdg_shell.WmBase, version);
     } else if (eq(interface_name, xdg_decoration.DecorationManagerV1)) {
         wli.xdg_decoration_manager = registry.bind(name, xdg_decoration.DecorationManagerV1, version);
+    } else if (eq(interface_name, wl.Output)) {
+        const output = registry.bind(name, wl.Output, version).?;
+        output.add_listener(&wl_output_listener, wli.wld);
     }
 }
 
 fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) callconv(.c) void {
     _ = data;
     _ = registry;
-    _ = name;
-    // unreachable;
+
+    log.debug("Remove global: {}", .{name});
 }
 
 fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) callconv(.c) void {
@@ -582,11 +633,17 @@ fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_dat
     wld.should_draw = true;
 }
 
-fn handleWlBufferRelease(data: ?*anyopaque, buffer: ?*wl.Buffer) callconv(.c) void {
-    _ = buffer;
+fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) callconv(.c) void {
+    _ = wl_buffer;
+    const buffer: *Buffer = @ptrCast(@alignCast(data));
+    const wld = buffer.wld;
 
-    const wld: *WlData = @ptrCast(@alignCast(data));
-    wld.free_buffers += 1;
+    if (buffer.width != wld.width or buffer.height != wld.height) {
+        buffer.handle.?.destroy();
+        buffer.handle = null;
+    }
+
+    buffer.free = true;
 }
 
 fn handleWlSeatCapabilities(data: ?*anyopaque, seat: ?*wl.Seat, capabilities: wl.Seat.Capability) callconv(.c) void {
@@ -653,13 +710,38 @@ fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_de
     mode_ptr.* = mode;
 }
 
+fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) callconv(.c) void {
+    _ = output;
+    _ = flags;
+    _ = refresh;
+    const wld: *WlData = @ptrCast(@alignCast(data));
+    const new_pixel_count = width * height;
+    const max_pixel_count = wld.max_width * wld.max_height;
+    if (new_pixel_count > max_pixel_count) {
+        wld.max_width = width;
+        wld.max_height = height;
+        wld.should_resize_shm = true;
+    }
+}
+
+fn handleWlOutputDone(data: ?*anyopaque, output: ?*wl.Output) callconv(.c) void {
+    _ = data;
+    _ = output;
+    // log.debug("Output done: {}:\n", .{output.?});
+}
+
+fn handleWlOutputScale(data: ?*anyopaque, output: ?*wl.Output, factor: i32) callconv(.c) void {
+    _ = data;
+    _ = output;
+    _ = factor;
+    // log.debug("Output scale: {}: {}", .{ output.?, factor });
+}
+
 var rv: i32 = 5;
 var ry: i32 = 0;
-fn draw(wld: *WlData) void {
-    wld.free_buffers -= 1;
-
-    const buffer_ptr = wld.buffer_data[wld.buffer_index];
-    const pixels = @as([*]Pixel, @ptrCast(buffer_ptr))[0..@intCast(wld.width * wld.height)];
+fn draw(wld: *WlData, buffer: *Buffer) void {
+    const data = wld.shm_ptr + @as(usize, @intCast(buffer.offset));
+    const pixels = @as([*]Pixel, @ptrCast(data))[0..@intCast(buffer.width * buffer.height)];
     @memset(pixels, .{ .r = 0, .g = 0, .b = 0, .a = 255 });
 
     // TODO: This should not be in draw!
@@ -676,20 +758,21 @@ fn draw(wld: *WlData) void {
     drawRect(wld, pixels, 10, ry, 100, 100, .{ .r = 255, .g = 0, .b = 0 });
     drawRect(wld, pixels, wld.width - 110, wld.height - 110, 100, 100, .{ .r = 0, .g = 255, .b = 0 });
 
-    wld.surface.attach(wld.buffers.?[wld.buffer_index], 0, 0);
+    wld.surface.attach(buffer.handle, 0, 0);
     wld.surface.damage(0, 0, wld.width, wld.height);
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.?.add_listener(&wl_callback_listener, wld);
     _ = wl.display_flush(wld.display);
-    wld.buffer_index = 1 - wld.buffer_index;
+
+    wld.should_draw = false;
 }
 
 fn drawRect(wld: *WlData, pixels: []Pixel, x: i32, y: i32, w: i32, h: i32, color: Pixel) void {
     const ux_min: usize = @max(0, x);
     const ux_max: usize = @intCast(@min(wld.width - 1, x + w));
     const uy_min: usize = @max(0, y);
-    const uy_max: usize = @intCast(@abs(@min(wld.height - 1, y + h)));
+    const uy_max: usize = @intCast(@min(wld.height - 1, y + h));
 
     for (ux_min..ux_max) |bx| {
         for (uy_min..uy_max) |by| {
