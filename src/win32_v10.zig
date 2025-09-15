@@ -5,11 +5,30 @@ const win32 = @import("win32.zig");
 const assert = std.debug.assert;
 
 var running = false;
-var bitmap_info = win32.BITMAPINFO{};
-var bitmap_memory: []u8 = &.{};
-var bitmap_width: c_int = undefined;
-var bitmap_height: c_int = undefined;
-const bytes_per_pixel: usize = 4;
+var global_back_buffer: OffscreenBuffer = undefined;
+
+pub const OffscreenBuffer = struct {
+    info: win32.BITMAPINFO,
+    memory: []u8,
+    width: i32,
+    height: i32,
+    pitch: i32,
+    bytes_per_pixel: i32,
+};
+
+pub const WindowDimensions = struct {
+    width: i32,
+    height: i32,
+};
+
+fn getWindowDimension(window: win32.HWND) WindowDimensions {
+    var client_rect: win32.RECT = undefined;
+    _ = win32.GetClientRect(window, &client_rect);
+    return .{
+        .width = client_rect.right - client_rect.left,
+        .height = client_rect.bottom - client_rect.top,
+    };
+}
 
 pub fn main() u8 {
     const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
@@ -33,6 +52,8 @@ pub fn windowsEntry(
     _ = command_line;
     _ = cmd_show;
 
+    win32ResizeDibSection(&global_back_buffer, 1280, 720);
+
     const window_class = win32.WNDCLASSA{
         .style = win32.CS_OWNDC | win32.CS_HREDRAW | win32.CS_VREDRAW,
         .lpfnWndProc = windowProcA,
@@ -41,7 +62,7 @@ pub fn windowsEntry(
     };
 
     if (win32.RegisterClassA(&window_class) != 0) {
-        const window_handle_opt = win32.CreateWindowExA(
+        const window_opt = win32.CreateWindowExA(
             0,
             window_class.lpszClassName,
             "v10",
@@ -56,7 +77,7 @@ pub fn windowsEntry(
             null,
         );
 
-        if (window_handle_opt) |window_handle| {
+        if (window_opt) |window| {
             running = true;
             var x_offset: i32 = 0;
             const y_offset = 0;
@@ -70,14 +91,22 @@ pub fn windowsEntry(
                     _ = win32.DispatchMessageA(&msg);
                 }
 
-                renderWeirdGradient(x_offset, y_offset);
+                renderWeirdGradient(global_back_buffer, x_offset, y_offset);
                 x_offset += 1;
 
-                const device_context = win32.GetDC(window_handle);
-                var client_rect: win32.RECT = undefined;
-                _ = win32.GetClientRect(window_handle, &client_rect);
-                win32UpdateWindow(device_context, &client_rect, 0, 0, bitmap_width, bitmap_height);
-                _ = win32.ReleaseDC(window_handle, device_context);
+                const device_context = win32.GetDC(window);
+                const dimension = getWindowDimension(window);
+                win32DisplayBufferInWindow(
+                    device_context,
+                    dimension.width,
+                    dimension.height,
+                    global_back_buffer,
+                    0,
+                    0,
+                    global_back_buffer.width,
+                    global_back_buffer.height,
+                );
+                _ = win32.ReleaseDC(window, device_context);
             }
         } else {
             log.err("CreateWindow failed!", .{});
@@ -93,13 +122,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
     var result: win32.LRESULT = 0;
 
     switch (message) {
-        win32.WM_SIZE => {
-            var client_rect: win32.RECT = undefined;
-            _ = win32.GetClientRect(window, &client_rect);
-            const width = client_rect.right - client_rect.left;
-            const height = client_rect.bottom - client_rect.top;
-            win32ResizeDibSection(width, height);
-        },
+        win32.WM_SIZE => {},
         win32.WM_CLOSE, win32.WM_DESTROY => {
             running = false;
         },
@@ -122,9 +145,8 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
                 const w = paint.rcPaint.right - paint.rcPaint.left;
                 const h = paint.rcPaint.bottom - paint.rcPaint.top;
 
-                var client_rect: win32.RECT = undefined;
-                _ = win32.GetClientRect(window, &client_rect);
-                win32UpdateWindow(dc, &client_rect, x, y, w, h);
+                const dimension = getWindowDimension(window);
+                win32DisplayBufferInWindow(dc, dimension.width, dimension.height, global_back_buffer, x, y, w, h);
             }
             _ = win32.EndPaint(window, &paint);
         },
@@ -137,27 +159,26 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
     return result;
 }
 
-fn win32ResizeDibSection(width: c_int, height: c_int) void {
-    if (bitmap_memory.len > 0) {
-        _ = win32.VirtualFree(bitmap_memory.ptr, 0, win32.MEM_RELEASE);
+fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) void {
+    if (buffer.memory.len > 0) {
+        _ = win32.VirtualFree(buffer.memory.ptr, 0, win32.MEM_RELEASE);
     }
 
-    bitmap_width = width;
-    bitmap_height = height;
+    buffer.bytes_per_pixel = 4;
+    buffer.width = width;
+    buffer.height = height;
+    buffer.pitch = buffer.width * buffer.bytes_per_pixel;
 
-    bitmap_info = win32.BITMAPINFO{ .bmiHeader = .{
-        .biWidth = bitmap_width,
-        .biHeight = -bitmap_height,
+    buffer.info = win32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = buffer.width,
+        .biHeight = -buffer.height,
         .biPlanes = 1,
         .biBitCount = 32,
         .biCompression = win32.BI_RGB,
     } };
 
-    const uwidth: usize = @intCast(bitmap_width);
-    const uheight: usize = @intCast(bitmap_height);
-
-    const bitmap_memory_size: usize = uwidth * uheight * bytes_per_pixel;
-    bitmap_memory = @as([*]u8, @ptrCast(win32.VirtualAlloc(
+    const bitmap_memory_size: usize = @intCast(width * height * buffer.bytes_per_pixel);
+    buffer.memory = @as([*]u8, @ptrCast(win32.VirtualAlloc(
         null,
         bitmap_memory_size,
         win32.MEM_COMMIT,
@@ -165,23 +186,20 @@ fn win32ResizeDibSection(width: c_int, height: c_int) void {
     )))[0..bitmap_memory_size];
 }
 
-fn win32UpdateWindow(dc: win32.HDC, client_rect: *win32.RECT, x: c_int, y: c_int, width: c_int, height: c_int) void {
+fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: OffscreenBuffer, x: i32, y: i32, width: i32, height: i32) void {
     _ = x;
     _ = y;
     _ = width;
     _ = height;
 
-    const window_width = client_rect.right - client_rect.left;
-    const window_height = client_rect.bottom - client_rect.top;
-    win32.StretchDIBits(dc, 0, 0, bitmap_width, bitmap_height, 0, 0, window_width, window_height, bitmap_memory.ptr, &bitmap_info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+    win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
 }
 
-fn renderWeirdGradient(xoffset: i32, yoffset: i32) void {
-    const uwidth: usize = @intCast(bitmap_width);
-    const uheight: usize = @intCast(bitmap_height);
+fn renderWeirdGradient(buffer: OffscreenBuffer, xoffset: i32, yoffset: i32) void {
+    const uwidth: usize = @intCast(buffer.width);
+    const uheight: usize = @intCast(buffer.height);
 
-    const pitch = uwidth * bytes_per_pixel;
-    var row: [*]u8 = bitmap_memory.ptr;
+    var row: [*]u8 = buffer.memory.ptr;
     for (0..uheight) |uy| {
         const y: i32 = @intCast(uy);
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
@@ -193,6 +211,6 @@ fn renderWeirdGradient(xoffset: i32, yoffset: i32) void {
             pixel[0] = (@as(u16, g) << 8) | b;
             pixel += 1;
         }
-        row += pitch;
+        row += @intCast(buffer.pitch);
     }
 }

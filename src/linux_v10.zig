@@ -12,6 +12,7 @@ const assert = std.debug.assert;
 
 const initial_window_width: i32 = 800;
 const initial_window_height: i32 = 600;
+const bytes_per_pixel = 4;
 
 const WlInitData = struct {
     wld: *WlData,
@@ -21,15 +22,8 @@ const WlInitData = struct {
     xdg_wm_base: ?*xdg_shell.WmBase = null,
     xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
 
-    argb8888: bool = false,
+    xrgb8888: bool = false,
     seat_capabilities: wl.Seat.Capability = .{},
-};
-
-const Pixel = extern struct {
-    b: u8,
-    g: u8,
-    r: u8,
-    a: u8 = 255,
 };
 
 const WlData = struct {
@@ -258,8 +252,8 @@ pub fn main() !void {
 
     wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
 
-    if (wli.argb8888 == false) {
-        log.err("argb8888 format not avaliable", .{});
+    if (wli.xrgb8888 == false) {
+        log.err("xrgb8888 format not avaliable", .{});
         return error.UnexpectedWayland;
     }
 
@@ -296,15 +290,14 @@ pub fn main() !void {
 
         wld.surface.commit();
         _ = wl.display_roundtrip(display);
-        log.debug("xdg decoration roundtrip done", .{});
 
         if (mode == .server_side) {
             log.debug("Using xdg_decoration", .{});
             assert(wld.pending_resize != null);
             const r = wld.pending_resize.?;
             try resize(&wld, r.width, r.height);
-            const buffer = aquireFreeBuffer(&wld).?;
-            draw(&wld, buffer);
+            const buffer_index = aquireFreeBufferIndex(&wld).?;
+            draw(&wld, wld.buffers[buffer_index]);
         }
 
         xdg_decor_toplevel = .{
@@ -358,8 +351,8 @@ pub fn main() !void {
             if (wld.pending_resize) |r| {
                 try resize(&wld, r.width, r.height);
             }
-            const buffer = aquireFreeBuffer(&wld).?;
-            draw(&wld, buffer);
+            const buffer_index = aquireFreeBufferIndex(&wld).?;
+            draw(&wld, wld.buffers[buffer_index]);
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         } else {
@@ -387,13 +380,16 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
+    var x_offset: i32 = 0;
     while (wl.display_dispatch(display) != -1 and wld.running) {
         if (wld.pending_resize) |r| {
             try resize(&wld, r.width, r.height);
         }
 
         if (wld.should_draw) {
-            if (aquireFreeBuffer(&wld)) |buffer| {
+            if (aquireFreeBufferIndex(&wld)) |buffer_index| {
+                const buffer = wld.buffers[buffer_index];
+                renderWeirdGradient(buffer, x_offset, 0);
                 draw(&wld, buffer);
             } else {
                 _ = wl.display_roundtrip(display);
@@ -401,6 +397,7 @@ pub fn main() !void {
             }
         }
 
+        x_offset += 1;
         _ = wl.display_flush(display);
     }
 }
@@ -442,7 +439,7 @@ fn resize_shm(wld: *WlData) PosixShmError!void {
     }
 
     const pixel_count: usize = @intCast(wld.max_width * wld.max_height);
-    const buffer_size: usize = pixel_count * @sizeOf(Pixel);
+    const buffer_size: usize = pixel_count * bytes_per_pixel;
     log.debug("Buffer size: {}", .{buffer_size});
     wld.shm_size = buffer_size * wld.buffers.len;
     log.debug("Allocating shm: {}", .{wld.shm_size});
@@ -476,11 +473,11 @@ fn resize_shm(wld: *WlData) PosixShmError!void {
         width = initial_window_width;
         height = initial_window_height;
     }
-    const stride = width * @sizeOf(Pixel);
+    const stride = width * bytes_per_pixel;
 
     var offset: i32 = 0;
     for (&wld.buffers) |*buffer| {
-        const handle = pool.create_buffer(offset, width, height, stride, .argb8888) orelse {
+        const handle = pool.create_buffer(offset, width, height, stride, .xrgb8888) orelse {
             log.err("wl_pool_create_buffer failed", .{});
             return error.WlPoolCreateBufferFailed;
         };
@@ -515,13 +512,13 @@ fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}
     wld.pending_resize = null;
 }
 
-fn aquireFreeBuffer(wld: *WlData) ?*Buffer {
-    for (&wld.buffers) |*buffer| {
+fn aquireFreeBufferIndex(wld: *WlData) ?usize {
+    for (&wld.buffers, 0..) |*buffer, i| {
         if (buffer.free) {
             if (buffer.handle == null or buffer.width != wld.width or buffer.height != wld.height) {
                 if (buffer.handle) |h| h.destroy();
 
-                const new_buf = wld.pool.?.create_buffer(buffer.offset, wld.width, wld.height, wld.width * @sizeOf(Pixel), .argb8888) orelse @panic("Buffer recreation failed");
+                const new_buf = wld.pool.?.create_buffer(buffer.offset, wld.width, wld.height, wld.width * bytes_per_pixel, .xrgb8888) orelse @panic("Buffer recreation failed");
                 new_buf.add_listener(&wl_buffer_listener, buffer);
                 buffer.handle = new_buf;
                 buffer.width = wld.width;
@@ -529,7 +526,7 @@ fn aquireFreeBuffer(wld: *WlData) ?*Buffer {
             }
 
             buffer.free = false;
-            return buffer;
+            return i;
         }
     }
 
@@ -573,7 +570,7 @@ fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) ca
     _ = shm;
 
     const wli: *WlInitData = @ptrCast(@alignCast(data));
-    if (format == .argb8888) wli.argb8888 = true;
+    if (format == .xrgb8888) wli.xrgb8888 = true;
 }
 
 fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) callconv(.c) void {
@@ -737,27 +734,30 @@ fn handleWlOutputScale(data: ?*anyopaque, output: ?*wl.Output, factor: i32) call
     // log.debug("Output scale: {}: {}", .{ output.?, factor });
 }
 
-var rv: i32 = 5;
-var ry: i32 = 0;
-fn draw(wld: *WlData, buffer: *Buffer) void {
-    const data = wld.shm_ptr + @as(usize, @intCast(buffer.offset));
-    const pixels = @as([*]Pixel, @ptrCast(data))[0..@intCast(buffer.width * buffer.height)];
-    @memset(pixels, .{ .r = 0, .g = 0, .b = 0, .a = 255 });
+fn renderWeirdGradient(buffer: Buffer, xoffset: i32, yoffset: i32) void {
+    const uwidth: usize = @intCast(buffer.width);
+    const uheight: usize = @intCast(buffer.height);
 
-    // TODO: This should not be in draw!
-    ry += rv;
-    if (ry < 0) {
-        ry = 0;
-        rv *= -1;
+    const pitch = uwidth * bytes_per_pixel;
+    var row: [*]u8 = buffer.wld.shm_ptr + @as(usize, @intCast(buffer.offset));
+    for (0..uheight) |uy| {
+        const y: i32 = @intCast(uy);
+        var pixel: [*]u32 = @ptrCast(@alignCast(row));
+
+        for (0..uwidth) |ux| {
+            const x: i32 = @intCast(ux);
+
+            const b: u8 = @truncate(@as(usize, @intCast(x + xoffset)));
+            const g: u8 = @truncate(@as(usize, @intCast(y + yoffset)));
+            pixel[0] = (@as(u16, g) << 8) | b;
+            pixel += 1;
+        }
+
+        row += pitch;
     }
-    if (ry + 100 > wld.height) {
-        ry = wld.height - 100;
-        rv *= -1;
-    }
+}
 
-    drawRect(wld, pixels, 10, ry, 100, 100, .{ .r = 255, .g = 0, .b = 0 });
-    drawRect(wld, pixels, wld.width - 110, wld.height - 110, 100, 100, .{ .r = 0, .g = 255, .b = 0 });
-
+fn draw(wld: *WlData, buffer: Buffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
     wld.surface.damage(0, 0, wld.width, wld.height);
     wld.surface.commit();
@@ -766,19 +766,6 @@ fn draw(wld: *WlData, buffer: *Buffer) void {
     _ = wl.display_flush(wld.display);
 
     wld.should_draw = false;
-}
-
-fn drawRect(wld: *WlData, pixels: []Pixel, x: i32, y: i32, w: i32, h: i32, color: Pixel) void {
-    const ux_min: usize = @max(0, x);
-    const ux_max: usize = @intCast(@min(wld.width - 1, x + w));
-    const uy_min: usize = @max(0, y);
-    const uy_max: usize = @intCast(@min(wld.height - 1, y + h));
-
-    for (ux_min..ux_max) |bx| {
-        for (uy_min..uy_max) |by| {
-            pixels[bx + (by * @as(usize, @intCast(wld.width)))] = color;
-        }
-    }
 }
 
 fn nop() callconv(.c) void {}
