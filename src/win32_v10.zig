@@ -96,14 +96,14 @@ pub fn windowsEntry(
                     _ = win32.DispatchMessageA(&msg);
                 }
 
+                x_offset += 1;
+
                 for (0..xinput.XUSER_MAX_COUNT) |controller_index| {
                     var controller_state: xinput.STATE = undefined;
                     if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
                         // Controller present
                         const pad = &controller_state.gamepad;
                         const buttons = pad.buttons;
-                        // const stick_x = pad.thumb_l_x;
-                        // const stick_y = pad.thumb_l_y;
 
                         if (buttons.a) {
                             y_offset += 2;
@@ -116,11 +116,10 @@ pub fn windowsEntry(
                 // const vibration = xinput.VIBRATION{ .left_motor_speed = 30000, .right_motor_speed = 60000 };
                 // _ = xinput.XInputSetState(0, &vibration);
 
-                renderWeirdGradient(global_back_buffer, x_offset, y_offset);
-                x_offset += 1;
+                renderWeirdGradient(&global_back_buffer, x_offset, y_offset);
 
                 const dimension = getWindowDimension(window);
-                win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, global_back_buffer);
+                win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
             }
         } else {
             log.err("CreateWindow failed!", .{});
@@ -143,9 +142,44 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             log.debug("WM_ACTIVATEAPP", .{});
         },
 
-        win32.WM_KEYDOWN => {
-            if (wparam == win32.VK_ESCAPE) {
-                global_running = false;
+        win32.WM_SYSKEYDOWN,
+        win32.WM_SYSKEYUP,
+        win32.WM_KEYDOWN,
+        win32.WM_KEYUP,
+        => {
+            const vk_code = wparam;
+            const was_down = (lparam & (1 << 30)) != 0;
+            const is_down = (lparam & (1 << 31)) == 0;
+
+            if (is_down != was_down) {
+                if (vk_code == win32.VK_W) {
+                    //
+                } else if (vk_code == win32.VK_A) {
+                    //
+                } else if (vk_code == win32.VK_S) {
+                    //
+                } else if (vk_code == win32.VK_D) {
+                    //
+                } else if (vk_code == win32.VK_Q) {
+                    //
+                } else if (vk_code == win32.VK_E) {
+                    //
+                } else if (vk_code == win32.VK_UP) {
+                    //
+                } else if (vk_code == win32.VK_LEFT) {
+                    //
+                } else if (vk_code == win32.VK_DOWN) {
+                    //
+                } else if (vk_code == win32.VK_RIGHT) {
+                    //
+                } else if (vk_code == win32.VK_ESCAPE) {
+                    global_running = false;
+                } else if (vk_code == win32.VK_SPACE) {
+                    log.debug("space: {s} {s}", .{
+                        if (is_down) "is_down" else "",
+                        if (was_down) "was_down" else "",
+                    });
+                }
             }
         },
 
@@ -154,7 +188,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             const dc = win32.BeginPaint(window, &paint);
             {
                 const dimension = getWindowDimension(window);
-                win32DisplayBufferInWindow(dc, dimension.width, dimension.height, global_back_buffer);
+                win32DisplayBufferInWindow(dc, dimension.width, dimension.height, &global_back_buffer);
             }
             _ = win32.EndPaint(window, &paint);
         },
@@ -194,11 +228,19 @@ fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) 
     )))[0..bitmap_memory_size];
 }
 
-fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: OffscreenBuffer) void {
+fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: *OffscreenBuffer) void {
+
+    // TODO: Only set this after resize?
+    if (window_width < buffer.width or window_height < buffer.height) {
+        _ = win32.SetStretchBltMode(dc, win32.STRETCH_DELETESCANS);
+    } else {
+        _ = win32.SetStretchBltMode(dc, 0);
+    }
+
     win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
 }
 
-fn renderWeirdGradient(buffer: OffscreenBuffer, xoffset: i32, yoffset: i32) void {
+fn renderWeirdGradient(buffer: *OffscreenBuffer, xoffset: i32, yoffset: i32) void {
     const uwidth: usize = @intCast(buffer.width);
     const uheight: usize = @intCast(buffer.height);
 

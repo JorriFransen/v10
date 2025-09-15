@@ -600,7 +600,16 @@ pub const BI_RLE8: c_int = 1;
 pub const BI_RLE4: c_int = 2;
 pub const BI_BITFIELDS: c_int = 3;
 pub const BI_JPEG: c_int = 4;
-pub const BI_PNG: c_int = 5;
+pub const bi_png: c_int = 5;
+
+pub const STRETCH_ANDSCANS = 0x01;
+pub const STRETCH_ORSCANS = 0x02;
+pub const STRETCH_DELETESCANS = 0x03;
+pub const STRETCH_HALFTONE = 0x04;
+pub const BLACKONWHITE = STRETCH_ANDSCANS;
+pub const COLORONCOLOR = STRETCH_DELETESCANS;
+pub const HALFTONE = STRETCH_HALFTONE;
+pub const WHITEONBLACK = STRETCH_ORSCANS;
 
 pub const WNDCLASSA = extern struct {
     style: c_uint = 0,
@@ -755,6 +764,7 @@ pub extern "user32" fn GetClientRect(hwnd: HWND, rect: LPRECT) callconv(.winapi)
 pub extern "gdi32" fn PatBlt(hdc: ?HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: DWORD) callconv(.winapi) BOOL;
 pub extern "gdi32" fn CreateDIBSection(hdc: ?HDC, bitmap_info: *const BITMAPINFO, usage: c_uint, ppv_bit: **anyopaque, section: ?HANDLE, offset: DWORD) callconv(.winapi) HBITMAP;
 pub extern "gdi32" fn StretchDIBits(hdc: HDC, xdest: c_int, ydest: c_int, wdest: c_int, hdest: c_int, xsrc: c_int, ysrc: c_int, wsrc: c_int, hsrc: c_int, bits: *const anyopaque, bits_info: *const BITMAPINFO, usage: c_uint, rop: DWORD) callconv(.winapi) void;
+pub extern "gdi32" fn SetStretchBltMode(hdc: HDC, mode: c_int) callconv(.winapi) c_int;
 pub extern "gdi32" fn DeleteObject(obj: HGDIOBJ) callconv(.winapi) BOOL;
 pub extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(.winapi) HDC;
 pub extern "gdi32" fn GetDC(window: ?HWND) callconv(.winapi) HDC;

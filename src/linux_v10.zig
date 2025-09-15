@@ -323,8 +323,8 @@ pub fn main() !void {
             assert(wld.pending_resize != null);
             const r = wld.pending_resize.?;
             try resize(&wld, r.width, r.height);
-            const buffer_index = aquireFreeBufferIndex(&wld).?;
-            draw(&wld, wld.buffers[buffer_index]);
+            const buffer = aquireFreeBufferIndex(&wld).?;
+            draw(&wld, buffer);
         }
 
         xdg_decor_toplevel = .{
@@ -378,8 +378,8 @@ pub fn main() !void {
             if (wld.pending_resize) |r| {
                 try resize(&wld, r.width, r.height);
             }
-            const buffer_index = aquireFreeBufferIndex(&wld).?;
-            draw(&wld, wld.buffers[buffer_index]);
+            const buffer = aquireFreeBufferIndex(&wld).?;
+            draw(&wld, buffer);
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         } else {
@@ -414,8 +414,7 @@ pub fn main() !void {
         }
 
         if (wld.should_draw) {
-            if (aquireFreeBufferIndex(&wld)) |buffer_index| {
-                const buffer = wld.buffers[buffer_index];
+            if (aquireFreeBufferIndex(&wld)) |buffer| {
                 renderWeirdGradient(buffer, x_offset, 0);
                 draw(&wld, buffer);
             } else {
@@ -551,7 +550,7 @@ fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}
     wld.pending_resize = null;
 }
 
-fn aquireFreeBufferIndex(wld: *WlData) ?usize {
+fn aquireFreeBufferIndex(wld: *WlData) ?*Buffer {
     for (&wld.buffers, 0..) |*buffer, i| {
         if (buffer.free) {
             if (buffer.handle == null or buffer.width != wld.width or buffer.height != wld.height) {
@@ -775,7 +774,7 @@ fn handleWlOutputScale(data: ?*anyopaque, output: ?*wl.Output, factor: i32) call
     // log.debug("Output scale: {}: {}", .{ output.?, factor });
 }
 
-fn renderWeirdGradient(buffer: Buffer, xoffset: i32, yoffset: i32) void {
+fn renderWeirdGradient(buffer: *Buffer, xoffset: i32, yoffset: i32) void {
     const uwidth: usize = @intCast(buffer.width);
     const uheight: usize = @intCast(buffer.height);
 
@@ -798,7 +797,7 @@ fn renderWeirdGradient(buffer: Buffer, xoffset: i32, yoffset: i32) void {
     }
 }
 
-fn draw(wld: *WlData, buffer: Buffer) void {
+fn draw(wld: *WlData, buffer: *Buffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
     wld.surface.damage(0, 0, wld.window_width, wld.window_height);
     wld.surface.commit();

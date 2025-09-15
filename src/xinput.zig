@@ -21,7 +21,7 @@ pub const GAMEPAD = extern struct {
     thumb_r_y: win32.SHORT,
 };
 
-pub const GamepadButtons = packed struct(win32.DWORD) {
+pub const GamepadButtons = packed struct(win32.WORD) {
     dpad_up: bool,
     dpad_down: bool,
     dpad_left: bool,
@@ -37,7 +37,6 @@ pub const GamepadButtons = packed struct(win32.DWORD) {
     b: bool,
     x: bool,
     y: bool,
-    __reserved1__: u16,
 };
 
 pub const VIBRATION = extern struct {
