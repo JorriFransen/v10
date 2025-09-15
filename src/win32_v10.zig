@@ -113,8 +113,8 @@ pub fn windowsEntry(
                     }
                 }
 
-                const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 60000 };
-                _ = xinput.XInputSetState(0, &vibration);
+                // const vibration = xinput.VIBRATION{ .left_motor_speed = 30000, .right_motor_speed = 60000 };
+                // _ = xinput.XInputSetState(0, &vibration);
 
                 renderWeirdGradient(global_back_buffer, x_offset, y_offset);
                 x_offset += 1;

@@ -61,7 +61,18 @@ pub const GAMEPAD_X = 0x4000;
 pub const GAMEPAD_Y = 0x8000;
 
 pub fn load() void {
-    var lib = std.DynLib.open("xinput1_3.dll");
+    const versions = [_][]const u8{
+        "xinput1_3.dll",
+        "xinput1_4.dll",
+        "xinput9_1_0.dll",
+    };
+
+    var lib: ?std.DynLib = null;
+    for (versions) |version| {
+        lib = std.DynLib.open(version) catch continue;
+        log.debug("Loaded {s}", .{version});
+        break;
+    }
     var loaded = true;
 
     if (lib) |*l| {
@@ -78,7 +89,7 @@ pub fn load() void {
                 };
             }
         }
-    } else |_| {
+    } else {
         loaded = false;
     }
 
