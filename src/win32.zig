@@ -29,10 +29,63 @@ pub const BYTE = zig_win32.BYTE;
 pub const WORD = zig_win32.WORD;
 pub const DWORD = zig_win32.DWORD;
 pub const LONG = zig_win32.LONG;
+pub const SIZE_T = zig_win32.SIZE_T;
 pub const LPVOID = zig_win32.LPVOID;
 pub const POINT = zig_win32.POINT;
 pub const RECT = zig_win32.RECT;
 pub const LPRECT = *RECT;
+
+pub const MEM_COALESCE_PLACEHOLDERS: DWORD = 0x00000001;
+pub const MEM_PRESERVE_PLACEHOLDER: DWORD = 0x00000002;
+pub const MEM_COMMIT: DWORD = 0x00001000;
+pub const MEM_RESERVE: DWORD = 0x00002000;
+pub const MEM_DECOMMIT: DWORD = 0x00004000;
+pub const MEM_RELEASE: DWORD = 0x00008000;
+pub const MEM_RESET: DWORD = 0x00080000;
+pub const MEM_RESET_UNDO: DWORD = 0x1000000;
+pub const MEM_LARGE_PAGES: DWORD = 0x20000000;
+pub const MEM_PHYSICAL: DWORD = 0x00400000;
+pub const MEM_TOP_DOWN: DWORD = 0x00100000;
+pub const MEM_WRITE_WATCH: DWORD = 0x00200000;
+
+pub const PAGE_EXECUTE: DWORD = 0x10;
+pub const PAGE_EXECUTE_READ: DWORD = 0x20;
+pub const PAGE_EXECUTE_READWRITE: DWORD = 0x40;
+pub const PAGE_EXECUTE_WRITECOPY: DWORD = 0x80;
+pub const PAGE_NOACCESS: DWORD = 0x01;
+pub const PAGE_READONLY: DWORD = 0x02;
+pub const PAGE_READWRITE: DWORD = 0x04;
+pub const PAGE_WRITECOPY: DWORD = 0x08;
+pub const PAGE_TARGETS_INVALID: DWORD = 0x40000000;
+pub const PAGE_TARGETS_NO_UPDATE: DWORD = 0x40000000;
+pub const PAGE_GUARD: DWORD = 0x100;
+pub const PAGE_NOCACHE: DWORD = 0x200;
+pub const PAGE_WRITECOMBINE: DWORD = 0x400;
+
+pub const QS_KEY: c_uint = 0x0001;
+pub const QS_MOUSEMOVE: c_uint = 0x0002;
+pub const QS_MOUSEBUTTON: c_uint = 0x0004;
+pub const QS_POSTMESSAGE: c_uint = 0x0008;
+pub const QS_TIMER: c_uint = 0x0010;
+pub const QS_PAINT: c_uint = 0x0020;
+pub const QS_SENDMESSAGE: c_uint = 0x0040;
+pub const QS_HOTKEY: c_uint = 0x0080;
+pub const QS_ALLPOSTMESSAGE: c_uint = 0x0100;
+pub const QS_RAWINPUT: c_uint = 0x0400;
+pub const QS_TOUCH: c_uint = 0x0800;
+pub const QS_POINTER: c_uint = 0x1000;
+pub const QS_MOUSE: c_uint = (QS_MOUSEMOVE | QS_MOUSEBUTTON);
+pub const QS_INPUT: c_uint = (QS_MOUSE | QS_KEY | QS_RAWINPUT | QS_TOUCH | QS_POINTER);
+pub const QS_ALLEVENTS: c_uint = (QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY);
+pub const QS_ALLINPUT: c_uint = (QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY | QS_SENDMESSAGE);
+
+pub const PM_NOREMOVE: c_uint = 0x0000;
+pub const PM_REMOVE: c_uint = 0x0001;
+pub const PM_NOYIELD: c_uint = 0x0002;
+pub const PM_QS_INPUT: c_uint = (QS_INPUT << 16);
+pub const PM_QS_POSTMESSAGE: c_uint = ((QS_POSTMESSAGE | QS_HOTKEY | QS_TIMER) << 16);
+pub const PM_QS_PAINT: c_uint = (QS_PAINT << 16);
+pub const PM_QS_SENDMESSAGE: c_uint = (QS_SENDMESSAGE << 16);
 
 pub const MB_OK: c_uint = 0x0;
 pub const MB_OKCANCEL: c_uint = 0x1;
@@ -660,6 +713,9 @@ pub const BITMAPINFO = extern struct {
 
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
+pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) LPVOID;
+pub extern "kernel32" fn VirtualFree(address: LPVOID, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
+
 pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
 pub extern "user32" fn GetModuleHandleW(module_name: ?LPCWSTR) callconv(.winapi) HMODULE;
 pub extern "user32" fn GetCommandLineA() callconv(.winapi) LPSTR;
@@ -681,6 +737,8 @@ pub extern "user32" fn DestroyWindow(hwnd: HWND) callconv(.c) BOOL;
 
 pub extern "user32" fn GetMessageA(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
 pub extern "user32" fn GetMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
+pub extern "user32" fn PeekMessageA(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint, remove_msg: c_uint) callconv(.winapi) BOOL;
+pub extern "user32" fn PeekMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint, remove_msg: c_uint) callconv(.winapi) BOOL;
 
 pub extern "user32" fn TranslateMessage(msg: *const MSG) callconv(.winapi) BOOL;
 pub extern "user32" fn DispatchMessageA(msg: *const MSG) callconv(.winapi) LRESULT;
@@ -695,4 +753,5 @@ pub extern "gdi32" fn CreateDIBSection(hdc: ?HDC, bitmap_info: *const BITMAPINFO
 pub extern "gdi32" fn StretchDIBits(hdc: HDC, xdest: c_int, ydest: c_int, wdest: c_int, hdest: c_int, xsrc: c_int, ysrc: c_int, wsrc: c_int, hsrc: c_int, bits: *const anyopaque, bits_info: *const BITMAPINFO, usage: c_uint, rop: DWORD) callconv(.winapi) void;
 pub extern "gdi32" fn DeleteObject(obj: HGDIOBJ) callconv(.winapi) BOOL;
 pub extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(.winapi) HDC;
+pub extern "gdi32" fn GetDC(window: ?HWND) callconv(.winapi) HDC;
 pub extern "gdi32" fn ReleaseDC(window: ?HWND, hdc: HDC) callconv(.winapi) c_int;
