@@ -26,6 +26,7 @@ pub const LRESULT = zig_win32.LRESULT;
 pub const ATOM = zig_win32.ATOM;
 pub const BOOL = zig_win32.BOOL;
 pub const BYTE = zig_win32.BYTE;
+pub const SHORT = zig_win32.SHORT;
 pub const WORD = zig_win32.WORD;
 pub const DWORD = zig_win32.DWORD;
 pub const LONG = zig_win32.LONG;
@@ -34,6 +35,9 @@ pub const LPVOID = zig_win32.LPVOID;
 pub const POINT = zig_win32.POINT;
 pub const RECT = zig_win32.RECT;
 pub const LPRECT = *RECT;
+
+pub const ERROR_SUCCESS = 0x0;
+pub const ERROR_DEVICE_NOT_CONNECTED = 0x48f;
 
 pub const MEM_COALESCE_PLACEHOLDERS: DWORD = 0x00000001;
 pub const MEM_PRESERVE_PLACEHOLDER: DWORD = 0x00000002;

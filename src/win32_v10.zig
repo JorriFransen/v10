@@ -1,10 +1,11 @@
 const std = @import("std");
 const log = std.log.scoped(.win32_v10);
 const win32 = @import("win32.zig");
+const xinput = @import("xinput.zig");
 
 const assert = std.debug.assert;
 
-var running = false;
+var global_running = false;
 var global_back_buffer: OffscreenBuffer = undefined;
 
 pub const OffscreenBuffer = struct {
@@ -13,7 +14,6 @@ pub const OffscreenBuffer = struct {
     width: i32,
     height: i32,
     pitch: i32,
-    bytes_per_pixel: i32,
 };
 
 pub const WindowDimensions = struct {
@@ -52,6 +52,8 @@ pub fn windowsEntry(
     _ = command_line;
     _ = cmd_show;
 
+    xinput.load();
+
     win32ResizeDibSection(&global_back_buffer, 1280, 720);
 
     const window_class = win32.WNDCLASSA{
@@ -78,35 +80,47 @@ pub fn windowsEntry(
         );
 
         if (window_opt) |window| {
-            running = true;
+            global_running = true;
+            const device_context = win32.GetDC(window);
+
             var x_offset: i32 = 0;
-            const y_offset = 0;
-            while (running) {
+            var y_offset: i32 = 0;
+
+            while (global_running) {
                 var msg = win32.MSG{};
                 while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
                     if (msg.message == win32.WM_QUIT) {
-                        running = false;
+                        global_running = false;
                     }
                     _ = win32.TranslateMessage(&msg);
                     _ = win32.DispatchMessageA(&msg);
                 }
 
+                for (0..xinput.XUSER_MAX_COUNT) |controller_index| {
+                    var controller_state: xinput.STATE = undefined;
+                    if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
+                        // Controller present
+                        const pad = &controller_state.gamepad;
+                        const buttons = pad.buttons;
+                        // const stick_x = pad.thumb_l_x;
+                        // const stick_y = pad.thumb_l_y;
+
+                        if (buttons.a) {
+                            y_offset += 2;
+                        }
+                    } else {
+                        // Controller not present
+                    }
+                }
+
+                const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 60000 };
+                _ = xinput.XInputSetState(0, &vibration);
+
                 renderWeirdGradient(global_back_buffer, x_offset, y_offset);
                 x_offset += 1;
 
-                const device_context = win32.GetDC(window);
                 const dimension = getWindowDimension(window);
-                win32DisplayBufferInWindow(
-                    device_context,
-                    dimension.width,
-                    dimension.height,
-                    global_back_buffer,
-                    0,
-                    0,
-                    global_back_buffer.width,
-                    global_back_buffer.height,
-                );
-                _ = win32.ReleaseDC(window, device_context);
+                win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, global_back_buffer);
             }
         } else {
             log.err("CreateWindow failed!", .{});
@@ -122,9 +136,8 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
     var result: win32.LRESULT = 0;
 
     switch (message) {
-        win32.WM_SIZE => {},
         win32.WM_CLOSE, win32.WM_DESTROY => {
-            running = false;
+            global_running = false;
         },
         win32.WM_ACTIVATEAPP => {
             log.debug("WM_ACTIVATEAPP", .{});
@@ -132,7 +145,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
 
         win32.WM_KEYDOWN => {
             if (wparam == win32.VK_ESCAPE) {
-                running = false;
+                global_running = false;
             }
         },
 
@@ -140,13 +153,8 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             var paint: win32.PAINTSTRUCT = undefined;
             const dc = win32.BeginPaint(window, &paint);
             {
-                const x = paint.rcPaint.left;
-                const y = paint.rcPaint.top;
-                const w = paint.rcPaint.right - paint.rcPaint.left;
-                const h = paint.rcPaint.bottom - paint.rcPaint.top;
-
                 const dimension = getWindowDimension(window);
-                win32DisplayBufferInWindow(dc, dimension.width, dimension.height, global_back_buffer, x, y, w, h);
+                win32DisplayBufferInWindow(dc, dimension.width, dimension.height, global_back_buffer);
             }
             _ = win32.EndPaint(window, &paint);
         },
@@ -164,10 +172,10 @@ fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) 
         _ = win32.VirtualFree(buffer.memory.ptr, 0, win32.MEM_RELEASE);
     }
 
-    buffer.bytes_per_pixel = 4;
+    const bytes_per_pixel = 4;
     buffer.width = width;
     buffer.height = height;
-    buffer.pitch = buffer.width * buffer.bytes_per_pixel;
+    buffer.pitch = buffer.width * bytes_per_pixel;
 
     buffer.info = win32.BITMAPINFO{ .bmiHeader = .{
         .biWidth = buffer.width,
@@ -177,7 +185,7 @@ fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) 
         .biCompression = win32.BI_RGB,
     } };
 
-    const bitmap_memory_size: usize = @intCast(width * height * buffer.bytes_per_pixel);
+    const bitmap_memory_size: usize = @intCast(width * height * bytes_per_pixel);
     buffer.memory = @as([*]u8, @ptrCast(win32.VirtualAlloc(
         null,
         bitmap_memory_size,
@@ -186,12 +194,7 @@ fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) 
     )))[0..bitmap_memory_size];
 }
 
-fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: OffscreenBuffer, x: i32, y: i32, width: i32, height: i32) void {
-    _ = x;
-    _ = y;
-    _ = width;
-    _ = height;
-
+fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: OffscreenBuffer) void {
     win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
 }
 

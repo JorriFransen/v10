@@ -5,13 +5,14 @@ const OptimizeMode = std.builtin.OptimizeMode;
 const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
-var force_llvm: bool = undefined;
+var use_llvm: bool = undefined;
 
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
-    force_llvm = b.option(bool, "llvm", "Use the llvm backend") orelse false;
+    use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse false;
+    if (target.result.os.tag == .linux and optimize == .Debug) use_llvm = false;
 
     std.fs.cwd().makeDir("runtree") catch |e| switch (e) {
         error.PathAlreadyExists => {},
@@ -64,10 +65,10 @@ fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools
     const exe = b.addExecutable(.{
         .name = "v10",
         .root_module = main_module,
-        // .use_llvm = force_llvm,
-        .use_llvm = true,
     });
+    exe.linkSystemLibrary("kernel32");
     exe.linkSystemLibrary("user32");
+    exe.linkSystemLibrary("gdi32");
     exe.subsystem = .Windows;
 
     return exe;
@@ -87,7 +88,7 @@ fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: 
     const exe = b.addExecutable(.{
         .name = "v10",
         .root_module = main_module,
-        .use_llvm = force_llvm,
+        .use_llvm = use_llvm,
     });
 
     return exe;
@@ -127,7 +128,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },
         }),
-        .use_llvm = force_llvm,
+        .use_llvm = use_llvm,
     });
 
     // b.installArtifact(exe);
