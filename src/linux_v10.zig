@@ -4,14 +4,15 @@ const wayland = @import("wayland");
 const wl = wayland.wl;
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
+const viewporter = wayland.viewporter;
 const libdecor = @import("libdecor.zig");
 
 // TODO: Check if preferred_buffer_scale is relevant
 
 const assert = std.debug.assert;
 
-const initial_window_width: i32 = 800;
-const initial_window_height: i32 = 600;
+const initial_window_width: i32 = 1280;
+const initial_window_height: i32 = 720;
 const bytes_per_pixel = 4;
 
 const WlInitData = struct {
@@ -21,6 +22,7 @@ const WlInitData = struct {
     wl_seat: ?*wl.Seat = null,
     xdg_wm_base: ?*xdg_shell.WmBase = null,
     xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
+    viewporter: ?*viewporter.Viewporter = null,
 
     xrgb8888: bool = false,
     seat_capabilities: wl.Seat.Capability = .{},
@@ -38,17 +40,31 @@ const WlData = struct {
     compositor: *wl.Compositor = undefined,
     seat: *wl.Seat = undefined,
     surface: *wl.Surface = undefined,
+    viewporter: *viewporter.Viewporter = undefined,
+    viewport: *viewporter.Viewport = undefined,
     wm_base: *xdg_shell.WmBase = undefined,
     keyboard: *wl.Keyboard = undefined,
 
     toplevel: Toplevel = undefined,
 
+    /// Back buffer width
     width: i32 = -1,
+    /// Back buffer height
     height: i32 = -1,
+    /// Window width
+    window_width: i32,
+    /// Window height
+    window_height: i32,
+
+    /// Max width of (non fullscreen) surface
     bound_width: i32 = undefined,
+    /// Max height of (non fullscreen) surface
     bound_height: i32 = undefined,
+    /// Max width of all outputs
     max_width: i32 = undefined,
+    /// Max height of all outputs
     max_height: i32 = undefined,
+
     should_resize_shm: bool = undefined,
     shm_size: usize = undefined,
     shm_ptr: [*]u8 = undefined,
@@ -199,6 +215,8 @@ pub fn main() !void {
     var wld: WlData = .{
         .running = true,
         .display = display,
+        .window_width = initial_window_width,
+        .window_height = initial_window_height,
     };
 
     var wli = WlInitData{ .wld = &wld };
@@ -223,6 +241,10 @@ pub fn main() !void {
     }
     if (wli.xdg_wm_base) |wm_base| wld.wm_base = wm_base else {
         log.err("xdg_wm_base not available", .{});
+        return error.UnexpectedWayland;
+    }
+    if (wli.viewporter) |vp| wld.viewporter = vp else {
+        log.err("wl_viewporter not available", .{});
         return error.UnexpectedWayland;
     }
 
@@ -264,6 +286,11 @@ pub fn main() !void {
         return error.UnexpectedWayland;
     };
     wld.surface.add_listener(&wl_surface_listener, null);
+
+    wld.viewport = wld.viewporter.get_viewport(wld.surface) orelse {
+        log.err("wl_viewporter_get_viewport failed", .{});
+        return error.UnexpectedWayland;
+    };
 
     var xdg_decor_toplevel: Toplevel = undefined;
     if (wli.xdg_decoration_manager) |manager| {
@@ -500,13 +527,25 @@ fn resize_shm(wld: *WlData) PosixShmError!void {
 }
 
 fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}!void {
-    if (width == 0 and height == 0) {
-        wld.width = initial_window_width;
-        wld.height = initial_window_height;
-    } else {
-        wld.width = width;
-        wld.height = height;
-    }
+    // if (width == 0 and height == 0) {
+    //     wld.width = initial_window_width;
+    //     wld.height = initial_window_height;
+    // } else {
+    //     wld.width = width;
+    //     wld.height = height;
+    // }
+
+    // This is the size of the backbuffers
+    wld.width = initial_window_width;
+    wld.height = initial_window_height;
+
+    var window_width = width;
+    var window_height = height;
+    if (window_width == 0) window_width = wld.width;
+    if (window_height == 0) window_height = wld.height;
+    wld.window_width = window_width;
+    wld.window_height = window_height;
+    wld.viewport.set_destination(window_width, window_height);
 
     wld.should_draw = true;
     wld.pending_resize = null;
@@ -556,6 +595,8 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     } else if (eq(interface_name, wl.Output)) {
         const output = registry.bind(name, wl.Output, version).?;
         output.add_listener(&wl_output_listener, wli.wld);
+    } else if (eq(interface_name, viewporter.Viewporter)) {
+        wli.viewporter = registry.bind(name, viewporter.Viewporter, version);
     }
 }
 
@@ -759,7 +800,7 @@ fn renderWeirdGradient(buffer: Buffer, xoffset: i32, yoffset: i32) void {
 
 fn draw(wld: *WlData, buffer: Buffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
-    wld.surface.damage(0, 0, wld.width, wld.height);
+    wld.surface.damage(0, 0, wld.window_width, wld.window_height);
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.?.add_listener(&wl_callback_listener, wld);
