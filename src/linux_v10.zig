@@ -6,7 +6,7 @@ const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const viewporter = wayland.viewporter;
 const libdecor = @import("libdecor.zig");
-const libudev = @import("libudev.zig");
+const udev = @import("libudev.zig");
 
 const c = @cImport({
     @cInclude("linux/input.h");
@@ -200,53 +200,57 @@ const wl_output_listener = wl.Output.Listener{
 };
 
 pub fn main() !void {
-    libudev.load();
+    udev.load();
 
-    const udev = libudev.udev_new() orelse {
-        log.err("udev_new failed", .{});
-        return error.Unexpected;
-    };
+    var udev_monitor_fd: std.posix.fd_t = -1;
+    var udev_monitor: *udev.Monitor = undefined;
 
-    const udev_enumerator = libudev.udev_enumerate_new(udev) orelse {
-        log.err("udev_enumerate_new failed", .{});
-        return error.Unexpected;
-    };
-    _ = libudev.udev_enumerate_add_match_subsystem(udev_enumerator, "input");
-    _ = libudev.udev_enumerate_scan_devices(udev_enumerator);
+    const udev_ctx_opt = udev.new();
+    if (udev_ctx_opt) |udev_ctx| {
+        const udev_enumerator = udev.enumerate_new(udev_ctx) orelse {
+            log.err("udev_enumerate_new failed", .{});
+            return error.Unexpected;
+        };
+        _ = udev.enumerate_add_match_subsystem(udev_enumerator, "input");
+        _ = udev.enumerate_scan_devices(udev_enumerator);
 
-    var udev_list_entry = libudev.udev_enumerate_get_list_entry(udev_enumerator);
-    while (udev_list_entry) |e| {
-        const syspath = libudev.udev_list_entry_get_name(e);
-        const device = libudev.udev_device_new_from_syspath(udev, syspath).?;
-        defer _ = libudev.udev_device_unref(device);
+        var udev_list_entry = udev.enumerate_get_list_entry(udev_enumerator);
+        while (udev_list_entry) |e| {
+            const syspath = udev.list_entry_get_name(e);
+            const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
+            defer _ = udev.device_unref(device);
 
-        if (udevDeviceIsJoystick(udev, device)) |path| {
-            log.debug("Found joystick: {s}", .{path});
+            if (udevDeviceIsJoystick(udev_ctx, device)) |path| {
+                log.debug("Found joystick: {s}", .{path});
+            }
+
+            udev_list_entry = udev.list_entry_get_next(e);
         }
 
-        udev_list_entry = libudev.udev_list_entry_get_next(e);
-    }
+        _ = udev.enumerate_unref(udev_enumerator);
 
-    _ = libudev.udev_enumerate_unref(udev_enumerator);
+        if (udev.monitor_new_from_netlink(udev_ctx, "udev")) |m| {
+            udev_monitor = m;
+        } else {
+            log.err("udev_monitor_new_from_netlink failed", .{});
+            return error.Unexpected;
+        }
 
-    const udev_monitor = libudev.udev_monitor_new_from_netlink(udev, "udev") orelse {
-        log.err("udev_monitor_new_from_netlink failed", .{});
-        return error.Unexpected;
-    };
-    const udev_monitor_fd = libudev.udev_monitor_get_fd(udev_monitor);
-    if (udev_monitor_fd < 0) {
-        log.err("udev_monitor_get_Fd failed", .{});
-        return error.Unexpected;
-    }
+        udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
+        if (udev_monitor_fd < 0) {
+            log.err("udev_monitor_get_Fd failed", .{});
+            return error.Unexpected;
+        }
 
-    if (libudev.udev_monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
-        log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
-        return error.Unexpected;
-    }
+        if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
+            log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
+            return error.Unexpected;
+        }
 
-    if (libudev.udev_monitor_enable_receiving(udev_monitor) < 0) {
-        log.err("udev_monitor_enable_receiving failed", .{});
-        return error.Unexpected;
+        if (udev.monitor_enable_receiving(udev_monitor) < 0) {
+            log.err("udev_monitor_enable_receiving failed", .{});
+            return error.Unexpected;
+        }
     }
 
     var poll_fds = [_]std.posix.pollfd{
@@ -476,12 +480,12 @@ pub fn main() !void {
             for (poll_fds) |pfd| {
                 if (pfd.revents == std.posix.POLL.IN) {
                     if (pfd.fd == udev_monitor_fd) {
-                        const device = libudev.udev_monitor_receive_device(udev_monitor).?;
-                        defer _ = libudev.udev_device_unref(device);
+                        const device = udev.monitor_receive_device(udev_monitor).?;
+                        defer _ = udev.device_unref(device);
 
-                        const action = std.mem.span(libudev.udev_device_get_action(device).?);
+                        const action = std.mem.span(udev.device_get_action(device).?);
 
-                        if (udevDeviceIsJoystick(udev, device)) |path| {
+                        if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
                             log.debug("{s}: {s}", .{ action, path });
                         }
                     }
@@ -857,42 +861,48 @@ fn handleWlOutputScale(data: ?*anyopaque, output: ?*wl.Output, factor: i32) call
 }
 
 /// Returns the devnode path if the device is a joystick, otherwise returns null.
-fn udevDeviceIsJoystick(udev: *libudev.UDev, device: *libudev.UDevDevice) ?[]const u8 {
+fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[]const u8 {
     var is_joystick = false;
     var is_keyboard = false;
+    var is_mouse = false;
 
-    if (libudev.udev_device_get_devnode(device)) |n| {
+    if (udev.device_get_devnode(device)) |n| {
         const devnode_path = std.mem.span(n);
 
         if (std.mem.indexOf(u8, devnode_path, "event") != null) {
-            is_joystick = libudev.udev_device_get_property_value(device, "ID_INPUT_JOYSTICK") != null;
+            is_joystick = udev.device_get_property_value(device, "ID_INPUT_JOYSTICK") != null;
             if (is_joystick) {
-                if (libudev.udev_device_get_parent_with_subsystem_devtype(device, "usb", null)) |parent| {
-                    const sibling_enumerator = libudev.udev_enumerate_new(udev).?;
-                    defer _ = libudev.udev_enumerate_unref(sibling_enumerator);
+                if (udev.device_get_parent_with_subsystem_devtype(device, "usb", null)) |parent| {
+                    const sibling_enumerator = udev.enumerate_new(ctx).?;
+                    defer _ = udev.enumerate_unref(sibling_enumerator);
 
-                    _ = libudev.udev_enumerate_add_match_subsystem(sibling_enumerator, "input");
-                    _ = libudev.udev_enumerate_add_match_parent(sibling_enumerator, parent);
-                    _ = libudev.udev_enumerate_scan_devices(sibling_enumerator);
+                    _ = udev.enumerate_add_match_subsystem(sibling_enumerator, "input");
+                    _ = udev.enumerate_add_match_parent(sibling_enumerator, parent);
+                    _ = udev.enumerate_scan_devices(sibling_enumerator);
 
-                    var sibling = libudev.udev_enumerate_get_list_entry(sibling_enumerator);
+                    var sibling = udev.enumerate_get_list_entry(sibling_enumerator);
                     while (sibling) |s| {
-                        const sib_syspath = libudev.udev_list_entry_get_name(s);
-                        const sib_dev = libudev.udev_device_new_from_syspath(udev, sib_syspath).?;
-                        defer _ = libudev.udev_device_unref(sib_dev);
+                        const sib_syspath = udev.list_entry_get_name(s);
+                        const sib_dev = udev.device_new_from_syspath(ctx, sib_syspath).?;
+                        defer _ = udev.device_unref(sib_dev);
 
-                        if (libudev.udev_device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
+                        if (udev.device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
                             is_keyboard = true;
                             break;
                         }
 
-                        sibling = libudev.udev_list_entry_get_next(s);
+                        if (udev.device_get_property_value(sib_dev, "ID_INPUT_MOUSE")) |_| {
+                            is_mouse = true;
+                            break;
+                        }
+
+                        sibling = udev.list_entry_get_next(s);
                     }
                 }
             }
         }
 
-        if (is_joystick and !is_keyboard) {
+        if (is_joystick and !is_keyboard and !is_mouse) {
             return devnode_path;
         }
     }
