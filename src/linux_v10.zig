@@ -6,6 +6,7 @@ const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const viewporter = wayland.viewporter;
 const libdecor = @import("libdecor.zig");
+const libudev = @import("libudev.zig");
 
 const c = @cImport({
     @cInclude("linux/input.h");
@@ -199,6 +200,60 @@ const wl_output_listener = wl.Output.Listener{
 };
 
 pub fn main() !void {
+    libudev.load();
+
+    const udev = libudev.udev_new() orelse {
+        log.err("udev_new failed", .{});
+        return error.Unexpected;
+    };
+
+    const udev_enumerator = libudev.udev_enumerate_new(udev) orelse {
+        log.err("udev_enumerate_new failed", .{});
+        return error.Unexpected;
+    };
+    _ = libudev.udev_enumerate_add_match_subsystem(udev_enumerator, "input");
+    _ = libudev.udev_enumerate_scan_devices(udev_enumerator);
+
+    var udev_list_entry = libudev.udev_enumerate_get_list_entry(udev_enumerator);
+    while (udev_list_entry) |e| {
+        const syspath = libudev.udev_list_entry_get_name(e);
+        const device = libudev.udev_device_new_from_syspath(udev, syspath).?;
+        defer _ = libudev.udev_device_unref(device);
+
+        if (udevDeviceIsJoystick(udev, device)) |path| {
+            log.debug("Found joystick: {s}", .{path});
+        }
+
+        udev_list_entry = libudev.udev_list_entry_get_next(e);
+    }
+
+    _ = libudev.udev_enumerate_unref(udev_enumerator);
+
+    const udev_monitor = libudev.udev_monitor_new_from_netlink(udev, "udev") orelse {
+        log.err("udev_monitor_new_from_netlink failed", .{});
+        return error.Unexpected;
+    };
+    const udev_monitor_fd = libudev.udev_monitor_get_fd(udev_monitor);
+    if (udev_monitor_fd < 0) {
+        log.err("udev_monitor_get_Fd failed", .{});
+        return error.Unexpected;
+    }
+
+    if (libudev.udev_monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
+        log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
+        return error.Unexpected;
+    }
+
+    if (libudev.udev_monitor_enable_receiving(udev_monitor) < 0) {
+        log.err("udev_monitor_enable_receiving failed", .{});
+        return error.Unexpected;
+    }
+
+    var poll_fds = [_]std.posix.pollfd{
+        .{ .fd = udev_monitor_fd, .events = std.posix.POLL.IN, .revents = undefined },
+    };
+
+    // TODO: Move this into the generator
     var lwl = try std.DynLib.open("libwayland-client.so");
     defer lwl.close();
 
@@ -411,110 +466,30 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
-    const Gamepad = struct {
-        active: bool = false,
-        file: std.fs.File = undefined,
-        poller: std.Io.Poller(StreamEnum) = undefined,
-
-        const StreamEnum = enum { x };
-    };
-
-    var gpa_data = std.heap.DebugAllocator(.{}).init;
-    const gpa = gpa_data.allocator();
-    var gamepads = [_]Gamepad{.{}} ** 4;
-
-    { // TODO: There should be some way to get connect/disconnect events?
-        var input_dir = try std.fs.openDirAbsolute("/dev/input/by-id", .{ .iterate = true });
-        defer input_dir.close();
-
-        var next_index: usize = 0;
-
-        var it = input_dir.iterate();
-        while (try it.next()) |e| {
-            if (e.kind == .sym_link and std.mem.endsWith(u8, e.name, "event-joystick")) {
-                if (next_index >= gamepads.len) {
-                    log.warn("Gamepad limit reached!", .{});
-                    break;
-                }
-
-                const file = try input_dir.openFile(e.name, .{ .mode = .read_only, .lock_nonblocking = true, .lock = .shared });
-
-                gamepads[next_index] = .{
-                    .active = true,
-                    .file = file,
-                    .poller = std.Io.poll(gpa, Gamepad.StreamEnum, .{ .x = file }),
-                };
-
-                next_index += 1;
-            }
-        }
-    }
-
-    for (gamepads, 0..) |g, i| {
-        if (g.active) log.debug("gamepad {}: {}", .{ i, g });
-    }
-
     var x_offset: i32 = 0;
     var y_offset: i32 = 0;
-    var gx: i32 = 0;
-    var gy: i32 = 0;
+    const gx: i32 = 0;
+    const gy: i32 = 0;
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
-        for (&gamepads) |*gamepad| if (gamepad.active) {
-            _ = try gamepad.poller.pollTimeout(0);
-            const reader = gamepad.poller.reader(.x);
-            var available = reader.bufferedLen();
-            while (available >= @sizeOf(c.input_event)) {
-                var event: c.input_event = undefined;
-                try reader.readSliceAll(std.mem.asBytes(&event));
-                available -= @sizeOf(c.input_event);
+        if (try std.posix.poll(&poll_fds, 0) > 0) {
+            for (poll_fds) |pfd| {
+                if (pfd.revents == std.posix.POLL.IN) {
+                    if (pfd.fd == udev_monitor_fd) {
+                        const device = libudev.udev_monitor_receive_device(udev_monitor).?;
+                        defer _ = libudev.udev_device_unref(device);
 
-                switch (event.type) {
-                    c.EV_ABS => switch (event.code) {
-                        c.ABS_X => {
-                            gx = event.value;
-                        },
-                        c.ABS_Y => {
-                            gy = event.value;
-                        },
-                        c.ABS_Z => log.debug("ABS_Z: {}", .{event.value}),
-                        c.ABS_RX => log.debug("ABS_RX: {}", .{event.value}),
-                        c.ABS_RY => log.debug("ABS_RY: {}", .{event.value}),
-                        c.ABS_RZ => log.debug("ABS_RZ: {}", .{event.value}),
+                        const action = std.mem.span(libudev.udev_device_get_action(device).?);
 
-                        // dpad
-                        c.ABS_HAT0X => log.debug("ABS_HAT0X: {}", .{event.value}),
-                        c.ABS_HAT0Y => log.debug("ABS_HAT0Y: {}", .{event.value}),
-
-                        else => log.debug("Unhandled ABS: {}, value: {}", .{ event.code, event.value }),
-                    },
-                    c.EV_KEY => switch (event.code) {
-                        c.BTN_A => log.debug("BTN_A: {}", .{event.value}),
-                        c.BTN_B => log.debug("BTN_B: {}", .{event.value}),
-                        c.BTN_X => log.debug("BTN_X: {}", .{event.value}),
-                        c.BTN_Y => log.debug("BTN_Y: {}", .{event.value}),
-
-                        c.BTN_TL => log.debug("BTN_TL: {}", .{event.value}),
-                        c.BTN_TR => log.debug("BTN_TR: {}", .{event.value}),
-                        c.BTN_THUMBL => log.debug("BTN_THUMBL: {}", .{event.value}),
-                        c.BTN_THUMBR => log.debug("BTN_THUMBR: {}", .{event.value}),
-
-                        c.BTN_SELECT => log.debug("BTN_SELECT: {}", .{event.value}),
-                        c.BTN_START => log.debug("BTN_START: {}", .{event.value}),
-                        c.BTN_MODE => log.debug("BTN_MODE: {}", .{event.value}),
-
-                        // c.BTN_DPAD_UP => log.debug("BTN_DPAD_UP: {}", .{event.value}),
-                        // c.BTN_DPAD_DOWN => log.debug("BTN_DPAD_DOWN: {}", .{event.value}),
-                        // c.BTN_DPAD_LEFT => log.debug("BTN_DPAD_LEFT: {}", .{event.value}),
-                        // c.BTN_DPAD_RIGHT => log.debug("BTN_DPAD_RIGHT: {}", .{event.value}),
-                        else => log.debug("Unhandled KEY: {} ({x}), value: {}", .{ event.code, event.code, event.value }),
-                    },
-                    else => {},
+                        if (udevDeviceIsJoystick(udev, device)) |path| {
+                            log.debug("{s}: {s}", .{ action, path });
+                        }
+                    }
                 }
             }
-        };
+        }
 
-        log.debug("{},{}", .{ @divTrunc(gx, 4096), @divTrunc(gy, 4096) });
+        // log.debug("{},{}", .{ @divTrunc(gx, 4096), @divTrunc(gy, 4096) });
         x_offset +%= @divTrunc(gx, 4096);
         y_offset +%= @divTrunc(gy, 4096);
 
@@ -879,6 +854,50 @@ fn handleWlOutputScale(data: ?*anyopaque, output: ?*wl.Output, factor: i32) call
     _ = output;
     _ = factor;
     // log.debug("Output scale: {}: {}", .{ output.?, factor });
+}
+
+/// Returns the devnode path if the device is a joystick, otherwise returns null.
+fn udevDeviceIsJoystick(udev: *libudev.UDev, device: *libudev.UDevDevice) ?[]const u8 {
+    var is_joystick = false;
+    var is_keyboard = false;
+
+    if (libudev.udev_device_get_devnode(device)) |n| {
+        const devnode_path = std.mem.span(n);
+
+        if (std.mem.indexOf(u8, devnode_path, "event") != null) {
+            is_joystick = libudev.udev_device_get_property_value(device, "ID_INPUT_JOYSTICK") != null;
+            if (is_joystick) {
+                if (libudev.udev_device_get_parent_with_subsystem_devtype(device, "usb", null)) |parent| {
+                    const sibling_enumerator = libudev.udev_enumerate_new(udev).?;
+                    defer _ = libudev.udev_enumerate_unref(sibling_enumerator);
+
+                    _ = libudev.udev_enumerate_add_match_subsystem(sibling_enumerator, "input");
+                    _ = libudev.udev_enumerate_add_match_parent(sibling_enumerator, parent);
+                    _ = libudev.udev_enumerate_scan_devices(sibling_enumerator);
+
+                    var sibling = libudev.udev_enumerate_get_list_entry(sibling_enumerator);
+                    while (sibling) |s| {
+                        const sib_syspath = libudev.udev_list_entry_get_name(s);
+                        const sib_dev = libudev.udev_device_new_from_syspath(udev, sib_syspath).?;
+                        defer _ = libudev.udev_device_unref(sib_dev);
+
+                        if (libudev.udev_device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
+                            is_keyboard = true;
+                            break;
+                        }
+
+                        sibling = libudev.udev_list_entry_get_next(s);
+                    }
+                }
+            }
+        }
+
+        if (is_joystick and !is_keyboard) {
+            return devnode_path;
+        }
+    }
+
+    return null;
 }
 
 fn renderWeirdGradient(buffer: *Buffer, xoffset: i32, yoffset: i32) void {
