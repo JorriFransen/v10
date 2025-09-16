@@ -7,6 +7,7 @@ const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const viewporter = wayland.viewporter;
 const libdecor = @import("libdecor.zig");
 const udev = @import("libudev.zig");
+const posix = std.posix.system;
 
 const c = @cImport({
     @cInclude("linux/input.h");
@@ -199,10 +200,31 @@ const wl_output_listener = wl.Output.Listener{
     .description = @ptrCast(&nop),
 };
 
+const PollFdSlot = enum(usize) {
+    udev,
+
+    // NOTE: !!! Update first/last when changing this!
+    joystick_0,
+    joystick_1,
+    joystick_2,
+    joystick_3,
+    // NOTE: !!! Update first/last when changing this!
+
+    pub const first_joystick: usize = @intFromEnum(PollFdSlot.joystick_0);
+    pub const last_joystick: usize = @intFromEnum(PollFdSlot.joystick_3);
+    pub const joystick_count: usize = last_joystick - first_joystick + 1;
+};
+
+const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
+var poll_fds: [poll_fd_count]std.posix.pollfd = [1]std.posix.pollfd{.{
+    .fd = -1,
+    .events = undefined,
+    .revents = undefined,
+}} ** poll_fd_count;
+
 pub fn main() !void {
     udev.load();
 
-    var udev_monitor_fd: std.posix.fd_t = -1;
     var udev_monitor: *udev.Monitor = undefined;
 
     const udev_ctx_opt = udev.new();
@@ -220,8 +242,8 @@ pub fn main() !void {
             const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
             defer _ = udev.device_unref(device);
 
-            if (udevDeviceIsJoystick(udev_ctx, device)) |path| {
-                log.debug("Found joystick: {s}", .{path});
+            if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
+                try addJoystick(device, devnode_path);
             }
 
             udev_list_entry = udev.list_entry_get_next(e);
@@ -236,11 +258,12 @@ pub fn main() !void {
             return error.Unexpected;
         }
 
-        udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
+        const udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
         if (udev_monitor_fd < 0) {
             log.err("udev_monitor_get_Fd failed", .{});
             return error.Unexpected;
         }
+        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = std.posix.POLL.IN, .revents = undefined };
 
         if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
             log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
@@ -252,10 +275,6 @@ pub fn main() !void {
             return error.Unexpected;
         }
     }
-
-    var poll_fds = [_]std.posix.pollfd{
-        .{ .fd = udev_monitor_fd, .events = std.posix.POLL.IN, .revents = undefined },
-    };
 
     // TODO: Move this into the generator
     var lwl = try std.DynLib.open("libwayland-client.so");
@@ -472,30 +491,105 @@ pub fn main() !void {
 
     var x_offset: i32 = 0;
     var y_offset: i32 = 0;
-    const gx: i32 = 0;
-    const gy: i32 = 0;
+    var jx: i32 = 0;
+    var jy: i32 = 0;
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
         if (try std.posix.poll(&poll_fds, 0) > 0) {
-            for (poll_fds) |pfd| {
-                if (pfd.revents == std.posix.POLL.IN) {
-                    if (pfd.fd == udev_monitor_fd) {
-                        const device = udev.monitor_receive_device(udev_monitor).?;
-                        defer _ = udev.device_unref(device);
+            for (poll_fds, 0..) |pollfd, slot_index| {
+                if (pollfd.revents & std.posix.POLL.IN != 0) {
+                    const slot: PollFdSlot = @enumFromInt(slot_index);
+                    switch (slot) {
+                        .udev => {
+                            const device = udev.monitor_receive_device(udev_monitor).?;
+                            defer _ = udev.device_unref(device);
 
-                        const action = std.mem.span(udev.device_get_action(device).?);
+                            const action = std.mem.span(udev.device_get_action(device).?);
 
-                        if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
-                            log.debug("{s}: {s}", .{ action, path });
-                        }
+                            if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
+                                if (std.mem.eql(u8, action, "add")) {
+                                    try addJoystick(device, path);
+                                } else if (std.mem.eql(u8, action, "remove")) {
+                                    removeJoystick(device, path);
+                                } else {
+                                    log.err("Unhandled joystick action: '{s}'", .{action});
+                                }
+                            }
+                        },
+
+                        .joystick_0,
+                        .joystick_1,
+                        .joystick_2,
+                        .joystick_3,
+                        => {
+                            var events: [16]c.input_event = undefined;
+                            const read_len = try std.posix.read(pollfd.fd, std.mem.sliceAsBytes(&events));
+                            if (read_len > 0) {
+                                const num_events = read_len / @sizeOf(c.input_event);
+                                for (events[0..num_events]) |event| {
+                                    switch (event.type) {
+                                        c.EV_SYN => {},
+                                        c.EV_ABS => switch (event.code) {
+                                            c.ABS_X => {
+                                                jx = event.value;
+                                                // log.debug("X: {}", .{event.value});
+                                            },
+                                            c.ABS_Y => {
+                                                jy = event.value;
+                                                // log.debug("Y: {}", .{event.value});
+                                            },
+                                            // c.ABS_Z => log.debug("Z: {}", .{event.value}),
+                                            // c.ABS_RX => log.debug("RX: {}", .{event.value}),
+                                            // c.ABS_RY => log.debug("RY: {}", .{event.value}),
+                                            // c.ABS_RZ => log.debug("RZ: {}", .{event.value}),
+                                            //
+                                            // // dpad
+                                            // c.ABS_HAT0X => log.debug("HAT0X: {}", .{event.value}),
+                                            // c.ABS_HAT0Y => log.debug("HAT0Y: {}", .{event.value}),
+
+                                            // else => log.debug("{} unhandled axis {}", .{ slot, event.code }),
+                                            else => {},
+                                        },
+                                        c.EV_KEY => switch (event.code) {
+                                            // c.BTN_A => log.debug("A: {}", .{event.value}),
+                                            // c.BTN_B => log.debug("B: {}", .{event.value}),
+                                            // c.BTN_X => log.debug("X: {}", .{event.value}),
+                                            // c.BTN_Y => log.debug("Y: {}", .{event.value}),
+                                            //
+                                            // c.BTN_THUMBL => log.debug("THUMBL: {}", .{event.value}),
+                                            // c.BTN_THUMBR => log.debug("THUMBR: {}", .{event.value}),
+                                            //
+                                            // c.BTN_TL => log.debug("TL: {}", .{event.value}),
+                                            // c.BTN_TR => log.debug("TR: {}", .{event.value}),
+                                            //
+                                            // c.BTN_SELECT => log.debug("SELECT: {}", .{event.value}),
+                                            // c.BTN_START => log.debug("START: {}", .{event.value}),
+                                            // c.BTN_MODE => log.debug("MODE: {}", .{event.value}),
+
+                                            // else => log.debug("{} unhandled key {}", .{ slot, event.code }),
+                                            else => {},
+                                        },
+                                        else => {},
+                                    }
+                                }
+                            } else {
+                                unreachable;
+                            }
+                        },
+
+                        // else => {
+                        //     log.warn("Unhandled pollfd slot {}", .{slot});
+                        // },
                     }
                 }
             }
         }
 
+        // log.debug("{},{}", .{ jx, jy });
         // log.debug("{},{}", .{ @divTrunc(gx, 4096), @divTrunc(gy, 4096) });
-        x_offset +%= @divTrunc(gx, 4096);
-        y_offset +%= @divTrunc(gy, 4096);
+        x_offset +%= @divTrunc(jx, 4096);
+        y_offset +%= @divTrunc(jy, 4096);
+        // log.debug("{},{}", .{ x_offset, y_offset });
 
         if (wld.pending_resize) |r| {
             try resize(&wld, r.width, r.height);
@@ -609,6 +703,7 @@ fn resize_shm(wld: *WlData) PosixShmError!void {
 
     wld.should_resize_shm = false;
     // TODO: Signal a buffer resize is required!
+    // TODO: Test by plugging in external monitor
 }
 
 fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}!void {
@@ -860,12 +955,39 @@ fn handleWlOutputScale(data: ?*anyopaque, output: ?*wl.Output, factor: i32) call
     // log.debug("Output scale: {}: {}", .{ output.?, factor });
 }
 
+fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
+    _ = device;
+    log.debug("Adding joystick: '{s}'", .{devnode_path});
+
+    var joystick_index_opt: ?usize = null;
+    for (0..PollFdSlot.joystick_count) |ji| {
+        const pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
+        if (pollfd.fd == -1) {
+            joystick_index_opt = ji;
+            break;
+        }
+    }
+
+    if (joystick_index_opt) |ji| {
+        const fd = try std.posix.open(devnode_path, std.posix.O{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0);
+        poll_fds[PollFdSlot.first_joystick + ji] = .{ .fd = fd, .events = std.posix.POLL.IN, .revents = undefined };
+    } else {
+        log.warn("A joystick was added, but there are no free slots!", .{});
+    }
+}
+
+fn removeJoystick(device: *udev.Device, devnode_path: []const u8) void {
+    _ = device;
+    log.debug("Removing joystick: '{s}'", .{devnode_path});
+    // TODO: Store path (and state) in joystick data, match with devnode_path
+    unreachable;
+}
+
 /// Returns the devnode path if the device is a joystick, otherwise returns null.
 fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[]const u8 {
     var is_joystick = false;
     var is_keyboard = false;
     var is_mouse = false;
-
     if (udev.device_get_devnode(device)) |n| {
         const devnode_path = std.mem.span(n);
 
