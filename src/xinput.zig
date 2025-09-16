@@ -61,9 +61,9 @@ pub const GAMEPAD_Y = 0x8000;
 
 pub fn load() void {
     const versions = [_][]const u8{
-        "xinput1_3.dll",
-        "xinput1_4.dll",
         "xinput9_1_0.dll",
+        "xinput1_4.dll",
+        "xinput1_3.dll",
     };
 
     var lib: ?std.DynLib = null;

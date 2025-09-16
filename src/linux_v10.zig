@@ -7,6 +7,10 @@ const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const viewporter = wayland.viewporter;
 const libdecor = @import("libdecor.zig");
 
+const c = @cImport({
+    @cInclude("linux/input.h");
+});
+
 // TODO: Check if preferred_buffer_scale is relevant
 
 const assert = std.debug.assert;
@@ -407,15 +411,119 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
+    const Gamepad = struct {
+        active: bool = false,
+        file: std.fs.File = undefined,
+        poller: std.Io.Poller(StreamEnum) = undefined,
+
+        const StreamEnum = enum { x };
+    };
+
+    var gpa_data = std.heap.DebugAllocator(.{}).init;
+    const gpa = gpa_data.allocator();
+    var gamepads = [_]Gamepad{.{}} ** 4;
+
+    { // TODO: There should be some way to get connect/disconnect events?
+        var input_dir = try std.fs.openDirAbsolute("/dev/input/by-id", .{ .iterate = true });
+        defer input_dir.close();
+
+        var next_index: usize = 0;
+
+        var it = input_dir.iterate();
+        while (try it.next()) |e| {
+            if (e.kind == .sym_link and std.mem.endsWith(u8, e.name, "event-joystick")) {
+                if (next_index >= gamepads.len) {
+                    log.warn("Gamepad limit reached!", .{});
+                    break;
+                }
+
+                const file = try input_dir.openFile(e.name, .{ .mode = .read_only, .lock_nonblocking = true, .lock = .shared });
+
+                gamepads[next_index] = .{
+                    .active = true,
+                    .file = file,
+                    .poller = std.Io.poll(gpa, Gamepad.StreamEnum, .{ .x = file }),
+                };
+
+                next_index += 1;
+            }
+        }
+    }
+
+    for (gamepads, 0..) |g, i| {
+        if (g.active) log.debug("gamepad {}: {}", .{ i, g });
+    }
+
     var x_offset: i32 = 0;
+    var y_offset: i32 = 0;
+    var gx: i32 = 0;
+    var gy: i32 = 0;
+
     while (wl.display_dispatch(display) != -1 and wld.running) {
+        for (&gamepads) |*gamepad| if (gamepad.active) {
+            _ = try gamepad.poller.pollTimeout(0);
+            const reader = gamepad.poller.reader(.x);
+            var available = reader.bufferedLen();
+            while (available >= @sizeOf(c.input_event)) {
+                var event: c.input_event = undefined;
+                try reader.readSliceAll(std.mem.asBytes(&event));
+                available -= @sizeOf(c.input_event);
+
+                switch (event.type) {
+                    c.EV_ABS => switch (event.code) {
+                        c.ABS_X => {
+                            gx = event.value;
+                        },
+                        c.ABS_Y => {
+                            gy = event.value;
+                        },
+                        c.ABS_Z => log.debug("ABS_Z: {}", .{event.value}),
+                        c.ABS_RX => log.debug("ABS_RX: {}", .{event.value}),
+                        c.ABS_RY => log.debug("ABS_RY: {}", .{event.value}),
+                        c.ABS_RZ => log.debug("ABS_RZ: {}", .{event.value}),
+
+                        // dpad
+                        c.ABS_HAT0X => log.debug("ABS_HAT0X: {}", .{event.value}),
+                        c.ABS_HAT0Y => log.debug("ABS_HAT0Y: {}", .{event.value}),
+
+                        else => log.debug("Unhandled ABS: {}, value: {}", .{ event.code, event.value }),
+                    },
+                    c.EV_KEY => switch (event.code) {
+                        c.BTN_A => log.debug("BTN_A: {}", .{event.value}),
+                        c.BTN_B => log.debug("BTN_B: {}", .{event.value}),
+                        c.BTN_X => log.debug("BTN_X: {}", .{event.value}),
+                        c.BTN_Y => log.debug("BTN_Y: {}", .{event.value}),
+
+                        c.BTN_TL => log.debug("BTN_TL: {}", .{event.value}),
+                        c.BTN_TR => log.debug("BTN_TR: {}", .{event.value}),
+                        c.BTN_THUMBL => log.debug("BTN_THUMBL: {}", .{event.value}),
+                        c.BTN_THUMBR => log.debug("BTN_THUMBR: {}", .{event.value}),
+
+                        c.BTN_SELECT => log.debug("BTN_SELECT: {}", .{event.value}),
+                        c.BTN_START => log.debug("BTN_START: {}", .{event.value}),
+                        c.BTN_MODE => log.debug("BTN_MODE: {}", .{event.value}),
+
+                        // c.BTN_DPAD_UP => log.debug("BTN_DPAD_UP: {}", .{event.value}),
+                        // c.BTN_DPAD_DOWN => log.debug("BTN_DPAD_DOWN: {}", .{event.value}),
+                        // c.BTN_DPAD_LEFT => log.debug("BTN_DPAD_LEFT: {}", .{event.value}),
+                        // c.BTN_DPAD_RIGHT => log.debug("BTN_DPAD_RIGHT: {}", .{event.value}),
+                        else => log.debug("Unhandled KEY: {} ({x}), value: {}", .{ event.code, event.code, event.value }),
+                    },
+                    else => {},
+                }
+            }
+        };
+
+        log.debug("{},{}", .{ @divTrunc(gx, 4096), @divTrunc(gy, 4096) });
+        x_offset +%= @divTrunc(gx, 4096);
+        y_offset +%= @divTrunc(gy, 4096);
+
         if (wld.pending_resize) |r| {
             try resize(&wld, r.width, r.height);
         }
-
         if (wld.should_draw) {
             if (aquireFreeBufferIndex(&wld)) |buffer| {
-                renderWeirdGradient(buffer, x_offset, 0);
+                renderWeirdGradient(buffer, x_offset, y_offset);
                 draw(&wld, buffer);
             } else {
                 _ = wl.display_roundtrip(display);
@@ -423,7 +531,6 @@ pub fn main() !void {
             }
         }
 
-        x_offset += 1;
         _ = wl.display_flush(display);
     }
 }
@@ -551,7 +658,7 @@ fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}
 }
 
 fn aquireFreeBufferIndex(wld: *WlData) ?*Buffer {
-    for (&wld.buffers, 0..) |*buffer, i| {
+    for (&wld.buffers) |*buffer| {
         if (buffer.free) {
             if (buffer.handle == null or buffer.width != wld.width or buffer.height != wld.height) {
                 if (buffer.handle) |h| h.destroy();
@@ -564,7 +671,7 @@ fn aquireFreeBufferIndex(wld: *WlData) ?*Buffer {
             }
 
             buffer.free = false;
-            return i;
+            return buffer;
         }
     }
 
@@ -787,8 +894,8 @@ fn renderWeirdGradient(buffer: *Buffer, xoffset: i32, yoffset: i32) void {
         for (0..uwidth) |ux| {
             const x: i32 = @intCast(ux);
 
-            const b: u8 = @truncate(@as(usize, @intCast(x + xoffset)));
-            const g: u8 = @truncate(@as(usize, @intCast(y + yoffset)));
+            const b: u8 = @truncate(@as(u32, @bitCast(x +% xoffset)));
+            const g: u8 = @truncate(@as(u32, @bitCast(y +% yoffset)));
             pixel[0] = (@as(u16, g) << 8) | b;
             pixel += 1;
         }

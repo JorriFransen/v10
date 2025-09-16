@@ -96,18 +96,16 @@ pub fn windowsEntry(
                     _ = win32.DispatchMessageA(&msg);
                 }
 
-                x_offset += 1;
-
                 for (0..xinput.XUSER_MAX_COUNT) |controller_index| {
                     var controller_state: xinput.STATE = undefined;
                     if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
                         // Controller present
                         const pad = &controller_state.gamepad;
                         const buttons = pad.buttons;
+                        _ = buttons;
 
-                        if (buttons.a) {
-                            y_offset += 2;
-                        }
+                        x_offset +%= @divTrunc(pad.thumb_l_x, 4096);
+                        y_offset -%= @divTrunc(pad.thumb_l_y, 4096);
                     } else {
                         // Controller not present
                     }
@@ -251,8 +249,8 @@ fn renderWeirdGradient(buffer: *OffscreenBuffer, xoffset: i32, yoffset: i32) voi
         for (0..uwidth) |ux| {
             const x: i32 = @intCast(ux);
 
-            const b: u8 = @truncate(@as(usize, @intCast(x + xoffset)));
-            const g: u8 = @truncate(@as(usize, @intCast(y + yoffset)));
+            const b: u8 = @truncate(@as(u32, @bitCast(x +% xoffset)));
+            const g: u8 = @truncate(@as(u32, @bitCast(y +% yoffset)));
             pixel[0] = (@as(u16, g) << 8) | b;
             pixel += 1;
         }
