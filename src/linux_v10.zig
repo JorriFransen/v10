@@ -1,17 +1,20 @@
 const std = @import("std");
 const log = std.log.scoped(.linux_v10);
+
 const wayland = @import("wayland");
 const wl = wayland.wl;
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const viewporter = wayland.viewporter;
+
 const libdecor = @import("libdecor.zig");
+
 const udev = @import("libudev.zig");
 const posix = std.posix.system;
 
-const c = @cImport({
-    @cInclude("linux/input.h");
-});
+const linux_input = @import("linux_input.zig");
+const InputEvent = linux_input.InputEvent;
+const Key = linux_input.Key;
 
 // TODO: Check if preferred_buffer_scale is relevant
 
@@ -529,52 +532,62 @@ pub fn main() !void {
                         .joystick_2,
                         .joystick_3,
                         => {
-                            var events: [16]c.input_event = undefined;
+                            var events: [16]InputEvent = undefined;
                             const read_len = try std.posix.read(pollfd.fd, std.mem.sliceAsBytes(&events));
                             if (read_len > 0) {
-                                const num_events = read_len / @sizeOf(c.input_event);
+                                const num_events = read_len / @sizeOf(InputEvent);
                                 for (events[0..num_events]) |event| {
                                     switch (event.type) {
-                                        c.EV_SYN => {},
-                                        c.EV_ABS => switch (event.code) {
-                                            c.ABS_X => {
-                                                jx = event.value;
-                                                // log.debug("X: {}", .{event.value});
-                                            },
-                                            c.ABS_Y => {
-                                                jy = event.value;
-                                                // log.debug("Y: {}", .{event.value});
-                                            },
-                                            // c.ABS_Z => log.debug("Z: {}", .{event.value}),
-                                            // c.ABS_RX => log.debug("RX: {}", .{event.value}),
-                                            // c.ABS_RY => log.debug("RY: {}", .{event.value}),
-                                            // c.ABS_RZ => log.debug("RZ: {}", .{event.value}),
-                                            //
-                                            // // dpad
-                                            // c.ABS_HAT0X => log.debug("HAT0X: {}", .{event.value}),
-                                            // c.ABS_HAT0Y => log.debug("HAT0Y: {}", .{event.value}),
+                                        .SYN => {},
+                                        .ABS => {
+                                            const abs: linux_input.Abs = @enumFromInt(event.code);
+                                            switch (abs) {
+                                                .X => {
+                                                    jx = event.value;
+                                                    // log.debug("X: {}", .{event.value});
+                                                },
+                                                .Y => {
+                                                    jy = event.value;
+                                                    // log.debug("Y: {}", .{event.value});
+                                                },
+                                                .Z => log.debug("Z: {}", .{event.value}),
+                                                .RX => log.debug("RX: {}", .{event.value}),
+                                                .RY => log.debug("RY: {}", .{event.value}),
+                                                .RZ => log.debug("RZ: {}", .{event.value}),
 
-                                            // else => log.debug("{} unhandled axis {}", .{ slot, event.code }),
-                                            else => {},
+                                                // dpad
+                                                .HAT0X => log.debug("HAT0X: {}", .{event.value}),
+                                                .HAT0Y => log.debug("HAT0Y: {}", .{event.value}),
+
+                                                // else => log.debug("{} unhandled axis {}", .{ slot, event.code }),
+                                                else => {},
+                                            }
                                         },
-                                        c.EV_KEY => switch (event.code) {
-                                            // c.BTN_A => log.debug("A: {}", .{event.value}),
-                                            // c.BTN_B => log.debug("B: {}", .{event.value}),
-                                            // c.BTN_X => log.debug("X: {}", .{event.value}),
-                                            // c.BTN_Y => log.debug("Y: {}", .{event.value}),
-                                            //
-                                            // c.BTN_THUMBL => log.debug("THUMBL: {}", .{event.value}),
-                                            // c.BTN_THUMBR => log.debug("THUMBR: {}", .{event.value}),
-                                            //
-                                            // c.BTN_TL => log.debug("TL: {}", .{event.value}),
-                                            // c.BTN_TR => log.debug("TR: {}", .{event.value}),
-                                            //
-                                            // c.BTN_SELECT => log.debug("SELECT: {}", .{event.value}),
-                                            // c.BTN_START => log.debug("START: {}", .{event.value}),
-                                            // c.BTN_MODE => log.debug("MODE: {}", .{event.value}),
+                                        .KEY => {
+                                            const key: linux_input.Key = @enumFromInt(event.code);
+                                            switch (key) {
+                                                // Key.BTN_A => log.debug("A: {}", .{event.value}),
+                                                // Key.BTN_B => log.debug("B: {}", .{event.value}),
+                                                // Key.BTN_X => log.debug("X: {}", .{event.value}),
+                                                // Key.BTN_Y => log.debug("Y: {}", .{event.value}),
+                                                //
+                                                // .BTN_THUMBL => log.debug("THUMBL: {}", .{event.value}),
+                                                // .BTN_THUMBR => log.debug("THUMBR: {}", .{event.value}),
+                                                //
+                                                // .BTN_TL => log.debug("TL: {}", .{event.value}),
+                                                // .BTN_TR => log.debug("TR: {}", .{event.value}),
+                                                //
+                                                // .BTN_SELECT => log.debug("SELECT: {}", .{event.value}),
+                                                // .BTN_START => log.debug("START: {}", .{event.value}),
+                                                .BTN_MODE => {
+                                                    log.debug("MODE: {}", .{event.value});
+                                                    if (event.value != 0)
+                                                        wld.running = false;
+                                                },
 
-                                            // else => log.debug("{} unhandled key {}", .{ slot, event.code }),
-                                            else => {},
+                                                // else => log.debug("{} unhandled key {}", .{ slot, event.code }),
+                                                else => {},
+                                            }
                                         },
                                         else => {},
                                     }
@@ -878,18 +891,49 @@ fn handleWlSeatCapabilities(data: ?*anyopaque, seat: ?*wl.Seat, capabilities: wl
     wli.seat_capabilities = capabilities;
 }
 
-fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u32, key: u32, state: wl.Keyboard.KeyState) callconv(.c) void {
+fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u32, rawkey: u32, state: wl.Keyboard.KeyState) callconv(.c) void {
     _ = keyboard;
     _ = time;
     _ = serial;
-    _ = state;
 
     const wld: *WlData = @ptrCast(@alignCast(data));
 
     // TODO: Do this via the keymap with xkb!
-    // 1 = esc, 58 = caps
-    if (key == 1 or key == 58) {
-        wld.running = false;
+    const key: linux_input.Key = @enumFromInt(rawkey);
+    const was_down = state != .pressed;
+    const is_down = state == .pressed or state == .repeated;
+
+    if (is_down != was_down) {
+        if (key == .W) {
+            //
+        } else if (key == .A) {
+            //
+        } else if (key == .S) {
+            //
+        } else if (key == .D) {
+            //
+        } else if (key == .Q) {
+            //
+        } else if (key == .E) {
+            //
+        } else if (key == .UP) {
+            //
+        } else if (key == .LEFT) {
+            //
+        } else if (key == .DOWN) {
+            //
+        } else if (key == .RIGHT) {
+            //
+        } else if (key == .ESC) {
+            wld.running = false;
+        } else if (key == .CAPSLOCK) {
+            wld.running = false;
+        } else if (key == .SPACE) {
+            log.debug("space: {s} {s}", .{
+                if (is_down) "is_down" else "",
+                if (was_down) "was_down" else "",
+            });
+        }
     }
 }
 
