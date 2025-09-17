@@ -1,10 +1,94 @@
 const std = @import("std");
 
+pub const EVIOCSFF = std.os.linux.IOCTL.IOW('E', 0x80, FfEffect);
+
 pub const InputEvent = extern struct {
     time: std.posix.timeval = .{ .sec = 0, .usec = 0 },
     type: EventType = @enumFromInt(0),
     code: u16 = 0,
     value: i32 = 0,
+};
+
+pub const FfEffect = extern struct {
+    type: FfType,
+    id: i16 = 0,
+    direction: u16 = 0,
+    trigger: FfTrigger = .{},
+    replay: FfReplay = .{},
+
+    u: extern union {
+        constant: FfConstantEffect,
+        ramp: FfRampEffect,
+        periodic: FfPeriodicEffect,
+        condition: [2]FfConditionEffect,
+        rumble: FfRumbleEffect,
+    },
+};
+
+pub const FfTrigger = extern struct {
+    button: u16 = 0,
+    interval: u16 = 0,
+};
+
+pub const FfReplay = extern struct {
+    length: u16 = 0,
+    delay: u16 = 0,
+};
+
+pub const FfConstantEffect = extern struct {
+    level: i16 = 0,
+    envelope: FfEnvelope = .{},
+};
+
+pub const FfRampEffect = extern struct {
+    start_level: i16 = 0,
+    end_level: i16 = 0,
+    envelope: FfEnvelope = .{},
+};
+
+pub const FfPeriodicEffect = extern struct {
+    waveform: u16 = 0,
+    period: u16 = 0,
+    magnitude: i16 = 0,
+    offset: i16 = 0,
+    phase: u16 = 0,
+    envelope: FfEnvelope = .{},
+    custom_len: u32 = 0,
+    custom_data: ?*i16 = null,
+};
+
+pub const FfConditionEffect = extern struct {
+    right_saturation: u16 = 0,
+    left_saturation: u16 = 0,
+    right_coeff: i16 = 0,
+    left_coeff: i16 = 0,
+    deadband: u16 = 0,
+    center: i16 = 0,
+};
+
+pub const FfRumbleEffect = extern struct {
+    strong_magnitude: u16 = 0,
+    weak_magnitude: u16 = 0,
+};
+
+pub const FfEnvelope = extern struct {
+    attack_length: u16 = 0,
+    attack_level: u16 = 0,
+    fade_length: u16 = 0,
+    fade_level: u16 = 0,
+};
+
+pub const FfType = enum(u16) {
+    RUMBLE = 0x50,
+    PERIODIC = 0x51,
+    CONSTANT = 0x52,
+    SPRING = 0x53,
+    FRICTION = 0x54,
+    DAMPER = 0x55,
+    INERTIA = 0x56,
+    RAMP = 0x57,
+    pub const EFFECT_MIN: FfType = .RUMBLE;
+    pub const EFFECT_MAX: FfType = .RAMP;
 };
 
 pub const EventType = enum(u16) {

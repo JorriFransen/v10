@@ -15,6 +15,7 @@ const posix = std.posix.system;
 const linux_input = @import("linux_input.zig");
 const InputEvent = linux_input.InputEvent;
 const Key = linux_input.Key;
+const Abs = linux_input.Abs;
 
 // TODO: Check if preferred_buffer_scale is relevant
 
@@ -226,11 +227,64 @@ var poll_fds: [poll_fd_count]std.posix.pollfd = [1]std.posix.pollfd{.{
 }} ** poll_fd_count;
 
 const Joystick = struct {
+    fd: std.posix.fd_t,
+    active: bool = false,
+
+    rumble_strong: u16 = 0,
+    rumble_weak: u16 = 0,
+    rumble_event_id: i16 = -1,
+
+    axis: [32]i32 = [1]i32{0} ** 32,
+    buttons: [320]u1 = [1]u1{0} ** 320,
+
     /// Zero terminated devnode path
     path: [32]u8 = [1]u8{0} ** 32,
+
+    fn handleEvent(this: *Joystick, event: *const InputEvent) void {
+        switch (event.type) {
+            .SYN => {},
+            .ABS => {
+                if (event.code < this.axis.len) {
+                    this.axis[event.code] = event.value;
+                }
+            },
+            .KEY => {
+                if (event.code < this.buttons.len) {
+                    this.buttons[event.code] = if (event.value != 0) 1 else 0;
+                }
+            },
+            else => log.warn("Unhandled event: {}", .{event.type}),
+        }
+    }
+
+    fn setRumble(this: *Joystick, strong: u16, weak: u16) !void {
+        assert(this.active);
+        assert(this.fd >= 0);
+
+        if (strong != this.rumble_strong or weak != this.rumble_weak) {
+            this.rumble_strong = strong;
+            this.rumble_weak = weak;
+
+            const rumble_event = linux_input.FfEffect{
+                .type = .RUMBLE,
+                .id = this.rumble_event_id,
+                // NOTE: These magnitudes are treated as i16 values by the xpad driver!
+                // TODO: Queury the driver with udev, modify magnitude based on driver
+                .u = .{ .rumble = .{ .strong_magnitude = this.rumble_strong, .weak_magnitude = this.rumble_weak } },
+                .replay = .{ .length = 0xffff },
+            };
+
+            const id = posix.ioctl(this.fd, linux_input.EVIOCSFF, &rumble_event);
+            assert(id >= 0);
+            this.rumble_event_id = @intCast(id);
+
+            const play = InputEvent{ .type = .FF, .code = @intCast(id), .value = 1 };
+            _ = try std.posix.write(this.fd, std.mem.asBytes(&play));
+        }
+    }
 };
 
-var joysticks: [PollFdSlot.joystick_count]Joystick = undefined;
+var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
 
 pub fn main() !void {
     udev.load();
@@ -501,8 +555,6 @@ pub fn main() !void {
 
     var x_offset: i32 = 0;
     var y_offset: i32 = 0;
-    var jx: i32 = 0;
-    var jy: i32 = 0;
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
         if (try std.posix.poll(&poll_fds, 0) > 0) {
@@ -536,80 +588,31 @@ pub fn main() !void {
                             const read_len = try std.posix.read(pollfd.fd, std.mem.sliceAsBytes(&events));
                             if (read_len > 0) {
                                 const num_events = read_len / @sizeOf(InputEvent);
-                                for (events[0..num_events]) |event| {
-                                    switch (event.type) {
-                                        .SYN => {},
-                                        .ABS => {
-                                            const abs: linux_input.Abs = @enumFromInt(event.code);
-                                            switch (abs) {
-                                                .X => {
-                                                    jx = event.value;
-                                                    // log.debug("X: {}", .{event.value});
-                                                },
-                                                .Y => {
-                                                    jy = event.value;
-                                                    // log.debug("Y: {}", .{event.value});
-                                                },
-                                                .Z => log.debug("Z: {}", .{event.value}),
-                                                .RX => log.debug("RX: {}", .{event.value}),
-                                                .RY => log.debug("RY: {}", .{event.value}),
-                                                .RZ => log.debug("RZ: {}", .{event.value}),
-
-                                                // dpad
-                                                .HAT0X => log.debug("HAT0X: {}", .{event.value}),
-                                                .HAT0Y => log.debug("HAT0Y: {}", .{event.value}),
-
-                                                // else => log.debug("{} unhandled axis {}", .{ slot, event.code }),
-                                                else => {},
-                                            }
-                                        },
-                                        .KEY => {
-                                            const key: linux_input.Key = @enumFromInt(event.code);
-                                            switch (key) {
-                                                // Key.BTN_A => log.debug("A: {}", .{event.value}),
-                                                // Key.BTN_B => log.debug("B: {}", .{event.value}),
-                                                // Key.BTN_X => log.debug("X: {}", .{event.value}),
-                                                // Key.BTN_Y => log.debug("Y: {}", .{event.value}),
-                                                //
-                                                // .BTN_THUMBL => log.debug("THUMBL: {}", .{event.value}),
-                                                // .BTN_THUMBR => log.debug("THUMBR: {}", .{event.value}),
-                                                //
-                                                // .BTN_TL => log.debug("TL: {}", .{event.value}),
-                                                // .BTN_TR => log.debug("TR: {}", .{event.value}),
-                                                //
-                                                // .BTN_SELECT => log.debug("SELECT: {}", .{event.value}),
-                                                // .BTN_START => log.debug("START: {}", .{event.value}),
-                                                .BTN_MODE => {
-                                                    log.debug("MODE: {}", .{event.value});
-                                                    if (event.value != 0)
-                                                        wld.running = false;
-                                                },
-
-                                                // else => log.debug("{} unhandled key {}", .{ slot, event.code }),
-                                                else => {},
-                                            }
-                                        },
-                                        else => {},
-                                    }
+                                for (events[0..num_events]) |*event| {
+                                    const jid = slot_index - PollFdSlot.first_joystick;
+                                    const joystick = &joysticks[jid];
+                                    joystick.handleEvent(event);
                                 }
                             } else {
-                                unreachable;
+                                // Read failed somehow, don't throw an error, keep running
                             }
                         },
-
-                        // else => {
-                        //     log.warn("Unhandled pollfd slot {}", .{slot});
-                        // },
                     }
                 }
             }
         }
 
-        // log.debug("{},{}", .{ jx, jy });
-        // log.debug("{},{}", .{ @divTrunc(gx, 4096), @divTrunc(gy, 4096) });
-        x_offset +%= @divTrunc(jx, 4096);
-        y_offset +%= @divTrunc(jy, 4096);
-        // log.debug("{},{}", .{ x_offset, y_offset });
+        for (&joysticks) |*js| {
+            const jx: i32 = js.axis[@intFromEnum(Abs.X)];
+            const jy: i32 = js.axis[@intFromEnum(Abs.Y)];
+
+            x_offset +%= @divTrunc(jx, 4096);
+            y_offset +%= @divTrunc(jy, 4096);
+
+            if (js.buttons[@intFromEnum(Key.BTN_MODE)] == 1) {
+                wld.running = false;
+            }
+        }
 
         if (wld.pending_resize) |r| {
             try resize(&wld, r.width, r.height);
@@ -1020,10 +1023,11 @@ fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
     }
 
     if (joystick_index_opt) |ji| {
-        const fd = try std.posix.open(devnode_path, std.posix.O{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0);
+        const fd = try std.posix.open(devnode_path, std.posix.O{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
         poll_fds[PollFdSlot.first_joystick + ji] = .{ .fd = fd, .events = std.posix.POLL.IN, .revents = undefined };
 
         const joystick = &joysticks[ji];
+        joystick.* = .{ .fd = fd, .active = true };
         assert(joystick.path.len > devnode_path.len + 1);
         @memcpy(joystick.path[0..devnode_path.len], devnode_path);
         joystick.path[devnode_path.len] = 0;
@@ -1040,7 +1044,7 @@ fn removeJoystick(device: *udev.Device, devnode_path: []const u8) void {
     for (&joysticks, 0..) |*js, ji| {
         if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), devnode_path)) {
             joystick_index_opt = ji;
-            js.* = .{};
+            js.* = .{ .fd = -1 };
             break;
         } else {}
     }

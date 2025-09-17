@@ -1,10 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.libudev);
 
-const c = @cImport({
-    @cInclude("libudev.h");
-});
-
 pub const Context = opaque {};
 pub const Monitor = opaque {};
 pub const Device = opaque {};
