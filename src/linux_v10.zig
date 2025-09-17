@@ -222,6 +222,13 @@ var poll_fds: [poll_fd_count]std.posix.pollfd = [1]std.posix.pollfd{.{
     .revents = undefined,
 }} ** poll_fd_count;
 
+const Joystick = struct {
+    /// Zero terminated devnode path
+    path: [32]u8 = [1]u8{0} ** 32,
+};
+
+var joysticks: [PollFdSlot.joystick_count]Joystick = undefined;
+
 pub fn main() !void {
     udev.load();
 
@@ -971,6 +978,11 @@ fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
     if (joystick_index_opt) |ji| {
         const fd = try std.posix.open(devnode_path, std.posix.O{ .ACCMODE = .RDONLY, .NONBLOCK = true }, 0);
         poll_fds[PollFdSlot.first_joystick + ji] = .{ .fd = fd, .events = std.posix.POLL.IN, .revents = undefined };
+
+        const joystick = &joysticks[ji];
+        assert(joystick.path.len > devnode_path.len + 1);
+        @memcpy(joystick.path[0..devnode_path.len], devnode_path);
+        joystick.path[devnode_path.len] = 0;
     } else {
         log.warn("A joystick was added, but there are no free slots!", .{});
     }
@@ -979,8 +991,23 @@ fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
 fn removeJoystick(device: *udev.Device, devnode_path: []const u8) void {
     _ = device;
     log.debug("Removing joystick: '{s}'", .{devnode_path});
-    // TODO: Store path (and state) in joystick data, match with devnode_path
-    unreachable;
+
+    var joystick_index_opt: ?usize = null;
+    for (&joysticks, 0..) |*js, ji| {
+        if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), devnode_path)) {
+            joystick_index_opt = ji;
+            js.* = .{};
+            break;
+        } else {}
+    }
+
+    if (joystick_index_opt) |ji| {
+        const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
+        std.posix.close(js_pollfd.fd);
+        js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
+    } else {
+        log.warn("Trying to remove a joystick, but is was never registered!", .{});
+    }
 }
 
 /// Returns the devnode path if the device is a joystick, otherwise returns null.
