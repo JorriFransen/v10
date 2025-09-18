@@ -2,8 +2,6 @@ const std = @import("std");
 const log = std.log.scoped(.dsound);
 const win32 = @import("win32.zig");
 
-const LPUNKNOWN = ?*anyopaque;
-
 pub const OK: u32 = 0x00000000;
 pub const ERR_OUTOFMEMORY: u32 = 0x00000007;
 pub const ERR_NOINTERFACE: u32 = 0x000001AE;
@@ -50,6 +48,15 @@ pub const BCAPS_STICKYFOCUS = 0x00004000;
 pub const BCAPS_GLOBALFOCUS = 0x00008000;
 pub const BCAPS_GETCURRENTPOSITION2 = 0x00010000;
 pub const BCAPS_MUTE3DATMAXDISTANCE = 0x00020000;
+
+pub const BPLAY_LOOPING = 0x00000001;
+pub const BPLAY_LOCHARDWARE = 0x00000002;
+pub const BPLAY_LOCSOFTWARE = 0x00000004;
+pub const BPLAY_TERMINATEBY_TIME = 0x00000008;
+pub const BPLAY_TERMINATEBY_DISTANCE = 0x000000010;
+pub const BPLAY_TERMINATEBY_PRIORITY = 0x000000020;
+
+pub const WAVE_FORMAT_PCM = 0x1;
 
 pub const IDirectSound = extern struct {
     vtable: *const VTable,
@@ -122,13 +129,13 @@ pub const IDirectSoundBuffer = extern struct {
         return this.vtable.Release(this);
     }
 
-    pub inline fn GetCaps(this: *IDirectSoundBuffer, caps: *BCaps) win32.HRESULT {
+    pub inline fn GetCaps(this: *IDirectSoundBuffer, caps: *BufferCaps) win32.HRESULT {
         return this.vtable.GetCaps(this, caps);
     }
-    pub inline fn GetCurrentPosition(this: *IDirectSoundBuffer, current_play_cursor: *win32.DWORD, current_write_cursor: *win32.DWORD) win32.HRESULT {
+    pub inline fn GetCurrentPosition(this: *IDirectSoundBuffer, current_play_cursor: ?*win32.DWORD, current_write_cursor: ?*win32.DWORD) win32.HRESULT {
         return this.vtable.GetCurrentPosition(this, current_play_cursor, current_write_cursor);
     }
-    pub inline fn GetFormat(this: *IDirectSoundBuffer, format: *WAVEFORMATEX, size_allocated: win32.DWORD, size_written: *win32.DWORD) win32.HRESULT {
+    pub inline fn GetFormat(this: *IDirectSoundBuffer, format: *WaveFormatEx, size_allocated: win32.DWORD, size_written: *win32.DWORD) win32.HRESULT {
         return this.vtable.GetFormat(this, format, size_allocated, size_written);
     }
     pub inline fn GetVolume(this: *IDirectSoundBuffer, volume: *win32.LONG) win32.HRESULT {
@@ -155,7 +162,7 @@ pub const IDirectSoundBuffer = extern struct {
     pub inline fn SetCurrentPosition(this: *IDirectSoundBuffer, new_position: win32.DWORD) win32.HRESULT {
         return this.vtable.SetCurrentPosition(this, new_position);
     }
-    pub inline fn SetFormat(this: *IDirectSoundBuffer, format: *const WAVEFORMATEX) win32.HRESULT {
+    pub inline fn SetFormat(this: *IDirectSoundBuffer, format: *const WaveFormatEx) win32.HRESULT {
         return this.vtable.SetFormat(this, format);
     }
     pub inline fn SetVolume(this: *IDirectSoundBuffer, volume: win32.LONG) win32.HRESULT {
@@ -184,9 +191,9 @@ pub const IDirectSoundBuffer = extern struct {
         Release: *const fn (this: *IDirectSound) callconv(.c) u32,
 
         // IDirectSoundBuffer methods
-        GetCaps: *const fn (this: *IDirectSoundBuffer, caps: *BCaps) callconv(.c) win32.HRESULT,
-        GetCurrentPosition: *const fn (this: *IDirectSoundBuffer, current_play_cursor: *win32.DWORD, current_write_cursor: *win32.DWORD) callconv(.c) win32.HRESULT,
-        GetFormat: *const fn (this: *IDirectSoundBuffer, format: *WAVEFORMATEX, size_allocated: win32.DWORD, size_written: *win32.DWORD) callconv(.c) win32.HRESULT,
+        GetCaps: *const fn (this: *IDirectSoundBuffer, caps: *BufferCaps) callconv(.c) win32.HRESULT,
+        GetCurrentPosition: *const fn (this: *IDirectSoundBuffer, current_play_cursor: ?*win32.DWORD, current_write_cursor: ?*win32.DWORD) callconv(.c) win32.HRESULT,
+        GetFormat: *const fn (this: *IDirectSoundBuffer, format: *WaveFormatEx, size_allocated: win32.DWORD, size_written: *win32.DWORD) callconv(.c) win32.HRESULT,
         GetVolume: *const fn (this: *IDirectSoundBuffer, volume: *win32.LONG) callconv(.c) win32.HRESULT,
         GetPan: *const fn (this: *IDirectSoundBuffer, pan: *win32.LONG) callconv(.c) win32.HRESULT,
         GetFrequency: *const fn (this: *IDirectSoundBuffer, frequency: *win32.DWORD) callconv(.c) win32.HRESULT,
@@ -195,7 +202,7 @@ pub const IDirectSoundBuffer = extern struct {
         Lock: *const fn (this: *IDirectSoundBuffer, write_cursor: win32.DWORD, write_bytes: win32.DWORD, audio_ptr_1: **anyopaque, audio_bytes_1: *win32.DWORD, audio_ptr_2: **anyopaque, audio_bytes_2: *win32.DWORD, flags: win32.DWORD) callconv(.c) win32.HRESULT,
         Play: *const fn (this: *IDirectSoundBuffer, reserved1: win32.DWORD, reserved2: win32.DWORD, flags: win32.DWORD) callconv(.c) win32.HRESULT,
         SetCurrentPosition: *const fn (this: *IDirectSoundBuffer, new_position: win32.DWORD) callconv(.c) win32.HRESULT,
-        SetFormat: *const fn (this: *IDirectSoundBuffer, format: *const WAVEFORMATEX) callconv(.c) win32.HRESULT,
+        SetFormat: *const fn (this: *IDirectSoundBuffer, format: *const WaveFormatEx) callconv(.c) win32.HRESULT,
         SetVolume: *const fn (this: *IDirectSoundBuffer, volume: win32.LONG) callconv(.c) win32.HRESULT,
         SetPan: *const fn (this: *IDirectSoundBuffer, pan: win32.LONG) callconv(.c) win32.HRESULT,
         SetFrequency: *const fn (this: *IDirectSoundBuffer, frequency: win32.DWORD) callconv(.c) win32.HRESULT,
@@ -206,7 +213,7 @@ pub const IDirectSoundBuffer = extern struct {
 };
 
 pub const Caps = opaque {};
-pub const BCaps = extern struct {
+pub const BufferCaps = extern struct {
     dwSize: win32.DWORD = 0,
     dwFlags: win32.DWORD = 0,
     dwBufferBytes: win32.DWORD = 0,
@@ -219,18 +226,18 @@ pub const BufferDesc = extern struct {
     flags: win32.DWORD = 0,
     buffer_bytes: win32.DWORD = 0,
     reserved: win32.DWORD = 0,
-    wave_format: ?*WAVEFORMATEX = null,
+    wave_format: ?*const WaveFormatEx = null,
     guid_3d_algorighm: win32.GUID = .{},
 };
 
-pub const WAVEFORMATEX = extern struct {
-    wFormatTag: win32.WORD = 0,
-    nChannels: win32.WORD = 0,
-    nSamplesPerSec: win32.DWORD = 0,
-    nAvgBytesPerSec: win32.DWORD = 0,
-    nBlockAlign: win32.WORD = 0,
-    wBitsPerSample: win32.WORD = 0,
-    cbSize: win32.WORD = 0,
+pub const WaveFormatEx = extern struct {
+    format: win32.WORD = 0,
+    channels: win32.WORD = 0,
+    samples_per_second: win32.DWORD = 0,
+    avg_bytes_per_second: win32.DWORD = 0,
+    block_align: win32.WORD = 0,
+    bits_per_sample: win32.WORD = 0,
+    size: win32.WORD = 0,
 };
 
 // typedef struct WAVEFORMATEXTENSIBLE {
@@ -242,7 +249,7 @@ pub const WAVEFORMATEX = extern struct {
 //     DWORD SubFormat;
 // } WAVEFORMATEXTENSIBLE;
 
-fn DirectSoundCreateStub(guid: ?*win32.GUID, ds: **IDirectSound, unk_outer: LPUNKNOWN) callconv(.winapi) win32.HRESULT {
+fn DirectSoundCreateStub(guid: ?*win32.GUID, ds: **IDirectSound, unk_outer: ?*anyopaque) callconv(.winapi) win32.HRESULT {
     _ = guid;
     _ = ds;
     _ = unk_outer;
