@@ -87,6 +87,7 @@ pub const LoadError = error{
 pub fn load() LoadError!void {
     var lib = std.DynLib.open("libdecor-0.so") catch return error.LibDecorNotFound;
     errdefer lib.close();
+    log.debug("Loaded libdecor-0.so", .{});
 
     const struct_info = @typeInfo(LibDecor).@"struct";
     inline for (struct_info.decls) |decl| {

@@ -17,6 +17,8 @@ const InputEvent = linux_input.InputEvent;
 const Key = linux_input.Key;
 const Abs = linux_input.Abs;
 
+const alsa = @import("linux/alsa.zig");
+
 // TODO: Check if preferred_buffer_scale is relevant
 
 const assert = std.debug.assert;
@@ -501,6 +503,64 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
+    alsa.load();
+    const samples_per_second = 48000;
+    const bytes_per_sample = @sizeOf(i16) * 2;
+    var sound_buffer_size: usize = samples_per_second * bytes_per_sample;
+    var period_size: usize = 1024;
+    const tone_hz = 256;
+    const tone_volume = 6000;
+    var running_sample_index: u32 = 0;
+    const square_wave_period: i32 = samples_per_second / tone_hz;
+    const half_square_wave_period: u32 = square_wave_period / 2;
+
+    // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
+    //        required for mixing with other applications. For pipewire, the alsa
+    //        plugin is required (pipewire-alsa on arch). Same for pulse
+    //        (alsa-plugins on arch). The alternative is using hw:0,0 or plughw:0,0;
+    //        or similar. But this takes contol over the hardware, and will not work
+    //        if another application is using it already!
+    var pcm_handle: *alsa.Pcm = undefined;
+    if (alsa.pcm_open(&pcm_handle, "default", .PLAYBACK, 0) == 0) {
+        var hw_params_opt: ?*alsa.PcmHwParams = undefined;
+        if (alsa.pcm_hw_params_malloc(&hw_params_opt) == 0) {
+            const hw_params = hw_params_opt.?;
+
+            _ = alsa.pcm_hw_params_any(pcm_handle, hw_params);
+            _ = alsa.pcm_hw_params_set_access(pcm_handle, hw_params, .RW_INTERLEAVED);
+            _ = alsa.pcm_hw_params_set_format(pcm_handle, hw_params, .S16);
+            _ = alsa.pcm_hw_params_set_channels(pcm_handle, hw_params, 2);
+            _ = alsa.pcm_hw_params_set_rate(pcm_handle, hw_params, samples_per_second, 0);
+            _ = alsa.pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &sound_buffer_size);
+            _ = alsa.pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, null);
+
+            _ = alsa.pcm_hw_params(pcm_handle, hw_params);
+            _ = alsa.pcm_hw_params_free(hw_params);
+
+            if (alsa.pcm_prepare(pcm_handle) != 0) {
+                log.warn("snd_pcm_prepare failed", .{});
+            }
+        } else {
+            log.warn("snd_pcm_hw_params_malloc failed", .{});
+        }
+    } else {
+        log.warn("snd_pcm_open failed", .{});
+    }
+
+    var sound_buffer = try std.posix.mmap(
+        null,
+        sound_buffer_size,
+        posix.PROT.NONE,
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    );
+    try std.posix.mprotect(sound_buffer, posix.PROT.READ | posix.PROT.WRITE);
+
+    _ = &sound_buffer;
+
+    _ = .{ bytes_per_sample, tone_volume, &running_sample_index, half_square_wave_period };
+
     udev.load();
 
     var udev_monitor: *udev.Monitor = undefined;
@@ -613,6 +673,26 @@ pub fn main() !void {
             if (js.buttons[@intFromEnum(Key.BTN_MODE)] == 1) {
                 wld.running = false;
             }
+        }
+
+        const frames_to_write = period_size;
+        const frames: [][2]i16 = @ptrCast(sound_buffer);
+        log.debug("sound_buffer.len: {}", .{sound_buffer.len});
+        log.debug("frames.len: {}", .{frames.len});
+        log.debug("/: {}", .{sound_buffer.len / frames.len});
+        for (frames[0..frames_to_write]) |*frame| {
+            const sample_value: i16 = if ((running_sample_index / half_square_wave_period) % 2 == 0) tone_volume else -tone_volume;
+            frame[0] = sample_value;
+            frame[1] = sample_value;
+            running_sample_index +%= 1;
+        }
+
+        const frames_written = alsa.pcm_writei(pcm_handle, sound_buffer.ptr, frames_to_write);
+        if (frames_written < 0) {
+            log.warn("alsa underrun: {}", .{frames_written});
+            _ = alsa.pcm_prepare(pcm_handle);
+        } else if (frames_written != frames_to_write) {
+            log.warn("alsa partial write {} / {}", .{ frames_written, frames_to_write });
         }
 
         if (wld.pending_resize) |r| {
