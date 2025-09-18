@@ -7,12 +7,12 @@ const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const viewporter = wayland.viewporter;
 
-const libdecor = @import("libdecor.zig");
+const libdecor = @import("linux/libdecor.zig");
 
-const udev = @import("libudev.zig");
+const udev = @import("linux/libudev.zig");
 const posix = std.posix.system;
 
-const linux_input = @import("linux_input.zig");
+const linux_input = @import("linux/input.zig");
 const InputEvent = linux_input.InputEvent;
 const Key = linux_input.Key;
 const Abs = linux_input.Abs;
