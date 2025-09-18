@@ -32,7 +32,7 @@ pub const GamepadButtons = packed struct(win32.WORD) {
     right_Thumb: bool,
     left_shoulder: bool,
     right_shoulder: bool,
-    __reserved0__: u2,
+    __reserved__: u2,
     a: bool,
     b: bool,
     x: bool,
@@ -99,6 +99,8 @@ pub fn load() void {
 }
 
 fn loadStubs() void {
+    log.warn("XInput not found, loading stubs", .{});
+
     const struct_info = @typeInfo(XInput).@"struct";
     inline for (struct_info.decls) |decl| {
         const decl_type = @TypeOf(@field(XInput, decl.name));
@@ -110,16 +112,18 @@ fn loadStubs() void {
     }
 }
 
-pub var XInputGetState: *const fn (user_index: win32.DWORD, state: *STATE) callconv(.winapi) win32.DWORD = undefined;
 fn XInputGetStateStub(user_index: win32.DWORD, state: *STATE) callconv(.winapi) win32.DWORD {
     _ = user_index;
     _ = state;
     return win32.ERROR_DEVICE_NOT_CONNECTED;
 }
+const FN_XInputGetState = @TypeOf(XInputGetStateStub);
+pub var XInputGetState: *const FN_XInputGetState = undefined;
 
-pub var XInputSetState: *const fn (user_index: win32.DWORD, vibration: *const VIBRATION) callconv(.winapi) win32.DWORD = undefined;
 fn XInputSetStateStub(user_index: win32.DWORD, vibration: *const VIBRATION) callconv(.winapi) win32.DWORD {
     _ = user_index;
     _ = vibration;
     return win32.ERROR_DEVICE_NOT_CONNECTED;
 }
+const FN_XInputSetState = @TypeOf(XInputSetStateStub);
+pub var XInputSetState: *const FN_XInputSetState = undefined;

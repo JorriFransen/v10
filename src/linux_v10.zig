@@ -287,58 +287,6 @@ const Joystick = struct {
 var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
 
 pub fn main() !void {
-    udev.load();
-
-    var udev_monitor: *udev.Monitor = undefined;
-
-    const udev_ctx_opt = udev.new();
-    if (udev_ctx_opt) |udev_ctx| {
-        const udev_enumerator = udev.enumerate_new(udev_ctx) orelse {
-            log.err("udev_enumerate_new failed", .{});
-            return error.Unexpected;
-        };
-        _ = udev.enumerate_add_match_subsystem(udev_enumerator, "input");
-        _ = udev.enumerate_scan_devices(udev_enumerator);
-
-        var udev_list_entry = udev.enumerate_get_list_entry(udev_enumerator);
-        while (udev_list_entry) |e| {
-            const syspath = udev.list_entry_get_name(e);
-            const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
-            defer _ = udev.device_unref(device);
-
-            if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
-                try addJoystick(device, devnode_path);
-            }
-
-            udev_list_entry = udev.list_entry_get_next(e);
-        }
-
-        _ = udev.enumerate_unref(udev_enumerator);
-
-        if (udev.monitor_new_from_netlink(udev_ctx, "udev")) |m| {
-            udev_monitor = m;
-        } else {
-            log.err("udev_monitor_new_from_netlink failed", .{});
-            return error.Unexpected;
-        }
-
-        const udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
-        if (udev_monitor_fd < 0) {
-            log.err("udev_monitor_get_Fd failed", .{});
-            return error.Unexpected;
-        }
-        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = std.posix.POLL.IN, .revents = undefined };
-
-        if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
-            log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
-            return error.Unexpected;
-        }
-
-        if (udev.monitor_enable_receiving(udev_monitor) < 0) {
-            log.err("udev_monitor_enable_receiving failed", .{});
-            return error.Unexpected;
-        }
-    }
 
     // TODO: Move this into the generator
     var lwl = try std.DynLib.open("libwayland-client.so");
@@ -552,6 +500,59 @@ pub fn main() !void {
 
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
+
+    udev.load();
+
+    var udev_monitor: *udev.Monitor = undefined;
+
+    const udev_ctx_opt = udev.new();
+    if (udev_ctx_opt) |udev_ctx| {
+        const udev_enumerator = udev.enumerate_new(udev_ctx) orelse {
+            log.err("udev_enumerate_new failed", .{});
+            return error.Unexpected;
+        };
+        _ = udev.enumerate_add_match_subsystem(udev_enumerator, "input");
+        _ = udev.enumerate_scan_devices(udev_enumerator);
+
+        var udev_list_entry = udev.enumerate_get_list_entry(udev_enumerator);
+        while (udev_list_entry) |e| {
+            const syspath = udev.list_entry_get_name(e);
+            const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
+            defer _ = udev.device_unref(device);
+
+            if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
+                try addJoystick(device, devnode_path);
+            }
+
+            udev_list_entry = udev.list_entry_get_next(e);
+        }
+
+        _ = udev.enumerate_unref(udev_enumerator);
+
+        if (udev.monitor_new_from_netlink(udev_ctx, "udev")) |m| {
+            udev_monitor = m;
+        } else {
+            log.err("udev_monitor_new_from_netlink failed", .{});
+            return error.Unexpected;
+        }
+
+        const udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
+        if (udev_monitor_fd < 0) {
+            log.err("udev_monitor_get_Fd failed", .{});
+            return error.Unexpected;
+        }
+        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = std.posix.POLL.IN, .revents = undefined };
+
+        if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
+            log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
+            return error.Unexpected;
+        }
+
+        if (udev.monitor_enable_receiving(udev_monitor) < 0) {
+            log.err("udev_monitor_enable_receiving failed", .{});
+            return error.Unexpected;
+        }
+    }
 
     var x_offset: i32 = 0;
     var y_offset: i32 = 0;

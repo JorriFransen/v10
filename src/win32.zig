@@ -5,6 +5,7 @@ const zig_win32 = std.os.windows;
 pub const HINSTANCE = zig_win32.HINSTANCE;
 pub const HMODULE = zig_win32.HMODULE;
 pub const HANDLE = zig_win32.HANDLE;
+pub const HRESULT = zig_win32.HRESULT;
 pub const HDC = zig_win32.HDC;
 pub const HBITMAP = HANDLE;
 pub const HGDIOBJ = HANDLE;
@@ -610,6 +611,13 @@ pub const BLACKONWHITE = STRETCH_ANDSCANS;
 pub const COLORONCOLOR = STRETCH_DELETESCANS;
 pub const HALFTONE = STRETCH_HALFTONE;
 pub const WHITEONBLACK = STRETCH_ORSCANS;
+
+pub const GUID = extern struct {
+    data1: u32 = 0,
+    data2: u16 = 0,
+    data3: u16 = 0,
+    data4: [8]u8 = .{0} ** 8,
+};
 
 pub const WNDCLASSA = extern struct {
     style: c_uint = 0,

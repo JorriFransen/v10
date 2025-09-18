@@ -11,6 +11,8 @@ pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
+    std.log.debug("standard target: {s}", .{try target.result.linuxTriple(b.allocator)});
+
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse false;
     if (target.result.os.tag == .linux and optimize == .Debug) use_llvm = false;
 

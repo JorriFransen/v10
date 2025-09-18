@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.win32_v10);
 const win32 = @import("win32.zig");
 const xinput = @import("xinput.zig");
+const dsound = @import("direct_sound.zig");
 
 const assert = std.debug.assert;
 
@@ -20,6 +21,28 @@ pub const WindowDimensions = struct {
     width: i32,
     height: i32,
 };
+
+fn win32InitDSound(window: win32.HWND) void {
+    dsound.load();
+
+    var ds: *dsound.IDirectSound = undefined;
+    if (dsound.DirectSoundCreate(null, &ds, null) == dsound.OK) {
+        _ = ds.SetCooperativeLevel(window, dsound.SCL_PRIORITY);
+
+        const buffer_desc = dsound.BufferDesc{
+            .flags = dsound.BCAPS_PRIMARYBUFFER,
+        };
+        var primary_buffer: *dsound.IDirectSoundBuffer = undefined;
+        if (ds.CreateSoundBuffer(&buffer_desc, &primary_buffer, null) == dsound.OK) {
+            const waveformat = dsound.WAVEFORMATEX{};
+            _ = primary_buffer.SetFormat(&waveformat);
+        } else {
+            log.warn("DSound CreateSoundBuffer failed (primary buffer)", .{});
+        }
+    } else {
+        log.warn("DirectSoundCreate failed", .{});
+    }
+}
 
 fn getWindowDimension(window: win32.HWND) WindowDimensions {
     var client_rect: win32.RECT = undefined;
@@ -52,8 +75,6 @@ pub fn windowsEntry(
     _ = command_line;
     _ = cmd_show;
 
-    xinput.load();
-
     win32ResizeDibSection(&global_back_buffer, 1280, 720);
 
     const window_class = win32.WNDCLASSA{
@@ -83,6 +104,9 @@ pub fn windowsEntry(
             global_running = true;
             const device_context = win32.GetDC(window);
 
+            xinput.load();
+            win32InitDSound(window);
+
             var x_offset: i32 = 0;
             var y_offset: i32 = 0;
 
@@ -101,8 +125,6 @@ pub fn windowsEntry(
                     if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
                         // Controller present
                         const pad = &controller_state.gamepad;
-                        const buttons = pad.buttons;
-                        _ = buttons;
 
                         x_offset +%= @divTrunc(pad.thumb_l_x, 4096);
                         y_offset -%= @divTrunc(pad.thumb_l_y, 4096);
@@ -177,6 +199,11 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
                         if (is_down) "is_down" else "",
                         if (was_down) "was_down" else "",
                     });
+                }
+
+                const alt_key_was_down = (lparam & (1 << 29)) != 0;
+                if ((vk_code == win32.VK_F4) and alt_key_was_down) {
+                    global_running = false;
                 }
             }
         },
