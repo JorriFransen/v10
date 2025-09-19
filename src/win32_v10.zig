@@ -139,18 +139,18 @@ pub fn windowsEntry(
             var x_offset: i32 = 0;
             var y_offset: i32 = 0;
 
-            const samples_per_second = 48000;
-            const bytes_per_sample = @sizeOf(i16) * 2;
-            const sound_buffer_size = samples_per_second * bytes_per_sample;
+            const audio_frames_per_second = 48000;
+            const audio_bytes_per_sample = @sizeOf(i16);
+            const audio_bytes_per_frame = audio_bytes_per_sample * 2;
+            const audio_buffer_byte_size = audio_frames_per_second * audio_bytes_per_frame;
             const tone_hz = 256;
             const tone_volume = 6000;
-            var running_sample_index: u32 = 0;
-            const square_wave_period: i32 = samples_per_second / tone_hz;
-            const half_square_wave_period: u32 = square_wave_period / 2;
+            var running_frame_index: u32 = 0;
+            const wave_period: u32 = audio_frames_per_second / tone_hz;
 
             xinput.load();
-            win32InitDSound(window, samples_per_second, sound_buffer_size);
-            _ = global_sound_buffer.Play(0, 0, dsound.BPLAY_LOOPING);
+            win32InitDSound(window, audio_frames_per_second, audio_buffer_byte_size);
+            var sound_is_playing = false;
 
             while (global_running) {
                 var msg = win32.MSG{};
@@ -188,41 +188,52 @@ pub fn windowsEntry(
                     var region2_ptr: *anyopaque = undefined;
                     var region2_bytes: u32 = undefined;
 
-                    const byte_to_lock: win32.DWORD = (running_sample_index * bytes_per_sample) % sound_buffer_size;
-                    const bytes_to_write = if (byte_to_lock > play_cursor)
-                        (sound_buffer_size - byte_to_lock) + play_cursor
-                    else
-                        play_cursor - byte_to_lock;
+                    const byte_to_lock: win32.DWORD = (running_frame_index * audio_bytes_per_frame) % audio_buffer_byte_size;
+                    const bytes_to_write: u32 =
+                        if (byte_to_lock == play_cursor)
+                            if (sound_is_playing) 0 else audio_buffer_byte_size
+                        else if (byte_to_lock > play_cursor)
+                            (audio_buffer_byte_size - byte_to_lock) + play_cursor
+                        else
+                            play_cursor - byte_to_lock;
 
                     if (global_sound_buffer.Lock(byte_to_lock, bytes_to_write, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
-                        const region_1_sample_count = region1_bytes / bytes_per_sample;
+                        const region_1_frame_count = region1_bytes / audio_bytes_per_frame;
                         var sample_out: [*]i16 = @ptrCast(@alignCast(region1_ptr));
-                        for (0..region_1_sample_count) |_| {
-                            const sample_value: i16 = if ((running_sample_index / half_square_wave_period) % 2 == 0) tone_volume else -tone_volume;
+                        for (0..region_1_frame_count) |_| {
+                            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(running_frame_index)) / @as(f32, @floatFromInt(wave_period)));
+                            const sine_value: f32 = @sin(t);
+                            const sample_value: i16 = @intFromFloat(@as(f32, tone_volume) * sine_value);
                             sample_out[0] = sample_value;
                             sample_out += 1;
 
                             sample_out[0] = sample_value;
                             sample_out += 1;
 
-                            running_sample_index += 1;
+                            running_frame_index +%= 1;
                         }
 
-                        const region_2_sample_count = region2_bytes / bytes_per_sample;
+                        const region_2_frame_count = region2_bytes / audio_bytes_per_frame;
                         sample_out = @ptrCast(@alignCast(region2_ptr));
-                        for (0..region_2_sample_count) |_| {
-                            const sample_value: i16 = if ((running_sample_index / half_square_wave_period) % 2 == 0) tone_volume else -tone_volume;
+                        for (0..region_2_frame_count) |_| {
+                            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(running_frame_index)) / @as(f32, @floatFromInt(wave_period)));
+                            const sine_value: f32 = @sin(t);
+                            const sample_value: i16 = @intFromFloat(@as(f32, tone_volume) * sine_value);
                             sample_out[0] = sample_value;
                             sample_out += 1;
 
                             sample_out[0] = sample_value;
                             sample_out += 1;
 
-                            running_sample_index += 1;
+                            running_frame_index +%= 1;
                         }
 
                         _ = global_sound_buffer.Unlock(region1_ptr, region1_bytes, region2_ptr, region2_bytes);
                     }
+                }
+                if (!sound_is_playing) {
+                    sound_is_playing = true;
+                    _ = global_sound_buffer.Play(0, 0, dsound.BPLAY_LOOPING);
                 }
 
                 const dimension = getWindowDimension(window);
