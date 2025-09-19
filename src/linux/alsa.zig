@@ -91,6 +91,20 @@ pub const PcmFormat = enum(c_int) {
     pub const LAST: PcmFormat = .DSD_U32_BE;
 };
 
+pub const PcmState = enum(c_int) {
+    OPEN = 0,
+    SETUP,
+    PREPARED,
+    RUNNING,
+    XRUN,
+    DRAINING,
+    PAUSED,
+    SUSPENDED,
+    DISCONNECTED,
+    PRIVATE1 = 1024,
+    pub const LAST: PcmState = .DISCONNECTED;
+};
+
 fn pcm_open_stub(pcm: **Pcm, name: [*:0]const u8, stream: PcmStreamType, mode: c_int) callconv(.c) c_int {
     _ = pcm;
     _ = name;
@@ -201,6 +215,46 @@ fn pcm_writei_stub(pcm: *Pcm, buffer: *anyopaque, size: PcmUFrames) callconv(.c)
 }
 const FN_pcm_writei = @TypeOf(pcm_writei_stub);
 pub var pcm_writei: *const FN_pcm_writei = undefined;
+
+fn pcm_poll_descriptors_count_stub(pcm: *Pcm) callconv(.c) c_int {
+    _ = pcm;
+    return -1;
+}
+const FN_pcm_poll_descriptors_count = @TypeOf(pcm_poll_descriptors_count_stub);
+pub var pcm_poll_descriptors_count: *const FN_pcm_poll_descriptors_count = undefined;
+
+fn pcm_poll_descriptors_stub(pcm: *Pcm, pfds: [*]std.posix.pollfd, space: c_uint) callconv(.c) c_int {
+    _ = pcm;
+    _ = pfds;
+    _ = space;
+    return -1;
+}
+const FN_pcm_poll_descriptors = @TypeOf(pcm_poll_descriptors_stub);
+pub var pcm_poll_descriptors: *const FN_pcm_poll_descriptors = undefined;
+
+fn pcm_poll_descriptors_revents_stub(pcm: *Pcm, pfds: [*]std.posix.pollfd, nfds: c_uint, revents: *c_ushort) callconv(.c) c_int {
+    _ = pcm;
+    _ = pfds;
+    _ = nfds;
+    _ = revents;
+    return -1;
+}
+const FN_pcm_poll_descriptors_revents = @TypeOf(pcm_poll_descriptors_revents_stub);
+pub var pcm_poll_descriptors_revents: *const FN_pcm_poll_descriptors_revents = undefined;
+
+fn pcm_start_stub(pcm: *Pcm) callconv(.c) c_int {
+    _ = pcm;
+    return -1;
+}
+const FN_pcm_start = @TypeOf(pcm_start_stub);
+pub var pcm_start: *const FN_pcm_start = undefined;
+
+fn pcm_state_stub(pcm: *Pcm) callconv(.c) PcmState {
+    _ = pcm;
+    return .DISCONNECTED;
+}
+const FN_pcm_state = @TypeOf(pcm_state_stub);
+pub var pcm_state: *const FN_pcm_state = undefined;
 
 pub fn load() void {
     var lib = std.DynLib.open("libasound.so") catch {

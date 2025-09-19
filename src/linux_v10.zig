@@ -207,6 +207,7 @@ const wl_output_listener = wl.Output.Listener{
 };
 
 const PollFdSlot = enum(usize) {
+    alsa,
     udev,
 
     // NOTE: !!! Update first/last when changing this!
@@ -511,8 +512,7 @@ pub fn main() !void {
     const tone_hz = 256;
     const tone_volume = 6000;
     var running_sample_index: u32 = 0;
-    const square_wave_period: i32 = samples_per_second / tone_hz;
-    const half_square_wave_period: u32 = square_wave_period / 2;
+    const wave_period: i32 = samples_per_second / tone_hz;
 
     // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
     //        required for mixing with other applications. For pipewire, the alsa
@@ -537,7 +537,19 @@ pub fn main() !void {
             _ = alsa.pcm_hw_params(pcm_handle, hw_params);
             _ = alsa.pcm_hw_params_free(hw_params);
 
-            if (alsa.pcm_prepare(pcm_handle) != 0) {
+            if (alsa.pcm_prepare(pcm_handle) == 0) {
+                const pfd_count = alsa.pcm_poll_descriptors_count(pcm_handle);
+                if (pfd_count == 1) {
+                    var alsa_pfd: std.posix.pollfd = undefined;
+                    if (alsa.pcm_poll_descriptors(pcm_handle, @ptrCast(&alsa_pfd), 1) == pfd_count) {
+                        poll_fds[@intFromEnum(PollFdSlot.alsa)] = alsa_pfd;
+                    } else {
+                        log.warn("snd_pcm_poll_descriptors failed", .{});
+                    }
+                } else {
+                    log.warn("Alsa unexpected number of pollfds: {}", .{pfd_count});
+                }
+            } else {
                 log.warn("snd_pcm_prepare failed", .{});
             }
         } else {
@@ -547,7 +559,7 @@ pub fn main() !void {
         log.warn("snd_pcm_open failed", .{});
     }
 
-    var sound_buffer = try std.posix.mmap(
+    const sound_buffer = try std.posix.mmap(
         null,
         sound_buffer_size,
         posix.PROT.NONE,
@@ -556,10 +568,6 @@ pub fn main() !void {
         0,
     );
     try std.posix.mprotect(sound_buffer, posix.PROT.READ | posix.PROT.WRITE);
-
-    _ = &sound_buffer;
-
-    _ = .{ bytes_per_sample, tone_volume, &running_sample_index, half_square_wave_period };
 
     udev.load();
 
@@ -601,7 +609,7 @@ pub fn main() !void {
             log.err("udev_monitor_get_Fd failed", .{});
             return error.Unexpected;
         }
-        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = std.posix.POLL.IN, .revents = undefined };
+        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = posix.POLL.IN, .revents = undefined };
 
         if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
             log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
@@ -618,47 +626,52 @@ pub fn main() !void {
     var y_offset: i32 = 0;
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
+        var write_audio = false;
         if (try std.posix.poll(&poll_fds, 0) > 0) {
-            for (poll_fds, 0..) |pollfd, slot_index| {
-                if (pollfd.revents & std.posix.POLL.IN != 0) {
-                    const slot: PollFdSlot = @enumFromInt(slot_index);
-                    switch (slot) {
-                        .udev => {
-                            const device = udev.monitor_receive_device(udev_monitor).?;
-                            defer _ = udev.device_unref(device);
+            for (&poll_fds, 0..) |*pollfd, slot_index| {
+                const slot: PollFdSlot = @enumFromInt(slot_index);
+                const in = pollfd.revents & posix.POLL.IN != 0;
+                switch (slot) {
+                    .alsa => {
+                        var event: c_ushort = undefined;
+                        _ = alsa.pcm_poll_descriptors_revents(pcm_handle, @ptrCast(pollfd), 1, &event);
+                        write_audio = (event & posix.POLL.OUT) != 0;
+                    },
+                    .udev => if (in) {
+                        const device = udev.monitor_receive_device(udev_monitor).?;
+                        defer _ = udev.device_unref(device);
 
-                            const action = std.mem.span(udev.device_get_action(device).?);
+                        const action = std.mem.span(udev.device_get_action(device).?);
 
-                            if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
-                                if (std.mem.eql(u8, action, "add")) {
-                                    try addJoystick(device, path);
-                                } else if (std.mem.eql(u8, action, "remove")) {
-                                    removeJoystick(device, path);
-                                } else {
-                                    log.err("Unhandled joystick action: '{s}'", .{action});
-                                }
-                            }
-                        },
-
-                        .joystick_0,
-                        .joystick_1,
-                        .joystick_2,
-                        .joystick_3,
-                        => {
-                            var events: [16]InputEvent = undefined;
-                            const read_len = try std.posix.read(pollfd.fd, std.mem.sliceAsBytes(&events));
-                            if (read_len > 0) {
-                                const num_events = read_len / @sizeOf(InputEvent);
-                                for (events[0..num_events]) |*event| {
-                                    const jid = slot_index - PollFdSlot.first_joystick;
-                                    const joystick = &joysticks[jid];
-                                    joystick.handleEvent(event);
-                                }
+                        if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
+                            if (std.mem.eql(u8, action, "add")) {
+                                try addJoystick(device, path);
+                            } else if (std.mem.eql(u8, action, "remove")) {
+                                removeJoystick(device, path);
                             } else {
-                                // Read failed somehow, don't throw an error, keep running
+                                log.err("Unhandled joystick action: '{s}'", .{action});
                             }
-                        },
-                    }
+                        }
+                    },
+
+                    .joystick_0,
+                    .joystick_1,
+                    .joystick_2,
+                    .joystick_3,
+                    => if (in) {
+                        var events: [16]InputEvent = undefined;
+                        const read_len = try std.posix.read(pollfd.fd, std.mem.sliceAsBytes(&events));
+                        if (read_len > 0) {
+                            const num_events = read_len / @sizeOf(InputEvent);
+                            for (events[0..num_events]) |*event| {
+                                const jid = slot_index - PollFdSlot.first_joystick;
+                                const joystick = &joysticks[jid];
+                                joystick.handleEvent(event);
+                            }
+                        } else {
+                            // Read failed somehow, don't throw an error, keep running
+                        }
+                    },
                 }
             }
         }
@@ -674,25 +687,29 @@ pub fn main() !void {
                 wld.running = false;
             }
         }
+        x_offset += 1;
 
-        const frames_to_write = period_size;
-        const frames: [][2]i16 = @ptrCast(sound_buffer);
-        log.debug("sound_buffer.len: {}", .{sound_buffer.len});
-        log.debug("frames.len: {}", .{frames.len});
-        log.debug("/: {}", .{sound_buffer.len / frames.len});
-        for (frames[0..frames_to_write]) |*frame| {
-            const sample_value: i16 = if ((running_sample_index / half_square_wave_period) % 2 == 0) tone_volume else -tone_volume;
-            frame[0] = sample_value;
-            frame[1] = sample_value;
-            running_sample_index +%= 1;
-        }
+        if (write_audio) {
+            const frames_to_write = period_size;
+            const frames: [][2]i16 = @ptrCast(sound_buffer);
+            for (frames[0..frames_to_write]) |*frame| {
+                const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(running_sample_index)) / @as(f32, @floatFromInt(wave_period)));
+                const sine_value: f32 = @sin(t);
+                const sample_value: i16 = @intFromFloat(@as(f32, tone_volume) * sine_value);
+                frame[0] = sample_value;
+                frame[1] = sample_value;
+                running_sample_index +%= 1;
+            }
 
-        const frames_written = alsa.pcm_writei(pcm_handle, sound_buffer.ptr, frames_to_write);
-        if (frames_written < 0) {
-            log.warn("alsa underrun: {}", .{frames_written});
-            _ = alsa.pcm_prepare(pcm_handle);
-        } else if (frames_written != frames_to_write) {
-            log.warn("alsa partial write {} / {}", .{ frames_written, frames_to_write });
+            // TODO: poll the fd, this is blocking!
+            // TODO: switch to mmap (read/write cursor)
+            const frames_written = alsa.pcm_writei(pcm_handle, sound_buffer.ptr, frames_to_write);
+            if (frames_written < 0) {
+                log.warn("alsa underrun: {}", .{frames_written});
+                _ = alsa.pcm_prepare(pcm_handle);
+            } else if (frames_written != frames_to_write) {
+                log.warn("alsa partial write {} / {}", .{ frames_written, frames_to_write });
+            }
         }
 
         if (wld.pending_resize) |r| {
@@ -1105,7 +1122,7 @@ fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
 
     if (joystick_index_opt) |ji| {
         const fd = try std.posix.open(devnode_path, std.posix.O{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
-        poll_fds[PollFdSlot.first_joystick + ji] = .{ .fd = fd, .events = std.posix.POLL.IN, .revents = undefined };
+        poll_fds[PollFdSlot.first_joystick + ji] = .{ .fd = fd, .events = posix.POLL.IN, .revents = undefined };
 
         const joystick = &joysticks[ji];
         joystick.* = .{ .fd = fd, .active = true };
