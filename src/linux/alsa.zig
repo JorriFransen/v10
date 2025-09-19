@@ -4,6 +4,7 @@ const log = std.log.scoped(.alsa);
 pub const Pcm = opaque {};
 pub const PcmHwParams = opaque {};
 pub const PcmUFrames = c_ulong;
+pub const PcmSFrames = c_long;
 
 pub const PcmStreamType = enum(c_int) {
     PLAYBACK = 0,
@@ -105,11 +106,17 @@ pub const PcmState = enum(c_int) {
     pub const LAST: PcmState = .DISCONNECTED;
 };
 
+pub const PcmChannelArea = extern struct {
+    /// Base address of channel samples
+    addr: [*]u8,
+    /// Offset to first sample in bits
+    offset: c_uint,
+    /// Samples distance in bits
+    step: c_uint,
+};
+
 fn pcm_open_stub(pcm: **Pcm, name: [*:0]const u8, stream: PcmStreamType, mode: c_int) callconv(.c) c_int {
-    _ = pcm;
-    _ = name;
-    _ = stream;
-    _ = mode;
+    _ = .{ pcm, name, stream, mode };
     return -1;
 }
 const FN_pcm_open = @TypeOf(pcm_open_stub);
@@ -123,138 +130,136 @@ const FN_pcm_hw_params_malloc = @TypeOf(pcm_hw_params_malloc_stub);
 pub var pcm_hw_params_malloc: *const FN_pcm_hw_params_malloc = undefined;
 
 fn pcm_hw_params_free_stub(obj: *PcmHwParams) callconv(.c) void {
-    _ = obj;
+    _ = .{obj};
 }
 const FN_pcm_hw_params_free = @TypeOf(pcm_hw_params_free_stub);
 pub var pcm_hw_params_free: *const FN_pcm_hw_params_free = undefined;
 
 fn pcm_hw_params_any_stub(pcm: *Pcm, params: *PcmHwParams) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
+    _ = .{ pcm, params };
     return -1;
 }
 const FN_pcm_hw_params_any = @TypeOf(pcm_hw_params_any_stub);
 pub var pcm_hw_params_any: *const FN_pcm_hw_params_any = undefined;
 
 fn pcm_hw_params_set_buffer_size_near_stub(pcm: *Pcm, params: *PcmHwParams, val: *PcmUFrames) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
-    _ = val;
+    _ = .{ pcm, params, val };
     return -1;
 }
 const FN_pcm_hw_params_set_buffer_size_near = @TypeOf(pcm_hw_params_set_buffer_size_near_stub);
 pub var pcm_hw_params_set_buffer_size_near: *const FN_pcm_hw_params_set_buffer_size_near = undefined;
 
 fn pcm_hw_params_set_period_size_near_stub(pcm: *Pcm, params: *PcmHwParams, val: *PcmUFrames, dir: ?*c_int) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
-    _ = val;
-    _ = dir;
+    _ = .{ pcm, params, val, dir };
     return -1;
 }
 const FN_pcm_hw_params_set_period_size_near = @TypeOf(pcm_hw_params_set_period_size_near_stub);
 pub var pcm_hw_params_set_period_size_near: *const FN_pcm_hw_params_set_period_size_near = undefined;
 
 fn pcm_hw_params_set_access_stub(pcm: *Pcm, params: *PcmHwParams, access: PcmAccess) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
-    _ = access;
+    _ = .{ pcm, params, access };
     return -1;
 }
 const FN_pcm_hw_params_set_access = @TypeOf(pcm_hw_params_set_access_stub);
 pub var pcm_hw_params_set_access: *const FN_pcm_hw_params_set_access = undefined;
 
 fn pcm_hw_params_set_format_stub(pcm: *Pcm, params: *PcmHwParams, format: PcmFormat) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
-    _ = format;
+    _ = .{ pcm, params, format };
     return -1;
 }
 const FN_pcm_hw_params_set_format = @TypeOf(pcm_hw_params_set_format_stub);
 pub var pcm_hw_params_set_format: *const FN_pcm_hw_params_set_format = undefined;
 
 fn pcm_hw_params_set_channels_stub(pcm: *Pcm, params: *PcmHwParams, val: c_uint) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
-    _ = val;
+    _ = .{ pcm, params, val };
     return -1;
 }
 const FN_pcm_hw_params_set_channels = @TypeOf(pcm_hw_params_set_channels_stub);
 pub var pcm_hw_params_set_channels: *const FN_pcm_hw_params_set_channels = undefined;
 
 fn pcm_hw_params_set_rate_stub(pcm: *Pcm, params: *PcmHwParams, val: c_uint, dir: c_int) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
-    _ = val;
-    _ = dir;
+    _ = .{ pcm, params, val, dir };
     return -1;
 }
 const FN_pcm_hw_params_set_rate = @TypeOf(pcm_hw_params_set_rate_stub);
 pub var pcm_hw_params_set_rate: *const FN_pcm_hw_params_set_rate = undefined;
 
 fn pcm_hw_params_stub(pcm: *Pcm, params: *PcmHwParams) callconv(.c) c_int {
-    _ = pcm;
-    _ = params;
+    _ = .{ pcm, params };
     return -1;
 }
 const FN_pcm_hw_params = @TypeOf(pcm_hw_params_stub);
 pub var pcm_hw_params: *const FN_pcm_hw_params = undefined;
 
 fn pcm_prepare_stub(pcm: *Pcm) callconv(.c) c_int {
-    _ = pcm;
+    _ = .{pcm};
     return -1;
 }
 const FN_pcm_prepare = @TypeOf(pcm_prepare_stub);
 pub var pcm_prepare: *const FN_pcm_prepare = undefined;
 
 fn pcm_writei_stub(pcm: *Pcm, buffer: *anyopaque, size: PcmUFrames) callconv(.c) c_int {
-    _ = pcm;
-    _ = buffer;
-    _ = size;
+    _ = .{ pcm, buffer, size };
     return -1;
 }
 const FN_pcm_writei = @TypeOf(pcm_writei_stub);
 pub var pcm_writei: *const FN_pcm_writei = undefined;
 
 fn pcm_poll_descriptors_count_stub(pcm: *Pcm) callconv(.c) c_int {
-    _ = pcm;
+    _ = .{pcm};
     return -1;
 }
 const FN_pcm_poll_descriptors_count = @TypeOf(pcm_poll_descriptors_count_stub);
 pub var pcm_poll_descriptors_count: *const FN_pcm_poll_descriptors_count = undefined;
 
 fn pcm_poll_descriptors_stub(pcm: *Pcm, pfds: [*]std.posix.pollfd, space: c_uint) callconv(.c) c_int {
-    _ = pcm;
-    _ = pfds;
-    _ = space;
+    _ = .{ pcm, pfds, space };
     return -1;
 }
 const FN_pcm_poll_descriptors = @TypeOf(pcm_poll_descriptors_stub);
 pub var pcm_poll_descriptors: *const FN_pcm_poll_descriptors = undefined;
 
 fn pcm_poll_descriptors_revents_stub(pcm: *Pcm, pfds: [*]std.posix.pollfd, nfds: c_uint, revents: *c_ushort) callconv(.c) c_int {
-    _ = pcm;
-    _ = pfds;
-    _ = nfds;
-    _ = revents;
+    _ = .{ pcm, pfds, nfds, revents };
     return -1;
 }
 const FN_pcm_poll_descriptors_revents = @TypeOf(pcm_poll_descriptors_revents_stub);
 pub var pcm_poll_descriptors_revents: *const FN_pcm_poll_descriptors_revents = undefined;
 
 fn pcm_start_stub(pcm: *Pcm) callconv(.c) c_int {
-    _ = pcm;
+    _ = .{pcm};
     return -1;
 }
 const FN_pcm_start = @TypeOf(pcm_start_stub);
 pub var pcm_start: *const FN_pcm_start = undefined;
 
 fn pcm_state_stub(pcm: *Pcm) callconv(.c) PcmState {
-    _ = pcm;
+    _ = .{pcm};
     return .DISCONNECTED;
 }
 const FN_pcm_state = @TypeOf(pcm_state_stub);
 pub var pcm_state: *const FN_pcm_state = undefined;
+
+fn pcm_mmap_begin_stub(pcm: *Pcm, areas: **PcmChannelArea, offset: *PcmUFrames, frames: *PcmUFrames) callconv(.c) c_int {
+    _ = .{ pcm, areas, offset, frames };
+    return -1;
+}
+const FN_pcm_mmap_begin = @TypeOf(pcm_mmap_begin_stub);
+pub var pcm_mmap_begin: *const FN_pcm_mmap_begin = undefined;
+
+fn pcm_mmap_commit_stub(pcm: *Pcm, offset: PcmUFrames, frames: PcmUFrames) callconv(.c) PcmSFrames {
+    _ = .{ pcm, offset, frames };
+    return -1;
+}
+const FN_pcm_mmap_commit = @TypeOf(pcm_mmap_commit_stub);
+pub var pcm_mmap_commit: *const FN_pcm_mmap_commit = undefined;
+
+fn pcm_avail_update_stub(pcm: *Pcm) callconv(.c) PcmSFrames {
+    _ = pcm;
+    return -1;
+}
+const FN_pcm_avail_update = @TypeOf(pcm_avail_update_stub);
+pub var pcm_avail_update: *const FN_pcm_avail_update = undefined;
 
 pub fn load() void {
     var lib = std.DynLib.open("libasound.so") catch {
