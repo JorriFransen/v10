@@ -8,7 +8,7 @@ const assert = std.debug.assert;
 
 var global_running = false;
 var global_back_buffer: OffscreenBuffer = undefined;
-var global_sound_buffer: *dsound.IDirectSoundBuffer = undefined;
+var global_sound_buffer_opt: ?*dsound.IDirectSoundBuffer = undefined;
 
 pub const OffscreenBuffer = struct {
     info: win32.BITMAPINFO,
@@ -21,6 +21,17 @@ pub const OffscreenBuffer = struct {
 pub const WindowDimensions = struct {
     width: i32,
     height: i32,
+};
+
+pub const Win32SoundOutput = struct {
+    frames_per_second: u32 = 0,
+    bytes_per_sample: u32 = 0,
+    bytes_per_frame: u32 = 0,
+    buffer_byte_size: u32 = 0,
+    tone_hz: u32 = 0,
+    tone_volume: u32 = 0,
+    running_frame_index: u32 = 0,
+    wave_period: u32 = 0,
 };
 
 fn win32InitDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) void {
@@ -47,9 +58,9 @@ fn win32InitDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32
             const buffer_desc = dsound.BufferDesc{
                 .flags = dsound.BCAPS_PRIMARYBUFFER,
             };
-            var primary_buffer: *dsound.IDirectSoundBuffer = undefined;
-            if (ds.CreateSoundBuffer(&buffer_desc, &primary_buffer, null) == dsound.OK) {
-                if (primary_buffer.SetFormat(&waveformat) == dsound.OK) {
+            var primary_buffer_opt: ?*dsound.IDirectSoundBuffer = null;
+            if (ds.CreateSoundBuffer(&buffer_desc, &primary_buffer_opt, null) == dsound.OK) {
+                if (primary_buffer_opt.?.SetFormat(&waveformat) == dsound.OK) {
                     log.debug("DSound primary buffer format set", .{});
                 } else {
                     log.warn("DSound primary_buffer.SetFormat failed", .{});
@@ -66,7 +77,7 @@ fn win32InitDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32
             .wave_format = &waveformat,
             .buffer_bytes = buffer_size,
         };
-        if (ds.CreateSoundBuffer(&buffer_desc, &global_sound_buffer, null) == dsound.OK) {
+        if (ds.CreateSoundBuffer(&buffer_desc, &global_sound_buffer_opt, null) == dsound.OK) {
             log.debug("DSound secondary buffer created", .{});
         } else {
             log.warn("DSound CreateSoundBuffer failed (secondary buffer)", .{});
@@ -139,18 +150,23 @@ pub fn windowsEntry(
             var x_offset: i32 = 0;
             var y_offset: i32 = 0;
 
-            const audio_frames_per_second = 48000;
-            const audio_bytes_per_sample = @sizeOf(i16);
-            const audio_bytes_per_frame = audio_bytes_per_sample * 2;
-            const audio_buffer_byte_size = audio_frames_per_second * audio_bytes_per_frame;
-            const tone_hz = 256;
-            const tone_volume = 6000;
-            var running_frame_index: u32 = 0;
-            const wave_period: u32 = audio_frames_per_second / tone_hz;
-
             xinput.load();
-            win32InitDSound(window, audio_frames_per_second, audio_buffer_byte_size);
-            var sound_is_playing = false;
+
+            var sound_output: Win32SoundOutput = .{};
+            sound_output.frames_per_second = 48000;
+            sound_output.bytes_per_sample = @sizeOf(i16);
+            sound_output.bytes_per_frame = sound_output.bytes_per_sample * 2;
+            sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame;
+            sound_output.tone_hz = 256;
+            sound_output.tone_volume = 6000;
+            sound_output.running_frame_index = 0;
+            sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
+
+            win32InitDSound(window, sound_output.frames_per_second, sound_output.buffer_byte_size);
+            if (global_sound_buffer_opt) |gsb| {
+                win32FillSoundBuffer(gsb, &sound_output, 0, sound_output.buffer_byte_size);
+                _ = gsb.Play(0, 0, dsound.BPLAY_LOOPING);
+            }
 
             while (global_running) {
                 var msg = win32.MSG{};
@@ -182,59 +198,16 @@ pub fn windowsEntry(
 
                 var play_cursor: u32 = undefined;
                 var write_cursor: u32 = undefined;
-                if (global_sound_buffer.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
-                    var region1_ptr: *anyopaque = undefined;
-                    var region1_bytes: u32 = undefined;
-                    var region2_ptr: *anyopaque = undefined;
-                    var region2_bytes: u32 = undefined;
-
-                    const byte_to_lock: win32.DWORD = (running_frame_index * audio_bytes_per_frame) % audio_buffer_byte_size;
+                if (global_sound_buffer_opt) |gsb| if (gsb.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
+                    const byte_to_lock: win32.DWORD = (sound_output.running_frame_index * sound_output.bytes_per_frame) % sound_output.buffer_byte_size;
                     const bytes_to_write: u32 =
-                        if (byte_to_lock == play_cursor)
-                            if (sound_is_playing) 0 else audio_buffer_byte_size
-                        else if (byte_to_lock > play_cursor)
-                            (audio_buffer_byte_size - byte_to_lock) + play_cursor
+                        if (byte_to_lock > play_cursor)
+                            (sound_output.buffer_byte_size - byte_to_lock) + play_cursor
                         else
                             play_cursor - byte_to_lock;
 
-                    if (global_sound_buffer.Lock(byte_to_lock, bytes_to_write, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
-                        const region_1_frame_count = region1_bytes / audio_bytes_per_frame;
-                        var sample_out: [*]i16 = @ptrCast(@alignCast(region1_ptr));
-                        for (0..region_1_frame_count) |_| {
-                            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(running_frame_index)) / @as(f32, @floatFromInt(wave_period)));
-                            const sine_value: f32 = @sin(t);
-                            const sample_value: i16 = @intFromFloat(@as(f32, tone_volume) * sine_value);
-                            sample_out[0] = sample_value;
-                            sample_out += 1;
-
-                            sample_out[0] = sample_value;
-                            sample_out += 1;
-
-                            running_frame_index +%= 1;
-                        }
-
-                        const region_2_frame_count = region2_bytes / audio_bytes_per_frame;
-                        sample_out = @ptrCast(@alignCast(region2_ptr));
-                        for (0..region_2_frame_count) |_| {
-                            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(running_frame_index)) / @as(f32, @floatFromInt(wave_period)));
-                            const sine_value: f32 = @sin(t);
-                            const sample_value: i16 = @intFromFloat(@as(f32, tone_volume) * sine_value);
-                            sample_out[0] = sample_value;
-                            sample_out += 1;
-
-                            sample_out[0] = sample_value;
-                            sample_out += 1;
-
-                            running_frame_index +%= 1;
-                        }
-
-                        _ = global_sound_buffer.Unlock(region1_ptr, region1_bytes, region2_ptr, region2_bytes);
-                    }
-                }
-                if (!sound_is_playing) {
-                    sound_is_playing = true;
-                    _ = global_sound_buffer.Play(0, 0, dsound.BPLAY_LOOPING);
-                }
+                    win32FillSoundBuffer(gsb, &sound_output, byte_to_lock, bytes_to_write);
+                };
 
                 const dimension = getWindowDimension(window);
                 win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
@@ -361,6 +334,47 @@ fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i
     }
 
     win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+}
+
+fn win32FillSoundBuffer(buffer: *dsound.IDirectSoundBuffer, sound_output: *Win32SoundOutput, byte_to_lock: u32, bytes_to_write: u32) void {
+    var region1_ptr: *anyopaque = undefined;
+    var region1_bytes: u32 = undefined;
+    var region2_ptr: *anyopaque = undefined;
+    var region2_bytes: u32 = undefined;
+
+    if (buffer.Lock(byte_to_lock, bytes_to_write, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
+        const region_1_frame_count = region1_bytes / sound_output.bytes_per_frame;
+        var sample_out: [*]i16 = @ptrCast(@alignCast(region1_ptr));
+        for (0..region_1_frame_count) |_| {
+            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(sound_output.running_frame_index)) / @as(f32, @floatFromInt(sound_output.wave_period)));
+            const sine_value: f32 = @sin(t);
+            const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sound_output.running_frame_index +%= 1;
+        }
+
+        const region_2_frame_count = region2_bytes / sound_output.bytes_per_frame;
+        sample_out = @ptrCast(@alignCast(region2_ptr));
+        for (0..region_2_frame_count) |_| {
+            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(sound_output.running_frame_index)) / @as(f32, @floatFromInt(sound_output.wave_period)));
+            const sine_value: f32 = @sin(t);
+            const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sound_output.running_frame_index +%= 1;
+        }
+
+        _ = buffer.Unlock(region1_ptr, region1_bytes, region2_ptr, region2_bytes);
+    }
 }
 
 fn renderWeirdGradient(buffer: *OffscreenBuffer, xoffset: i32, yoffset: i32) void {

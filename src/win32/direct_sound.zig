@@ -72,7 +72,7 @@ pub const IDirectSound = extern struct {
     }
 
     // IDirectSound methods
-    pub inline fn CreateSoundBuffer(this: *IDirectSound, buffer_desc: *const BufferDesc, buffer: **IDirectSoundBuffer, unk_outer: ?*anyopaque) win32.HRESULT {
+    pub inline fn CreateSoundBuffer(this: *IDirectSound, buffer_desc: *const BufferDesc, buffer: *?*IDirectSoundBuffer, unk_outer: ?*anyopaque) win32.HRESULT {
         return this.vtable.CreateSoundBuffer(this, buffer_desc, buffer, unk_outer);
     }
     pub inline fn GetCaps(this: *IDirectSound, caps: *Caps) win32.HRESULT {
@@ -105,7 +105,7 @@ pub const IDirectSound = extern struct {
         Release: *const fn (this: *IDirectSound) callconv(.c) u32,
 
         // IDirectSound methods
-        CreateSoundBuffer: *const fn (this: *IDirectSound, buffer_desc: *const BufferDesc, buffer: **IDirectSoundBuffer, unk_outer: ?*anyopaque) callconv(.c) win32.HRESULT,
+        CreateSoundBuffer: *const fn (this: *IDirectSound, buffer_desc: *const BufferDesc, buffer: *?*IDirectSoundBuffer, unk_outer: ?*anyopaque) callconv(.c) win32.HRESULT,
         GetCaps: *const fn (this: *IDirectSound, caps: *Caps) callconv(.c) win32.HRESULT,
         DuplicateSoundBuffer: *const fn (this: *IDirectSound, original: *const IDirectSoundBuffer, duplicate: **const IDirectSoundBuffer) callconv(.c) win32.HRESULT,
         SetCooperativeLevel: *const fn (this: *IDirectSound, hwnd: win32.HWND, level: win32.DWORD) callconv(.c) win32.HRESULT,

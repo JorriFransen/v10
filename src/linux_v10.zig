@@ -27,6 +27,8 @@ const initial_window_width: i32 = 1280;
 const initial_window_height: i32 = 720;
 const bytes_per_pixel = 4;
 
+var pcm_opt: ?*alsa.Pcm = null;
+
 const WlInitData = struct {
     wld: *WlData,
     wl_shm: ?*wl.Shm = null,
@@ -287,6 +289,18 @@ const Joystick = struct {
     }
 };
 
+const LinuxSoundOutput = struct {
+    frames_per_second: u32 = 0,
+    bytes_per_sample: u32 = 0,
+    bytes_per_frame: u32 = 0,
+    buffer_byte_size: u32 = 0,
+    period_size: u32 = 0,
+    tone_hz: u32 = 0,
+    tone_volume: u32 = 0,
+    running_frame_index: u32 = 0,
+    wave_period: u32 = 0,
+};
+
 var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
 
 pub fn main() !void {
@@ -504,67 +518,24 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
-    alsa.load();
-    const audio_frames_per_second = 48000;
-    const audio_bytes_per_sample = @sizeOf(i16);
-    const audio_bytes_per_frame = audio_bytes_per_sample * 2;
-    var audio_buffer_byte_size: usize = audio_frames_per_second * audio_bytes_per_frame;
-    var period_size: usize = 1024;
-    const tone_hz = 256;
-    const tone_volume = 6000;
-    var running_frame_index: u32 = 0;
-    const wave_period: i32 = audio_frames_per_second / tone_hz;
+    var sound_output: LinuxSoundOutput = .{};
+    sound_output.frames_per_second = 48000;
+    sound_output.bytes_per_sample = @sizeOf(i16);
+    sound_output.bytes_per_frame = sound_output.bytes_per_sample * 2;
+    sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame;
+    sound_output.period_size = 1024;
+    sound_output.tone_hz = 256;
+    sound_output.tone_volume = 6000;
+    sound_output.running_frame_index = 0;
+    sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
 
-    // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
-    //        required for mixing with other applications. For pipewire, the alsa
-    //        plugin is required (pipewire-alsa on arch). Same for pulse
-    //        (alsa-plugins on arch). The alternative is using hw:0,0 or plughw:0,0;
-    //        or similar. But this takes contol over the hardware, and will not work
-    //        if another application is using it already!
-    var pcm_handle: *alsa.Pcm = undefined;
-    if (alsa.pcm_open(&pcm_handle, "default", .PLAYBACK, 0) == 0) {
-        var hw_params_opt: ?*alsa.PcmHwParams = undefined;
-        if (alsa.pcm_hw_params_malloc(&hw_params_opt) == 0) {
-            const hw_params = hw_params_opt.?;
+    linuxInitAlsa(sound_output.frames_per_second, sound_output.bytes_per_frame, &sound_output.buffer_byte_size, &sound_output.period_size);
+    if (pcm_opt) |pcm| {
+        var filled: alsa.PcmSFrames = sound_output.buffer_byte_size / sound_output.bytes_per_frame;
+        linuxFillSoundBuffer(pcm, &sound_output, &filled);
+        assert(filled == 0);
 
-            _ = alsa.pcm_hw_params_any(pcm_handle, hw_params);
-            _ = alsa.pcm_hw_params_set_access(pcm_handle, hw_params, .MMAP_COMPLEX);
-            _ = alsa.pcm_hw_params_set_format(pcm_handle, hw_params, .S16);
-            _ = alsa.pcm_hw_params_set_channels(pcm_handle, hw_params, 2);
-            _ = alsa.pcm_hw_params_set_rate(pcm_handle, hw_params, audio_frames_per_second, 0);
-
-            var buffer_size_frames = audio_buffer_byte_size / audio_bytes_per_frame;
-            _ = alsa.pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size_frames);
-            audio_buffer_byte_size = buffer_size_frames * audio_bytes_per_frame;
-
-            _ = alsa.pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, null);
-
-            _ = alsa.pcm_hw_params(pcm_handle, hw_params);
-            _ = alsa.pcm_hw_params_free(hw_params);
-
-            if (alsa.pcm_prepare(pcm_handle) == 0) {
-                const pfd_count = alsa.pcm_poll_descriptors_count(pcm_handle);
-                if (pfd_count == 1) {
-                    var alsa_pfd: std.posix.pollfd = undefined;
-                    if (alsa.pcm_poll_descriptors(pcm_handle, @ptrCast(&alsa_pfd), 1) == pfd_count) {
-                        poll_fds[@intFromEnum(PollFdSlot.alsa)] = alsa_pfd;
-
-                        log.debug("alsa pollfd setup", .{});
-                        log.debug("alsa initial state: {}", .{alsa.pcm_state(pcm_handle)});
-                    } else {
-                        log.warn("snd_pcm_poll_descriptors failed", .{});
-                    }
-                } else {
-                    log.warn("Alsa unexpected number of pollfds: {}", .{pfd_count});
-                }
-            } else {
-                log.warn("snd_pcm_prepare failed", .{});
-            }
-        } else {
-            log.warn("snd_pcm_hw_params_malloc failed", .{});
-        }
-    } else {
-        log.warn("snd_pcm_open failed", .{});
+        _ = alsa.pcm_start(pcm);
     }
 
     udev.load();
@@ -630,17 +601,17 @@ pub fn main() !void {
                 const slot: PollFdSlot = @enumFromInt(slot_index);
                 const in = pollfd.revents & posix.POLL.IN != 0;
                 switch (slot) {
-                    .alsa => {
+                    .alsa => if (pcm_opt) |pcm| {
                         var event: c_ushort = undefined;
-                        _ = alsa.pcm_poll_descriptors_revents(pcm_handle, @ptrCast(pollfd), 1, &event);
+                        _ = alsa.pcm_poll_descriptors_revents(pcm, @ptrCast(pollfd), 1, &event);
                         const out = (event & posix.POLL.OUT) != 0;
                         const err = (event & posix.POLL.ERR) != 0;
                         if (out or err) {
-                            const state = alsa.pcm_state(pcm_handle);
+                            const state = alsa.pcm_state(pcm);
                             if (state == .XRUN or err) {
-                                _ = alsa.pcm_prepare(pcm_handle);
+                                _ = alsa.pcm_prepare(pcm);
                             }
-                            audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm_handle));
+                            audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
                             assert(audio_write_frame_count >= 0);
                         } else if (event == 0) {
                             continue;
@@ -702,37 +673,16 @@ pub fn main() !void {
         x_offset += 1;
 
         if (audio_write_frame_count > 0) {
-            // assert(audio_write_frame_count >= period_size);
+            const pcm = pcm_opt.?;
 
             var remaining = audio_write_frame_count;
             while (remaining > 0) {
-                var area: [2]?*alsa.PcmChannelArea = .{ null, null };
-                var offset: alsa.PcmUFrames = 0;
-                var frames: alsa.PcmUFrames = @intCast(audio_write_frame_count);
-                _ = alsa.pcm_mmap_begin(pcm_handle, @ptrCast(&area), &offset, &frames);
-                assert(area[1] == null);
-
-                var sample_out: [*]i16 = @ptrCast(@alignCast(area[0].?.addr + (offset * audio_bytes_per_frame)));
-                for (0..frames) |_| {
-                    const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(running_frame_index)) / @as(f32, @floatFromInt(wave_period)));
-                    const sine_value: f32 = @sin(t);
-                    const sample_value: i16 = @intFromFloat(@as(f32, tone_volume) * sine_value);
-                    sample_out[0] = sample_value;
-                    sample_out += 1;
-
-                    sample_out[0] = sample_value;
-                    sample_out += 1;
-
-                    running_frame_index +%= 1;
-                }
-
-                _ = alsa.pcm_mmap_commit(pcm_handle, offset, frames);
-                remaining -= @intCast(frames);
+                linuxFillSoundBuffer(pcm, &sound_output, &remaining);
             }
 
-            const state = alsa.pcm_state(pcm_handle);
+            const state = alsa.pcm_state(pcm);
             if (state != .RUNNING) {
-                _ = alsa.pcm_start(pcm_handle);
+                _ = alsa.pcm_start(pcm);
             }
         }
 
@@ -1227,6 +1177,91 @@ fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[]const u8 {
     }
 
     return null;
+}
+
+fn linuxFillSoundBuffer(pcm: *alsa.Pcm, sound_output: *LinuxSoundOutput, frame_count: *alsa.PcmSFrames) void {
+    var area: [2]?*alsa.PcmChannelArea = .{ null, null };
+    var offset: alsa.PcmUFrames = 0;
+    var frames: alsa.PcmUFrames = @intCast(frame_count.*);
+    _ = alsa.pcm_mmap_begin(pcm, @ptrCast(&area), &offset, &frames);
+    assert(area[1] == null);
+
+    var sample_out: [*]i16 = @ptrCast(@alignCast(area[0].?.addr + (offset * sound_output.bytes_per_frame)));
+    for (0..frames) |_| {
+        const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(sound_output.running_frame_index)) / @as(f32, @floatFromInt(sound_output.wave_period)));
+        const sine_value: f32 = @sin(t);
+        const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
+        sample_out[0] = sample_value;
+        sample_out += 1;
+
+        sample_out[0] = sample_value;
+        sample_out += 1;
+
+        sound_output.running_frame_index +%= 1;
+    }
+
+    _ = alsa.pcm_mmap_commit(pcm, offset, frames);
+
+    frame_count.* -= @intCast(frames);
+}
+
+fn linuxInitAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size: *u32, period_size: *u32) void {
+    alsa.load();
+
+    // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
+    //        required for mixing with other applications. For pipewire, the alsa
+    //        plugin is required (pipewire-alsa on arch). Same for pulse
+    //        (alsa-plugins on arch). The alternative is using hw:0,0 or plughw:0,0;
+    //        or similar. But this takes contol over the hardware, and will not work
+    //        if another application is using it already!
+    var pcm_handle: *alsa.Pcm = undefined;
+    if (alsa.pcm_open(&pcm_handle, "default", .PLAYBACK, 0) == 0) {
+        pcm_opt = pcm_handle;
+        var hw_params_opt: ?*alsa.PcmHwParams = undefined;
+        if (alsa.pcm_hw_params_malloc(&hw_params_opt) == 0) {
+            const hw_params = hw_params_opt.?;
+
+            _ = alsa.pcm_hw_params_any(pcm_handle, hw_params);
+            _ = alsa.pcm_hw_params_set_access(pcm_handle, hw_params, .MMAP_COMPLEX);
+            _ = alsa.pcm_hw_params_set_format(pcm_handle, hw_params, .S16);
+            _ = alsa.pcm_hw_params_set_channels(pcm_handle, hw_params, 2);
+            _ = alsa.pcm_hw_params_set_rate(pcm_handle, hw_params, audio_frames_per_second, 0);
+
+            var buffer_size_frames: c_ulong = buffer_byte_size.* / bytes_per_frame;
+            _ = alsa.pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size_frames);
+            buffer_byte_size.* = @intCast(buffer_size_frames * bytes_per_frame);
+
+            var ps: c_ulong = period_size.*;
+            _ = alsa.pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &ps, null);
+            period_size.* = @intCast(ps);
+
+            _ = alsa.pcm_hw_params(pcm_handle, hw_params);
+            _ = alsa.pcm_hw_params_free(hw_params);
+
+            if (alsa.pcm_prepare(pcm_handle) == 0) {
+                const pfd_count = alsa.pcm_poll_descriptors_count(pcm_handle);
+                if (pfd_count == 1) {
+                    var alsa_pfd: std.posix.pollfd = undefined;
+                    if (alsa.pcm_poll_descriptors(pcm_handle, @ptrCast(&alsa_pfd), 1) == pfd_count) {
+                        poll_fds[@intFromEnum(PollFdSlot.alsa)] = alsa_pfd;
+
+                        log.debug("alsa pollfd setup", .{});
+                        log.debug("alsa initial state: {}", .{alsa.pcm_state(pcm_handle)});
+                    } else {
+                        log.warn("snd_pcm_poll_descriptors failed", .{});
+                    }
+                } else {
+                    log.warn("Alsa unexpected number of pollfds: {}", .{pfd_count});
+                }
+            } else {
+                log.warn("snd_pcm_prepare failed", .{});
+            }
+        } else {
+            log.warn("snd_pcm_hw_params_malloc failed", .{});
+        }
+    } else {
+        log.warn("snd_pcm_open failed", .{});
+    }
 }
 
 fn renderWeirdGradient(buffer: *Buffer, xoffset: i32, yoffset: i32) void {
