@@ -586,10 +586,12 @@ pub fn main() !void {
 
     while (wl.display_dispatch(display) != -1 and wld.running) {
         var audio_write_frame_count: alsa.PcmSFrames = 0;
+
         if (try std.posix.poll(&poll_fds, 0) > 0) {
             for (&poll_fds, 0..) |*pollfd, slot_index| {
                 const slot: PollFdSlot = @enumFromInt(slot_index);
                 const in = pollfd.revents & posix.POLL.IN != 0;
+
                 switch (slot) {
                     .alsa => if (pcm_opt) |pcm| {
                         var event: c_ushort = undefined;
@@ -597,11 +599,12 @@ pub fn main() !void {
                         const out = (event & posix.POLL.OUT) != 0;
                         const err = (event & posix.POLL.ERR) != 0;
                         if (out or err) {
+                            audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
                             const state = alsa.pcm_state(pcm);
                             if (state == .XRUN or err) {
                                 _ = alsa.pcm_prepare(pcm);
+                                audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
                             }
-                            audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
                             assert(audio_write_frame_count >= 0);
                         } else if (event == 0) {
                             continue;
