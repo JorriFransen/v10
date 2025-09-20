@@ -289,18 +289,6 @@ const Joystick = struct {
     }
 };
 
-const LinuxSoundOutput = struct {
-    frames_per_second: u32 = 0,
-    bytes_per_sample: u32 = 0,
-    bytes_per_frame: u32 = 0,
-    buffer_byte_size: u32 = 0,
-    period_size: u32 = 0,
-    tone_hz: u32 = 0,
-    tone_volume: u32 = 0,
-    running_frame_index: u32 = 0,
-    wave_period: u32 = 0,
-};
-
 var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
 
 pub fn main() !void {
@@ -522,16 +510,18 @@ pub fn main() !void {
     sound_output.frames_per_second = 48000;
     sound_output.bytes_per_sample = @sizeOf(i16);
     sound_output.bytes_per_frame = sound_output.bytes_per_sample * 2;
-    sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame;
+    sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame / 15;
     sound_output.period_size = 1024;
-    sound_output.tone_hz = 256;
-    sound_output.tone_volume = 6000;
+    sound_output.tone_hz = 512;
+    sound_output.tone_volume = 3000;
     sound_output.running_frame_index = 0;
     sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
+    sound_output.t_sine = 0;
+    sound_output.latency_frame_count = sound_output.frames_per_second / 15;
 
     linuxInitAlsa(sound_output.frames_per_second, sound_output.bytes_per_frame, &sound_output.buffer_byte_size, &sound_output.period_size);
     if (pcm_opt) |pcm| {
-        var filled: alsa.PcmSFrames = sound_output.buffer_byte_size / sound_output.bytes_per_frame;
+        var filled: alsa.PcmSFrames = sound_output.latency_frame_count;
         linuxFillSoundBuffer(pcm, &sound_output, &filled);
         assert(filled == 0);
 
@@ -659,9 +649,9 @@ pub fn main() !void {
             }
         }
 
-        for (&joysticks) |*js| {
+        for (&joysticks) |*js| if (js.active) {
             const jx: i32 = js.axis[@intFromEnum(Abs.X)];
-            const jy: i32 = js.axis[@intFromEnum(Abs.Y)];
+            const jy: i32 = -js.axis[@intFromEnum(Abs.Y)];
 
             x_offset +%= @divTrunc(jx, 4096);
             y_offset +%= @divTrunc(jy, 4096);
@@ -669,7 +659,11 @@ pub fn main() !void {
             if (js.buttons[@intFromEnum(Key.BTN_MODE)] == 1) {
                 wld.running = false;
             }
-        }
+
+            sound_output.tone_hz = @intFromFloat(512 + 256 * (@as(f32, @floatFromInt(jy)) / 30000));
+            sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
+        };
+
         x_offset += 1;
 
         if (audio_write_frame_count > 0) {
@@ -1179,17 +1173,31 @@ fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[]const u8 {
     return null;
 }
 
+const LinuxSoundOutput = struct {
+    frames_per_second: u32 = 0,
+    bytes_per_sample: u32 = 0,
+    bytes_per_frame: u32 = 0,
+    buffer_byte_size: u32 = 0,
+    period_size: u32 = 0,
+    tone_hz: u32 = 0,
+    tone_volume: u32 = 0,
+    running_frame_index: u32 = 0,
+    wave_period: u32 = 0,
+    t_sine: f32 = 0,
+    latency_frame_count: u32 = 0,
+};
+
 fn linuxFillSoundBuffer(pcm: *alsa.Pcm, sound_output: *LinuxSoundOutput, frame_count: *alsa.PcmSFrames) void {
     var area: [2]?*alsa.PcmChannelArea = .{ null, null };
     var offset: alsa.PcmUFrames = 0;
     var frames: alsa.PcmUFrames = @intCast(frame_count.*);
+
     _ = alsa.pcm_mmap_begin(pcm, @ptrCast(&area), &offset, &frames);
     assert(area[1] == null);
 
     var sample_out: [*]i16 = @ptrCast(@alignCast(area[0].?.addr + (offset * sound_output.bytes_per_frame)));
     for (0..frames) |_| {
-        const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(sound_output.running_frame_index)) / @as(f32, @floatFromInt(sound_output.wave_period)));
-        const sine_value: f32 = @sin(t);
+        const sine_value = @sin(sound_output.t_sine);
         const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
         sample_out[0] = sample_value;
         sample_out += 1;
@@ -1197,6 +1205,8 @@ fn linuxFillSoundBuffer(pcm: *alsa.Pcm, sound_output: *LinuxSoundOutput, frame_c
         sample_out[0] = sample_value;
         sample_out += 1;
 
+        sound_output.t_sine += std.math.tau / @as(f32, @floatFromInt(sound_output.wave_period));
+        if (sound_output.t_sine > std.math.tau) sound_output.t_sine -= std.math.tau;
         sound_output.running_frame_index +%= 1;
     }
 

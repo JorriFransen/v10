@@ -32,7 +32,52 @@ pub const Win32SoundOutput = struct {
     tone_volume: u32 = 0,
     running_frame_index: u32 = 0,
     wave_period: u32 = 0,
+    t_sine: f32 = 0,
+    latency_frame_count: u32 = 0,
 };
+
+fn win32FillSoundBuffer(buffer: *dsound.IDirectSoundBuffer, sound_output: *Win32SoundOutput, byte_to_lock: u32, bytes_to_write: u32) void {
+    var region1_ptr: *anyopaque = undefined;
+    var region1_bytes: u32 = undefined;
+    var region2_ptr: *anyopaque = undefined;
+    var region2_bytes: u32 = undefined;
+
+    if (buffer.Lock(byte_to_lock, bytes_to_write, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
+        const region_1_frame_count = region1_bytes / sound_output.bytes_per_frame;
+        var sample_out: [*]i16 = @ptrCast(@alignCast(region1_ptr));
+        for (0..region_1_frame_count) |_| {
+            const sine_value: f32 = @sin(sound_output.t_sine);
+            const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sound_output.t_sine += std.math.tau / @as(f32, @floatFromInt(sound_output.wave_period));
+            if (sound_output.t_sine > std.math.tau) sound_output.t_sine -= std.math.tau;
+            sound_output.running_frame_index +%= 1;
+        }
+
+        const region_2_frame_count = region2_bytes / sound_output.bytes_per_frame;
+        sample_out = @ptrCast(@alignCast(region2_ptr));
+        for (0..region_2_frame_count) |_| {
+            const sine_value: f32 = @sin(sound_output.t_sine);
+            const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sound_output.t_sine += std.math.tau / @as(f32, @floatFromInt(sound_output.wave_period));
+            if (sound_output.t_sine > std.math.tau) sound_output.t_sine -= std.math.tau;
+            sound_output.running_frame_index +%= 1;
+        }
+
+        _ = buffer.Unlock(region1_ptr, region1_bytes, region2_ptr, region2_bytes);
+    }
+}
 
 fn win32InitDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) void {
     dsound.load();
@@ -158,13 +203,15 @@ pub fn windowsEntry(
             sound_output.bytes_per_frame = sound_output.bytes_per_sample * 2;
             sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame;
             sound_output.tone_hz = 256;
-            sound_output.tone_volume = 6000;
+            sound_output.tone_volume = 3000;
             sound_output.running_frame_index = 0;
             sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
+            sound_output.t_sine = 0;
+            sound_output.latency_frame_count = sound_output.frames_per_second / 15;
 
             win32InitDSound(window, sound_output.frames_per_second, sound_output.buffer_byte_size);
             if (global_sound_buffer_opt) |gsb| {
-                win32FillSoundBuffer(gsb, &sound_output, 0, sound_output.buffer_byte_size);
+                win32FillSoundBuffer(gsb, &sound_output, 0, sound_output.latency_frame_count * sound_output.bytes_per_frame);
                 _ = gsb.Play(0, 0, dsound.BPLAY_LOOPING);
             }
 
@@ -185,11 +232,16 @@ pub fn windowsEntry(
                         const pad = &controller_state.gamepad;
 
                         x_offset +%= @divTrunc(pad.thumb_l_x, 4096);
-                        y_offset -%= @divTrunc(pad.thumb_l_y, 4096);
+                        y_offset +%= @divTrunc(pad.thumb_l_y, 4096);
+
+                        sound_output.tone_hz = @intFromFloat(512 + (256 * (@as(f32, @floatFromInt(pad.thumb_l_y)) / 30000)));
+                        sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
                     } else {
                         // Controller not present
                     }
                 }
+
+                x_offset += 1;
 
                 // const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
                 // _ = xinput.XInputSetState(0, &vibration);
@@ -199,12 +251,13 @@ pub fn windowsEntry(
                 var play_cursor: u32 = undefined;
                 var write_cursor: u32 = undefined;
                 if (global_sound_buffer_opt) |gsb| if (gsb.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
-                    const byte_to_lock: win32.DWORD = (sound_output.running_frame_index * sound_output.bytes_per_frame) % sound_output.buffer_byte_size;
+                    const byte_to_lock: u32 = (sound_output.running_frame_index * sound_output.bytes_per_frame) % sound_output.buffer_byte_size;
+                    const target_cursor: u32 = ((play_cursor + (sound_output.latency_frame_count * sound_output.bytes_per_frame)) % sound_output.buffer_byte_size);
                     const bytes_to_write: u32 =
-                        if (byte_to_lock > play_cursor)
-                            (sound_output.buffer_byte_size - byte_to_lock) + play_cursor
+                        if (byte_to_lock > target_cursor)
+                            (sound_output.buffer_byte_size - byte_to_lock) + target_cursor
                         else
-                            play_cursor - byte_to_lock;
+                            target_cursor - byte_to_lock;
 
                     win32FillSoundBuffer(gsb, &sound_output, byte_to_lock, bytes_to_write);
                 };
@@ -334,47 +387,6 @@ fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i
     }
 
     win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
-}
-
-fn win32FillSoundBuffer(buffer: *dsound.IDirectSoundBuffer, sound_output: *Win32SoundOutput, byte_to_lock: u32, bytes_to_write: u32) void {
-    var region1_ptr: *anyopaque = undefined;
-    var region1_bytes: u32 = undefined;
-    var region2_ptr: *anyopaque = undefined;
-    var region2_bytes: u32 = undefined;
-
-    if (buffer.Lock(byte_to_lock, bytes_to_write, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
-        const region_1_frame_count = region1_bytes / sound_output.bytes_per_frame;
-        var sample_out: [*]i16 = @ptrCast(@alignCast(region1_ptr));
-        for (0..region_1_frame_count) |_| {
-            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(sound_output.running_frame_index)) / @as(f32, @floatFromInt(sound_output.wave_period)));
-            const sine_value: f32 = @sin(t);
-            const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
-            sample_out[0] = sample_value;
-            sample_out += 1;
-
-            sample_out[0] = sample_value;
-            sample_out += 1;
-
-            sound_output.running_frame_index +%= 1;
-        }
-
-        const region_2_frame_count = region2_bytes / sound_output.bytes_per_frame;
-        sample_out = @ptrCast(@alignCast(region2_ptr));
-        for (0..region_2_frame_count) |_| {
-            const t: f32 = 2 * std.math.pi * (@as(f32, @floatFromInt(sound_output.running_frame_index)) / @as(f32, @floatFromInt(sound_output.wave_period)));
-            const sine_value: f32 = @sin(t);
-            const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(sound_output.tone_volume)) * sine_value);
-            sample_out[0] = sample_value;
-            sample_out += 1;
-
-            sample_out[0] = sample_value;
-            sample_out += 1;
-
-            sound_output.running_frame_index +%= 1;
-        }
-
-        _ = buffer.Unlock(region1_ptr, region1_bytes, region2_ptr, region2_bytes);
-    }
 }
 
 fn renderWeirdGradient(buffer: *OffscreenBuffer, xoffset: i32, yoffset: i32) void {
