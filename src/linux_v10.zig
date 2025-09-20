@@ -27,202 +27,11 @@ const initial_window_width: i32 = 1280;
 const initial_window_height: i32 = 720;
 const bytes_per_pixel = 4;
 
+var running: bool = false;
+var wld: WlData = .{};
 var pcm_opt: ?*alsa.Pcm = null;
 
-const WlInitData = struct {
-    wld: *WlData,
-    wl_shm: ?*wl.Shm = null,
-    wl_compositor: ?*wl.Compositor = null,
-    wl_seat: ?*wl.Seat = null,
-    xdg_wm_base: ?*xdg_shell.WmBase = null,
-    xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
-    viewporter: ?*viewporter.Viewporter = null,
-
-    xrgb8888: bool = false,
-    seat_capabilities: wl.Seat.Capability = .{},
-};
-
-const WlData = struct {
-    running: bool = true,
-    should_draw: bool = false,
-
-    pool: ?*wl.ShmPool = undefined,
-    buffers: [3]Buffer = undefined,
-
-    display: *wl.Display = undefined,
-    shm: *wl.Shm = undefined,
-    compositor: *wl.Compositor = undefined,
-    seat: *wl.Seat = undefined,
-    surface: *wl.Surface = undefined,
-    viewporter: *viewporter.Viewporter = undefined,
-    viewport: *viewporter.Viewport = undefined,
-    wm_base: *xdg_shell.WmBase = undefined,
-    keyboard: *wl.Keyboard = undefined,
-
-    toplevel: Toplevel = undefined,
-
-    /// Back buffer width
-    width: i32 = -1,
-    /// Back buffer height
-    height: i32 = -1,
-    /// Window width
-    window_width: i32,
-    /// Window height
-    window_height: i32,
-
-    /// Max width of (non fullscreen) surface
-    bound_width: i32 = undefined,
-    /// Max height of (non fullscreen) surface
-    bound_height: i32 = undefined,
-    /// Max width of all outputs
-    max_width: i32 = undefined,
-    /// Max height of all outputs
-    max_height: i32 = undefined,
-
-    should_resize_shm: bool = undefined,
-    shm_size: usize = undefined,
-    shm_ptr: [*]u8 = undefined,
-
-    pending_resize: ?PendingResize = null,
-};
-
-const Buffer = struct {
-    wld: *WlData,
-    handle: ?*wl.Buffer,
-    offset: i32,
-    free: bool,
-    width: i32,
-    height: i32,
-};
-
-const Toplevel = union(enum) {
-    no_decoration: struct {
-        xdg_surface: *xdg_shell.Surface,
-        xdg_toplevel: *xdg_shell.Toplevel,
-    },
-
-    xdg_decoration: struct {
-        xdg_surface: *xdg_shell.Surface,
-        xdg_toplevel: *xdg_shell.Toplevel,
-        xdg_toplevel_decoration: *xdg_decoration.ToplevelDecorationV1,
-        supports_ssd: bool,
-    },
-
-    libdecor: struct {
-        decor: *libdecor.Context,
-        frame: *libdecor.Frame,
-    },
-
-    fn set_app_id(this: Toplevel, id: [*:0]const u8) void {
-        switch (this) {
-            .no_decoration => |d| d.xdg_toplevel.set_app_id(id),
-            .xdg_decoration => |d| d.xdg_toplevel.set_app_id(id),
-            .libdecor => |d| libdecor.frame_set_app_id(d.frame, id),
-        }
-    }
-
-    fn set_title(this: Toplevel, id: [*:0]const u8) void {
-        switch (this) {
-            .no_decoration => |n| n.xdg_toplevel.set_title(id),
-            .xdg_decoration => |n| n.xdg_toplevel.set_title(id),
-            .libdecor => |d| libdecor.frame_set_title(d.frame, id),
-        }
-    }
-};
-
-const PendingResize = struct {
-    width: i32,
-    height: i32,
-};
-
-const wl_registry_listener = wl.Registry.Listener{
-    .global = handleWlRegisterGlobal,
-    .global_remove = handleWlRemoveGlobal,
-};
-
-const wl_shm_listener = wl.Shm.Listener{
-    .format = handleWlShmFormat,
-};
-
-const wl_surface_listener = wl.Surface.Listener{
-    .enter = @ptrCast(&nop),
-    .leave = @ptrCast(&nop),
-    .preferred_buffer_scale = @ptrCast(&nop),
-    .preferred_buffer_transform = @ptrCast(&nop),
-};
-
-const xdg_wm_base_listener = xdg_shell.WmBase.Listener{
-    .ping = handleXdgPing,
-};
-
-const xdg_surface_listener = xdg_shell.Surface.Listener{
-    .configure = handleXdgSurfaceConfigure,
-};
-
-const xdg_toplevel_listener = xdg_shell.Toplevel.Listener{
-    .configure = handleXdgToplevelConfigure,
-    .configure_bounds = handleXdgToplevelConfigureBounds,
-    .wm_capabilities = handleXdgToplevelWmCapabilities,
-    .close = handleXdgToplevelClose,
-};
-
-const wl_callback_listener = wl.Callback.Listener{
-    .done = handleWlCallbackDone,
-};
-
-const wl_buffer_listener = wl.Buffer.Listener{
-    .release = handleWlBufferRelease,
-};
-
-const wl_seat_listener = wl.Seat.Listener{
-    .capabilities = handleWlSeatCapabilities,
-    .name = @ptrCast(&nop),
-};
-
-const wl_keyboard_listener = wl.Keyboard.Listener{
-    .key = handleWlKey,
-    .enter = @ptrCast(&nop),
-    .leave = @ptrCast(&nop),
-    .modifiers = @ptrCast(&nop),
-    .repeat_info = @ptrCast(&nop),
-    .keymap = @ptrCast(&nop),
-};
-
-const libdecor_listener = libdecor.FrameInterface{
-    .configure = handleLibdecorConfigure,
-    .commit = @ptrCast(&nop), // This should be safe to ignore, since we continuously redraw
-    .close = handleLibdecorClose,
-    .dismiss_popup = handleLibdecorDismissPopup,
-};
-
-const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{
-    .configure = handleXdgDecorationConfigure,
-};
-
-const wl_output_listener = wl.Output.Listener{
-    .geometry = @ptrCast(&nop),
-    .mode = handleWlOutputMode,
-    .done = handleWlOutputDone,
-    .scale = handleWlOutputScale,
-    .name = @ptrCast(&nop),
-    .description = @ptrCast(&nop),
-};
-
-const PollFdSlot = enum(usize) {
-    alsa,
-    udev,
-
-    // NOTE: !!! Update first/last when changing this!
-    joystick_0,
-    joystick_1,
-    joystick_2,
-    joystick_3,
-    // NOTE: !!! Update first/last when changing this!
-
-    pub const first_joystick: usize = @intFromEnum(PollFdSlot.joystick_0);
-    pub const last_joystick: usize = @intFromEnum(PollFdSlot.joystick_3);
-    pub const joystick_count: usize = last_joystick - first_joystick + 1;
-};
+var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
 
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
 var poll_fds: [poll_fd_count]std.posix.pollfd = [1]std.posix.pollfd{.{
@@ -230,66 +39,6 @@ var poll_fds: [poll_fd_count]std.posix.pollfd = [1]std.posix.pollfd{.{
     .events = undefined,
     .revents = undefined,
 }} ** poll_fd_count;
-
-const Joystick = struct {
-    fd: std.posix.fd_t,
-    active: bool = false,
-
-    rumble_strong: u16 = 0,
-    rumble_weak: u16 = 0,
-    rumble_event_id: i16 = -1,
-
-    axis: [32]i32 = [1]i32{0} ** 32,
-    buttons: [320]u1 = [1]u1{0} ** 320,
-
-    /// Zero terminated devnode path
-    path: [32]u8 = [1]u8{0} ** 32,
-
-    fn handleEvent(this: *Joystick, event: *const InputEvent) void {
-        switch (event.type) {
-            .SYN => {},
-            .ABS => {
-                if (event.code < this.axis.len) {
-                    this.axis[event.code] = event.value;
-                }
-            },
-            .KEY => {
-                if (event.code < this.buttons.len) {
-                    this.buttons[event.code] = if (event.value != 0) 1 else 0;
-                }
-            },
-            else => log.warn("Unhandled event: {}", .{event.type}),
-        }
-    }
-
-    fn setRumble(this: *Joystick, strong: u16, weak: u16) !void {
-        assert(this.active);
-        assert(this.fd >= 0);
-
-        if (strong != this.rumble_strong or weak != this.rumble_weak) {
-            this.rumble_strong = strong;
-            this.rumble_weak = weak;
-
-            const rumble_event = linux_input.FfEffect{
-                .type = .RUMBLE,
-                .id = this.rumble_event_id,
-                // NOTE: These magnitudes are treated as i16 values by the xpad driver!
-                // TODO: Queury the driver with udev, modify magnitude based on driver
-                .u = .{ .rumble = .{ .strong_magnitude = this.rumble_strong, .weak_magnitude = this.rumble_weak } },
-                .replay = .{ .length = 0xffff },
-            };
-
-            const id = posix.ioctl(this.fd, linux_input.EVIOCSFF, &rumble_event);
-            assert(id >= 0);
-            this.rumble_event_id = @intCast(id);
-
-            const play = InputEvent{ .type = .FF, .code = @intCast(id), .value = 1 };
-            _ = try std.posix.write(this.fd, std.mem.asBytes(&play));
-        }
-    }
-};
-
-var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
 
 pub fn main() !void {
 
@@ -311,8 +60,8 @@ pub fn main() !void {
         return error.UnexpectedWayland;
     };
 
-    var wld: WlData = .{
-        .running = true,
+    running = true;
+    wld = .{
         .display = display,
         .window_width = initial_window_width,
         .window_height = initial_window_height,
@@ -355,7 +104,7 @@ pub fn main() !void {
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
 
-    try resize_shm(&wld);
+    try resize_shm();
 
     if (wli.seat_capabilities.keyboard == false) {
         log.debug("keyboard not available", .{});
@@ -391,7 +140,7 @@ pub fn main() !void {
         return error.UnexpectedWayland;
     };
 
-    var xdg_decor_toplevel: Toplevel = undefined;
+    var xdg_decor_toplevel: WlToplevel = undefined;
     if (wli.xdg_decoration_manager) |manager| {
         const xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
             log.err("xdg_wm_base_get_xdg_surface failed", .{});
@@ -421,9 +170,9 @@ pub fn main() !void {
             log.debug("Using xdg_decoration", .{});
             assert(wld.pending_resize != null);
             const r = wld.pending_resize.?;
-            try resize(&wld, r.width, r.height);
-            const buffer = aquireFreeBufferIndex(&wld).?;
-            draw(&wld, buffer);
+            try resize(r.width, r.height);
+            const buffer = aquireFreeBufferIndex().?;
+            draw(buffer);
         }
 
         xdg_decor_toplevel = .{
@@ -475,10 +224,10 @@ pub fn main() !void {
             wld.surface.commit();
             _ = wl.display_roundtrip(display);
             if (wld.pending_resize) |r| {
-                try resize(&wld, r.width, r.height);
+                try resize(r.width, r.height);
             }
-            const buffer = aquireFreeBufferIndex(&wld).?;
-            draw(&wld, buffer);
+            const buffer = aquireFreeBufferIndex().?;
+            draw(buffer);
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         } else {
@@ -512,7 +261,7 @@ pub fn main() !void {
     sound_output.bytes_per_frame = sound_output.bytes_per_sample * 2;
     sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame / 15;
     sound_output.period_size = 1024;
-    sound_output.tone_hz = 512;
+    sound_output.tone_hz = 256;
     sound_output.tone_volume = 3000;
     sound_output.running_frame_index = 0;
     sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
@@ -584,7 +333,7 @@ pub fn main() !void {
     var x_offset: i32 = 0;
     var y_offset: i32 = 0;
 
-    while (wl.display_dispatch(display) != -1 and wld.running) {
+    while (wl.display_dispatch(display) != -1 and running) {
         var audio_write_frame_count: alsa.PcmSFrames = 0;
 
         if (try std.posix.poll(&poll_fds, 0) > 0) {
@@ -598,6 +347,7 @@ pub fn main() !void {
                         _ = alsa.pcm_poll_descriptors_revents(pcm, @ptrCast(pollfd), 1, &event);
                         const out = (event & posix.POLL.OUT) != 0;
                         const err = (event & posix.POLL.ERR) != 0;
+
                         if (out or err) {
                             audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
                             const state = alsa.pcm_state(pcm);
@@ -613,6 +363,7 @@ pub fn main() !void {
                             unreachable;
                         }
                     },
+
                     .udev => if (in) {
                         const device = udev.monitor_receive_device(udev_monitor).?;
                         defer _ = udev.device_unref(device);
@@ -660,7 +411,7 @@ pub fn main() !void {
             y_offset +%= @divTrunc(jy, 4096);
 
             if (js.buttons[@intFromEnum(Key.BTN_MODE)] == 1) {
-                wld.running = false;
+                running = false;
             }
 
             sound_output.tone_hz = @intFromFloat(512 + 256 * (@as(f32, @floatFromInt(jy)) / 30000));
@@ -684,12 +435,12 @@ pub fn main() !void {
         }
 
         if (wld.pending_resize) |r| {
-            try resize(&wld, r.width, r.height);
+            try resize(r.width, r.height);
         }
         if (wld.should_draw) {
-            if (aquireFreeBufferIndex(&wld)) |buffer| {
+            if (aquireFreeBufferIndex()) |buffer| {
                 renderWeirdGradient(buffer, x_offset, y_offset);
-                draw(&wld, buffer);
+                draw(buffer);
             } else {
                 _ = wl.display_roundtrip(display);
                 continue;
@@ -700,6 +451,184 @@ pub fn main() !void {
     }
 }
 
+const WlInitData = struct {
+    wld: *WlData,
+    wl_shm: ?*wl.Shm = null,
+    wl_compositor: ?*wl.Compositor = null,
+    wl_seat: ?*wl.Seat = null,
+    xdg_wm_base: ?*xdg_shell.WmBase = null,
+    xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
+    viewporter: ?*viewporter.Viewporter = null,
+
+    xrgb8888: bool = false,
+    seat_capabilities: wl.Seat.Capability = .{},
+};
+
+const WlData = struct {
+    should_draw: bool = false,
+
+    pool: ?*wl.ShmPool = null,
+    buffers: [3]WlBuffer = undefined,
+
+    display: *wl.Display = undefined,
+    shm: *wl.Shm = undefined,
+    compositor: *wl.Compositor = undefined,
+    seat: *wl.Seat = undefined,
+    surface: *wl.Surface = undefined,
+    viewporter: *viewporter.Viewporter = undefined,
+    viewport: *viewporter.Viewport = undefined,
+    wm_base: *xdg_shell.WmBase = undefined,
+    keyboard: *wl.Keyboard = undefined,
+
+    toplevel: WlToplevel = undefined,
+
+    /// Back buffer width
+    width: i32 = -1,
+    /// Back buffer height
+    height: i32 = -1,
+    /// Window width
+    window_width: i32 = 0,
+    /// Window height
+    window_height: i32 = 0,
+
+    /// Max width of (non fullscreen) surface
+    bound_width: i32 = 0,
+    /// Max height of (non fullscreen) surface
+    bound_height: i32 = 0,
+    /// Max width of all outputs
+    max_width: i32 = 0,
+    /// Max height of all outputs
+    max_height: i32 = 0,
+
+    should_resize_shm: bool = false,
+    shm_size: usize = 0,
+    shm_ptr: [*]u8 = undefined,
+
+    pending_resize: ?WlPendingResize = null,
+};
+
+const WlBuffer = struct {
+    handle: ?*wl.Buffer,
+    offset: i32,
+    free: bool,
+    width: i32,
+    height: i32,
+};
+
+const WlToplevel = union(enum) {
+    no_decoration: struct {
+        xdg_surface: *xdg_shell.Surface,
+        xdg_toplevel: *xdg_shell.Toplevel,
+    },
+
+    xdg_decoration: struct {
+        xdg_surface: *xdg_shell.Surface,
+        xdg_toplevel: *xdg_shell.Toplevel,
+        xdg_toplevel_decoration: *xdg_decoration.ToplevelDecorationV1,
+        supports_ssd: bool,
+    },
+
+    libdecor: struct {
+        decor: *libdecor.Context,
+        frame: *libdecor.Frame,
+    },
+
+    fn set_app_id(this: WlToplevel, id: [*:0]const u8) void {
+        switch (this) {
+            .no_decoration => |d| d.xdg_toplevel.set_app_id(id),
+            .xdg_decoration => |d| d.xdg_toplevel.set_app_id(id),
+            .libdecor => |d| libdecor.frame_set_app_id(d.frame, id),
+        }
+    }
+
+    fn set_title(this: WlToplevel, id: [*:0]const u8) void {
+        switch (this) {
+            .no_decoration => |n| n.xdg_toplevel.set_title(id),
+            .xdg_decoration => |n| n.xdg_toplevel.set_title(id),
+            .libdecor => |d| libdecor.frame_set_title(d.frame, id),
+        }
+    }
+};
+
+const WlPendingResize = struct {
+    width: i32,
+    height: i32,
+};
+
+const PollFdSlot = enum(usize) {
+    alsa,
+    udev,
+
+    // NOTE: !!! Update first/last when changing this!
+    joystick_0,
+    joystick_1,
+    joystick_2,
+    joystick_3,
+    // NOTE: !!! Update first/last when changing this!
+
+    pub const first_joystick: usize = @intFromEnum(PollFdSlot.joystick_0);
+    pub const last_joystick: usize = @intFromEnum(PollFdSlot.joystick_3);
+    pub const joystick_count: usize = last_joystick - first_joystick + 1;
+};
+
+const Joystick = struct {
+    fd: std.posix.fd_t,
+    active: bool = false,
+
+    rumble_strong: u16 = 0,
+    rumble_weak: u16 = 0,
+    rumble_event_id: i16 = -1,
+
+    axis: [32]i32 = [1]i32{0} ** 32,
+    buttons: [320]u1 = [1]u1{0} ** 320,
+
+    /// Zero terminated devnode path
+    path: [32]u8 = [1]u8{0} ** 32,
+
+    fn handleEvent(this: *Joystick, event: *const InputEvent) void {
+        switch (event.type) {
+            .SYN => {},
+            .ABS => {
+                if (event.code < this.axis.len) {
+                    this.axis[event.code] = event.value;
+                }
+            },
+            .KEY => {
+                if (event.code < this.buttons.len) {
+                    this.buttons[event.code] = if (event.value != 0) 1 else 0;
+                }
+            },
+            else => log.warn("Unhandled event: {}", .{event.type}),
+        }
+    }
+
+    fn setRumble(this: *Joystick, strong: u16, weak: u16) !void {
+        assert(this.active);
+        assert(this.fd >= 0);
+
+        if (strong != this.rumble_strong or weak != this.rumble_weak) {
+            this.rumble_strong = strong;
+            this.rumble_weak = weak;
+
+            const rumble_event = linux_input.FfEffect{
+                .type = .RUMBLE,
+                .id = this.rumble_event_id,
+                // NOTE: These magnitudes are treated as i16 values by the xpad driver!
+                // TODO: Queury the driver with udev, modify magnitude based on driver
+                .u = .{ .rumble = .{ .strong_magnitude = this.rumble_strong, .weak_magnitude = this.rumble_weak } },
+                .replay = .{ .length = 0xffff },
+            };
+
+            const id = posix.ioctl(this.fd, linux_input.EVIOCSFF, &rumble_event);
+            assert(id >= 0);
+            this.rumble_event_id = @intCast(id);
+
+            const play = InputEvent{ .type = .FF, .code = @intCast(id), .value = 1 };
+            _ = try std.posix.write(this.fd, std.mem.asBytes(&play));
+        }
+    }
+};
+
 const PosixShmError = error{
     ShmOpenFailed,
     ShmUnlinkFailed,
@@ -709,8 +638,7 @@ const PosixShmError = error{
     WlPoolCreateBufferFailed,
 };
 
-fn resize_shm(wld: *WlData) PosixShmError!void {
-    log.debug("resize_shm", .{});
+fn resize_shm() PosixShmError!void {
     const S = std.posix.S;
 
     var name_buf: [16]u8 = undefined;
@@ -781,7 +709,6 @@ fn resize_shm(wld: *WlData) PosixShmError!void {
         };
 
         buffer.* = .{
-            .wld = wld,
             .handle = handle,
             .offset = offset,
             .free = true,
@@ -798,15 +725,7 @@ fn resize_shm(wld: *WlData) PosixShmError!void {
     // TODO: Test by plugging in external monitor
 }
 
-fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}!void {
-    // if (width == 0 and height == 0) {
-    //     wld.width = initial_window_width;
-    //     wld.height = initial_window_height;
-    // } else {
-    //     wld.width = width;
-    //     wld.height = height;
-    // }
-
+fn resize(width: i32, height: i32) error{WlPoolCreateBufferFailed}!void {
     // This is the size of the backbuffers
     wld.width = initial_window_width;
     wld.height = initial_window_height;
@@ -823,7 +742,7 @@ fn resize(wld: *WlData, width: i32, height: i32) error{WlPoolCreateBufferFailed}
     wld.pending_resize = null;
 }
 
-fn aquireFreeBufferIndex(wld: *WlData) ?*Buffer {
+fn aquireFreeBufferIndex() ?*WlBuffer {
     for (&wld.buffers) |*buffer| {
         if (buffer.free) {
             if (buffer.handle == null or buffer.width != wld.width or buffer.height != wld.height) {
@@ -897,10 +816,9 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, se
 }
 
 fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states: wayland.Array) callconv(.c) void {
+    _ = data;
     _ = toplevel;
     _ = states;
-
-    const wld: *WlData = @ptrCast(@alignCast(data));
 
     if (wld.pending_resize) |*r| {
         r.width = width;
@@ -914,9 +832,9 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel,
 }
 
 fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32) callconv(.c) void {
+    _ = data;
     _ = toplevel;
 
-    const wld: *WlData = @ptrCast(@alignCast(data));
     wld.bound_width = width;
     wld.bound_height = height;
     log.debug("xdg toplevel configure bounds {},{}", .{ width, height });
@@ -929,24 +847,23 @@ fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Topl
 }
 
 fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) callconv(.c) void {
+    _ = data;
     _ = toplevel;
 
-    const wld: *WlData = @ptrCast(@alignCast(data));
-    wld.running = false;
+    running = false;
 }
 
 fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_data: u32) callconv(.c) void {
+    _ = data;
     _ = callback_data;
     callback.?.destroy();
 
-    const wld: *WlData = @ptrCast(@alignCast(data));
     wld.should_draw = true;
 }
 
 fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) callconv(.c) void {
     _ = wl_buffer;
-    const buffer: *Buffer = @ptrCast(@alignCast(data));
-    const wld = buffer.wld;
+    const buffer: *WlBuffer = @ptrCast(@alignCast(data));
 
     if (buffer.width != wld.width or buffer.height != wld.height) {
         buffer.handle.?.destroy();
@@ -964,11 +881,10 @@ fn handleWlSeatCapabilities(data: ?*anyopaque, seat: ?*wl.Seat, capabilities: wl
 }
 
 fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u32, rawkey: u32, state: wl.Keyboard.KeyState) callconv(.c) void {
+    _ = data;
     _ = keyboard;
     _ = time;
     _ = serial;
-
-    const wld: *WlData = @ptrCast(@alignCast(data));
 
     // TODO: Do this via the keymap with xkb!
     const key: linux_input.Key = @enumFromInt(rawkey);
@@ -997,9 +913,9 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
         } else if (key == .RIGHT) {
             //
         } else if (key == .ESC) {
-            wld.running = false;
+            running = false;
         } else if (key == .CAPSLOCK) {
-            wld.running = false;
+            running = false;
         } else if (key == .SPACE) {
             log.debug("space: {s} {s}", .{
                 if (is_down) "is_down" else "",
@@ -1010,7 +926,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
 }
 
 fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configuration, data: ?*anyopaque) callconv(.c) void {
-    const wld: *WlData = @ptrCast(@alignCast(data));
+    _ = data;
 
     var width: c_int = undefined;
     var height: c_int = undefined;
@@ -1023,18 +939,18 @@ fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configurati
     libdecor.frame_commit(frame, state, config);
     libdecor.state_free(state);
 
-    resize(wld, width, height) catch |e| {
+    resize(width, height) catch |e| {
         log.err("Error during resize: {}", .{e});
         log.err("Unable to handle resize error in handleLibdecorConfigure, stopping application", .{});
-        wld.running = false;
+        running = false;
         return;
     };
 }
 
 fn handleLibdecorClose(frame: *libdecor.Frame, data: ?*anyopaque) callconv(.c) void {
+    _ = data;
     _ = frame;
-    const wld: *WlData = @ptrCast(@alignCast(data));
-    wld.running = false;
+    running = false;
 }
 
 fn handleLibdecorDismissPopup(frame: *libdecor.Frame, seat_name: [*c]const u8, data: ?*anyopaque) callconv(.c) void {
@@ -1052,10 +968,11 @@ fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_de
 }
 
 fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) callconv(.c) void {
+    _ = data;
     _ = output;
     _ = flags;
     _ = refresh;
-    const wld: *WlData = @ptrCast(@alignCast(data));
+
     const new_pixel_count = width * height;
     const max_pixel_count = wld.max_width * wld.max_height;
     if (new_pixel_count > max_pixel_count) {
@@ -1063,19 +980,6 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
         wld.max_height = height;
         wld.should_resize_shm = true;
     }
-}
-
-fn handleWlOutputDone(data: ?*anyopaque, output: ?*wl.Output) callconv(.c) void {
-    _ = data;
-    _ = output;
-    // log.debug("Output done: {}:\n", .{output.?});
-}
-
-fn handleWlOutputScale(data: ?*anyopaque, output: ?*wl.Output, factor: i32) callconv(.c) void {
-    _ = data;
-    _ = output;
-    _ = factor;
-    // log.debug("Output scale: {}: {}", .{ output.?, factor });
 }
 
 fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
@@ -1277,12 +1181,12 @@ fn linuxInitAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte
     }
 }
 
-fn renderWeirdGradient(buffer: *Buffer, xoffset: i32, yoffset: i32) void {
+fn renderWeirdGradient(buffer: *WlBuffer, xoffset: i32, yoffset: i32) void {
     const uwidth: usize = @intCast(buffer.width);
     const uheight: usize = @intCast(buffer.height);
 
     const pitch = uwidth * bytes_per_pixel;
-    var row: [*]u8 = buffer.wld.shm_ptr + @as(usize, @intCast(buffer.offset));
+    var row: [*]u8 = wld.shm_ptr + @as(usize, @intCast(buffer.offset));
     for (0..uheight) |uy| {
         const y: i32 = @intCast(uy);
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
@@ -1300,15 +1204,88 @@ fn renderWeirdGradient(buffer: *Buffer, xoffset: i32, yoffset: i32) void {
     }
 }
 
-fn draw(wld: *WlData, buffer: *Buffer) void {
+fn draw(buffer: *WlBuffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
     wld.surface.damage(0, 0, wld.window_width, wld.window_height);
     wld.surface.commit();
     const callback = wld.surface.frame();
-    callback.?.add_listener(&wl_callback_listener, wld);
+    callback.?.add_listener(&wl_callback_listener, &wld);
     _ = wl.display_flush(wld.display);
 
     wld.should_draw = false;
 }
 
 fn nop() callconv(.c) void {}
+
+const wl_registry_listener = wl.Registry.Listener{
+    .global = handleWlRegisterGlobal,
+    .global_remove = handleWlRemoveGlobal,
+};
+
+const wl_shm_listener = wl.Shm.Listener{
+    .format = handleWlShmFormat,
+};
+
+const wl_surface_listener = wl.Surface.Listener{
+    .enter = @ptrCast(&nop),
+    .leave = @ptrCast(&nop),
+    .preferred_buffer_scale = @ptrCast(&nop),
+    .preferred_buffer_transform = @ptrCast(&nop),
+};
+
+const xdg_wm_base_listener = xdg_shell.WmBase.Listener{
+    .ping = handleXdgPing,
+};
+
+const xdg_surface_listener = xdg_shell.Surface.Listener{
+    .configure = handleXdgSurfaceConfigure,
+};
+
+const xdg_toplevel_listener = xdg_shell.Toplevel.Listener{
+    .configure = handleXdgToplevelConfigure,
+    .configure_bounds = handleXdgToplevelConfigureBounds,
+    .wm_capabilities = handleXdgToplevelWmCapabilities,
+    .close = handleXdgToplevelClose,
+};
+
+const wl_callback_listener = wl.Callback.Listener{
+    .done = handleWlCallbackDone,
+};
+
+const wl_buffer_listener = wl.Buffer.Listener{
+    .release = handleWlBufferRelease,
+};
+
+const wl_seat_listener = wl.Seat.Listener{
+    .capabilities = handleWlSeatCapabilities,
+    .name = @ptrCast(&nop),
+};
+
+const wl_keyboard_listener = wl.Keyboard.Listener{
+    .key = handleWlKey,
+    .enter = @ptrCast(&nop),
+    .leave = @ptrCast(&nop),
+    .modifiers = @ptrCast(&nop),
+    .repeat_info = @ptrCast(&nop),
+    .keymap = @ptrCast(&nop),
+};
+
+const libdecor_listener = libdecor.FrameInterface{
+    .configure = handleLibdecorConfigure,
+    .commit = @ptrCast(&nop), // This should be safe to ignore, since we continuously redraw
+    .close = handleLibdecorClose,
+    .dismiss_popup = handleLibdecorDismissPopup,
+};
+
+const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{
+    .configure = handleXdgDecorationConfigure,
+};
+
+const wl_output_listener = wl.Output.Listener{
+    .geometry = @ptrCast(&nop),
+    .mode = handleWlOutputMode,
+    .done = @ptrCast(&nop),
+    .scale = @ptrCast(&nop),
+    .name = @ptrCast(&nop),
+    .description = @ptrCast(&nop),
+};
