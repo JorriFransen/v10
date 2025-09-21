@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.linux_v10);
 
+const x86_64 = @import("x86_64.zig");
+
 const wayland = @import("wayland");
 const wl = wayland.wl;
 const xdg_shell = wayland.xdg_shell;
@@ -333,6 +335,11 @@ pub fn main() !void {
     var x_offset: i32 = 0;
     var y_offset: i32 = 0;
 
+    var update_last_counter = try std.time.Instant.now();
+    var update_last_cycle_count = x86_64.rdtsc();
+    var frame_last_counter = try std.time.Instant.now();
+    var frame_last_cycle_count = x86_64.rdtsc();
+
     while (wl.display_dispatch(display) != -1 and running) {
         var audio_write_frame_count: alsa.PcmSFrames = 0;
 
@@ -441,6 +448,18 @@ pub fn main() !void {
             if (aquireFreeBufferIndex()) |buffer| {
                 renderWeirdGradient(buffer, x_offset, y_offset);
                 draw(buffer);
+
+                const end_cycle_count = x86_64.rdtsc();
+                const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - frame_last_cycle_count);
+                const end_counter = try std.time.Instant.now();
+                const counter_elapsed = end_counter.since(frame_last_counter);
+                const ms_per_frame = @as(f32, @floatFromInt(counter_elapsed)) / std.time.ns_per_ms;
+                const fps = std.time.ns_per_s / @as(f32, @floatFromInt(counter_elapsed));
+                const mcpf = cycles_elapsed / (1000 * 1000);
+                log.info("{d:.2}ms/f,  {d:.2}f/s, {d:.2}mc/f", .{ ms_per_frame, fps, mcpf });
+
+                frame_last_counter = end_counter;
+                frame_last_cycle_count = end_cycle_count;
             } else {
                 _ = wl.display_roundtrip(display);
                 continue;
@@ -448,6 +467,17 @@ pub fn main() !void {
         }
 
         _ = wl.display_flush(display);
+
+        const end_cycle_count = x86_64.rdtsc();
+        const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - update_last_cycle_count);
+        const end_counter = try std.time.Instant.now();
+        const counter_elapsed: f32 = @floatFromInt(end_counter.since(update_last_counter));
+        const ms_per_update = counter_elapsed / std.time.ns_per_ms;
+        const ups = std.time.ns_per_s / counter_elapsed;
+        const mcpu = cycles_elapsed / (1000 * 1000);
+        log.info("{d:.2}ms/u,  {d:.2}u/s, {d:.2}mc/u", .{ ms_per_update, ups, mcpu });
+        update_last_counter = end_counter;
+        update_last_cycle_count = end_cycle_count;
     }
 }
 

@@ -732,8 +732,18 @@ pub const BITMAPINFO = extern struct {
     bmiColors: [1]RGBQUAD = std.mem.zeroes([1]RGBQUAD),
 };
 
+pub const LARGE_INTEGER = extern union {
+    u: extern struct {
+        low_part: DWORD,
+        high_part: LONG,
+    },
+    quad_part: u64,
+};
+
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
+pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) BOOL;
+pub extern "kernel32" fn QueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) LPVOID;
 pub extern "kernel32" fn VirtualFree(address: LPVOID, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
 

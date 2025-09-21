@@ -3,6 +3,7 @@ const log = std.log.scoped(.win32_v10);
 const win32 = @import("win32/win32.zig");
 const xinput = @import("win32/xinput.zig");
 const dsound = @import("win32/direct_sound.zig");
+const x86_64 = @import("x86_64.zig");
 
 const assert = std.debug.assert;
 
@@ -165,6 +166,10 @@ pub fn windowsEntry(
 
     win32ResizeDibSection(&global_back_buffer, 1280, 720);
 
+    var qpf_result: win32.LARGE_INTEGER = undefined;
+    _ = win32.QueryPerformanceFrequency(&qpf_result);
+    const perf_count_frequency = qpf_result.quad_part;
+
     const window_class = win32.WNDCLASSA{
         .style = win32.CS_OWNDC | win32.CS_HREDRAW | win32.CS_VREDRAW,
         .lpfnWndProc = windowProcA,
@@ -215,6 +220,11 @@ pub fn windowsEntry(
                 _ = gsb.Play(0, 0, dsound.BPLAY_LOOPING);
             }
 
+            var last_counter: win32.LARGE_INTEGER = undefined;
+            _ = win32.QueryPerformanceFrequency(&last_counter);
+
+            var last_cycle_count = x86_64.rdtsc();
+
             while (global_running) {
                 var msg = win32.MSG{};
                 while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
@@ -264,6 +274,21 @@ pub fn windowsEntry(
 
                 const dimension = getWindowDimension(window);
                 win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
+
+                const end_cycle_count = x86_64.rdtscp();
+
+                var end_counter: win32.LARGE_INTEGER = undefined;
+                _ = win32.QueryPerformanceCounter(&end_counter);
+
+                const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
+                const counter_elapsed: f32 = @floatFromInt(end_counter.quad_part - last_counter.quad_part);
+                const ms_per_frame = (1000 * counter_elapsed) / @as(f32, @floatFromInt(perf_count_frequency));
+                const fps = @as(f32, @floatFromInt(perf_count_frequency)) / counter_elapsed;
+                const mcps = cycles_elapsed / (1000 * 1000);
+                log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f", .{ ms_per_frame, fps, mcps });
+
+                last_counter = end_counter;
+                last_cycle_count = end_cycle_count;
             }
         } else {
             log.err("CreateWindow failed!", .{});
