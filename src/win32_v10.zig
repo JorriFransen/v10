@@ -4,6 +4,7 @@ const win32 = @import("win32/win32.zig");
 const xinput = @import("win32/xinput.zig");
 const dsound = @import("win32/direct_sound.zig");
 const x86_64 = @import("x86_64.zig");
+const v10 = @import("v10.zig");
 
 const assert = std.debug.assert;
 
@@ -256,7 +257,13 @@ pub fn windowsEntry(
                 // const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
                 // _ = xinput.XInputSetState(0, &vibration);
 
-                renderWeirdGradient(&global_back_buffer, x_offset, y_offset);
+                var game_offscreen_buffer = v10.game.OffscreenBuffer{
+                    .memory = global_back_buffer.memory,
+                    .width = global_back_buffer.width,
+                    .height = global_back_buffer.height,
+                    .pitch = global_back_buffer.pitch,
+                };
+                v10.game.updateAndRender(&game_offscreen_buffer, x_offset, y_offset);
 
                 var play_cursor: u32 = undefined;
                 var write_cursor: u32 = undefined;
@@ -285,7 +292,8 @@ pub fn windowsEntry(
                 const ms_per_frame = (1000 * counter_elapsed) / @as(f32, @floatFromInt(perf_count_frequency));
                 const fps = @as(f32, @floatFromInt(perf_count_frequency)) / counter_elapsed;
                 const mcps = cycles_elapsed / (1000 * 1000);
-                log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f", .{ ms_per_frame, fps, mcps });
+                // log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f", .{ ms_per_frame, fps, mcps });
+                _ = .{ ms_per_frame, fps, mcps };
 
                 last_counter = end_counter;
                 last_cycle_count = end_cycle_count;
@@ -412,24 +420,4 @@ fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i
     }
 
     win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
-}
-
-fn renderWeirdGradient(buffer: *OffscreenBuffer, xoffset: i32, yoffset: i32) void {
-    const uwidth: usize = @intCast(buffer.width);
-    const uheight: usize = @intCast(buffer.height);
-
-    var row: [*]u8 = buffer.memory.ptr;
-    for (0..uheight) |uy| {
-        const y: i32 = @intCast(uy);
-        var pixel: [*]u32 = @ptrCast(@alignCast(row));
-        for (0..uwidth) |ux| {
-            const x: i32 = @intCast(ux);
-
-            const b: u8 = @truncate(@as(u32, @bitCast(x +% xoffset)));
-            const g: u8 = @truncate(@as(u32, @bitCast(y +% yoffset)));
-            pixel[0] = (@as(u16, g) << 8) | b;
-            pixel += 1;
-        }
-        row += @intCast(buffer.pitch);
-    }
 }
