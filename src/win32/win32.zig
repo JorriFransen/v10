@@ -40,6 +40,8 @@ pub const LPRECT = *RECT;
 pub const ERROR_SUCCESS = 0x0;
 pub const ERROR_DEVICE_NOT_CONNECTED = 0x48f;
 
+pub const ATTACH_PARENT_PROCESS: DWORD = std.math.maxInt(DWORD);
+
 pub const MEM_COALESCE_PLACEHOLDERS: DWORD = 0x00000001;
 pub const MEM_PRESERVE_PLACEHOLDER: DWORD = 0x00000002;
 pub const MEM_COMMIT: DWORD = 0x00001000;
@@ -612,6 +614,41 @@ pub const COLORONCOLOR = STRETCH_DELETESCANS;
 pub const HALFTONE = STRETCH_HALFTONE;
 pub const WHITEONBLACK = STRETCH_ORSCANS;
 
+pub const GENERIC_ALL = 0x10000000;
+pub const GENERIC_EXECUTE = 0x20000000;
+pub const GENERIC_WRITE = 0x40000000;
+pub const GENERIC_READ = 0x80000000;
+
+pub const FILE_SHARE_DELETE = 0x00000004;
+pub const FILE_SHARE_READ = 0x00000001;
+pub const FILE_SHARE_WRITE = 0x00000002;
+
+pub const CREATE_ALWAYS = 2;
+pub const CREATE_NEW = 1;
+pub const OPEN_ALWAYS = 4;
+pub const OPEN_EXISTING = 3;
+pub const TRUNCATE_EXISTING = 5;
+
+pub const FILE_ATTRIBUTE_ARCHIVE = 32; // (0x20)
+pub const FILE_ATTRIBUTE_ENCRYPTED = 16384; // (0x4000)
+pub const FILE_ATTRIBUTE_HIDDEN = 2; // (0x2)
+pub const FILE_ATTRIBUTE_NORMAL = 128; // (0x80)
+pub const FILE_ATTRIBUTE_OFFLINE = 4096; // (0x1000)
+pub const FILE_ATTRIBUTE_READONLY = 1; // (0x1)
+pub const FILE_ATTRIBUTE_SYSTEM = 4; //; (0x4)
+pub const FILE_ATTRIBUTE_TEMPORARY = 256; // (0x100)
+pub const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+pub const FILE_FLAG_DELETE_ON_CLOSE = 0x04000000;
+pub const FILE_FLAG_NO_BUFFERING = 0x20000000;
+pub const FILE_FLAG_OPEN_NO_RECALL = 0x00100000;
+pub const FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+pub const FILE_FLAG_OVERLAPPED = 0x40000000;
+pub const FILE_FLAG_POSIX_SEMANTICS = 0x01000000;
+pub const FILE_FLAG_RANDOM_ACCESS = 0x10000000;
+pub const FILE_FLAG_SESSION_AWARE = 0x00800000;
+pub const FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000;
+pub const FILE_FLAG_WRITE_THROUGH = 0x80000000;
+
 pub const GUID = extern struct {
     data1: u32 = 0,
     data2: u16 = 0,
@@ -740,12 +777,20 @@ pub const LARGE_INTEGER = extern union {
     quad_part: u64,
 };
 
+pub const SECURITY_ATTRIBUTES = extern struct {
+    length: DWORD = @sizeOf(@This()),
+    security_descriptor: LPVOID,
+    inherit_handle: BOOL,
+};
+
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
 pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn QueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) LPVOID;
 pub extern "kernel32" fn VirtualFree(address: LPVOID, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
+pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
+pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, share_mode: DWORD, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) ?HANDLE;
 
 pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
 pub extern "user32" fn GetModuleHandleW(module_name: ?LPCWSTR) callconv(.winapi) HMODULE;

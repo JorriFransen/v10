@@ -144,6 +144,20 @@ fn getWindowDimension(window: win32.HWND) WindowDimensions {
 }
 
 pub fn main() u8 {
+    if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS) == 0) {
+        // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
+
+        // if (win32.CreateFileA("nul", win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.OPEN_EXISTING, win32.FILE_ATTRIBUTE_NORMAL, null)) |handle| {
+        //     _ = handle;
+        // _ = win.SetStdHandle(win.STD_INPUT_HANDLE, handle);
+        // _ = win.SetStdHandle(win.STD_OUTPUT_HANDLE, handle);
+        // _ = win.SetStdHandle(win.STD_ERROR_HANDLE, handle);
+        //     unreachable;
+        // } else {
+        //     unreachable;
+        // }
+    }
+
     const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
     const command_line = win32.GetCommandLineA();
 
