@@ -252,8 +252,6 @@ pub fn windowsEntry(
                     }
                 }
 
-                x_offset += 1;
-
                 // const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
                 // _ = xinput.XInputSetState(0, &vibration);
 

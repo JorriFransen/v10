@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.linux_v10);
 
+const v10 = @import("v10.zig");
+
 const x86_64 = @import("x86_64.zig");
 
 const wayland = @import("wayland");
@@ -12,7 +14,8 @@ const viewporter = wayland.viewporter;
 const libdecor = @import("linux/libdecor.zig");
 
 const udev = @import("linux/libudev.zig");
-const posix = std.posix.system;
+const linux = std.os.linux;
+const errno = std.posix.errno;
 
 const linux_input = @import("linux/input.zig");
 const InputEvent = linux_input.InputEvent;
@@ -29,6 +32,7 @@ const initial_window_width: i32 = 1280;
 const initial_window_height: i32 = 720;
 const bytes_per_pixel = 4;
 
+var global_back_buffer: OffscreenBuffer = undefined;
 var running: bool = false;
 var wld: WlData = .{};
 var pcm_opt: ?*alsa.Pcm = null;
@@ -36,7 +40,7 @@ var pcm_opt: ?*alsa.Pcm = null;
 var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
 
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
-var poll_fds: [poll_fd_count]std.posix.pollfd = [1]std.posix.pollfd{.{
+var poll_fds: [poll_fd_count]linux.pollfd = [1]linux.pollfd{.{
     .fd = -1,
     .events = undefined,
     .revents = undefined,
@@ -174,7 +178,7 @@ pub fn main() !void {
             const r = wld.pending_resize.?;
             try resize(r.width, r.height);
             const buffer = aquireFreeBufferIndex().?;
-            draw(buffer);
+            linuxDisplayBufferInWindow(buffer);
         }
 
         xdg_decor_toplevel = .{
@@ -229,7 +233,7 @@ pub fn main() !void {
                 try resize(r.width, r.height);
             }
             const buffer = aquireFreeBufferIndex().?;
-            draw(buffer);
+            linuxDisplayBufferInWindow(buffer);
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         } else {
@@ -319,7 +323,7 @@ pub fn main() !void {
             log.err("udev_monitor_get_Fd failed", .{});
             return error.Unexpected;
         }
-        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = posix.POLL.IN, .revents = undefined };
+        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = linux.POLL.IN, .revents = undefined };
 
         if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
             log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
@@ -335,25 +339,23 @@ pub fn main() !void {
     var x_offset: i32 = 0;
     var y_offset: i32 = 0;
 
-    var update_last_counter = try std.time.Instant.now();
-    var update_last_cycle_count = x86_64.rdtsc();
-    var frame_last_counter = try std.time.Instant.now();
-    var frame_last_cycle_count = x86_64.rdtsc();
+    var last_counter = try std.time.Instant.now();
+    var last_cycle_count = x86_64.rdtsc();
 
     while (wl.display_dispatch(display) != -1 and running) {
         var audio_write_frame_count: alsa.PcmSFrames = 0;
 
-        if (try std.posix.poll(&poll_fds, 0) > 0) {
+        if (linux.poll(&poll_fds, poll_fds.len, 0) > 0) {
             for (&poll_fds, 0..) |*pollfd, slot_index| {
                 const slot: PollFdSlot = @enumFromInt(slot_index);
-                const in = pollfd.revents & posix.POLL.IN != 0;
+                const in = pollfd.revents & linux.POLL.IN != 0;
 
                 switch (slot) {
                     .alsa => if (pcm_opt) |pcm| {
                         var event: c_ushort = undefined;
                         _ = alsa.pcm_poll_descriptors_revents(pcm, @ptrCast(pollfd), 1, &event);
-                        const out = (event & posix.POLL.OUT) != 0;
-                        const err = (event & posix.POLL.ERR) != 0;
+                        const out = (event & linux.POLL.OUT) != 0;
+                        const err = (event & linux.POLL.ERR) != 0;
 
                         if (out or err) {
                             audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
@@ -394,7 +396,7 @@ pub fn main() !void {
                     .joystick_3,
                     => if (in) {
                         var events: [16]InputEvent = undefined;
-                        const read_len = try std.posix.read(pollfd.fd, std.mem.sliceAsBytes(&events));
+                        const read_len = linux.read(pollfd.fd, @ptrCast(&events), @sizeOf(@TypeOf(events)));
                         if (read_len > 0) {
                             const num_events = read_len / @sizeOf(InputEvent);
                             for (events[0..num_events]) |*event| {
@@ -423,9 +425,17 @@ pub fn main() !void {
 
             sound_output.tone_hz = @intFromFloat(512 + 256 * (@as(f32, @floatFromInt(jy)) / 30000));
             sound_output.wave_period = sound_output.frames_per_second / sound_output.tone_hz;
+
+            // try js.setRumble(3000, 0);
         };
 
-        x_offset += 1;
+        var game_offscreen_buffer = v10.game.OffscreenBuffer{
+            .memory = global_back_buffer.memory,
+            .width = global_back_buffer.width,
+            .height = global_back_buffer.height,
+            .pitch = global_back_buffer.pitch,
+        };
+        v10.game.updateAndRender(&game_offscreen_buffer, x_offset, y_offset);
 
         if (audio_write_frame_count > 0) {
             const pcm = pcm_opt.?;
@@ -444,22 +454,17 @@ pub fn main() !void {
         if (wld.pending_resize) |r| {
             try resize(r.width, r.height);
         }
+
+        var wayland_blit = false;
         if (wld.should_draw) {
-            if (aquireFreeBufferIndex()) |buffer| {
-                renderWeirdGradient(buffer, x_offset, y_offset);
-                draw(buffer);
+            if (aquireFreeBufferIndex()) |wl_buffer| {
 
-                const end_cycle_count = x86_64.rdtsc();
-                const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - frame_last_cycle_count);
-                const end_counter = try std.time.Instant.now();
-                const counter_elapsed = end_counter.since(frame_last_counter);
-                const ms_per_frame = @as(f32, @floatFromInt(counter_elapsed)) / std.time.ns_per_ms;
-                const fps = std.time.ns_per_s / @as(f32, @floatFromInt(counter_elapsed));
-                const mcpf = cycles_elapsed / (1000 * 1000);
-                log.info("{d:.2}ms/f,  {d:.2}f/s, {d:.2}mc/f", .{ ms_per_frame, fps, mcpf });
+                // Copy global_back_buffer into wayland buffer
+                const wl_buffer_mem: [*]u8 = wld.shm_ptr + @as(usize, @intCast(wl_buffer.offset));
+                @memcpy(wl_buffer_mem[0..@intCast(wl_buffer.width * wl_buffer.height * bytes_per_pixel)], global_back_buffer.memory);
 
-                frame_last_counter = end_counter;
-                frame_last_cycle_count = end_cycle_count;
+                linuxDisplayBufferInWindow(wl_buffer);
+                wayland_blit = true;
             } else {
                 _ = wl.display_roundtrip(display);
                 continue;
@@ -469,17 +474,26 @@ pub fn main() !void {
         _ = wl.display_flush(display);
 
         const end_cycle_count = x86_64.rdtsc();
-        const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - update_last_cycle_count);
+        const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
         const end_counter = try std.time.Instant.now();
-        const counter_elapsed: f32 = @floatFromInt(end_counter.since(update_last_counter));
-        const ms_per_update = counter_elapsed / std.time.ns_per_ms;
-        const ups = std.time.ns_per_s / counter_elapsed;
-        const mcpu = cycles_elapsed / (1000 * 1000);
-        log.info("{d:.2}ms/u,  {d:.2}u/s, {d:.2}mc/u", .{ ms_per_update, ups, mcpu });
-        update_last_counter = end_counter;
-        update_last_cycle_count = end_cycle_count;
+        const counter_elapsed: f32 = @floatFromInt(end_counter.since(last_counter));
+        const ms_per_frame = counter_elapsed / std.time.ns_per_ms;
+        const fps = std.time.ns_per_s / counter_elapsed;
+        const mcpf = cycles_elapsed / (1000 * 1000);
+        // log.info("{d:.2}ms/f,  {d:.2}f/s, {d:.2}mc/f {s}", .{ ms_per_frame, fps, mcpf, if (wayland_blit) "wl_blit" else "" });
+        _ = .{ ms_per_frame, fps, mcpf };
+
+        last_counter = end_counter;
+        last_cycle_count = end_cycle_count;
     }
 }
+
+const OffscreenBuffer = struct {
+    memory: []u8 = &.{},
+    width: i32 = 0,
+    height: i32 = 0,
+    pitch: i32 = 0,
+};
 
 const WlInitData = struct {
     wld: *WlData,
@@ -602,7 +616,7 @@ const PollFdSlot = enum(usize) {
 };
 
 const Joystick = struct {
-    fd: std.posix.fd_t,
+    fd: linux.fd_t,
     active: bool = false,
 
     rumble_strong: u16 = 0,
@@ -649,17 +663,17 @@ const Joystick = struct {
                 .replay = .{ .length = 0xffff },
             };
 
-            const id = posix.ioctl(this.fd, linux_input.EVIOCSFF, &rumble_event);
+            const id = linux.ioctl(this.fd, linux_input.EVIOCSFF, @intFromPtr(&rumble_event));
             assert(id >= 0);
             this.rumble_event_id = @intCast(id);
 
             const play = InputEvent{ .type = .FF, .code = @intCast(id), .value = 1 };
-            _ = try std.posix.write(this.fd, std.mem.asBytes(&play));
+            _ = linux.write(this.fd, @ptrCast(&play), @sizeOf(InputEvent));
         }
     }
 };
 
-const PosixShmError = error{
+const ShmError = error{
     ShmOpenFailed,
     ShmUnlinkFailed,
     FtruncateFailed,
@@ -668,8 +682,12 @@ const PosixShmError = error{
     WlPoolCreateBufferFailed,
 };
 
-fn resize_shm() PosixShmError!void {
-    const S = std.posix.S;
+fn resize_shm() ShmError!void {
+    const S = linux.S;
+
+    if (wld.shm_size == 0) {
+        _ = linux.munmap(wld.shm_ptr, wld.shm_size);
+    }
 
     var name_buf: [16]u8 = undefined;
     name_buf[0] = '/';
@@ -680,17 +698,17 @@ fn resize_shm() PosixShmError!void {
     }
     const name: [*:0]u8 = @ptrCast(&name_buf);
 
-    const open_flags = std.posix.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
-    const mode: std.c.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
+    const open_flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
+    const mode: linux.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
     const fd = std.c.shm_open(name, @bitCast(open_flags), mode);
     if (fd < 0) {
-        log.err("shm_open failed, errno: {}", .{std.posix.errno(fd)});
+        log.err("shm_open failed, errno: {}", .{errno(fd)});
         return error.ShmOpenFailed;
     }
-    defer _ = std.c.close(fd);
+    defer _ = linux.close(fd);
 
     if (std.c.shm_unlink(name) != 0) {
-        log.err("shm_unlink failed, errno: {}", .{std.posix.errno(-1)});
+        log.err("shm_unlink failed, errno: {}", .{errno(-1)});
         return error.ShmUnlinkFailed;
     }
 
@@ -700,20 +718,20 @@ fn resize_shm() PosixShmError!void {
     wld.shm_size = buffer_size * wld.buffers.len;
     log.debug("Allocating shm: {}", .{wld.shm_size});
 
-    if (std.c.ftruncate(fd, @intCast(wld.shm_size)) != 0) {
-        log.err("ftruncate failed, errno: {}", .{std.posix.errno(-1)});
+    if (linux.ftruncate(fd, @intCast(wld.shm_size)) != 0) {
+        log.err("ftruncate failed, errno: {}", .{errno(-1)});
         return error.FtruncateFailed;
     }
 
-    const prot = std.c.PROT.READ | std.c.PROT.WRITE;
-    const map = std.c.MAP{ .TYPE = .SHARED };
+    const prot = linux.PROT.READ | linux.PROT.WRITE;
+    const map = linux.MAP{ .TYPE = .SHARED };
 
-    const mapped = std.c.mmap(null, @intCast(wld.shm_size), prot, map, fd, 0);
-    if (mapped == std.c.MAP_FAILED) {
-        log.err("mmap call failed during buffer resize", .{});
+    const mapped = linux.mmap(null, wld.shm_size, prot, map, fd, 0);
+    if (mapped == std.math.maxInt(usize)) {
+        log.err("mmap call failed during shm buffer resize", .{});
         return error.MmapFailed;
     }
-    wld.shm_ptr = @ptrCast(mapped);
+    wld.shm_ptr = @ptrFromInt(mapped);
 
     if (wld.pool) |p| p.destroy();
 
@@ -755,11 +773,31 @@ fn resize_shm() PosixShmError!void {
     // TODO: Test by plugging in external monitor
 }
 
-fn resize(width: i32, height: i32) error{WlPoolCreateBufferFailed}!void {
-    // This is the size of the backbuffers
+fn resize(width: i32, height: i32) !void {
+    // Back buffer
     wld.width = initial_window_width;
     wld.height = initial_window_height;
 
+    if (global_back_buffer.memory.len > 0) {
+        _ = linux.munmap(global_back_buffer.memory.ptr, global_back_buffer.memory.len);
+    }
+    global_back_buffer.width = initial_window_width;
+    global_back_buffer.height = initial_window_height;
+    global_back_buffer.pitch = initial_window_width * bytes_per_pixel;
+
+    const back_buffer_memory_size: usize = @intCast(global_back_buffer.width * global_back_buffer.height * bytes_per_pixel);
+    const map = linux.MAP{ .TYPE = .PRIVATE, .ANONYMOUS = true };
+
+    const mapped = linux.mmap(null, back_buffer_memory_size, linux.PROT.NONE, map, -1, 0);
+    if (mapped == std.math.maxInt(usize)) {
+        log.err("mmap call failed during back buffer resize", .{});
+        return error.MmapFailed;
+    }
+    _ = linux.mprotect(@ptrFromInt(mapped), back_buffer_memory_size, linux.PROT.READ | linux.PROT.WRITE);
+    global_back_buffer.memory = @as([*]u8, @ptrFromInt(mapped))[0..back_buffer_memory_size];
+    @memset(global_back_buffer.memory, 255);
+
+    // Window
     var window_width = width;
     var window_height = height;
     if (window_width == 0) window_width = wld.width;
@@ -970,10 +1008,8 @@ fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configurati
     libdecor.state_free(state);
 
     resize(width, height) catch |e| {
-        log.err("Error during resize: {}", .{e});
-        log.err("Unable to handle resize error in handleLibdecorConfigure, stopping application", .{});
-        running = false;
-        return;
+        log.err("Resize failed during libdecor configure: {}", .{e});
+        std.process.exit(1);
     };
 }
 
@@ -1012,7 +1048,7 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
     }
 }
 
-fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
+fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
     _ = device;
     log.debug("Adding joystick: '{s}'", .{devnode_path});
 
@@ -1026,26 +1062,42 @@ fn addJoystick(device: *udev.Device, devnode_path: []const u8) !void {
     }
 
     if (joystick_index_opt) |ji| {
-        const fd = try std.posix.open(devnode_path, std.posix.O{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
-        poll_fds[PollFdSlot.first_joystick + ji] = .{ .fd = fd, .events = posix.POLL.IN, .revents = undefined };
+        const fd = linux.open(devnode_path, linux.O{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
+        if (fd < 0) {
+            log.err("Opening controller evdev file failed, errno: {}", .{errno(fd)});
+            return error.OpenFailed;
+        }
+
+        poll_fds[PollFdSlot.first_joystick + ji] = .{
+            .fd = @intCast(fd),
+            .events = linux.POLL.IN,
+            .revents = undefined,
+        };
 
         const joystick = &joysticks[ji];
-        joystick.* = .{ .fd = fd, .active = true };
-        assert(joystick.path.len > devnode_path.len + 1);
-        @memcpy(joystick.path[0..devnode_path.len], devnode_path);
-        joystick.path[devnode_path.len] = 0;
+        joystick.* = .{
+            .fd = @intCast(fd),
+            .active = true,
+        };
+
+        const dnp = std.mem.span(devnode_path);
+        assert(joystick.path.len > dnp.len + 1);
+        @memcpy(joystick.path[0..dnp.len], dnp);
+        joystick.path[dnp.len] = 0;
     } else {
         log.warn("A joystick was added, but there are no free slots!", .{});
     }
 }
 
-fn removeJoystick(device: *udev.Device, devnode_path: []const u8) void {
+fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) void {
     _ = device;
     log.debug("Removing joystick: '{s}'", .{devnode_path});
 
+    const dnp = std.mem.span(devnode_path);
+
     var joystick_index_opt: ?usize = null;
     for (&joysticks, 0..) |*js, ji| {
-        if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), devnode_path)) {
+        if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), dnp)) {
             joystick_index_opt = ji;
             js.* = .{ .fd = -1 };
             break;
@@ -1054,7 +1106,7 @@ fn removeJoystick(device: *udev.Device, devnode_path: []const u8) void {
 
     if (joystick_index_opt) |ji| {
         const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
-        std.posix.close(js_pollfd.fd);
+        _ = linux.close(js_pollfd.fd);
         js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
     } else {
         log.warn("Trying to remove a joystick, but is was never registered!", .{});
@@ -1062,7 +1114,7 @@ fn removeJoystick(device: *udev.Device, devnode_path: []const u8) void {
 }
 
 /// Returns the devnode path if the device is a joystick, otherwise returns null.
-fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[]const u8 {
+fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8 {
     var is_joystick = false;
     var is_keyboard = false;
     var is_mouse = false;
@@ -1188,7 +1240,7 @@ fn linuxInitAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte
             if (alsa.pcm_prepare(pcm_handle) == 0) {
                 const pfd_count = alsa.pcm_poll_descriptors_count(pcm_handle);
                 if (pfd_count == 1) {
-                    var alsa_pfd: std.posix.pollfd = undefined;
+                    var alsa_pfd: linux.pollfd = undefined;
                     if (alsa.pcm_poll_descriptors(pcm_handle, @ptrCast(&alsa_pfd), 1) == pfd_count) {
                         poll_fds[@intFromEnum(PollFdSlot.alsa)] = alsa_pfd;
 
@@ -1211,30 +1263,7 @@ fn linuxInitAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte
     }
 }
 
-fn renderWeirdGradient(buffer: *WlBuffer, xoffset: i32, yoffset: i32) void {
-    const uwidth: usize = @intCast(buffer.width);
-    const uheight: usize = @intCast(buffer.height);
-
-    const pitch = uwidth * bytes_per_pixel;
-    var row: [*]u8 = wld.shm_ptr + @as(usize, @intCast(buffer.offset));
-    for (0..uheight) |uy| {
-        const y: i32 = @intCast(uy);
-        var pixel: [*]u32 = @ptrCast(@alignCast(row));
-
-        for (0..uwidth) |ux| {
-            const x: i32 = @intCast(ux);
-
-            const b: u8 = @truncate(@as(u32, @bitCast(x +% xoffset)));
-            const g: u8 = @truncate(@as(u32, @bitCast(y +% yoffset)));
-            pixel[0] = (@as(u16, g) << 8) | b;
-            pixel += 1;
-        }
-
-        row += pitch;
-    }
-}
-
-fn draw(buffer: *WlBuffer) void {
+fn linuxDisplayBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
     wld.surface.damage(0, 0, wld.window_width, wld.window_height);
     wld.surface.commit();
