@@ -19,22 +19,66 @@ pub const game = struct {
 
     pub const AudioBuffer = struct {
         samples: [*]i16,
-        frame_count: u32,
-        frames_per_second: u32,
+        frame_count: i32,
+        frames_per_second: i32,
     };
 
-    pub fn updateAndRender(offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer, blue_offset: i32, green_offset: i32, tone_hz: u32) void {
-        outputSound(sound_buffer, tone_hz);
+    pub const ButtonState = extern struct {
+        half_transition_count: i32 = 0,
+        ended_down: bool = false,
+    };
+
+    pub const ControllerInput = struct {
+        start_x: f32 = 0,
+        start_y: f32 = 0,
+        min_x: f32 = 0,
+        min_y: f32 = 0,
+        max_x: f32 = 0,
+        max_y: f32 = 0,
+        end_x: f32 = 0,
+        end_y: f32 = 0,
+
+        is_analog: bool = false,
+
+        up: ButtonState = .{},
+        down: ButtonState = .{},
+        left: ButtonState = .{},
+        right: ButtonState = .{},
+        left_shoulder: ButtonState = .{},
+        right_shoulder: ButtonState = .{},
+    };
+
+    pub const Input = struct {
+        controllers: [4]ControllerInput = .{ControllerInput{}} ** 4,
+    };
+
+    var blue_offset: i32 = 0;
+    var green_offset: i32 = 0;
+    var tone_hz: i32 = 256;
+    var t_sine: f32 = 0;
+
+    pub fn updateAndRender(input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
+        const input_0 = &input.controllers[0];
+
+        if (input_0.is_analog) {
+            blue_offset += @intFromFloat(4 * input_0.end_x);
+            tone_hz = @intFromFloat(256 + (128 * input_0.end_y));
+        }
+
+        if (input_0.down.ended_down) {
+            green_offset += 1;
+        }
+
+        outputSound(sound_buffer);
         renderWeirdGradient(offscreen_buffer, blue_offset, green_offset);
     }
 
-    var t_sine: f32 = 0;
-    pub fn outputSound(buffer: *AudioBuffer, tone_hz: u32) void {
+    pub fn outputSound(buffer: *AudioBuffer) void {
         const tone_volume = 3000;
-        const wave_period = buffer.frames_per_second / tone_hz;
+        const wave_period = @divTrunc(buffer.frames_per_second, tone_hz);
 
         var sample_out: [*]i16 = buffer.samples;
-        for (0..buffer.frame_count) |_| {
+        for (0..@intCast(buffer.frame_count)) |_| {
             const sine_value: f32 = @sin(t_sine);
             const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
             sample_out[0] = sample_value;

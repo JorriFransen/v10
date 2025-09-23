@@ -11,18 +11,17 @@ const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const viewporter = wayland.viewporter;
 
-const libdecor = @import("linux/libdecor.zig");
+const linux = @import("linux/linux.zig");
+const input = linux.input;
+const alsa = linux.alsa;
+const ioctl = linux.ioctl;
+const udev = linux.libudev;
+const libdecor = linux.libdecor;
+const errno = linux.errno;
 
-const udev = @import("linux/libudev.zig");
-const linux = std.os.linux;
-const errno = std.posix.errno;
-
-const linux_input = @import("linux/input.zig");
-const InputEvent = linux_input.InputEvent;
-const Key = linux_input.Key;
-const Abs = linux_input.Abs;
-
-const alsa = @import("linux/alsa.zig");
+const InputEvent = input.InputEvent;
+const Key = input.Key;
+const Abs = input.Abs;
 
 // TODO: Check if preferred_buffer_scale is relevant
 
@@ -37,7 +36,7 @@ var running: bool = false;
 var wld: WlData = .{};
 var pcm_opt: ?*alsa.Pcm = null;
 
-var joysticks: [PollFdSlot.joystick_count]Joystick = [1]Joystick{.{ .fd = -1 }} ** PollFdSlot.joystick_count;
+var joysticks = [_]Joystick{.{ .fd = -1, .kind = undefined }} ** PollFdSlot.joystick_count;
 
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
 var poll_fds: [poll_fd_count]linux.pollfd = [1]linux.pollfd{.{
@@ -267,7 +266,6 @@ pub fn main() !void {
     sound_output.bytes_per_frame = sound_output.bytes_per_sample * 2;
     sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame / 15;
     sound_output.period_size = 1024;
-    sound_output.tone_hz = 256;
     sound_output.latency_frame_count = sound_output.frames_per_second / 15;
 
     linuxInitAlsa(sound_output.frames_per_second, sound_output.bytes_per_frame, &sound_output.buffer_byte_size, &sound_output.period_size);
@@ -331,8 +329,9 @@ pub fn main() !void {
         }
     }
 
-    var x_offset: i32 = 0;
-    var y_offset: i32 = 0;
+    var game_input = [_]v10.game.Input{.{}} ** 2;
+    var new_input = &game_input[0];
+    var old_input = &game_input[1];
 
     var last_counter = try std.time.Instant.now();
     var last_cycle_count = x86_64.rdtsc();
@@ -411,18 +410,36 @@ pub fn main() !void {
             try resize(r.width, r.height);
         }
 
-        for (&joysticks) |*js| if (js.active) {
-            const jx: i32 = js.axis[@intFromEnum(Abs.X)];
-            const jy: i32 = -js.axis[@intFromEnum(Abs.Y)];
+        var max_controller_count: usize = joysticks.len;
+        if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
 
-            x_offset +%= @divTrunc(jx, 4096);
-            y_offset +%= @divTrunc(jy, 4096);
+        for (&joysticks, 0..) |*js, i| if (js.active) {
+            const old_controller = &old_input.controllers[i];
+            var new_controller = &new_input.controllers[i];
 
-            if (js.buttons[@intFromEnum(Key.BTN_MODE)] == 1) {
-                running = false;
-            }
+            // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
+            js.processDigitalButton(&old_controller.down, Key.BTN_A, &new_controller.down);
+            js.processDigitalButton(&old_controller.right, Key.BTN_B, &new_controller.right);
+            js.processDigitalButton(&old_controller.left, Key.BTN_X, &new_controller.left);
+            js.processDigitalButton(&old_controller.up, Key.BTN_Y, &new_controller.up);
+            js.processDigitalButton(&old_controller.left_shoulder, Key.BTN_TL, &new_controller.left_shoulder);
+            js.processDigitalButton(&old_controller.right_shoulder, Key.BTN_TR, &new_controller.right_shoulder);
 
-            sound_output.tone_hz = @intFromFloat(512 + 256 * (@as(f32, @floatFromInt(jy)) / 30000));
+            log.debug("{},{}", .{ js.axis[@intFromEnum(Joystick.Axis.left_x)], js.axis[@intFromEnum(Joystick.Axis.left_y)] });
+
+            const stick_x = js.axis[@intFromEnum(Abs.X)];
+            const stick_y = -js.axis[@intFromEnum(Abs.Y)];
+
+            new_controller.is_analog = true;
+            new_controller.start_x = old_controller.end_x;
+            new_controller.start_y = old_controller.end_y;
+
+            new_controller.min_x = stick_x;
+            new_controller.min_y = stick_y;
+            new_controller.max_x = stick_x;
+            new_controller.max_y = stick_y;
+            new_controller.end_x = stick_x;
+            new_controller.end_y = stick_y;
 
             // try js.setRumble(3000, 0);
         };
@@ -432,7 +449,7 @@ pub fn main() !void {
         var game_sound_output_buffer: v10.game.AudioBuffer = .{
             .samples = if (audio_fill) |f| @ptrCast(f.frames.ptr) else &.{},
             .frame_count = if (audio_fill) |f| @intCast(f.frames.len) else 0,
-            .frames_per_second = sound_output.frames_per_second,
+            .frames_per_second = @intCast(sound_output.frames_per_second),
         };
 
         var game_offscreen_buffer = v10.game.OffscreenBuffer{
@@ -442,7 +459,7 @@ pub fn main() !void {
             .pitch = global_back_buffer.pitch,
         };
 
-        v10.game.updateAndRender(&game_offscreen_buffer, &game_sound_output_buffer, x_offset, y_offset, sound_output.tone_hz);
+        v10.game.updateAndRender(new_input, &game_offscreen_buffer, &game_sound_output_buffer);
 
         if (audio_fill) |f| {
             const pcm = pcm_opt.?;
@@ -484,6 +501,10 @@ pub fn main() !void {
 
         last_counter = end_counter;
         last_cycle_count = end_cycle_count;
+
+        const tmp = new_input;
+        new_input = old_input;
+        old_input = tmp;
     }
 }
 
@@ -617,32 +638,85 @@ const PollFdSlot = enum(usize) {
 const Joystick = struct {
     fd: linux.fd_t,
     active: bool = false,
+    kind: Kind,
 
     rumble_strong: u16 = 0,
     rumble_weak: u16 = 0,
     rumble_event_id: i16 = -1,
 
-    axis: [32]i32 = [1]i32{0} ** 32,
-    buttons: [320]u1 = [1]u1{0} ** 320,
+    axis_min_max: [axis_count][2]i32 = [_][2]i32{.{ -1, 1 }} ** axis_count,
+    axis: [axis_count]f32 = [_]f32{0} ** axis_count,
+    buttons: [320]u1 = [_]u1{0} ** 320,
 
     /// Zero terminated devnode path
     path: [32]u8 = [1]u8{0} ** 32,
+
+    const Kind = enum {
+        default,
+        xbox,
+    };
+
+    const axis_count = @typeInfo(Axis).@"enum".fields.len;
+    const Axis = enum(usize) {
+        left_x = 0,
+        left_y = 1,
+        left_z = 2,
+        right_x = 3,
+        right_y = 4,
+        right_z = 5,
+    };
+
+    fn absEventCodeToAxisIndex(kind: Kind, code: u16) ?usize {
+        switch (kind) {
+            .default,
+            .xbox,
+            => {
+                const axis_opt: ?Axis = switch (@as(Abs, @enumFromInt(code))) {
+                    else => null,
+                    Abs.X => .left_x,
+                    Abs.Y => .left_y,
+                    Abs.Z => .left_z,
+                    Abs.RX => .right_x,
+                    Abs.RY => .right_y,
+                    Abs.RZ => .right_z,
+                };
+
+                if (axis_opt) |axis| {
+                    return @intFromEnum(axis);
+                } else return null;
+            },
+        }
+    }
 
     fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         switch (event.type) {
             .SYN => {},
             .ABS => {
-                if (event.code < this.axis.len) {
-                    this.axis[event.code] = event.value;
-                }
+                if (absEventCodeToAxisIndex(this.kind, event.code)) |axis_idx| {
+                    // TODO: Use deadzone from AbsInfo
+                    if (event.value < -128 or event.value > 128) {
+                        const min: f32 = @floatFromInt(-this.axis_min_max[axis_idx][0]);
+                        const max: f32 = @floatFromInt(this.axis_min_max[axis_idx][1]);
+                        this.axis[axis_idx] =
+                            @as(f32, @floatFromInt(event.value)) / if (event.value < 0) min else max;
+                    } else {
+                        this.axis[axis_idx] = 0;
+                    }
+                } // TODO: Handle hats reported as axis
             },
             .KEY => {
+                // TODO: Add mapping like axis
                 if (event.code < this.buttons.len) {
                     this.buttons[event.code] = if (event.value != 0) 1 else 0;
                 }
             },
             else => log.warn("Unhandled event: {}", .{event.type}),
         }
+    }
+
+    fn processDigitalButton(this: *const Joystick, old_state: *const v10.game.ButtonState, btn: Key, new_state: *v10.game.ButtonState) void {
+        new_state.ended_down = this.buttons[@intFromEnum(btn)] == 1;
+        new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
     }
 
     fn setRumble(this: *Joystick, strong: u16, weak: u16) !void {
@@ -653,7 +727,7 @@ const Joystick = struct {
             this.rumble_strong = strong;
             this.rumble_weak = weak;
 
-            const rumble_event = linux_input.FfEffect{
+            const rumble_event = input.FfEffect{
                 .type = .RUMBLE,
                 .id = this.rumble_event_id,
                 // NOTE: These magnitudes are treated as i16 values by the xpad driver!
@@ -662,7 +736,7 @@ const Joystick = struct {
                 .replay = .{ .length = 0xffff },
             };
 
-            const id = linux.ioctl(this.fd, linux_input.EVIOCSFF, @intFromPtr(&rumble_event));
+            const id = ioctl.ioctl(this.fd, input.EVIOCSFF, @intFromPtr(&rumble_event));
             assert(id >= 0);
             this.rumble_event_id = @intCast(id);
 
@@ -954,7 +1028,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
     _ = serial;
 
     // TODO: Do this via the keymap with xkb!
-    const key: linux_input.Key = @enumFromInt(rawkey);
+    const key: input.Key = @enumFromInt(rawkey);
     const was_down = state != .pressed;
     const is_down = state == .pressed or state == .repeated;
 
@@ -1048,8 +1122,24 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
 }
 
 fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
-    _ = device;
+    // _ = device;
     log.debug("Adding joystick: '{s}'", .{devnode_path});
+    const syspath = udev.device_get_syspath(device).?;
+    log.debug("\tsyspath: {s}", .{syspath});
+    const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;
+    const parent_syspath = std.mem.span(udev.device_get_syspath(input_dev).?);
+    log.debug("\tparent syspath: {s}", .{parent_syspath});
+    var driver_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const driver_path = try std.fmt.bufPrint(&driver_path_buffer, "{f}", .{std.fs.path.fmtJoin(&.{ parent_syspath, "device/driver" })});
+    log.debug("\tdriver path: {s}", .{driver_path});
+    var driver_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const driver_name = try std.fs.readLinkAbsolute(driver_path, &driver_name_buffer);
+    log.debug("\tdriver name: {s}", .{std.fs.path.basename(driver_name)});
+
+    const kind: Joystick.Kind = if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
+        .xbox
+    else
+        .default;
 
     var joystick_index_opt: ?usize = null;
     for (0..PollFdSlot.joystick_count) |ji| {
@@ -1061,7 +1151,7 @@ fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
     }
 
     if (joystick_index_opt) |ji| {
-        const fd = linux.open(devnode_path, linux.O{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
+        const fd: linux.fd_t = @intCast(linux.open(devnode_path, linux.O{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0));
         if (fd < 0) {
             log.err("Opening controller evdev file failed, errno: {}", .{errno(fd)});
             return error.OpenFailed;
@@ -1077,15 +1167,71 @@ fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
         joystick.* = .{
             .fd = @intCast(fd),
             .active = true,
+            .kind = kind,
         };
 
         const dnp = std.mem.span(devnode_path);
         assert(joystick.path.len > dnp.len + 1);
         @memcpy(joystick.path[0..dnp.len], dnp);
         joystick.path[dnp.len] = 0;
+
+        var string_buffer: [128]u8 = undefined;
+        const invalid_rc: isize = -1;
+        var rc: isize = invalid_rc;
+        rc = ioctl.ioctl(fd, input.EVIOCGNAME(string_buffer.len), @intFromPtr(&string_buffer));
+        if (rc != -1) log.debug("Joystick name: '{s}'", .{std.mem.span(@as([*:0]u8, @ptrCast(&string_buffer)))});
+
+        rc = ioctl.ioctl(fd, input.EVIOCGPHYS(string_buffer.len), @intFromPtr(&string_buffer));
+        if (rc != -1) log.debug("Joystick location: '{s}'", .{std.mem.span(@as([*:0]u8, @ptrCast(&string_buffer)))});
+
+        rc = ioctl.ioctl(fd, input.EVIOCGUNIQ(string_buffer.len), @intFromPtr(&string_buffer));
+        if (rc != -1) log.debug("Joystick identifier: '{s}'", .{std.mem.span(@as([*:0]u8, @ptrCast(&string_buffer)))});
+
+        var properties: input.Prop = .{};
+        rc = ioctl.ioctl(fd, input.EVIOCGPROP(@sizeOf(input.Prop)), @intFromPtr(&properties));
+        if (rc != -1) log.debug("Joystick prop: '{}'", .{properties});
+
+        switch (kind) {
+            .default, .xbox => {
+                inline for (std.meta.fields(input.Abs)) |axis| {
+                    var abs_info: input.AbsInfo = undefined;
+                    if (ioctl.ioctl(fd, input.EVIOCGABS(@enumFromInt(axis.value)), &abs_info) != -1) {
+                        if (abs_info.maximum > abs_info.minimum) {
+                            log.info("axis: {s}: {}", .{ axis.name, abs_info });
+                            if (Joystick.absEventCodeToAxisIndex(kind, axis.value)) |axis_idx| {
+                                joystick.axis_min_max[axis_idx] = .{ abs_info.minimum, abs_info.maximum };
+                            }
+                        }
+                    } else {
+                        log.warn("ioctl EVIOCGABS failed for asix '{s}'", .{axis.name});
+                    }
+                }
+            },
+        }
+
+        //
+        // var key_bit_buffer: [((input.Key.MAX - 1) / @bitSizeOf(c_ulong)) + 1]c_ulong = undefined;
+        // if (ioctl.ioctl(fd, input.EVIOCGBIT(.KEY, key_bit_buffer.len), &key_bit_buffer) != -1) {
+        //     inline for (std.meta.fields(input.Key), 0..) |key, bit| {
+        //         if (testBit(bit, &key_bit_buffer)) {
+        //             log.debug("Button supported: {s}", .{key.name});
+        //         }
+        //     }
+        // }
+        // // inline for (std.meta.fields(input.Key)) |key| {
+        // //     var key_info : input.KeyInfo = undefined;
+        // // }
     } else {
         log.warn("A joystick was added, but there are no free slots!", .{});
     }
+}
+
+fn testBit(bit: usize, buf: []const c_ulong) bool {
+    // NOTE: correct buffer size calculation
+    // var abs_bit_buffer: [((input.Abs.MAX - 1) / @bitSizeOf(c_ulong)) + 1]c_ulong = undefined;
+
+    const bits_per_long = @bitSizeOf(c_ulong);
+    return ((buf[bit / bits_per_long] >> @as(u6, @intCast(bit % bits_per_long))) & 1) != 0;
 }
 
 fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) void {
@@ -1098,7 +1244,7 @@ fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) void {
     for (&joysticks, 0..) |*js, ji| {
         if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), dnp)) {
             joystick_index_opt = ji;
-            js.* = .{ .fd = -1 };
+            js.* = .{ .fd = -1, .active = false, .kind = undefined };
             break;
         } else {}
     }
@@ -1167,7 +1313,6 @@ const SoundOutput = struct {
     bytes_per_frame: u32 = 0,
     buffer_byte_size: u32 = 0,
     period_size: u32 = 0, // TODO: This should be set to latency_frame_count!
-    tone_hz: u32 = 0,
     latency_frame_count: u32 = 0,
 };
 
