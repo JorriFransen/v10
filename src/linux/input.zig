@@ -1,12 +1,40 @@
-const std = @import("std");
+const linux = @import("linux.zig");
+const ioctl = linux.ioctl;
 
-pub const EVIOCSFF = std.os.linux.IOCTL.IOW('E', 0x80, FfEffect);
+pub inline fn EVIOCGNAME(len: isize) isize {
+    return ioctl.IOC(ioctl.bits.read, 'E', 0x06, len);
+}
+pub inline fn EVIOCGPHYS(len: isize) isize {
+    return ioctl.IOC(ioctl.bits.read, 'E', 0x07, len);
+}
+pub inline fn EVIOCGUNIQ(len: isize) isize {
+    return ioctl.IOC(ioctl.bits.read, 'E', 0x08, len);
+}
+pub inline fn EVIOCGPROP(len: isize) isize {
+    return ioctl.IOC(ioctl.bits.read, 'E', 0x09, len);
+}
+pub inline fn EVIOCGBIT(ev: EventType, len: isize) isize {
+    return ioctl.IOC(ioctl.bits.read, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
+}
+pub inline fn EVIOCGABS(abs: Abs) isize {
+    return ioctl.IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
+}
+pub const EVIOCSFF = ioctl.IOW('E', 0x80, FfEffect);
 
 pub const InputEvent = extern struct {
-    time: std.posix.timeval = .{ .sec = 0, .usec = 0 },
+    time: linux.timeval = .{ .sec = 0, .usec = 0 },
     type: EventType = @enumFromInt(0),
     code: u16 = 0,
     value: i32 = 0,
+};
+
+pub const AbsInfo = extern struct {
+    value: i32,
+    minimum: i32,
+    maximum: i32,
+    fuzz: i32,
+    flat: i32,
+    resolution: i32,
 };
 
 pub const FfEffect = extern struct {
@@ -76,6 +104,20 @@ pub const FfEnvelope = extern struct {
     attack_level: u16 = 0,
     fade_length: u16 = 0,
     fade_level: u16 = 0,
+};
+pub const Prop = packed struct(u8) {
+    pointer: bool = false,
+    direct: bool = false,
+    button_pad: bool = false,
+    semi_mt: bool = false,
+    top_button_pad: bool = false,
+    pointing_stick: bool = false,
+    accelerometer: bool = false,
+
+    __reserved__: u1 = 0,
+
+    pub const MAX: u8 = 0x1f;
+    pub const CNT: u8 = MAX + 1;
 };
 
 pub const FfType = enum(u16) {
@@ -153,8 +195,8 @@ pub const Abs = enum(u16) {
     MT_DISTANCE = 0x3b,
     MT_TOOL_X = 0x3c,
     MT_TOOL_Y = 0x3d,
-    MAX = 0x3f,
 
+    pub const MAX: u16 = 0x3f;
     pub const CNT: u16 = (.MAX + 1);
 };
 
@@ -776,8 +818,8 @@ pub const Key = enum(u16) {
     BTN_TRIGGER_HAPPY38 = 0x2e5,
     BTN_TRIGGER_HAPPY39 = 0x2e6,
     BTN_TRIGGER_HAPPY40 = 0x2e7,
-    MAX = 0x2ff,
 
+    pub const MAX: u16 = 0x2ff;
     pub const BTN_MISC: Key = 0x100;
     pub const BTN_MOUSE: Key = 0x110;
     pub const BTN_TRIGGER: Key = 0x120;
