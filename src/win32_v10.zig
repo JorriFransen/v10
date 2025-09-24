@@ -36,6 +36,38 @@ pub const Win32AudioOutput = struct {
     tone_hz: u32 = 0,
 };
 
+fn win32ClearAudioBuffer(buffer: *dsound.IDirectSoundBuffer, audio_output: *const Win32AudioOutput) void {
+    var region1_ptr: *anyopaque = undefined;
+    var region1_bytes: u32 = undefined;
+    var region2_ptr: *anyopaque = undefined;
+    var region2_bytes: u32 = undefined;
+
+    if (buffer.Lock(0, audio_output.buffer_byte_size, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
+        var dst_sample: [*]i16 = @ptrCast(@alignCast(region1_ptr));
+
+        const region_1_frame_count = region1_bytes / audio_output.bytes_per_frame;
+        for (0..region_1_frame_count) |_| {
+            dst_sample[0] = 0;
+            dst_sample += 1;
+
+            dst_sample[0] = 0;
+            dst_sample += 1;
+        }
+
+        dst_sample = @ptrCast(@alignCast(region2_ptr));
+        const region_2_frame_count = region2_bytes / audio_output.bytes_per_frame;
+        for (0..region_2_frame_count) |_| {
+            dst_sample[0] = 0;
+            dst_sample += 1;
+
+            dst_sample[0] = 0;
+            dst_sample += 1;
+        }
+
+        _ = buffer.Unlock(region1_ptr, region1_bytes, region2_ptr, region2_bytes);
+    }
+}
+
 fn win32FillAudioBuffer(buffer: *dsound.IDirectSoundBuffer, audio_output: *Win32AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *const v10.game.AudioBuffer) void {
     assert(bytes_to_write == source_buffer.frame_count * audio_output.bytes_per_frame);
 
@@ -226,7 +258,7 @@ pub fn windowsEntry(
 
             win32InitDSound(window, audio_output.frames_per_second, audio_output.buffer_byte_size);
             if (global_sound_buffer_opt) |gsb| {
-                // win32FillAudioBuffer(gsb, &audio_output, 0, audio_output.latency_frame_count * audio_output.bytes_per_frame);
+                win32ClearAudioBuffer(gsb, &audio_output);
                 _ = gsb.Play(0, 0, dsound.BPLAY_LOOPING);
             }
 
