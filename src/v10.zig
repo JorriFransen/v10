@@ -17,8 +17,36 @@ pub const game = struct {
         pitch: i32,
     };
 
-    pub fn updateAndRender(offscreen_buffer: *OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
+    pub const AudioBuffer = struct {
+        samples: [*]i16,
+        frame_count: u32,
+        frames_per_second: u32,
+    };
+
+    pub fn updateAndRender(offscreen_buffer: *OffscreenBuffer, audio_buffer: *AudioBuffer, blue_offset: i32, green_offset: i32, tone_hz: u32) void {
+        outputAudio(audio_buffer, tone_hz);
         renderWeirdGradient(offscreen_buffer, blue_offset, green_offset);
+    }
+
+    var t_sine: f32 = 0;
+    pub fn outputAudio(buffer: *AudioBuffer, tone_hz: u32) void {
+        const tone_volume = 3000;
+        const wave_period = buffer.frames_per_second / tone_hz;
+
+        var sample_out: [*]i16 = buffer.samples;
+        for (0..buffer.frame_count) |_| {
+            const sine_value: f32 = @sin(t_sine);
+            const sample_value: i16 = @intFromFloat(tone_volume * sine_value);
+
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            sample_out[0] = sample_value;
+            sample_out += 1;
+
+            t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
+            if (t_sine > std.math.tau) t_sine -= std.math.tau;
+        }
     }
 };
 
