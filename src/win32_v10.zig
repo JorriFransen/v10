@@ -261,7 +261,7 @@ pub fn windowsEntry(
                 .bytes_per_frame = audio_bytes_per_frame,
                 .buffer_byte_size = audio_buffer_byte_size,
                 .running_frame_index = 0,
-                .latency_frame_count = audio_fps / 30,
+                .latency_frame_count = audio_fps / 15,
             };
 
             win32ClearAudioBuffer(&audio_output);
