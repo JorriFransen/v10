@@ -418,17 +418,19 @@ pub fn main() !void {
             var new_controller = &new_input.controllers[i];
 
             // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
-            js.processDigitalButton(&old_controller.down, Key.BTN_A, &new_controller.down);
-            js.processDigitalButton(&old_controller.right, Key.BTN_B, &new_controller.right);
-            js.processDigitalButton(&old_controller.left, Key.BTN_X, &new_controller.left);
-            js.processDigitalButton(&old_controller.up, Key.BTN_Y, &new_controller.up);
-            js.processDigitalButton(&old_controller.left_shoulder, Key.BTN_TL, &new_controller.left_shoulder);
-            js.processDigitalButton(&old_controller.right_shoulder, Key.BTN_TR, &new_controller.right_shoulder);
+            js.processDigitalButton(&old_controller.down, .south, &new_controller.down);
+            js.processDigitalButton(&old_controller.right, .east, &new_controller.right);
+            js.processDigitalButton(&old_controller.left, .west, &new_controller.left);
+            js.processDigitalButton(&old_controller.up, .north, &new_controller.up);
+            js.processDigitalButton(&old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
+            js.processDigitalButton(&old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
+            js.processDigitalButton(&old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
+            js.processDigitalButton(&old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
+            js.processDigitalButton(&old_controller.left_shoulder, .shoulder_left, &new_controller.left_shoulder);
+            js.processDigitalButton(&old_controller.right_shoulder, .shoulder_right, &new_controller.right_shoulder);
 
-            log.debug("{},{}", .{ js.axis[@intFromEnum(Joystick.Axis.left_x)], js.axis[@intFromEnum(Joystick.Axis.left_y)] });
-
-            const stick_x = js.axis[@intFromEnum(Abs.X)];
-            const stick_y = -js.axis[@intFromEnum(Abs.Y)];
+            const stick_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
+            const stick_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
 
             new_controller.is_analog = true;
             new_controller.start_x = old_controller.end_x;
@@ -644,9 +646,10 @@ const Joystick = struct {
     rumble_weak: u16 = 0,
     rumble_event_id: i16 = -1,
 
-    axis_min_max: [axis_count][2]i32 = [_][2]i32{.{ -1, 1 }} ** axis_count,
+    axis_meta: [axis_count]AxisMeta = [_]AxisMeta{.{}} ** axis_count,
     axis: [axis_count]f32 = [_]f32{0} ** axis_count,
-    buttons: [320]u1 = [_]u1{0} ** 320,
+
+    buttons: [button_count]u1 = [_]u1{0} ** button_count,
 
     /// Zero terminated devnode path
     path: [32]u8 = [1]u8{0} ** 32,
@@ -654,6 +657,12 @@ const Joystick = struct {
     const Kind = enum {
         default,
         xbox,
+    };
+
+    const AxisMeta = struct {
+        min: i32 = -1,
+        max: i32 = 1,
+        deadzone: i32 = 0,
     };
 
     const axis_count = @typeInfo(Axis).@"enum".fields.len;
@@ -666,13 +675,42 @@ const Joystick = struct {
         right_z = 5,
     };
 
+    const button_count = @typeInfo(Button).@"enum".fields.len;
+    const Button = enum(usize) {
+        north,
+        east,
+        south,
+        west,
+        dpad_up,
+        dpad_right,
+        dpad_down,
+        dpad_left,
+        thumb_left,
+        thumb_right,
+        shoulder_left,
+        shoulder_right,
+        select,
+        start,
+        mode,
+    };
+
     fn absEventCodeToAxisIndex(kind: Kind, code: u16) ?usize {
         switch (kind) {
             .default,
             .xbox,
             => {
-                const axis_opt: ?Axis = switch (@as(Abs, @enumFromInt(code))) {
-                    else => null,
+                const abs: Abs = @enumFromInt(code);
+                const axis_opt: ?Axis = switch (abs) {
+                    else => {
+                        log.warn("Unhandled {s} controller event: {s}", .{ @tagName(kind), @tagName(abs) });
+                        return null;
+                    },
+
+                    // Don't warn for unhandled, these are handled later!
+                    Abs.HAT0X,
+                    Abs.HAT0Y,
+                    => null,
+
                     Abs.X => .left_x,
                     Abs.Y => .left_y,
                     Abs.Z => .left_z,
@@ -688,33 +726,94 @@ const Joystick = struct {
         }
     }
 
+    fn absEventCodeToHatButtonIndices(kind: Kind, code: u16) ?struct { usize, usize } {
+        switch (kind) {
+            .default,
+            .xbox,
+            => {
+                const abs: Abs = @enumFromInt(code);
+                const btns_opt: ?struct { Button, Button } = switch (abs) {
+                    else => {
+                        log.warn("Unhandled {s} controller event: {s}", .{ @tagName(kind), @tagName(abs) });
+                        return null;
+                    },
+                    Abs.HAT0X => .{ .dpad_left, .dpad_right },
+                    Abs.HAT0Y => .{ .dpad_up, .dpad_down },
+                };
+
+                if (btns_opt) |btns| {
+                    return .{ @intFromEnum(btns[0]), @intFromEnum(btns[1]) };
+                } else return null;
+            },
+        }
+    }
+
+    fn keyEventCodeToButtonIndex(kind: Kind, code: u16) ?usize {
+        switch (kind) {
+            .default,
+            .xbox,
+            => {
+                const key: Key = @enumFromInt(code);
+                const btn_opt: ?Button = switch (key) {
+                    else => {
+                        log.warn("Unhandled {s} controller event: {s}", .{ @tagName(kind), @tagName(key) });
+                        return null;
+                    },
+                    Key.BTN_Y => .north,
+                    Key.BTN_B => .east,
+                    Key.BTN_A => .south,
+                    Key.BTN_X => .west,
+                    Key.BTN_THUMBL => .thumb_left,
+                    Key.BTN_THUMBR => .thumb_right,
+                    Key.BTN_TL => .shoulder_left,
+                    Key.BTN_TR => .shoulder_right,
+                    Key.BTN_SELECT => .select,
+                    Key.BTN_START => .start,
+                    Key.BTN_MODE => .mode,
+                };
+
+                if (btn_opt) |btn| {
+                    return @intFromEnum(btn);
+                } else return null;
+            },
+        }
+    }
+
     fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         switch (event.type) {
             .SYN => {},
             .ABS => {
                 if (absEventCodeToAxisIndex(this.kind, event.code)) |axis_idx| {
-                    // TODO: Use deadzone from AbsInfo
-                    if (event.value < -128 or event.value > 128) {
-                        const min: f32 = @floatFromInt(-this.axis_min_max[axis_idx][0]);
-                        const max: f32 = @floatFromInt(this.axis_min_max[axis_idx][1]);
-                        this.axis[axis_idx] =
-                            @as(f32, @floatFromInt(event.value)) / if (event.value < 0) min else max;
+                    const meta = this.axis_meta[axis_idx];
+
+                    if (event.value < -meta.deadzone or event.value > meta.deadzone) {
+                        const min: f32 = @floatFromInt(meta.min);
+                        const max: f32 = @floatFromInt(meta.max);
+                        this.axis[axis_idx] = @as(f32, @floatFromInt(event.value)) / if (event.value < 0) -min else max;
                     } else {
                         this.axis[axis_idx] = 0;
                     }
-                } // TODO: Handle hats reported as axis
+                } else if (absEventCodeToHatButtonIndices(this.kind, event.code)) |hat_btns| {
+                    if (event.value == 0) {
+                        this.buttons[hat_btns[0]] = 0;
+                        this.buttons[hat_btns[1]] = 0;
+                    } else if (event.value < 0) {
+                        this.buttons[hat_btns[0]] = if (event.value != 0) 1 else 0;
+                    } else {
+                        this.buttons[hat_btns[1]] = if (event.value != 0) 1 else 0;
+                    }
+                }
             },
             .KEY => {
-                // TODO: Add mapping like axis
-                if (event.code < this.buttons.len) {
-                    this.buttons[event.code] = if (event.value != 0) 1 else 0;
+                if (keyEventCodeToButtonIndex(this.kind, event.code)) |btn_idx| {
+                    this.buttons[btn_idx] = if (event.value != 0) 1 else 0;
                 }
             },
             else => log.warn("Unhandled event: {}", .{event.type}),
         }
     }
 
-    fn processDigitalButton(this: *const Joystick, old_state: *const v10.game.ButtonState, btn: Key, new_state: *v10.game.ButtonState) void {
+    fn processDigitalButton(this: *const Joystick, old_state: *const v10.game.ButtonState, btn: Button, new_state: *v10.game.ButtonState) void {
         new_state.ended_down = this.buttons[@intFromEnum(btn)] == 1;
         new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
     }
@@ -1122,19 +1221,12 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
 }
 
 fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
-    // _ = device;
-    log.debug("Adding joystick: '{s}'", .{devnode_path});
-    const syspath = udev.device_get_syspath(device).?;
-    log.debug("\tsyspath: {s}", .{syspath});
     const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;
     const parent_syspath = std.mem.span(udev.device_get_syspath(input_dev).?);
-    log.debug("\tparent syspath: {s}", .{parent_syspath});
     var driver_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const driver_path = try std.fmt.bufPrint(&driver_path_buffer, "{f}", .{std.fs.path.fmtJoin(&.{ parent_syspath, "device/driver" })});
-    log.debug("\tdriver path: {s}", .{driver_path});
     var driver_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const driver_name = try std.fs.readLinkAbsolute(driver_path, &driver_name_buffer);
-    log.debug("\tdriver name: {s}", .{std.fs.path.basename(driver_name)});
+    const driver_name = std.fs.path.basename(try std.fs.readLinkAbsolute(driver_path, &driver_name_buffer));
 
     const kind: Joystick.Kind = if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
         .xbox
@@ -1175,21 +1267,17 @@ fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
         @memcpy(joystick.path[0..dnp.len], dnp);
         joystick.path[dnp.len] = 0;
 
-        var string_buffer: [128]u8 = undefined;
-        const invalid_rc: isize = -1;
-        var rc: isize = invalid_rc;
-        rc = ioctl.ioctl(fd, input.EVIOCGNAME(string_buffer.len), @intFromPtr(&string_buffer));
-        if (rc != -1) log.debug("Joystick name: '{s}'", .{std.mem.span(@as([*:0]u8, @ptrCast(&string_buffer)))});
-
-        rc = ioctl.ioctl(fd, input.EVIOCGPHYS(string_buffer.len), @intFromPtr(&string_buffer));
-        if (rc != -1) log.debug("Joystick location: '{s}'", .{std.mem.span(@as([*:0]u8, @ptrCast(&string_buffer)))});
-
-        rc = ioctl.ioctl(fd, input.EVIOCGUNIQ(string_buffer.len), @intFromPtr(&string_buffer));
-        if (rc != -1) log.debug("Joystick identifier: '{s}'", .{std.mem.span(@as([*:0]u8, @ptrCast(&string_buffer)))});
-
-        var properties: input.Prop = .{};
-        rc = ioctl.ioctl(fd, input.EVIOCGPROP(@sizeOf(input.Prop)), @intFromPtr(&properties));
-        if (rc != -1) log.debug("Joystick prop: '{}'", .{properties});
+        // var string_buffer: [128]u8 = undefined;
+        // const invalid_rc: isize = -1;
+        // var rc: isize = invalid_rc;
+        // rc = ioctl.ioctl(fd, input.EVIOCGNAME(string_buffer.len), @intFromPtr(&string_buffer));
+        //
+        // rc = ioctl.ioctl(fd, input.EVIOCGPHYS(string_buffer.len), @intFromPtr(&string_buffer));
+        //
+        // rc = ioctl.ioctl(fd, input.EVIOCGUNIQ(string_buffer.len), @intFromPtr(&string_buffer));
+        //
+        // var properties: input.Prop = .{};
+        // rc = ioctl.ioctl(fd, input.EVIOCGPROP(@sizeOf(input.Prop)), @intFromPtr(&properties));
 
         switch (kind) {
             .default, .xbox => {
@@ -1197,9 +1285,12 @@ fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
                     var abs_info: input.AbsInfo = undefined;
                     if (ioctl.ioctl(fd, input.EVIOCGABS(@enumFromInt(axis.value)), &abs_info) != -1) {
                         if (abs_info.maximum > abs_info.minimum) {
-                            log.info("axis: {s}: {}", .{ axis.name, abs_info });
                             if (Joystick.absEventCodeToAxisIndex(kind, axis.value)) |axis_idx| {
-                                joystick.axis_min_max[axis_idx] = .{ abs_info.minimum, abs_info.maximum };
+                                joystick.axis_meta[axis_idx] = .{
+                                    .min = abs_info.minimum,
+                                    .max = abs_info.maximum,
+                                    .deadzone = abs_info.flat,
+                                };
                             }
                         }
                     } else {
@@ -1208,30 +1299,9 @@ fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
                 }
             },
         }
-
-        //
-        // var key_bit_buffer: [((input.Key.MAX - 1) / @bitSizeOf(c_ulong)) + 1]c_ulong = undefined;
-        // if (ioctl.ioctl(fd, input.EVIOCGBIT(.KEY, key_bit_buffer.len), &key_bit_buffer) != -1) {
-        //     inline for (std.meta.fields(input.Key), 0..) |key, bit| {
-        //         if (testBit(bit, &key_bit_buffer)) {
-        //             log.debug("Button supported: {s}", .{key.name});
-        //         }
-        //     }
-        // }
-        // // inline for (std.meta.fields(input.Key)) |key| {
-        // //     var key_info : input.KeyInfo = undefined;
-        // // }
     } else {
         log.warn("A joystick was added, but there are no free slots!", .{});
     }
-}
-
-fn testBit(bit: usize, buf: []const c_ulong) bool {
-    // NOTE: correct buffer size calculation
-    // var abs_bit_buffer: [((input.Abs.MAX - 1) / @bitSizeOf(c_ulong)) + 1]c_ulong = undefined;
-
-    const bits_per_long = @bitSizeOf(c_ulong);
-    return ((buf[bit / bits_per_long] >> @as(u6, @intCast(bit % bits_per_long))) & 1) != 0;
 }
 
 fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) void {
