@@ -6,6 +6,7 @@ const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
 var use_llvm: bool = undefined;
+var internal_build: bool = true;
 
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
@@ -14,14 +15,38 @@ pub fn build(b: *Build) !void {
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse false;
     if (target.result.os.tag == .linux and optimize == .Debug) use_llvm = false;
 
+    internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
+
+    var options = b.addOptions();
+    options.addOption(bool, "internal_build", internal_build);
+
+    const mem_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/memory/memory.zig"),
+    });
+
+    const modules = Modules{
+        .options = options.createModule(),
+        .memory = mem_module,
+        .xml = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .root_source_file = b.path("src/xml.zig"),
+            .imports = &.{
+                .{ .name = "mem", .module = mem_module },
+            },
+        }),
+    };
+
     std.fs.cwd().makeDir("runtree") catch |e| switch (e) {
         error.PathAlreadyExists => {},
         else => return e,
     };
 
-    const tools = try buildTools(b, optimize, target);
+    const tools = try buildTools(b, optimize, target, &modules);
 
-    _ = try buildEngine(b, optimize, target, &tools);
+    _ = try buildEngine(b, optimize, target, &modules, &tools);
 
     const clean_step = b.step("clean", "Clean build and cache");
     const rm_zig_out = b.addRemoveDirTree(b.path("zig-out"));
@@ -30,14 +55,22 @@ pub fn build(b: *Build) !void {
     clean_step.dependOn(&rm_cache.step);
 }
 
-fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: *const Tools) !*Step.Compile {
+const Modules = struct {
+    options: *Build.Module,
+    memory: *Build.Module,
+    xml: *Build.Module,
+};
+
+fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
     const os = target.result.os.tag;
 
     const exe = switch (os) {
         else => return error.PlatformNotSupported,
-        .windows => try buildWindows(b, optimize, target, tools),
-        .linux => try buildLinux(b, optimize, target, tools),
+        .windows => try buildWindows(b, optimize, target, modules, tools),
+        .linux => try buildLinux(b, optimize, target, modules, tools),
     };
+    exe.root_module.addImport("mem", modules.memory);
+    exe.root_module.addImport("options", modules.options);
 
     const exe_install = b.addInstallArtifact(exe, .{});
     b.getInstallStep().dependOn(&exe_install.step);
@@ -52,7 +85,8 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools:
     return exe;
 }
 
-fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: *const Tools) !*Step.Compile {
+fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
+    _ = modules;
     _ = tools;
 
     const main_module = b.addModule("main", .{
@@ -60,6 +94,7 @@ fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools
         .target = target,
         .root_source_file = b.path("src/win32_v10.zig"),
         .link_libc = true,
+        .imports = &.{},
     });
 
     const exe = b.addExecutable(.{
@@ -74,7 +109,9 @@ fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools
     return exe;
 }
 
-fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: *const Tools) !*Step.Compile {
+fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
+    _ = modules;
+
     const main_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
@@ -94,27 +131,13 @@ fn buildLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, tools: 
     return exe;
 }
 
+// TODO: Maybe merge this with 'Modules'?
 const Tools = struct {
     wayland_module: *Build.Module,
 };
 
-fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools {
+fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !Tools {
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
-
-    const mem_module = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = b.path("src/memory/memory.zig"),
-    });
-
-    const xml_module = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = b.path("src/xml.zig"),
-        .imports = &.{
-            .{ .name = "mem", .module = mem_module },
-        },
-    });
 
     const exe = b.addExecutable(.{
         .name = "wayland-gen",
@@ -123,8 +146,8 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !Tools 
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "xml", .module = xml_module },
-                .{ .name = "mem", .module = mem_module },
+                .{ .name = "xml", .module = modules.xml },
+                .{ .name = "mem", .module = modules.memory },
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
             },
         }),
