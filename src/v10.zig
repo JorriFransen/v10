@@ -29,6 +29,8 @@ pub const game = struct {
     };
 
     pub const ControllerInput = struct {
+        is_analog: bool = false,
+
         start_x: f32 = 0,
         start_y: f32 = 0,
         min_x: f32 = 0,
@@ -38,12 +40,14 @@ pub const game = struct {
         end_x: f32 = 0,
         end_y: f32 = 0,
 
-        is_analog: bool = false,
-
         up: ButtonState = .{},
         down: ButtonState = .{},
         left: ButtonState = .{},
         right: ButtonState = .{},
+        dpad_up: ButtonState = .{},
+        dpad_down: ButtonState = .{},
+        dpad_left: ButtonState = .{},
+        dpad_right: ButtonState = .{},
         left_shoulder: ButtonState = .{},
         right_shoulder: ButtonState = .{},
     };
@@ -67,6 +71,18 @@ pub const game = struct {
 
         if (input_0.down.ended_down) {
             green_offset += 1;
+        }
+
+        if (input_0.dpad_up.ended_down) {
+            green_offset -= 1;
+        } else if (input_0.dpad_down.ended_down) {
+            green_offset += 1;
+        }
+
+        if (input_0.dpad_right.ended_down) {
+            blue_offset += 1;
+        } else if (input_0.dpad_left.ended_down) {
+            blue_offset -= 1;
         }
 
         outputSound(sound_buffer);

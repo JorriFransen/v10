@@ -327,6 +327,10 @@ pub fn windowsEntry(
                         processXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
                         processXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
                         processXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
+                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
+                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
+                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
+                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
                         processXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
                         processXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
                     } else {
