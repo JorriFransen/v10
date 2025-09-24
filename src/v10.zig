@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.v10);
 
+const assert = std.debug.assert;
+
 const os = @import("builtin").os.tag;
 pub const platform = switch (os) {
     .windows => @import("win32_v10.zig"),
@@ -56,46 +58,66 @@ pub const game = struct {
         controllers: [4]ControllerInput = .{ControllerInput{}} ** 4,
     };
 
-    var blue_offset: i32 = 0;
-    var green_offset: i32 = 0;
-    var tone_hz: i32 = 256;
-    var t_sine: f32 = 0;
+    pub const GameState = struct {
+        blue_offset: i32 = 0,
+        green_offset: i32 = 0,
+        tone_hz: i32 = 256,
+        t_sine: f32 = 0,
+    };
 
-    pub fn updateAndRender(input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
+    pub const Memory = struct {
+        initialized: bool = false,
+        permanent: []u8,
+        transient: []u8,
+    };
+
+    pub fn updateAndRender(memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
+        assert(@sizeOf(GameState) <= memory.permanent.len);
+
+        const game_state: *GameState = @ptrCast(@alignCast(memory.permanent.ptr));
+        if (!memory.initialized) {
+            game_state.blue_offset = 0;
+            game_state.green_offset = 0;
+            game_state.tone_hz = 256;
+            game_state.t_sine = 0;
+
+            memory.initialized = true;
+        }
+
         const input_0 = &input.controllers[0];
 
         if (input_0.is_analog) {
-            blue_offset += @intFromFloat(4 * input_0.end_x);
-            tone_hz = @intFromFloat(256 + (128 * input_0.end_y));
+            game_state.blue_offset += @intFromFloat(4 * input_0.end_x);
+            game_state.tone_hz = @intFromFloat(256 + (128 * input_0.end_y));
         }
 
         if (input_0.down.ended_down) {
-            green_offset += 1;
+            game_state.green_offset += 1;
         }
 
         if (input_0.dpad_up.ended_down) {
-            green_offset -= 1;
+            game_state.green_offset -= 1;
         } else if (input_0.dpad_down.ended_down) {
-            green_offset += 1;
+            game_state.green_offset += 1;
         }
 
         if (input_0.dpad_right.ended_down) {
-            blue_offset += 1;
+            game_state.blue_offset += 1;
         } else if (input_0.dpad_left.ended_down) {
-            blue_offset -= 1;
+            game_state.blue_offset -= 1;
         }
 
-        outputSound(sound_buffer);
-        renderWeirdGradient(offscreen_buffer, blue_offset, green_offset);
+        outputSound(game_state, sound_buffer);
+        renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
     }
 
-    pub fn outputSound(buffer: *AudioBuffer) void {
+    pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
         const tone_volume = 3000;
-        const wave_period = @divTrunc(buffer.frames_per_second, tone_hz);
+        const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
 
         var sample_out: [*]i16 = buffer.samples;
         for (0..@intCast(buffer.frame_count)) |_| {
-            const sine_value: f32 = @sin(t_sine);
+            const sine_value: f32 = @sin(game_state.t_sine);
             const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
             sample_out[0] = sample_value;
             sample_out += 1;
@@ -103,8 +125,8 @@ pub const game = struct {
             sample_out[0] = sample_value;
             sample_out += 1;
 
-            t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
-            if (t_sine > std.math.tau) t_sine -= std.math.tau;
+            game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
+            if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
         }
     }
 };

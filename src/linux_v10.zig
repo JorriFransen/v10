@@ -1,5 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.linux_v10);
+const mem = @import("mem");
+const options = @import("options");
 
 const v10 = @import("v10.zig");
 
@@ -329,6 +331,43 @@ pub fn main() !void {
         }
     }
 
+    const base_address: ?[*]u8, const fixed = if (options.internal_build)
+        .{ @ptrFromInt(mem.TiB * 2), true }
+    else
+        .{ null, false };
+
+    const permanent_storage_size = mem.MiB * 64;
+    const transient_storage_size = mem.GiB * 4;
+    const total_size = permanent_storage_size + transient_storage_size;
+
+    const perm = linux.mmap(
+        base_address,
+        total_size,
+        linux.PROT.NONE,
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = fixed },
+        -1,
+        0,
+    );
+    if (perm == std.math.maxInt(usize)) {
+        log.err("mmap call for game memory failed", .{});
+        return error.MMapFailed;
+    }
+    if (linux.mprotect(@ptrFromInt(perm), total_size, linux.PROT.READ | linux.PROT.WRITE) != 0) {
+        log.err("mprotect call for game memory storage failed", .{});
+        return error.MProtectFailed;
+    }
+
+    const trans = perm + permanent_storage_size;
+
+    var game_memory = v10.game.Memory{
+        .initialized = false,
+        .permanent = @as([*]u8, @ptrFromInt(perm))[0..permanent_storage_size],
+        .transient = @as([*]u8, @ptrFromInt(trans))[0..transient_storage_size],
+    };
+
+    log.debug("perm: {*}", .{game_memory.permanent.ptr});
+    log.debug("trans: {*}", .{game_memory.transient.ptr});
+
     var game_input = [_]v10.game.Input{.{}} ** 2;
     var new_input = &game_input[0];
     var old_input = &game_input[1];
@@ -461,7 +500,7 @@ pub fn main() !void {
             .pitch = global_back_buffer.pitch,
         };
 
-        v10.game.updateAndRender(new_input, &game_offscreen_buffer, &game_sound_output_buffer);
+        v10.game.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
 
         if (audio_fill) |f| {
             const pcm = pcm_opt.?;
@@ -958,16 +997,25 @@ fn resize(width: i32, height: i32) !void {
     global_back_buffer.pitch = initial_window_width * bytes_per_pixel;
 
     const back_buffer_memory_size: usize = @intCast(global_back_buffer.width * global_back_buffer.height * bytes_per_pixel);
-    const map = linux.MAP{ .TYPE = .PRIVATE, .ANONYMOUS = true };
 
-    const mapped = linux.mmap(null, back_buffer_memory_size, linux.PROT.NONE, map, -1, 0);
+    const mapped = linux.mmap(
+        null,
+        back_buffer_memory_size,
+        linux.PROT.NONE,
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    );
     if (mapped == std.math.maxInt(usize)) {
         log.err("mmap call failed during back buffer resize", .{});
         return error.MmapFailed;
     }
-    _ = linux.mprotect(@ptrFromInt(mapped), back_buffer_memory_size, linux.PROT.READ | linux.PROT.WRITE);
+    if (linux.mprotect(@ptrFromInt(mapped), back_buffer_memory_size, linux.PROT.READ | linux.PROT.WRITE) != 0) {
+        log.err("mprotect call failed during back buffer resize", .{});
+        return error.MProtectFailed;
+    }
     global_back_buffer.memory = @as([*]u8, @ptrFromInt(mapped))[0..back_buffer_memory_size];
-    @memset(global_back_buffer.memory, 255);
+    @memset(global_back_buffer.memory, 0);
 
     // Window
     var window_width = width;

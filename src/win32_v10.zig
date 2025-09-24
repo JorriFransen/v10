@@ -1,5 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.win32_v10);
+const options = @import("options");
+const mem = @import("mem");
 const win32 = @import("win32/win32.zig");
 const xinput = @import("win32/xinput.zig");
 const dsound = @import("win32/direct_sound.zig");
@@ -215,8 +217,6 @@ pub fn windowsEntry(
     _ = command_line;
     _ = cmd_show;
 
-    win32ResizeDibSection(&global_back_buffer, 1280, 720);
-
     var qpf_result: win32.LARGE_INTEGER = undefined;
     _ = win32.QueryPerformanceFrequency(&qpf_result);
     const perf_count_frequency = qpf_result.quad_part;
@@ -247,8 +247,7 @@ pub fn windowsEntry(
         if (window_opt) |window| {
             global_running = true;
             const device_context = win32.GetDC(window);
-
-            xinput.load();
+            const dib_allocated = win32ResizeDibSection(&global_back_buffer, 1280, 720);
 
             const audio_fps = 48000;
             const audio_bytes_per_sample = @sizeOf(i16);
@@ -267,141 +266,172 @@ pub fn windowsEntry(
 
             win32ClearAudioBuffer(&audio_output);
             if (audio_output.dsound_buffer) |b| _ = b.Play(0, 0, dsound.BPLAY_LOOPING);
-            audio_output.buffer = @as([*]i16, @ptrCast(@alignCast(win32.VirtualAlloc(
+            const samples = win32.VirtualAlloc(
                 null,
                 audio_output.buffer_byte_size,
                 win32.MEM_RESERVE | win32.MEM_COMMIT,
                 win32.PAGE_READWRITE,
-            ))))[0 .. audio_output.buffer_byte_size / audio_output.bytes_per_frame];
+            );
+            audio_output.buffer = @as([*]i16, @ptrCast(@alignCast(samples)))[0 .. audio_output.buffer_byte_size / audio_output.bytes_per_frame];
 
-            var input = [_]v10.game.Input{.{}} ** 2;
-            var new_input = &input[0];
-            var old_input = &input[1];
+            const base_address: ?[*]u8 = comptime if (options.internal_build)
+                @ptrFromInt(mem.TiB * 2)
+            else
+                null;
 
-            var last_counter: win32.LARGE_INTEGER = undefined;
-            _ = win32.QueryPerformanceFrequency(&last_counter);
+            const permanent_storage_size = mem.MiB * 64;
+            const transient_storage_size = mem.GiB * 4;
+            const total_size = permanent_storage_size + transient_storage_size;
 
-            var last_cycle_count = x86_64.rdtsc();
+            const perm: ?[*]u8 = @ptrCast(win32.VirtualAlloc(
+                base_address,
+                total_size,
+                win32.MEM_RESERVE | win32.MEM_COMMIT,
+                win32.PAGE_READWRITE,
+            ));
+            const trans: ?[*]u8 = @as([*]u8, @ptrCast(perm)) + permanent_storage_size;
 
-            while (global_running) {
-                var msg = win32.MSG{};
+            log.debug("perm:  {*}", .{perm});
+            log.debug("trans: {*}", .{trans});
 
-                while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
-                    if (msg.message == win32.WM_QUIT) {
-                        global_running = false;
+            var game_memory = v10.game.Memory{
+                .initialized = false,
+                .permanent = @as([*]u8, @ptrCast(perm))[0..permanent_storage_size],
+                .transient = @as([*]u8, @ptrCast(trans))[0..transient_storage_size],
+            };
+
+            if (dib_allocated and samples != null and perm != null and trans != null) {
+                xinput.load();
+
+                var input = [_]v10.game.Input{.{}} ** 2;
+                var new_input = &input[0];
+                var old_input = &input[1];
+
+                var last_counter: win32.LARGE_INTEGER = undefined;
+                _ = win32.QueryPerformanceFrequency(&last_counter);
+
+                var last_cycle_count = x86_64.rdtsc();
+
+                while (global_running) {
+                    var msg = win32.MSG{};
+
+                    while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
+                        if (msg.message == win32.WM_QUIT) {
+                            global_running = false;
+                        }
+                        _ = win32.TranslateMessage(&msg);
+                        _ = win32.DispatchMessageA(&msg);
                     }
-                    _ = win32.TranslateMessage(&msg);
-                    _ = win32.DispatchMessageA(&msg);
-                }
 
-                var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
-                if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
+                    var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
+                    if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
 
-                for (0..max_controller_count) |controller_index| {
-                    var controller_state: xinput.STATE = undefined;
-                    if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
-                        // Controller present
-                        const pad = &controller_state.gamepad;
+                    for (0..max_controller_count) |controller_index| {
+                        var controller_state: xinput.STATE = undefined;
+                        if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
+                            // Controller present
+                            const pad = &controller_state.gamepad;
 
-                        var old_controller = &old_input.controllers[controller_index];
-                        var new_controller = &new_input.controllers[controller_index];
+                            var old_controller = &old_input.controllers[controller_index];
+                            var new_controller = &new_input.controllers[controller_index];
 
-                        const StickType = @TypeOf(pad.thumb_l_x);
-                        const stick_max: f32 = @floatFromInt(std.math.maxInt(StickType));
-                        const stick_min: f32 = @floatFromInt(std.math.minInt(StickType));
-                        const stick_x = @as(f32, @floatFromInt(pad.thumb_l_x)) / if (pad.thumb_l_x < 0) -stick_min else stick_max;
-                        const stick_y = @as(f32, @floatFromInt(pad.thumb_l_y)) / if (pad.thumb_l_y < 0) -stick_min else stick_max;
+                            const StickType = @TypeOf(pad.thumb_l_x);
+                            const stick_max: f32 = @floatFromInt(std.math.maxInt(StickType));
+                            const stick_min: f32 = @floatFromInt(std.math.minInt(StickType));
+                            const stick_x = @as(f32, @floatFromInt(pad.thumb_l_x)) / if (pad.thumb_l_x < 0) -stick_min else stick_max;
+                            const stick_y = @as(f32, @floatFromInt(pad.thumb_l_y)) / if (pad.thumb_l_y < 0) -stick_min else stick_max;
 
-                        new_controller.is_analog = true;
-                        new_controller.start_x = old_controller.end_x;
-                        new_controller.start_y = old_controller.end_y;
+                            new_controller.is_analog = true;
+                            new_controller.start_x = old_controller.end_x;
+                            new_controller.start_y = old_controller.end_y;
 
-                        new_controller.min_x = stick_x;
-                        new_controller.min_y = stick_y;
-                        new_controller.max_x = stick_x;
-                        new_controller.max_y = stick_y;
-                        new_controller.end_x = stick_x;
-                        new_controller.end_y = stick_y;
+                            new_controller.min_x = stick_x;
+                            new_controller.min_y = stick_y;
+                            new_controller.max_x = stick_x;
+                            new_controller.max_y = stick_y;
+                            new_controller.end_x = stick_x;
+                            new_controller.end_y = stick_y;
 
-                        processXInputDigitalButton(pad.buttons, &old_controller.down, .a, &new_controller.down);
-                        processXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
-                        processXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
-                        processXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
-                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
-                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
-                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
-                        processXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
-                        processXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
-                        processXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
-                    } else {
-                        // Controller not present
+                            processXInputDigitalButton(pad.buttons, &old_controller.down, .a, &new_controller.down);
+                            processXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
+                            processXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
+                            processXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
+                            processXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
+                            processXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
+                        } else {
+                            // Controller not present
+                        }
                     }
+
+                    // const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
+                    // _ = xinput.XInputSetState(0, &vibration);
+
+                    var play_cursor: u32 = undefined;
+                    var write_cursor: u32 = undefined;
+                    var byte_to_lock: u32 = undefined;
+                    var bytes_to_write: u32 = undefined;
+                    var frames_to_write: u32 = undefined;
+                    var audio_valid = false;
+                    if (audio_output.dsound_buffer) |buf| if (buf.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
+                        byte_to_lock = (audio_output.running_frame_index * audio_output.bytes_per_frame) % audio_output.buffer_byte_size;
+                        const target_cursor: u32 = ((play_cursor + (audio_output.latency_frame_count * audio_output.bytes_per_frame)) % audio_output.buffer_byte_size);
+
+                        bytes_to_write =
+                            if (byte_to_lock > target_cursor)
+                                (audio_output.buffer_byte_size - byte_to_lock) + target_cursor
+                            else
+                                target_cursor - byte_to_lock;
+
+                        frames_to_write = bytes_to_write / audio_output.bytes_per_frame;
+                        audio_valid = true;
+                    };
+
+                    var game_sound_output_buffer: v10.game.AudioBuffer = .{
+                        .samples = audio_output.buffer.ptr,
+                        .frame_count = @intCast(frames_to_write),
+                        .frames_per_second = audio_fps,
+                    };
+
+                    var game_offscreen_buffer: v10.game.OffscreenBuffer = .{
+                        .memory = global_back_buffer.memory,
+                        .width = global_back_buffer.width,
+                        .height = global_back_buffer.height,
+                        .pitch = global_back_buffer.pitch,
+                    };
+
+                    v10.game.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
+
+                    if (audio_valid) {
+                        win32FillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
+                    }
+
+                    const dimension = getWindowDimension(window);
+                    win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
+
+                    const end_cycle_count = x86_64.rdtscp();
+
+                    var end_counter: win32.LARGE_INTEGER = undefined;
+                    _ = win32.QueryPerformanceCounter(&end_counter);
+
+                    const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
+                    const counter_elapsed: f32 = @floatFromInt(end_counter.quad_part - last_counter.quad_part);
+                    const ms_per_frame = (1000 * counter_elapsed) / @as(f32, @floatFromInt(perf_count_frequency));
+                    const fps = @as(f32, @floatFromInt(perf_count_frequency)) / counter_elapsed;
+                    const mcps = cycles_elapsed / (1000 * 1000);
+                    // log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f", .{ ms_per_frame, fps, mcps });
+                    _ = .{ ms_per_frame, fps, mcps };
+
+                    last_counter = end_counter;
+                    last_cycle_count = end_cycle_count;
+
+                    const tmp = new_input;
+                    new_input = old_input;
+                    old_input = tmp;
                 }
-
-                // const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
-                // _ = xinput.XInputSetState(0, &vibration);
-
-                var play_cursor: u32 = undefined;
-                var write_cursor: u32 = undefined;
-                var byte_to_lock: u32 = undefined;
-                var bytes_to_write: u32 = undefined;
-                var frames_to_write: u32 = undefined;
-                var audio_valid = false;
-                if (audio_output.dsound_buffer) |buf| if (buf.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
-                    byte_to_lock = (audio_output.running_frame_index * audio_output.bytes_per_frame) % audio_output.buffer_byte_size;
-                    const target_cursor: u32 = ((play_cursor + (audio_output.latency_frame_count * audio_output.bytes_per_frame)) % audio_output.buffer_byte_size);
-
-                    bytes_to_write =
-                        if (byte_to_lock > target_cursor)
-                            (audio_output.buffer_byte_size - byte_to_lock) + target_cursor
-                        else
-                            target_cursor - byte_to_lock;
-
-                    frames_to_write = bytes_to_write / audio_output.bytes_per_frame;
-                    audio_valid = true;
-                };
-
-                var game_sound_output_buffer: v10.game.AudioBuffer = .{
-                    .samples = audio_output.buffer.ptr,
-                    .frame_count = @intCast(frames_to_write),
-                    .frames_per_second = audio_fps,
-                };
-
-                var game_offscreen_buffer: v10.game.OffscreenBuffer = .{
-                    .memory = global_back_buffer.memory,
-                    .width = global_back_buffer.width,
-                    .height = global_back_buffer.height,
-                    .pitch = global_back_buffer.pitch,
-                };
-
-                v10.game.updateAndRender(new_input, &game_offscreen_buffer, &game_sound_output_buffer);
-
-                if (audio_valid) {
-                    win32FillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
-                }
-
-                const dimension = getWindowDimension(window);
-                win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
-
-                const end_cycle_count = x86_64.rdtscp();
-
-                var end_counter: win32.LARGE_INTEGER = undefined;
-                _ = win32.QueryPerformanceCounter(&end_counter);
-
-                const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
-                const counter_elapsed: f32 = @floatFromInt(end_counter.quad_part - last_counter.quad_part);
-                const ms_per_frame = (1000 * counter_elapsed) / @as(f32, @floatFromInt(perf_count_frequency));
-                const fps = @as(f32, @floatFromInt(perf_count_frequency)) / counter_elapsed;
-                const mcps = cycles_elapsed / (1000 * 1000);
-                // log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f", .{ ms_per_frame, fps, mcps });
-                _ = .{ ms_per_frame, fps, mcps };
-
-                last_counter = end_counter;
-                last_cycle_count = end_cycle_count;
-
-                const tmp = new_input;
-                new_input = old_input;
-                old_input = tmp;
             }
         } else {
             log.err("CreateWindow failed!", .{});
@@ -492,7 +522,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
     return result;
 }
 
-fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) void {
+fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) bool {
     if (buffer.memory.len > 0) {
         _ = win32.VirtualFree(buffer.memory.ptr, 0, win32.MEM_RELEASE);
     }
@@ -511,12 +541,14 @@ fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) 
     } };
 
     const bitmap_memory_size: usize = @intCast(width * height * bytes_per_pixel);
-    buffer.memory = @as([*]u8, @ptrCast(win32.VirtualAlloc(
+    const memory = win32.VirtualAlloc(
         null,
         bitmap_memory_size,
         win32.MEM_RESERVE | win32.MEM_COMMIT,
         win32.PAGE_READWRITE,
-    )))[0..bitmap_memory_size];
+    );
+    buffer.memory = @as([*]u8, @ptrCast(memory))[0..bitmap_memory_size];
+    return memory != null;
 }
 
 fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: *OffscreenBuffer) void {

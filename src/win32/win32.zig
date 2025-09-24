@@ -787,7 +787,7 @@ pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) L
 
 pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn QueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) BOOL;
-pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) LPVOID;
+pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) ?LPVOID;
 pub extern "kernel32" fn VirtualFree(address: LPVOID, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, share_mode: DWORD, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) ?HANDLE;
