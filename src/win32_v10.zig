@@ -562,3 +562,76 @@ fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i
 
     win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
 }
+
+pub const DEBUG = struct {
+    pub fn readEntireFile(path: [*:0]const u8) callconv(.c) v10.DEBUG.ReadFileResult {
+        var result = v10.DEBUG.ReadFileResult{};
+
+        const handle = win32.CreateFileA(path, win32.GENERIC_READ, win32.FILE_SHARE_READ, null, win32.OPEN_EXISTING, 0, null);
+
+        if (handle != win32.INVALID_HANDLE_VALUE) {
+            var file_size: win32.LARGE_INTEGER = undefined;
+            if (win32.GetFileSizeEx(handle, &file_size) != 0) {
+                if (win32.VirtualAlloc(null, file_size.quad_part, win32.MEM_RESERVE | win32.MEM_COMMIT, win32.PAGE_READWRITE)) |alloc_res| {
+                    const file_size_32 = v10.safeTruncateU64(file_size.quad_part);
+
+                    var bytes_read: win32.DWORD = undefined;
+                    if (win32.ReadFile(handle, alloc_res, file_size_32, &bytes_read, null) != 0 and
+                        file_size_32 == bytes_read)
+                    {
+                        result.size = file_size_32;
+                        result.content = alloc_res;
+                    } else {
+                        freeFileMemory(alloc_res, file_size_32);
+                    }
+                }
+            } else {
+                log.warn("GetFileSizeEx failed", .{});
+            }
+
+            _ = win32.CloseHandle(handle);
+        } else {
+            log.warn("Failed to open file: '{s}'", .{path});
+        }
+
+        return result;
+    }
+
+    pub fn writeEntireFile(path: [*:0]const u8, memory: *anyopaque, size: usize) callconv(.c) bool {
+        var result = false;
+
+        const handle = win32.CreateFileA(path, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
+
+        if (handle != win32.INVALID_HANDLE_VALUE) {
+            var written: win32.DWORD = undefined;
+
+            const memory_size_32 = v10.safeTruncateU64(size);
+
+            if (win32.WriteFile(handle, memory, memory_size_32, &written, null) != 0) {
+                result = true;
+            } else {
+                log.warn("Failed to write file: '{s}'", .{path});
+            }
+
+            _ = win32.CloseHandle(handle);
+        } else {
+            log.warn("Failed to open file: '{s}'", .{path});
+        }
+
+        return result;
+    }
+
+    pub fn freeFileMemory(memory: ?*anyopaque, size: usize) callconv(.c) void {
+        if (memory) |m| {
+            assert(size > 0);
+            _ = win32.VirtualFree(m, 0, win32.MEM_DECOMMIT);
+        }
+    }
+};
+
+comptime {
+    if (options.internal_build)
+        for (@typeInfo(DEBUG).@"struct".decls) |decl| {
+            @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
+        };
+}

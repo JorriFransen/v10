@@ -33,7 +33,7 @@ const initial_window_width: i32 = 1280;
 const initial_window_height: i32 = 720;
 const bytes_per_pixel = 4;
 
-var global_back_buffer: OffscreenBuffer = undefined;
+var global_back_buffer: OffscreenBuffer = .{};
 var running: bool = false;
 var wld: WlData = .{};
 var pcm_opt: ?*alsa.Pcm = null;
@@ -331,7 +331,7 @@ pub fn main() !void {
         }
     }
 
-    const base_address: ?[*]u8, const fixed = if (options.internal_build)
+    const base_address: ?[*]align(std.heap.page_size_min) u8, const fixed = if (options.internal_build)
         .{ @ptrFromInt(mem.TiB * 2), true }
     else
         .{ null, false };
@@ -340,30 +340,30 @@ pub fn main() !void {
     const transient_storage_size = mem.GiB * 4;
     const total_size = permanent_storage_size + transient_storage_size;
 
-    const perm = linux.mmap(
+    var game_memory = v10.game.Memory{
+        .initialized = false,
+    };
+
+    if (linux.mmap(
         base_address,
         total_size,
         linux.PROT.NONE,
         .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = fixed },
         -1,
         0,
-    );
-    if (perm == std.math.maxInt(usize)) {
+    )) |all_memory| {
+        linux.mprotect(all_memory, linux.PROT.READ | linux.PROT.WRITE) catch {
+            log.err("mprotect call for game memory storage failed", .{});
+            return error.MProtectFailed;
+        };
+
+        game_memory.permanent = all_memory[0..permanent_storage_size];
+        game_memory.transient = all_memory[permanent_storage_size..];
+        assert(game_memory.transient.len == transient_storage_size);
+    } else |_| {
         log.err("mmap call for game memory failed", .{});
         return error.MMapFailed;
     }
-    if (linux.mprotect(@ptrFromInt(perm), total_size, linux.PROT.READ | linux.PROT.WRITE) != 0) {
-        log.err("mprotect call for game memory storage failed", .{});
-        return error.MProtectFailed;
-    }
-
-    const trans = perm + permanent_storage_size;
-
-    var game_memory = v10.game.Memory{
-        .initialized = false,
-        .permanent = @as([*]u8, @ptrFromInt(perm))[0..permanent_storage_size],
-        .transient = @as([*]u8, @ptrFromInt(trans))[0..transient_storage_size],
-    };
 
     log.debug("perm: {*}", .{game_memory.permanent.ptr});
     log.debug("trans: {*}", .{game_memory.transient.ptr});
@@ -378,7 +378,7 @@ pub fn main() !void {
     while (wl.display_dispatch(display) != -1 and running) {
         var audio_write_frame_count: alsa.PcmSFrames = 0;
 
-        if (linux.poll(&poll_fds, poll_fds.len, 0) > 0) {
+        if (try linux.poll(&poll_fds, 0) > 0) {
             for (&poll_fds, 0..) |*pollfd, slot_index| {
                 const slot: PollFdSlot = @enumFromInt(slot_index);
                 const in = pollfd.revents & linux.POLL.IN != 0;
@@ -429,15 +429,14 @@ pub fn main() !void {
                     .joystick_3,
                     => if (in) {
                         var events: [16]InputEvent = undefined;
-                        const read_len = linux.read(pollfd.fd, @ptrCast(&events), @sizeOf(@TypeOf(events)));
-                        if (read_len > 0) {
+                        if (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |read_len| {
                             const num_events = read_len / @sizeOf(InputEvent);
                             for (events[0..num_events]) |*event| {
                                 const jid = slot_index - PollFdSlot.first_joystick;
                                 const joystick = &joysticks[jid];
                                 joystick.handleEvent(event);
                             }
-                        } else {
+                        } else |_| {
                             // Read failed somehow, don't throw an error, keep running
                         }
                     },
@@ -517,7 +516,7 @@ pub fn main() !void {
             if (aquireFreeBuffer()) |wl_buffer| {
 
                 // Copy global_back_buffer into wayland buffer
-                const wl_buffer_mem: [*]u8 = wld.shm_ptr + @as(usize, @intCast(wl_buffer.offset));
+                const wl_buffer_mem: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
                 @memcpy(wl_buffer_mem[0..@intCast(wl_buffer.width * wl_buffer.height * bytes_per_pixel)], global_back_buffer.memory);
 
                 linuxDisplayBufferInWindow(wl_buffer);
@@ -550,7 +549,7 @@ pub fn main() !void {
 }
 
 const OffscreenBuffer = struct {
-    memory: []u8 = &.{},
+    memory: []align(std.heap.page_size_min) u8 = &.{},
     width: i32 = 0,
     height: i32 = 0,
     pitch: i32 = 0,
@@ -606,8 +605,7 @@ const WlData = struct {
     max_height: i32 = 0,
 
     should_resize_shm: bool = false,
-    shm_size: usize = 0,
-    shm_ptr: [*]u8 = undefined,
+    shm_data: []align(std.heap.page_size_min) u8 = &.{},
 
     pending_resize: ?WlPendingResize = null,
 };
@@ -896,8 +894,8 @@ const ShmError = error{
 fn resize_shm() ShmError!void {
     const S = linux.S;
 
-    if (wld.shm_size == 0) {
-        _ = linux.munmap(wld.shm_ptr, wld.shm_size);
+    if (wld.shm_data.len != 0) {
+        linux.munmap(wld.shm_data);
     }
 
     var name_buf: [16]u8 = undefined;
@@ -926,62 +924,63 @@ fn resize_shm() ShmError!void {
     const pixel_count: usize = @intCast(wld.max_width * wld.max_height);
     const buffer_size: usize = pixel_count * bytes_per_pixel;
     log.debug("Buffer size: {}", .{buffer_size});
-    wld.shm_size = buffer_size * wld.buffers.len;
-    log.debug("Allocating shm: {}", .{wld.shm_size});
+    const shm_size = buffer_size * wld.buffers.len;
+    log.debug("Allocating shm: {}", .{shm_size});
 
-    if (linux.ftruncate(fd, @intCast(wld.shm_size)) != 0) {
-        log.err("ftruncate failed, errno: {}", .{errno(-1)});
+    linux.ftruncate(fd, @intCast(shm_size)) catch |e| {
+        log.err("ftruncate failed: {}", .{e});
         return error.FtruncateFailed;
-    }
+    };
 
     const prot = linux.PROT.READ | linux.PROT.WRITE;
     const map = linux.MAP{ .TYPE = .SHARED };
 
-    const mapped = linux.mmap(null, wld.shm_size, prot, map, fd, 0);
-    if (mapped == std.math.maxInt(usize)) {
+    if (linux.mmap(null, shm_size, prot, map, fd, 0)) |mapped| {
+        wld.shm_data = mapped;
+
+        if (wld.pool) |p| p.destroy();
+
+        const pool = wld.shm.create_pool(fd, @intCast(wld.shm_data.len)) orelse {
+            log.err("wl_shm_create_pool failed", .{});
+            return error.WlShmCreatePoolFailed;
+        };
+        wld.pool = pool;
+
+        var width = wld.width;
+        var height = wld.height;
+        if (width == -1 and height == -1) {
+            width = initial_window_width;
+            height = initial_window_height;
+        }
+        const stride = width * bytes_per_pixel;
+
+        var offset: i32 = 0;
+        for (&wld.buffers) |*buffer| {
+            const handle = pool.create_buffer(offset, width, height, stride, .xrgb8888) orelse {
+                log.err("wl_pool_create_buffer failed", .{});
+                return error.WlPoolCreateBufferFailed;
+            };
+
+            buffer.* = .{
+                .handle = handle,
+                .offset = offset,
+                .free = true,
+                .width = width,
+                .height = height,
+            };
+            handle.add_listener(&wl_buffer_listener, buffer);
+
+            offset += @intCast(buffer_size);
+        }
+
+        wld.should_resize_shm = false;
+        // TODO: Signal a buffer resize is required!
+        // TODO: Test by plugging in external monitor
+
+    } else |_| {
         log.err("mmap call failed during shm buffer resize", .{});
         return error.MmapFailed;
     }
-    wld.shm_ptr = @ptrFromInt(mapped);
-
-    if (wld.pool) |p| p.destroy();
-
-    const pool = wld.shm.create_pool(fd, @intCast(wld.shm_size)) orelse {
-        log.err("wl_shm_create_pool failed", .{});
-        return error.WlShmCreatePoolFailed;
-    };
-    wld.pool = pool;
-
-    var width = wld.width;
-    var height = wld.height;
-    if (width == -1 and height == -1) {
-        width = initial_window_width;
-        height = initial_window_height;
-    }
-    const stride = width * bytes_per_pixel;
-
-    var offset: i32 = 0;
-    for (&wld.buffers) |*buffer| {
-        const handle = pool.create_buffer(offset, width, height, stride, .xrgb8888) orelse {
-            log.err("wl_pool_create_buffer failed", .{});
-            return error.WlPoolCreateBufferFailed;
-        };
-
-        buffer.* = .{
-            .handle = handle,
-            .offset = offset,
-            .free = true,
-            .width = width,
-            .height = height,
-        };
-        handle.add_listener(&wl_buffer_listener, buffer);
-
-        offset += @intCast(buffer_size);
-    }
-
-    wld.should_resize_shm = false;
-    // TODO: Signal a buffer resize is required!
-    // TODO: Test by plugging in external monitor
 }
 
 fn resize(width: i32, height: i32) !void {
@@ -990,7 +989,7 @@ fn resize(width: i32, height: i32) !void {
     wld.height = initial_window_height;
 
     if (global_back_buffer.memory.len > 0) {
-        _ = linux.munmap(global_back_buffer.memory.ptr, global_back_buffer.memory.len);
+        linux.munmap(global_back_buffer.memory);
     }
     global_back_buffer.width = wld.width;
     global_back_buffer.height = wld.height;
@@ -998,36 +997,35 @@ fn resize(width: i32, height: i32) !void {
 
     const back_buffer_memory_size: usize = @intCast(global_back_buffer.width * global_back_buffer.height * bytes_per_pixel);
 
-    const mapped = linux.mmap(
+    if (linux.mmap(
         null,
         back_buffer_memory_size,
         linux.PROT.NONE,
         .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
         -1,
         0,
-    );
-    if (mapped == std.math.maxInt(usize)) {
+    )) |mapped| {
+        global_back_buffer.memory = mapped;
+        linux.mprotect(mapped, linux.PROT.READ | linux.PROT.WRITE) catch {
+            log.err("mprotect call failed during back buffer resize", .{});
+            return error.MProtectFailed;
+        };
+
+        // Window
+        var window_width = width;
+        var window_height = height;
+        if (window_width == 0) window_width = wld.width;
+        if (window_height == 0) window_height = wld.height;
+        wld.window_width = window_width;
+        wld.window_height = window_height;
+        wld.viewport.set_destination(window_width, window_height);
+
+        wld.should_draw = true;
+        wld.pending_resize = null;
+    } else |_| {
         log.err("mmap call failed during back buffer resize", .{});
         return error.MmapFailed;
     }
-    if (linux.mprotect(@ptrFromInt(mapped), back_buffer_memory_size, linux.PROT.READ | linux.PROT.WRITE) != 0) {
-        log.err("mprotect call failed during back buffer resize", .{});
-        return error.MProtectFailed;
-    }
-    global_back_buffer.memory = @as([*]u8, @ptrFromInt(mapped))[0..back_buffer_memory_size];
-    @memset(global_back_buffer.memory, 0);
-
-    // Window
-    var window_width = width;
-    var window_height = height;
-    if (window_width == 0) window_width = wld.width;
-    if (window_height == 0) window_height = wld.height;
-    wld.window_width = window_width;
-    wld.window_height = window_height;
-    wld.viewport.set_destination(window_width, window_height);
-
-    wld.should_draw = true;
-    wld.pending_resize = null;
 }
 
 fn aquireFreeBuffer() ?*WlBuffer {
@@ -1049,6 +1047,75 @@ fn aquireFreeBuffer() ?*WlBuffer {
     }
 
     return null;
+}
+
+pub const DEBUG = struct {
+    pub fn readEntireFile(path: [*:0]const u8) callconv(.c) v10.DEBUG.ReadFileResult {
+        var result = v10.DEBUG.ReadFileResult{};
+
+        if (linux.openZ(path, .{ .ACCMODE = .RDONLY }, 0)) |handle| {
+            if (linux.fstat(handle)) |stat| {
+                const file_size: usize = @intCast(stat.size);
+
+                if (linux.mmap(null, file_size, linux.PROT.NONE, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0)) |mapped| {
+                    if (linux.mprotect(mapped, linux.PROT.READ | linux.PROT.WRITE)) {
+                        if (linux.read(handle, mapped)) |bytes_read| {
+                            assert(bytes_read == file_size);
+                            result.size = bytes_read;
+                            result.content = mapped.ptr;
+                        } else |_| {
+                            freeFileMemory(mapped.ptr, file_size);
+                            log.warn("File read failed: '{s}'", .{path});
+                        }
+                    } else |_| {
+                        log.warn("mprotect for file read failed", .{});
+                    }
+                } else |_| {
+                    log.warn("mmap for file read failed", .{});
+                }
+            } else |_| {
+                log.warn("Failed to stat file '{s}'", .{path});
+            }
+
+            _ = linux.close(handle);
+        } else |_| {
+            log.warn("Failed to open file: '{s}'", .{path});
+        }
+
+        return result;
+    }
+
+    pub fn writeEntireFile(path: [*:0]const u8, memory: *anyopaque, size: usize) callconv(.c) bool {
+        var result = false;
+
+        const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
+        if (linux.openZ(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, permissions)) |handle| {
+            if (linux.write(handle, @as([*]u8, @ptrCast(memory))[0..size])) |bytes_written| {
+                result = bytes_written == size;
+            } else |_| {
+                log.err("Failed to write to file: '{s}'", .{path});
+            }
+
+            _ = linux.close(handle);
+        } else |_| {
+            log.err("Failed to open file: '{s}'", .{path});
+        }
+        return result;
+    }
+
+    pub fn freeFileMemory(memory: ?*anyopaque, size: usize) callconv(.c) void {
+        if (memory) |m| {
+            assert(size > 0);
+            linux.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(m)))[0..size]);
+        }
+    }
+};
+
+comptime {
+    if (options.internal_build)
+        for (@typeInfo(DEBUG).@"struct".decls) |decl| {
+            @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
+        };
 }
 
 fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: [*:0]const u8, version: u32) callconv(.c) void {
@@ -1269,6 +1336,8 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
 }
 
 fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
+    log.debug("Adding joystick: '{s}'", .{devnode_path});
+
     const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;
     const parent_syspath = std.mem.span(udev.device_get_syspath(input_dev).?);
     var driver_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -1291,11 +1360,10 @@ fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
     }
 
     if (joystick_index_opt) |ji| {
-        const fd: linux.fd_t = @intCast(linux.open(devnode_path, linux.O{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0));
-        if (fd < 0) {
-            log.err("Opening controller evdev file failed, errno: {}", .{errno(fd)});
+        const fd = linux.openZ(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0) catch |e| {
+            log.err("Opening controller evdev file failed: {}", .{e});
             return error.OpenFailed;
-        }
+        };
 
         poll_fds[PollFdSlot.first_joystick + ji] = .{
             .fd = @intCast(fd),

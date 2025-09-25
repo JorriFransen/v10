@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.v10);
+const options = @import("options");
 
 const assert = std.debug.assert;
 
@@ -10,7 +11,22 @@ pub const platform = switch (os) {
     else => @compileError("Unsupported platform"),
 };
 
-// Services provided by the game
+pub const DEBUG = if (options.internal_build) struct {
+    pub const ReadFileResult = extern struct {
+        size: usize = 0,
+        content: *anyopaque = undefined,
+    };
+
+    pub extern fn readEntireFile(path: [*:0]const u8) callconv(.c) ReadFileResult;
+    pub extern fn freeFileMemory(memory: ?*anyopaque, size: usize) void;
+    pub extern fn writeEntireFile(path: [*:0]const u8, memory: *anyopaque, size: usize) bool;
+} else struct {};
+
+pub inline fn safeTruncateU64(value: u64) u32 {
+    assert(value <= std.math.maxInt(u32));
+    return @intCast(value);
+}
+
 pub const game = struct {
     pub const OffscreenBuffer = struct {
         memory: []u8,
@@ -67,21 +83,18 @@ pub const game = struct {
 
     pub const Memory = struct {
         initialized: bool = false,
-        permanent: []u8,
-        transient: []u8,
+        permanent: []u8 = &.{},
+        transient: []u8 = &.{},
     };
 
-    pub fn updateAndRender(memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
-        assert(@sizeOf(GameState) <= memory.permanent.len);
+    pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
+        assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
-        const game_state: *GameState = @ptrCast(@alignCast(memory.permanent.ptr));
-        if (!memory.initialized) {
-            game_state.blue_offset = 0;
-            game_state.green_offset = 0;
+        const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+        if (!game_memory.initialized) {
             game_state.tone_hz = 256;
-            game_state.t_sine = 0;
 
-            memory.initialized = true;
+            game_memory.initialized = true;
         }
 
         const input_0 = &input.controllers[0];

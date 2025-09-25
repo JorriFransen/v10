@@ -31,11 +31,17 @@ pub const SHORT = zig_win32.SHORT;
 pub const WORD = zig_win32.WORD;
 pub const DWORD = zig_win32.DWORD;
 pub const LONG = zig_win32.LONG;
+pub const ULONG = zig_win32.ULONG;
+pub const ULONG_PTR = zig_win32.ULONG_PTR;
+pub const PVOID = zig_win32.PVOID;
 pub const SIZE_T = zig_win32.SIZE_T;
 pub const LPVOID = zig_win32.LPVOID;
+pub const LPCVOID = zig_win32.LPCVOID;
 pub const POINT = zig_win32.POINT;
 pub const RECT = zig_win32.RECT;
 pub const LPRECT = *RECT;
+
+pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
 
 pub const ERROR_SUCCESS = 0x0;
 pub const ERROR_DEVICE_NOT_CONNECTED = 0x48f;
@@ -783,6 +789,21 @@ pub const SECURITY_ATTRIBUTES = extern struct {
     inherit_handle: BOOL,
 };
 
+pub const OVERLAPPED = extern struct {
+    internal: *ULONG,
+    internal_high: *ULONG,
+
+    dummy_union: extern union {
+        dummy_struct: extern struct {
+            offset: DWORD,
+            offset_high: DWORD,
+        },
+        pointer: PVOID,
+    },
+
+    event: HANDLE,
+};
+
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
 pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) BOOL;
@@ -790,7 +811,11 @@ pub extern "kernel32" fn QueryPerformanceFrequency(freq: *LARGE_INTEGER) callcon
 pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) ?LPVOID;
 pub extern "kernel32" fn VirtualFree(address: LPVOID, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
-pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, share_mode: DWORD, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) ?HANDLE;
+pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, share_mode: DWORD, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, size: *LARGE_INTEGER) callconv(.winapi) BOOL;
+pub extern "kernel32" fn ReadFile(handle: HANDLE, buffer: LPVOID, bytes_to_read: DWORD, bytes_read: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
+pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, bytes_written: *DWORD, overlapped: ?*OVERLAPPED) callconv(.c) BOOL;
+pub extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
 
 pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
 pub extern "user32" fn GetModuleHandleW(module_name: ?LPCWSTR) callconv(.winapi) HMODULE;
