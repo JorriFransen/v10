@@ -27,128 +27,126 @@ pub inline fn safeTruncateU64(value: u64) u32 {
     return @intCast(value);
 }
 
-pub const game = struct {
-    pub const OffscreenBuffer = struct {
-        memory: []u8,
-        width: i32,
-        height: i32,
-        pitch: i32,
-    };
-
-    pub const AudioBuffer = extern struct {
-        pub const Sample = i16;
-        pub const Frame = extern struct {
-            left: Sample = 0,
-            right: Sample = 0,
-        };
-
-        frames: [*]Frame,
-        frame_count: i32,
-        frames_per_second: i32,
-    };
-
-    pub const ButtonState = extern struct {
-        half_transition_count: i32 = 0,
-        ended_down: bool = false,
-    };
-
-    pub const ControllerInput = extern struct {
-        is_analog: bool = false,
-
-        start_x: f32 = 0,
-        start_y: f32 = 0,
-        min_x: f32 = 0,
-        min_y: f32 = 0,
-        max_x: f32 = 0,
-        max_y: f32 = 0,
-        end_x: f32 = 0,
-        end_y: f32 = 0,
-
-        up: ButtonState = .{},
-        down: ButtonState = .{},
-        left: ButtonState = .{},
-        right: ButtonState = .{},
-        dpad_up: ButtonState = .{},
-        dpad_down: ButtonState = .{},
-        dpad_left: ButtonState = .{},
-        dpad_right: ButtonState = .{},
-        left_shoulder: ButtonState = .{},
-        right_shoulder: ButtonState = .{},
-    };
-
-    pub const Input = extern struct {
-        controllers: [4]ControllerInput = .{ControllerInput{}} ** 4,
-    };
-
-    pub const GameState = extern struct {
-        blue_offset: i32 = 0,
-        green_offset: i32 = 0,
-        tone_hz: i32 = 256,
-        t_sine: f32 = 0,
-    };
-
-    pub const Memory = struct {
-        initialized: bool = false,
-        permanent: []u8 = &.{},
-        transient: []u8 = &.{},
-    };
-
-    pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
-        assert(@sizeOf(GameState) <= game_memory.permanent.len);
-
-        const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
-        if (!game_memory.initialized) {
-            game_state.tone_hz = 256;
-
-            game_memory.initialized = true;
-        }
-
-        const input_0 = &input.controllers[0];
-
-        if (input_0.is_analog) {
-            game_state.blue_offset += @intFromFloat(4 * input_0.end_x);
-            game_state.tone_hz = @intFromFloat(256 + (128 * input_0.end_y));
-        }
-
-        if (input_0.down.ended_down) {
-            game_state.green_offset += 1;
-        }
-
-        if (input_0.dpad_up.ended_down) {
-            game_state.green_offset -= 1;
-        } else if (input_0.dpad_down.ended_down) {
-            game_state.green_offset += 1;
-        }
-
-        if (input_0.dpad_right.ended_down) {
-            game_state.blue_offset += 1;
-        } else if (input_0.dpad_left.ended_down) {
-            game_state.blue_offset -= 1;
-        }
-
-        outputSound(game_state, sound_buffer);
-        renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
-    }
-
-    pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
-        const tone_volume = 3000;
-        const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
-
-        var frame_out = buffer.frames;
-        for (0..@intCast(buffer.frame_count)) |_| {
-            const sine_value: f32 = @sin(game_state.t_sine);
-            const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
-
-            frame_out[0] = .{ .left = sample_value, .right = sample_value };
-            frame_out += 1;
-
-            game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
-            if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
-        }
-    }
+pub const OffscreenBuffer = struct {
+    memory: []u8,
+    width: i32,
+    height: i32,
+    pitch: i32,
 };
 
-fn renderWeirdGradient(buffer: *game.OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
+pub const AudioBuffer = extern struct {
+    pub const Sample = i16;
+    pub const Frame = extern struct {
+        left: Sample = 0,
+        right: Sample = 0,
+    };
+
+    frames: [*]Frame,
+    frame_count: i32,
+    frames_per_second: i32,
+};
+
+pub const ButtonState = extern struct {
+    half_transition_count: i32 = 0,
+    ended_down: bool = false,
+};
+
+pub const ControllerInput = extern struct {
+    is_analog: bool = false,
+
+    start_x: f32 = 0,
+    start_y: f32 = 0,
+    min_x: f32 = 0,
+    min_y: f32 = 0,
+    max_x: f32 = 0,
+    max_y: f32 = 0,
+    end_x: f32 = 0,
+    end_y: f32 = 0,
+
+    up: ButtonState = .{},
+    down: ButtonState = .{},
+    left: ButtonState = .{},
+    right: ButtonState = .{},
+    dpad_up: ButtonState = .{},
+    dpad_down: ButtonState = .{},
+    dpad_left: ButtonState = .{},
+    dpad_right: ButtonState = .{},
+    left_shoulder: ButtonState = .{},
+    right_shoulder: ButtonState = .{},
+};
+
+pub const Input = extern struct {
+    controllers: [4]ControllerInput = .{ControllerInput{}} ** 4,
+};
+
+pub const GameState = extern struct {
+    blue_offset: i32 = 0,
+    green_offset: i32 = 0,
+    tone_hz: i32 = 256,
+    t_sine: f32 = 0,
+};
+
+pub const Memory = struct {
+    initialized: bool = false,
+    permanent: []u8 = &.{},
+    transient: []u8 = &.{},
+};
+
+pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
+    assert(@sizeOf(GameState) <= game_memory.permanent.len);
+
+    const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+    if (!game_memory.initialized) {
+        game_state.tone_hz = 256;
+
+        game_memory.initialized = true;
+    }
+
+    const input_0 = &input.controllers[0];
+
+    if (input_0.is_analog) {
+        game_state.blue_offset += @intFromFloat(4 * input_0.end_x);
+        game_state.tone_hz = @intFromFloat(256 + (128 * input_0.end_y));
+    }
+
+    if (input_0.down.ended_down) {
+        game_state.green_offset += 1;
+    }
+
+    if (input_0.dpad_up.ended_down) {
+        game_state.green_offset -= 1;
+    } else if (input_0.dpad_down.ended_down) {
+        game_state.green_offset += 1;
+    }
+
+    if (input_0.dpad_right.ended_down) {
+        game_state.blue_offset += 1;
+    } else if (input_0.dpad_left.ended_down) {
+        game_state.blue_offset -= 1;
+    }
+
+    outputSound(game_state, sound_buffer);
+    renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
+}
+
+pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
+    const tone_volume = 3000;
+    const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
+
+    var frame_out = buffer.frames;
+    for (0..@intCast(buffer.frame_count)) |_| {
+        const sine_value: f32 = @sin(game_state.t_sine);
+        const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
+
+        frame_out[0] = .{ .left = sample_value, .right = sample_value };
+        frame_out += 1;
+
+        game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
+        if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
+    }
+}
+
+fn renderWeirdGradient(buffer: *OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
     const uwidth: usize = @intCast(buffer.width);
     const uheight: usize = @intCast(buffer.height);
 

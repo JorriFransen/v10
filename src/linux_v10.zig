@@ -338,7 +338,7 @@ pub fn main() !void {
     const transient_storage_size = mem.GiB * 4;
     const total_size = permanent_storage_size + transient_storage_size;
 
-    var game_memory = v10.game.Memory{
+    var game_memory = v10.Memory{
         .initialized = false,
     };
 
@@ -492,20 +492,20 @@ pub fn main() !void {
 
         const frames_ptr, const frames_len = if (audio_fill) |f| .{ f.frames.ptr, f.frames.len } else .{ undefined, 0 };
 
-        var game_audio_output_buffer: v10.game.AudioBuffer = .{
+        var game_audio_output_buffer: v10.AudioBuffer = .{
             .frames = frames_ptr,
             .frame_count = @intCast(frames_len),
             .frames_per_second = @intCast(audio_output.frames_per_second),
         };
 
-        var game_offscreen_buffer = v10.game.OffscreenBuffer{
+        var game_offscreen_buffer = v10.OffscreenBuffer{
             .memory = global_back_buffer.memory,
             .width = global_back_buffer.width,
             .height = global_back_buffer.height,
             .pitch = global_back_buffer.pitch,
         };
 
-        v10.game.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
+        v10.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
 
         if (audio_fill) |f| {
             const pcm = pcm_opt.?;
@@ -615,9 +615,9 @@ const WlData = struct {
 
     pending_resize: ?WlPendingResize = null,
 
-    game_input: [2]v10.game.Input = .{v10.game.Input{}} ** 2,
-    new_input: *v10.game.Input = undefined,
-    old_input: *v10.game.Input = undefined,
+    game_input: [2]v10.Input = .{v10.Input{}} ** 2,
+    new_input: *v10.Input = undefined,
+    old_input: *v10.Input = undefined,
 };
 
 const WlBuffer = struct {
@@ -860,7 +860,7 @@ const Joystick = struct {
         }
     }
 
-    fn processDigitalButton(this: *const Joystick, old_state: *const v10.game.ButtonState, btn: Button, new_state: *v10.game.ButtonState) void {
+    fn processDigitalButton(this: *const Joystick, old_state: *const v10.ButtonState, btn: Button, new_state: *v10.ButtonState) void {
         new_state.ended_down = this.buttons[@intFromEnum(btn)] == 1;
         new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
     }
@@ -892,7 +892,7 @@ const Joystick = struct {
     }
 };
 
-fn processKeyEvent(new_state: *v10.game.ButtonState, is_down: bool) void {
+fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {
     new_state.ended_down = is_down;
     new_state.half_transition_count += 1;
 }
@@ -1516,7 +1516,7 @@ const AudioOutput = struct {
     period_size: u32 = 0, // TODO: This should be set to latency_frame_count!
     latency_frame_count: u32 = 0,
 
-    const Frame = v10.game.AudioBuffer.Frame;
+    const Frame = v10.AudioBuffer.Frame;
 };
 
 const AudioOutputFill = struct {

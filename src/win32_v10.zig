@@ -35,8 +35,8 @@ pub const AudioOutput = struct {
     running_frame_index: u32,
     latency_frame_count: u32,
 
-    const Sample = v10.game.AudioBuffer.Sample;
-    const Frame = v10.game.AudioBuffer.Frame;
+    const Sample = v10.AudioBuffer.Sample;
+    const Frame = v10.AudioBuffer.Frame;
 };
 
 fn clearAudioBuffer(audio_output: *AudioOutput) void {
@@ -70,7 +70,7 @@ fn clearAudioBuffer(audio_output: *AudioOutput) void {
     };
 }
 
-fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.game.AudioBuffer) void {
+fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.AudioBuffer) void {
     var region1_ptr: *anyopaque = undefined;
     var region1_bytes: u32 = undefined;
     var region2_ptr: *anyopaque = undefined;
@@ -170,7 +170,7 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn processPendingMessages(keyboard_controller: *v10.game.ControllerInput) void {
+fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
     var msg = win32.MSG{};
 
     while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
@@ -233,12 +233,12 @@ fn processPendingMessages(keyboard_controller: *v10.game.ControllerInput) void {
     }
 }
 
-fn processKeyboardMessage(new_state: *v10.game.ButtonState, ended_down: bool) void {
+fn processKeyboardMessage(new_state: *v10.ButtonState, ended_down: bool) void {
     new_state.ended_down = ended_down;
     new_state.half_transition_count += 1;
 }
 
-fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.game.ButtonState, comptime button: GamepadButton, new_state: *v10.game.ButtonState) void {
+fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.ButtonState, comptime button: GamepadButton, new_state: *v10.ButtonState) void {
     new_state.ended_down = @field(xinput_button_state, @tagName(button));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
 }
@@ -362,7 +362,7 @@ pub fn windowsEntry(
             log.debug("perm:  {*}", .{perm});
             log.debug("trans: {*}", .{trans});
 
-            var game_memory = v10.game.Memory{
+            var game_memory = v10.Memory{
                 .initialized = false,
                 .permanent = @as([*]u8, @ptrCast(perm))[0..permanent_storage_size],
                 .transient = @as([*]u8, @ptrCast(trans))[0..transient_storage_size],
@@ -371,7 +371,7 @@ pub fn windowsEntry(
             if (dib_allocated and audio_frames != null and perm != null and trans != null) {
                 xinput.load();
 
-                var input = [_]v10.game.Input{.{}} ** 2;
+                var input = [_]v10.Input{.{}} ** 2;
                 var new_input = &input[0];
                 var old_input = &input[1];
 
@@ -453,20 +453,20 @@ pub fn windowsEntry(
                         audio_valid = true;
                     };
 
-                    var game_sound_output_buffer: v10.game.AudioBuffer = .{
+                    var game_sound_output_buffer: v10.AudioBuffer = .{
                         .frames = @ptrCast(audio_output.buffer.ptr),
                         .frame_count = @intCast(frames_to_write),
                         .frames_per_second = audio_fps,
                     };
 
-                    var game_offscreen_buffer: v10.game.OffscreenBuffer = .{
+                    var game_offscreen_buffer: v10.OffscreenBuffer = .{
                         .memory = global_back_buffer.memory,
                         .width = global_back_buffer.width,
                         .height = global_back_buffer.height,
                         .pitch = global_back_buffer.pitch,
                     };
 
-                    v10.game.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
+                    v10.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
 
                     if (audio_valid) {
                         fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
