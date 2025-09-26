@@ -173,6 +173,8 @@ const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
     var msg = win32.MSG{};
 
+    const buttons = &keyboard_controller.buttons.named;
+
     while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
         switch (msg.message) {
             win32.WM_QUIT => {
@@ -190,25 +192,25 @@ fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
 
                 if (is_down != was_down) {
                     if (vk_code == win32.VK_W) {
-                        processKeyboardMessage(&keyboard_controller.dpad_up, is_down);
+                        processKeyboardMessage(&buttons.dpad_up, is_down);
                     } else if (vk_code == win32.VK_A) {
-                        processKeyboardMessage(&keyboard_controller.dpad_left, is_down);
+                        processKeyboardMessage(&buttons.dpad_left, is_down);
                     } else if (vk_code == win32.VK_S) {
-                        processKeyboardMessage(&keyboard_controller.dpad_down, is_down);
+                        processKeyboardMessage(&buttons.dpad_down, is_down);
                     } else if (vk_code == win32.VK_D) {
-                        processKeyboardMessage(&keyboard_controller.dpad_right, is_down);
+                        processKeyboardMessage(&buttons.dpad_right, is_down);
                     } else if (vk_code == win32.VK_Q) {
-                        processKeyboardMessage(&keyboard_controller.left_shoulder, is_down);
+                        processKeyboardMessage(&buttons.left_shoulder, is_down);
                     } else if (vk_code == win32.VK_E) {
-                        processKeyboardMessage(&keyboard_controller.right_shoulder, is_down);
+                        processKeyboardMessage(&buttons.right_shoulder, is_down);
                     } else if (vk_code == win32.VK_UP) {
-                        processKeyboardMessage(&keyboard_controller.up, is_down);
+                        processKeyboardMessage(&buttons.up, is_down);
                     } else if (vk_code == win32.VK_LEFT) {
-                        processKeyboardMessage(&keyboard_controller.left, is_down);
+                        processKeyboardMessage(&buttons.left, is_down);
                     } else if (vk_code == win32.VK_DOWN) {
-                        processKeyboardMessage(&keyboard_controller.down, is_down);
+                        processKeyboardMessage(&buttons.down, is_down);
                     } else if (vk_code == win32.VK_RIGHT) {
-                        processKeyboardMessage(&keyboard_controller.right, is_down);
+                        processKeyboardMessage(&buttons.right, is_down);
                     } else if (vk_code == win32.VK_ESCAPE) {
                         global_running = false;
                     } else if (vk_code == win32.VK_SPACE) {
@@ -234,6 +236,8 @@ fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
 }
 
 fn processKeyboardMessage(new_state: *v10.ButtonState, ended_down: bool) void {
+    assert(new_state.ended_down != ended_down);
+
     new_state.ended_down = ended_down;
     new_state.half_transition_count += 1;
 }
@@ -241,6 +245,19 @@ fn processKeyboardMessage(new_state: *v10.ButtonState, ended_down: bool) void {
 fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.ButtonState, comptime button: GamepadButton, new_state: *v10.ButtonState) void {
     new_state.ended_down = @field(xinput_button_state, @tagName(button));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
+}
+
+fn processXInputStickValue(value: win32.SHORT, deadzone: win32.SHORT) f32 {
+    var result: f32 = 0;
+
+    const fvalue: f32 = @floatFromInt(value);
+    if (value < -deadzone) {
+        result = fvalue / -@as(f32, @floatFromInt(std.math.minInt(win32.SHORT)));
+    } else if (value > deadzone) {
+        result = fvalue / @as(f32, @floatFromInt(std.math.maxInt(win32.SHORT)));
+    }
+
+    return result;
 }
 
 fn getWindowDimension(window: win32.HWND) WindowDimensions {
@@ -382,27 +399,29 @@ pub fn windowsEntry(
 
                 while (global_running) {
                     const keyboard_controller = &new_input.controllers[0];
-                    keyboard_controller.* = .{};
+                    const old_keyboard_controller = &old_input.controllers[0];
+                    keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
+                    for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
+                        new_button.ended_down = old_button.ended_down;
+                    }
 
                     processPendingMessages(keyboard_controller);
 
-                    var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
+                    var max_controller_count: usize = 1 + xinput.XUSER_MAX_COUNT;
                     if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
 
-                    for (0..max_controller_count) |controller_index| {
+                    for (0..@min(max_controller_count, xinput.XUSER_MAX_COUNT)) |controller_index| {
                         var controller_state: xinput.STATE = undefined;
                         if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
                             // Controller present
                             const pad = &controller_state.gamepad;
 
-                            var old_controller = &old_input.controllers[controller_index];
-                            var new_controller = &new_input.controllers[controller_index];
+                            const game_controller_index = controller_index + 1;
+                            var old_controller = &old_input.controllers[game_controller_index];
+                            var new_controller = &new_input.controllers[game_controller_index];
 
-                            const StickType = @TypeOf(pad.thumb_l_x);
-                            const stick_max: f32 = @floatFromInt(std.math.maxInt(StickType));
-                            const stick_min: f32 = @floatFromInt(std.math.minInt(StickType));
-                            const stick_x = @as(f32, @floatFromInt(pad.thumb_l_x)) / if (pad.thumb_l_x < 0) -stick_min else stick_max;
-                            const stick_y = @as(f32, @floatFromInt(pad.thumb_l_y)) / if (pad.thumb_l_y < 0) -stick_min else stick_max;
+                            const stick_x = processXInputStickValue(pad.thumb_l_x, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
+                            const stick_y = processXInputStickValue(pad.thumb_l_y, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
 
                             new_controller.is_analog = true;
                             new_controller.start_x = old_controller.end_x;
@@ -415,16 +434,19 @@ pub fn windowsEntry(
                             new_controller.end_x = stick_x;
                             new_controller.end_y = stick_y;
 
-                            processXInputDigitalButton(pad.buttons, &old_controller.down, .a, &new_controller.down);
-                            processXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
-                            processXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
-                            processXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
-                            processXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
-                            processXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
+                            const old_buttons = &old_controller.buttons.named;
+                            const new_buttons = &new_controller.buttons.named;
+
+                            processXInputDigitalButton(pad.buttons, &old_buttons.down, .a, &new_buttons.down);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.right, .b, &new_buttons.right);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.left, .x, &new_buttons.left);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.up, .y, &new_buttons.up);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_down, .dpad_down, &new_buttons.dpad_down);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_right, .dpad_right, &new_buttons.dpad_right);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_left, .dpad_left, &new_buttons.dpad_left);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_up, .dpad_up, &new_buttons.dpad_up);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.left_shoulder, .left_shoulder, &new_buttons.left_shoulder);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.right_shoulder, .right_shoulder, &new_buttons.right_shoulder);
                         } else {
                             // Controller not present
                         }

@@ -4,8 +4,6 @@ const win32 = @import("win32.zig");
 
 const XInput = @This();
 
-pub const XUSER_MAX_COUNT = 4;
-
 pub const STATE = extern struct {
     packet_number: win32.DWORD,
     gamepad: GAMEPAD,
@@ -43,6 +41,11 @@ pub const VIBRATION = extern struct {
     left_motor_speed: win32.WORD,
     right_motor_speed: win32.WORD,
 };
+
+pub const XUSER_MAX_COUNT = 4;
+pub const GAMEPAD_LEFT_THUMB_DEADZONE = 7849;
+pub const GAMEPAD_RIGHT_THUMB_DEADZONE = 8689;
+pub const GAMEPAD_TRIGGER_THRESHOLD = 30;
 
 pub const GAMEPAD_DPAD_UP = 0x0001;
 pub const GAMEPAD_DPAD_DOWN = 0x0002;

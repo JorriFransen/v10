@@ -63,20 +63,29 @@ pub const ControllerInput = extern struct {
     end_x: f32 = 0,
     end_y: f32 = 0,
 
-    up: ButtonState = .{},
-    down: ButtonState = .{},
-    left: ButtonState = .{},
-    right: ButtonState = .{},
-    dpad_up: ButtonState = .{},
-    dpad_down: ButtonState = .{},
-    dpad_left: ButtonState = .{},
-    dpad_right: ButtonState = .{},
-    left_shoulder: ButtonState = .{},
-    right_shoulder: ButtonState = .{},
+    buttons: extern union {
+        array: [10]ButtonState,
+        named: extern struct {
+            up: ButtonState,
+            down: ButtonState,
+            left: ButtonState,
+            right: ButtonState,
+            dpad_up: ButtonState,
+            dpad_down: ButtonState,
+            dpad_left: ButtonState,
+            dpad_right: ButtonState,
+            left_shoulder: ButtonState,
+            right_shoulder: ButtonState,
+        },
+        comptime {
+            const dummy: @This() = std.mem.zeroes(@This());
+            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+        }
+    },
 };
 
 pub const Input = extern struct {
-    controllers: [4]ControllerInput = .{ControllerInput{}} ** 4,
+    controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
 };
 
 pub const GameState = extern struct {
@@ -102,27 +111,29 @@ pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buff
         game_memory.initialized = true;
     }
 
-    const input_0 = &input.controllers[0];
+    for (input.controllers) |controller| {
+        if (controller.is_analog) {
+            game_state.blue_offset += @intFromFloat(4 * controller.end_x);
+            game_state.tone_hz = @intFromFloat(256 + (128 * controller.end_y));
+        }
 
-    if (input_0.is_analog) {
-        game_state.blue_offset += @intFromFloat(4 * input_0.end_x);
-        game_state.tone_hz = @intFromFloat(256 + (128 * input_0.end_y));
-    }
+        if (controller.buttons.named.down.ended_down) {
+            game_state.green_offset += 1;
+        }
 
-    if (input_0.down.ended_down) {
-        game_state.green_offset += 1;
-    }
+        if (controller.buttons.named.dpad_up.ended_down) {
+            game_state.green_offset -= 1;
+        }
+        if (controller.buttons.named.dpad_down.ended_down) {
+            game_state.green_offset += 1;
+        }
 
-    if (input_0.dpad_up.ended_down) {
-        game_state.green_offset -= 1;
-    } else if (input_0.dpad_down.ended_down) {
-        game_state.green_offset += 1;
-    }
-
-    if (input_0.dpad_right.ended_down) {
-        game_state.blue_offset += 1;
-    } else if (input_0.dpad_left.ended_down) {
-        game_state.blue_offset -= 1;
+        if (controller.buttons.named.dpad_right.ended_down) {
+            game_state.blue_offset += 1;
+        }
+        if (controller.buttons.named.dpad_left.ended_down) {
+            game_state.blue_offset -= 1;
+        }
     }
 
     outputSound(game_state, sound_buffer);
