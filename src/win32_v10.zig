@@ -191,33 +191,30 @@ fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
                 const is_down = (msg.lParam & (1 << 31)) == 0;
 
                 if (is_down != was_down) {
-                    if (vk_code == win32.VK_W) {
-                        processKeyboardMessage(&buttons.dpad_up, is_down);
-                    } else if (vk_code == win32.VK_A) {
-                        processKeyboardMessage(&buttons.dpad_left, is_down);
-                    } else if (vk_code == win32.VK_S) {
-                        processKeyboardMessage(&buttons.dpad_down, is_down);
-                    } else if (vk_code == win32.VK_D) {
-                        processKeyboardMessage(&buttons.dpad_right, is_down);
-                    } else if (vk_code == win32.VK_Q) {
+                    if (vk_code == win32.VK_Q) {
                         processKeyboardMessage(&buttons.left_shoulder, is_down);
                     } else if (vk_code == win32.VK_E) {
                         processKeyboardMessage(&buttons.right_shoulder, is_down);
+                    } else if (vk_code == win32.VK_W) {
+                        processKeyboardMessage(&buttons.move_up, is_down);
+                    } else if (vk_code == win32.VK_S) {
+                        processKeyboardMessage(&buttons.move_down, is_down);
+                    } else if (vk_code == win32.VK_A) {
+                        processKeyboardMessage(&buttons.move_left, is_down);
+                    } else if (vk_code == win32.VK_D) {
+                        processKeyboardMessage(&buttons.move_right, is_down);
                     } else if (vk_code == win32.VK_UP) {
-                        processKeyboardMessage(&buttons.up, is_down);
-                    } else if (vk_code == win32.VK_LEFT) {
-                        processKeyboardMessage(&buttons.left, is_down);
+                        processKeyboardMessage(&buttons.action_up, is_down);
                     } else if (vk_code == win32.VK_DOWN) {
-                        processKeyboardMessage(&buttons.down, is_down);
+                        processKeyboardMessage(&buttons.action_down, is_down);
+                    } else if (vk_code == win32.VK_LEFT) {
+                        processKeyboardMessage(&buttons.action_left, is_down);
                     } else if (vk_code == win32.VK_RIGHT) {
-                        processKeyboardMessage(&buttons.right, is_down);
+                        processKeyboardMessage(&buttons.action_right, is_down);
                     } else if (vk_code == win32.VK_ESCAPE) {
-                        global_running = false;
+                        processKeyboardMessage(&buttons.start, is_down);
                     } else if (vk_code == win32.VK_SPACE) {
-                        log.debug("space: {s} {s}", .{
-                            if (is_down) "is_down" else "",
-                            if (was_down) "was_down" else "",
-                        });
+                        processKeyboardMessage(&buttons.back, is_down);
                     }
 
                     const alt_key_was_down = (msg.lParam & (1 << 29)) != 0;
@@ -399,6 +396,7 @@ pub fn windowsEntry(
 
                 while (global_running) {
                     const keyboard_controller = &new_input.controllers[0];
+                    keyboard_controller.is_connected = true;
                     const old_keyboard_controller = &old_input.controllers[0];
                     keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
                     for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
@@ -407,48 +405,89 @@ pub fn windowsEntry(
 
                     processPendingMessages(keyboard_controller);
 
-                    var max_controller_count: usize = 1 + xinput.XUSER_MAX_COUNT;
-                    if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
+                    var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
+                    if (max_controller_count > (new_input.controllers.len - 1)) max_controller_count = (new_input.controllers.len - 1);
 
-                    for (0..@min(max_controller_count, xinput.XUSER_MAX_COUNT)) |controller_index| {
+                    for (0..max_controller_count) |controller_index| {
+                        const game_controller_index = controller_index + 1;
+                        var old_controller = &old_input.controllers[game_controller_index];
+                        var new_controller = &new_input.controllers[game_controller_index];
+
                         var controller_state: xinput.STATE = undefined;
                         if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
                             // Controller present
                             const pad = &controller_state.gamepad;
 
-                            const game_controller_index = controller_index + 1;
-                            var old_controller = &old_input.controllers[game_controller_index];
-                            var new_controller = &new_input.controllers[game_controller_index];
-
-                            const stick_x = processXInputStickValue(pad.thumb_l_x, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
-                            const stick_y = processXInputStickValue(pad.thumb_l_y, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
-
-                            new_controller.is_analog = true;
-                            new_controller.start_x = old_controller.end_x;
-                            new_controller.start_y = old_controller.end_y;
-
-                            new_controller.min_x = stick_x;
-                            new_controller.min_y = stick_y;
-                            new_controller.max_x = stick_x;
-                            new_controller.max_y = stick_y;
-                            new_controller.end_x = stick_x;
-                            new_controller.end_y = stick_y;
-
                             const old_buttons = &old_controller.buttons.named;
                             const new_buttons = &new_controller.buttons.named;
 
-                            processXInputDigitalButton(pad.buttons, &old_buttons.down, .a, &new_buttons.down);
-                            processXInputDigitalButton(pad.buttons, &old_buttons.right, .b, &new_buttons.right);
-                            processXInputDigitalButton(pad.buttons, &old_buttons.left, .x, &new_buttons.left);
-                            processXInputDigitalButton(pad.buttons, &old_buttons.up, .y, &new_buttons.up);
-                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_down, .dpad_down, &new_buttons.dpad_down);
-                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_right, .dpad_right, &new_buttons.dpad_right);
-                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_left, .dpad_left, &new_buttons.dpad_left);
-                            processXInputDigitalButton(pad.buttons, &old_buttons.dpad_up, .dpad_up, &new_buttons.dpad_up);
+                            new_controller.is_connected = true;
+
+                            new_controller.stick_average_x = processXInputStickValue(pad.thumb_l_x, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
+                            new_controller.stick_average_y = processXInputStickValue(pad.thumb_l_y, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
+
+                            if (new_controller.stick_average_x != 0 or new_controller.stick_average_y != 0) {
+                                new_controller.is_analog = true;
+                            }
+
+                            if (pad.buttons.dpad_up) {
+                                new_controller.stick_average_y = 1;
+                                new_controller.is_analog = false;
+                            }
+                            if (pad.buttons.dpad_down) {
+                                new_controller.stick_average_y = -1;
+                                new_controller.is_analog = false;
+                            }
+                            if (pad.buttons.dpad_left) {
+                                new_controller.stick_average_x = -1;
+                                new_controller.is_analog = false;
+                            }
+                            if (pad.buttons.dpad_right) {
+                                new_controller.stick_average_x = 1;
+                                new_controller.is_analog = false;
+                            }
+
+                            const threshold = 0.5;
+                            processXInputDigitalButton(
+                                @bitCast(@as(win32.WORD, if (new_controller.stick_average_y < -threshold) 1 else 0)),
+                                &old_buttons.move_down,
+                                @enumFromInt(0),
+                                &new_buttons.move_down,
+                            );
+                            processXInputDigitalButton(
+                                @bitCast(@as(win32.WORD, if (new_controller.stick_average_y > threshold) 1 else 0)),
+                                &old_buttons.move_up,
+                                @enumFromInt(0),
+                                &new_buttons.move_up,
+                            );
+                            processXInputDigitalButton(
+                                @bitCast(@as(win32.WORD, if (new_controller.stick_average_x < -threshold) 1 else 0)),
+                                &old_buttons.move_left,
+                                @enumFromInt(0),
+                                &new_buttons.move_left,
+                            );
+                            processXInputDigitalButton(
+                                @bitCast(@as(win32.WORD, if (new_controller.stick_average_x > threshold) 1 else 0)),
+                                &old_buttons.move_right,
+                                @enumFromInt(0),
+                                &new_buttons.move_right,
+                            );
+
+                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_up, .dpad_up, &new_buttons.move_up);
+                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_down, .dpad_down, &new_buttons.move_down);
+                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_left, .dpad_left, &new_buttons.move_left);
+                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_right, .dpad_right, &new_buttons.move_right);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.action_up, .y, &new_buttons.action_up);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.action_down, .a, &new_buttons.action_down);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.action_left, .x, &new_buttons.action_left);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.action_right, .b, &new_buttons.action_right);
                             processXInputDigitalButton(pad.buttons, &old_buttons.left_shoulder, .left_shoulder, &new_buttons.left_shoulder);
                             processXInputDigitalButton(pad.buttons, &old_buttons.right_shoulder, .right_shoulder, &new_buttons.right_shoulder);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.back, .back, &new_buttons.back);
+                            processXInputDigitalButton(pad.buttons, &old_buttons.start, .start, &new_buttons.start);
                         } else {
                             // Controller not present
+                            new_controller.is_connected = false;
                         }
                     }
 

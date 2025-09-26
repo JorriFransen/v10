@@ -374,7 +374,12 @@ pub fn main() !void {
 
     while (running) {
         const keyboard_controller = &wld.new_input.controllers[0];
-        keyboard_controller.* = .{};
+        keyboard_controller.is_connected = true;
+        const old_keyboard_controller = &wld.old_input.controllers[0];
+        keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
+        for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
+            new_button.ended_down = old_button.ended_down;
+        }
 
         if (wl.display_dispatch(display) == -1) {
             running = false;
@@ -453,40 +458,87 @@ pub fn main() !void {
         }
 
         var max_controller_count: usize = joysticks.len;
-        if (max_controller_count > wld.new_input.controllers.len) max_controller_count = wld.new_input.controllers.len;
+        if (max_controller_count > (wld.new_input.controllers.len - 1)) max_controller_count = (wld.new_input.controllers.len - 1);
 
-        for (&joysticks, 0..) |*js, i| if (js.active) {
+        for (joysticks[0..max_controller_count], 1..) |*js, i| {
             const old_controller = &wld.old_input.controllers[i];
             var new_controller = &wld.new_input.controllers[i];
 
-            // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
-            js.processDigitalButton(&old_controller.down, .south, &new_controller.down);
-            js.processDigitalButton(&old_controller.right, .east, &new_controller.right);
-            js.processDigitalButton(&old_controller.left, .west, &new_controller.left);
-            js.processDigitalButton(&old_controller.up, .north, &new_controller.up);
-            js.processDigitalButton(&old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
-            js.processDigitalButton(&old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
-            js.processDigitalButton(&old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
-            js.processDigitalButton(&old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
-            js.processDigitalButton(&old_controller.left_shoulder, .shoulder_left, &new_controller.left_shoulder);
-            js.processDigitalButton(&old_controller.right_shoulder, .shoulder_right, &new_controller.right_shoulder);
+            const old_buttons = &old_controller.buttons.named;
+            const new_buttons = &new_controller.buttons.named;
 
-            const stick_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
-            const stick_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
+            if (js.active) {
+                new_controller.is_connected = true;
 
-            new_controller.is_analog = true;
-            new_controller.start_x = old_controller.end_x;
-            new_controller.start_y = old_controller.end_y;
+                new_controller.stick_average_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
+                new_controller.stick_average_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
 
-            new_controller.min_x = stick_x;
-            new_controller.min_y = stick_y;
-            new_controller.max_x = stick_x;
-            new_controller.max_y = stick_y;
-            new_controller.end_x = stick_x;
-            new_controller.end_y = stick_y;
+                if (new_controller.stick_average_x != 0 or new_controller.stick_average_y != 0) {
+                    new_controller.is_analog = true;
+                }
 
-            // try js.setRumble(3000, 0);
-        };
+                if (js.buttons[@intFromEnum(Joystick.Button.dpad_up)] == 1) {
+                    new_controller.stick_average_y = 1;
+                    new_controller.is_analog = false;
+                }
+                if (js.buttons[@intFromEnum(Joystick.Button.dpad_down)] == 1) {
+                    new_controller.stick_average_y = -1;
+                    new_controller.is_analog = false;
+                }
+                if (js.buttons[@intFromEnum(Joystick.Button.dpad_left)] == 1) {
+                    new_controller.stick_average_x = -1;
+                    new_controller.is_analog = false;
+                }
+                if (js.buttons[@intFromEnum(Joystick.Button.dpad_right)] == 1) {
+                    new_controller.stick_average_x = 1;
+                    new_controller.is_analog = false;
+                }
+
+                const threshold = 0.5;
+                processDigitalButton(
+                    @bitCast(@as(u15, if (new_controller.stick_average_x < -threshold) 1 else 0)),
+                    &old_buttons.move_left,
+                    @enumFromInt(0),
+                    &new_buttons.move_left,
+                );
+                processDigitalButton(
+                    @bitCast(@as(u15, if (new_controller.stick_average_x > threshold) 1 else 0)),
+                    &old_buttons.move_right,
+                    @enumFromInt(0),
+                    &new_buttons.move_right,
+                );
+                processDigitalButton(
+                    @bitCast(@as(u15, if (new_controller.stick_average_y < -threshold) 1 else 0)),
+                    &old_buttons.move_down,
+                    @enumFromInt(0),
+                    &new_buttons.move_down,
+                );
+                processDigitalButton(
+                    @bitCast(@as(u15, if (new_controller.stick_average_y > threshold) 1 else 0)),
+                    &old_buttons.move_up,
+                    @enumFromInt(0),
+                    &new_buttons.move_up,
+                );
+
+                // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
+                // js.processDigitalButton(&old_buttons.move_up, .dpad_up, &new_buttons.move_up);
+                // js.processDigitalButton(&old_buttons.move_down, .dpad_down, &new_buttons.move_down);
+                // js.processDigitalButton(&old_buttons.move_left, .dpad_left, &new_buttons.move_left);
+                // js.processDigitalButton(&old_buttons.move_right, .dpad_right, &new_buttons.move_right);
+                processDigitalButton(js.buttons, &old_buttons.action_up, .north, &new_buttons.action_up);
+                processDigitalButton(js.buttons, &old_buttons.action_down, .south, &new_buttons.action_down);
+                processDigitalButton(js.buttons, &old_buttons.action_left, .west, &new_buttons.action_left);
+                processDigitalButton(js.buttons, &old_buttons.action_right, .east, &new_buttons.action_right);
+                processDigitalButton(js.buttons, &old_buttons.left_shoulder, .shoulder_left, &new_buttons.left_shoulder);
+                processDigitalButton(js.buttons, &old_buttons.right_shoulder, .shoulder_right, &new_buttons.right_shoulder);
+                processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
+                processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
+
+                // try js.setRumble(3000, 0);
+            } else {
+                new_controller.is_connected = false;
+            }
+        }
 
         const audio_fill = requestAudioBufferFill(pcm_opt, audio_write_frame_count);
 
@@ -696,7 +748,7 @@ const Joystick = struct {
     axis_meta: [axis_count]AxisMeta = [_]AxisMeta{.{}} ** axis_count,
     axis: [axis_count]f32 = [_]f32{0} ** axis_count,
 
-    buttons: [button_count]u1 = [_]u1{0} ** button_count,
+    buttons: Buttons = [_]u1{0} ** button_count,
 
     /// Zero terminated devnode path
     path: [32]u8 = [1]u8{0} ** 32,
@@ -723,6 +775,7 @@ const Joystick = struct {
     };
 
     const button_count = @typeInfo(Button).@"enum".fields.len;
+    const Buttons = [button_count]u1;
     const Button = enum(usize) {
         north,
         east,
@@ -860,11 +913,6 @@ const Joystick = struct {
         }
     }
 
-    fn processDigitalButton(this: *const Joystick, old_state: *const v10.ButtonState, btn: Button, new_state: *v10.ButtonState) void {
-        new_state.ended_down = this.buttons[@intFromEnum(btn)] == 1;
-        new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
-    }
-
     fn setRumble(this: *Joystick, strong: u16, weak: u16) !void {
         assert(this.active);
         assert(this.fd >= 0);
@@ -891,6 +939,11 @@ const Joystick = struct {
         }
     }
 };
+
+fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const v10.ButtonState, btn: Joystick.Button, new_state: *v10.ButtonState) void {
+    new_state.ended_down = buttons[@intFromEnum(btn)] == 1;
+    new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
+}
 
 fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {
     new_state.ended_down = is_down;
@@ -1262,37 +1315,33 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
     const is_down = state == .pressed or state == .repeated;
 
     const keyboard_controller = &wld.new_input.controllers[0];
+    const buttons = &keyboard_controller.buttons.named;
 
     if (is_down != was_down) {
-        if (key == .W) {
-            processKeyEvent(&keyboard_controller.dpad_up, is_down);
-        } else if (key == .A) {
-            processKeyEvent(&keyboard_controller.dpad_left, is_down);
-        } else if (key == .S) {
-            processKeyEvent(&keyboard_controller.dpad_down, is_down);
-        } else if (key == .D) {
-            processKeyEvent(&keyboard_controller.dpad_right, is_down);
-        } else if (key == .Q) {
-            processKeyEvent(&keyboard_controller.left_shoulder, is_down);
+        if (key == .Q) {
+            processKeyEvent(&buttons.left_shoulder, is_down);
         } else if (key == .E) {
-            processKeyEvent(&keyboard_controller.right_shoulder, is_down);
+            processKeyEvent(&buttons.right_shoulder, is_down);
+        } else if (key == .W) {
+            processKeyEvent(&buttons.move_up, is_down);
+        } else if (key == .S) {
+            processKeyEvent(&buttons.move_down, is_down);
+        } else if (key == .A) {
+            processKeyEvent(&buttons.move_left, is_down);
+        } else if (key == .D) {
+            processKeyEvent(&buttons.move_right, is_down);
         } else if (key == .UP) {
-            processKeyEvent(&keyboard_controller.up, is_down);
-        } else if (key == .LEFT) {
-            processKeyEvent(&keyboard_controller.left, is_down);
+            processKeyEvent(&buttons.action_up, is_down);
         } else if (key == .DOWN) {
-            processKeyEvent(&keyboard_controller.down, is_down);
+            processKeyEvent(&buttons.action_down, is_down);
+        } else if (key == .LEFT) {
+            processKeyEvent(&buttons.action_left, is_down);
         } else if (key == .RIGHT) {
-            processKeyEvent(&keyboard_controller.right, is_down);
+            processKeyEvent(&buttons.action_right, is_down);
         } else if (key == .ESC) {
-            running = false;
-        } else if (key == .CAPSLOCK) {
-            running = false;
+            processKeyEvent(&buttons.start, is_down);
         } else if (key == .SPACE) {
-            log.debug("space: {s} {s}", .{
-                if (is_down) "is_down" else "",
-                if (was_down) "was_down" else "",
-            });
+            processKeyEvent(&buttons.back, is_down);
         }
     }
 }
@@ -1483,20 +1532,21 @@ fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8
                     var sibling = udev.enumerate_get_list_entry(sibling_enumerator);
                     while (sibling) |s| {
                         const sib_syspath = udev.list_entry_get_name(s);
-                        const sib_dev = udev.device_new_from_syspath(ctx, sib_syspath).?;
-                        defer _ = udev.device_unref(sib_dev);
+                        if (udev.device_new_from_syspath(ctx, sib_syspath)) |sib_dev| {
+                            defer _ = udev.device_unref(sib_dev);
 
-                        if (udev.device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
-                            is_keyboard = true;
-                            break;
+                            if (udev.device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
+                                is_keyboard = true;
+                                break;
+                            }
+
+                            if (udev.device_get_property_value(sib_dev, "ID_INPUT_MOUSE")) |_| {
+                                is_mouse = true;
+                                break;
+                            }
+
+                            sibling = udev.list_entry_get_next(s);
                         }
-
-                        if (udev.device_get_property_value(sib_dev, "ID_INPUT_MOUSE")) |_| {
-                            is_mouse = true;
-                            break;
-                        }
-
-                        sibling = udev.list_entry_get_next(s);
                     }
                 }
             }
