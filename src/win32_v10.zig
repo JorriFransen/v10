@@ -26,26 +26,27 @@ pub const WindowDimensions = struct {
     height: i32,
 };
 
-pub const Win32AudioOutput = struct {
+pub const AudioOutput = struct {
     dsound_buffer: ?*dsound.IDirectSoundBuffer,
-    buffer: []i16 = &.{},
+    buffer: []Frame = &.{},
 
     frames_per_second: u32,
-    bytes_per_sample: u32,
-    bytes_per_frame: u32,
     buffer_byte_size: u32,
     running_frame_index: u32,
     latency_frame_count: u32,
+
+    const Sample = v10.game.AudioBuffer.Sample;
+    const Frame = v10.game.AudioBuffer.Frame;
 };
 
-fn win32ClearAudioBuffer(audio_output: *Win32AudioOutput) void {
+fn clearAudioBuffer(audio_output: *AudioOutput) void {
     var region1_ptr: *anyopaque = undefined;
     var region1_bytes: u32 = undefined;
     var region2_ptr: *anyopaque = undefined;
     var region2_bytes: u32 = undefined;
 
     if (audio_output.dsound_buffer) |buf| if (buf.Lock(0, audio_output.buffer_byte_size, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
-        const region_1_frame_count = region1_bytes / audio_output.bytes_per_frame;
+        const region_1_frame_count = region1_bytes / @sizeOf(AudioOutput.Frame);
         var dest_sample: [*]i16 = @ptrCast(@alignCast(region1_ptr));
         for (0..region_1_frame_count) |_| {
             dest_sample[0] = 0;
@@ -55,7 +56,7 @@ fn win32ClearAudioBuffer(audio_output: *Win32AudioOutput) void {
             dest_sample += 1;
         }
 
-        const region_2_frame_count = region2_bytes / audio_output.bytes_per_frame;
+        const region_2_frame_count = region2_bytes / @sizeOf(AudioOutput.Frame);
         dest_sample = @ptrCast(@alignCast(region2_ptr));
         for (0..region_2_frame_count) |_| {
             dest_sample[0] = 0;
@@ -69,38 +70,38 @@ fn win32ClearAudioBuffer(audio_output: *Win32AudioOutput) void {
     };
 }
 
-fn win32FillAudioBuffer(audio_output: *Win32AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.game.AudioBuffer) void {
+fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.game.AudioBuffer) void {
     var region1_ptr: *anyopaque = undefined;
     var region1_bytes: u32 = undefined;
     var region2_ptr: *anyopaque = undefined;
     var region2_bytes: u32 = undefined;
 
     if (audio_output.dsound_buffer) |buf| if (buf.Lock(byte_to_lock, bytes_to_write, &region1_ptr, &region1_bytes, &region2_ptr, &region2_bytes, 0) == dsound.OK) {
-        const region_1_frame_count = region1_bytes / audio_output.bytes_per_frame;
+        const region_1_frame_count = region1_bytes / @sizeOf(AudioOutput.Frame);
         var dest_sample: [*]i16 = @ptrCast(@alignCast(region1_ptr));
-        var source_sample = source_buffer.samples;
+        var source_frame = source_buffer.frames;
         for (0..region_1_frame_count) |_| {
-            dest_sample[0] = source_sample[0];
+            dest_sample[0] = source_frame[0].left;
             dest_sample += 1;
-            source_sample += 1;
 
-            dest_sample[0] = source_sample[0];
+            dest_sample[0] = source_frame[0].right;
             dest_sample += 1;
-            source_sample += 1;
+
+            source_frame += 1;
 
             audio_output.running_frame_index +%= 1;
         }
 
-        const region_2_frame_count = region2_bytes / audio_output.bytes_per_frame;
+        const region_2_frame_count = region2_bytes / @sizeOf(AudioOutput.Frame);
         dest_sample = @ptrCast(@alignCast(region2_ptr));
         for (0..region_2_frame_count) |_| {
-            dest_sample[0] = source_sample[0];
+            dest_sample[0] = source_frame[0].left;
             dest_sample += 1;
-            source_sample += 1;
 
-            dest_sample[0] = source_sample[0];
+            dest_sample[0] = source_frame[0].right;
             dest_sample += 1;
-            source_sample += 1;
+
+            source_frame += 1;
 
             audio_output.running_frame_index +%= 1;
         }
@@ -109,7 +110,7 @@ fn win32FillAudioBuffer(audio_output: *Win32AudioOutput, byte_to_lock: u32, byte
     };
 }
 
-fn win32InitDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*dsound.IDirectSoundBuffer {
+fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*dsound.IDirectSoundBuffer {
     dsound.load();
 
     var ds: *dsound.IDirectSound = undefined;
@@ -169,7 +170,7 @@ fn win32InitDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn win32ProcessPendingMessages(keyboard_controller: *v10.game.ControllerInput) void {
+fn processPendingMessages(keyboard_controller: *v10.game.ControllerInput) void {
     var msg = win32.MSG{};
 
     while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
@@ -189,25 +190,25 @@ fn win32ProcessPendingMessages(keyboard_controller: *v10.game.ControllerInput) v
 
                 if (is_down != was_down) {
                     if (vk_code == win32.VK_W) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_up, is_down);
+                        processKeyboardMessage(&keyboard_controller.dpad_up, is_down);
                     } else if (vk_code == win32.VK_A) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_left, is_down);
+                        processKeyboardMessage(&keyboard_controller.dpad_left, is_down);
                     } else if (vk_code == win32.VK_S) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_down, is_down);
+                        processKeyboardMessage(&keyboard_controller.dpad_down, is_down);
                     } else if (vk_code == win32.VK_D) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_right, is_down);
+                        processKeyboardMessage(&keyboard_controller.dpad_right, is_down);
                     } else if (vk_code == win32.VK_Q) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.left_shoulder, is_down);
+                        processKeyboardMessage(&keyboard_controller.left_shoulder, is_down);
                     } else if (vk_code == win32.VK_E) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.right_shoulder, is_down);
+                        processKeyboardMessage(&keyboard_controller.right_shoulder, is_down);
                     } else if (vk_code == win32.VK_UP) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.up, is_down);
+                        processKeyboardMessage(&keyboard_controller.up, is_down);
                     } else if (vk_code == win32.VK_LEFT) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.left, is_down);
+                        processKeyboardMessage(&keyboard_controller.left, is_down);
                     } else if (vk_code == win32.VK_DOWN) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.down, is_down);
+                        processKeyboardMessage(&keyboard_controller.down, is_down);
                     } else if (vk_code == win32.VK_RIGHT) {
-                        win32ProcessKeyboardMessage(&keyboard_controller.right, is_down);
+                        processKeyboardMessage(&keyboard_controller.right, is_down);
                     } else if (vk_code == win32.VK_ESCAPE) {
                         global_running = false;
                     } else if (vk_code == win32.VK_SPACE) {
@@ -232,17 +233,17 @@ fn win32ProcessPendingMessages(keyboard_controller: *v10.game.ControllerInput) v
     }
 }
 
-fn win32ProcessKeyboardMessage(new_state: *v10.game.ButtonState, ended_down: bool) void {
+fn processKeyboardMessage(new_state: *v10.game.ButtonState, ended_down: bool) void {
     new_state.ended_down = ended_down;
     new_state.half_transition_count += 1;
 }
 
-fn win32ProcessXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.game.ButtonState, comptime button: GamepadButton, new_state: *v10.game.ButtonState) void {
+fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.game.ButtonState, comptime button: GamepadButton, new_state: *v10.game.ButtonState) void {
     new_state.ended_down = @field(xinput_button_state, @tagName(button));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
 }
 
-fn win32GetWindowDimension(window: win32.HWND) WindowDimensions {
+fn getWindowDimension(window: win32.HWND) WindowDimensions {
     var client_rect: win32.RECT = undefined;
     _ = win32.GetClientRect(window, &client_rect);
     return .{
@@ -317,32 +318,29 @@ pub fn windowsEntry(
         if (window_opt) |window| {
             global_running = true;
             const device_context = win32.GetDC(window);
-            const dib_allocated = win32ResizeDibSection(&global_back_buffer, 1280, 720);
+            const dib_allocated = resizeDibSection(&global_back_buffer, 1280, 720);
 
             const audio_fps = 48000;
-            const audio_bytes_per_sample = @sizeOf(i16);
-            const audio_bytes_per_frame = audio_bytes_per_sample * 2;
+            const audio_bytes_per_frame = @sizeOf(AudioOutput.Sample) * 2;
             const audio_buffer_byte_size = audio_fps * audio_bytes_per_frame;
 
-            var audio_output: Win32AudioOutput = .{
-                .dsound_buffer = win32InitDSound(window, audio_fps, audio_buffer_byte_size),
+            var audio_output: AudioOutput = .{
+                .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size),
                 .frames_per_second = 48000,
-                .bytes_per_sample = @sizeOf(i16),
-                .bytes_per_frame = audio_bytes_per_frame,
                 .buffer_byte_size = audio_buffer_byte_size,
                 .running_frame_index = 0,
                 .latency_frame_count = audio_fps / 15,
             };
 
-            win32ClearAudioBuffer(&audio_output);
+            clearAudioBuffer(&audio_output);
             if (audio_output.dsound_buffer) |b| _ = b.Play(0, 0, dsound.BPLAY_LOOPING);
-            const samples = win32.VirtualAlloc(
+            const audio_frames = win32.VirtualAlloc(
                 null,
                 audio_output.buffer_byte_size,
                 win32.MEM_RESERVE | win32.MEM_COMMIT,
                 win32.PAGE_READWRITE,
             );
-            audio_output.buffer = @as([*]i16, @ptrCast(@alignCast(samples)))[0 .. audio_output.buffer_byte_size / audio_output.bytes_per_frame];
+            audio_output.buffer = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(audio_frames)))[0 .. audio_output.buffer_byte_size / @sizeOf(AudioOutput.Frame)];
 
             const base_address: ?[*]u8 = comptime if (options.internal_build)
                 @ptrFromInt(mem.TiB * 2)
@@ -370,7 +368,7 @@ pub fn windowsEntry(
                 .transient = @as([*]u8, @ptrCast(trans))[0..transient_storage_size],
             };
 
-            if (dib_allocated and samples != null and perm != null and trans != null) {
+            if (dib_allocated and audio_frames != null and perm != null and trans != null) {
                 xinput.load();
 
                 var input = [_]v10.game.Input{.{}} ** 2;
@@ -386,7 +384,7 @@ pub fn windowsEntry(
                     const keyboard_controller = &new_input.controllers[0];
                     keyboard_controller.* = .{};
 
-                    win32ProcessPendingMessages(keyboard_controller);
+                    processPendingMessages(keyboard_controller);
 
                     var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
                     if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
@@ -417,16 +415,16 @@ pub fn windowsEntry(
                             new_controller.end_x = stick_x;
                             new_controller.end_y = stick_y;
 
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.down, .a, &new_controller.down);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
-                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
+                            processXInputDigitalButton(pad.buttons, &old_controller.down, .a, &new_controller.down);
+                            processXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
+                            processXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
+                            processXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
+                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
+                            processXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
+                            processXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
                         } else {
                             // Controller not present
                         }
@@ -442,8 +440,8 @@ pub fn windowsEntry(
                     var frames_to_write: u32 = undefined;
                     var audio_valid = false;
                     if (audio_output.dsound_buffer) |buf| if (buf.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
-                        byte_to_lock = (audio_output.running_frame_index * audio_output.bytes_per_frame) % audio_output.buffer_byte_size;
-                        const target_cursor: u32 = ((play_cursor + (audio_output.latency_frame_count * audio_output.bytes_per_frame)) % audio_output.buffer_byte_size);
+                        byte_to_lock = (audio_output.running_frame_index * @sizeOf(AudioOutput.Frame)) % audio_output.buffer_byte_size;
+                        const target_cursor: u32 = ((play_cursor + (audio_output.latency_frame_count * @sizeOf(AudioOutput.Frame))) % audio_output.buffer_byte_size);
 
                         bytes_to_write =
                             if (byte_to_lock > target_cursor)
@@ -451,12 +449,12 @@ pub fn windowsEntry(
                             else
                                 target_cursor - byte_to_lock;
 
-                        frames_to_write = bytes_to_write / audio_output.bytes_per_frame;
+                        frames_to_write = bytes_to_write / @sizeOf(AudioOutput.Frame);
                         audio_valid = true;
                     };
 
                     var game_sound_output_buffer: v10.game.AudioBuffer = .{
-                        .samples = audio_output.buffer.ptr,
+                        .frames = @ptrCast(audio_output.buffer.ptr),
                         .frame_count = @intCast(frames_to_write),
                         .frames_per_second = audio_fps,
                     };
@@ -471,11 +469,11 @@ pub fn windowsEntry(
                     v10.game.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
 
                     if (audio_valid) {
-                        win32FillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
+                        fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
                     }
 
-                    const dimension = win32GetWindowDimension(window);
-                    win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
+                    const dimension = getWindowDimension(window);
+                    displayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
 
                     const end_cycle_count = x86_64.rdtscp();
 
@@ -574,8 +572,8 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             var paint: win32.PAINTSTRUCT = undefined;
             const dc = win32.BeginPaint(window, &paint);
             {
-                const dimension = win32GetWindowDimension(window);
-                win32DisplayBufferInWindow(dc, dimension.width, dimension.height, &global_back_buffer);
+                const dimension = getWindowDimension(window);
+                displayBufferInWindow(dc, dimension.width, dimension.height, &global_back_buffer);
             }
             _ = win32.EndPaint(window, &paint);
         },
@@ -588,7 +586,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
     return result;
 }
 
-fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) bool {
+fn resizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) bool {
     if (buffer.memory.len > 0) {
         _ = win32.VirtualFree(buffer.memory.ptr, 0, win32.MEM_RELEASE);
     }
@@ -617,7 +615,7 @@ fn win32ResizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) 
     return memory != null;
 }
 
-fn win32DisplayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: *OffscreenBuffer) void {
+fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: *OffscreenBuffer) void {
 
     // TODO: Only set this after resize?
     if (window_width < buffer.width or window_height < buffer.height) {

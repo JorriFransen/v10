@@ -35,8 +35,14 @@ pub const game = struct {
         pitch: i32,
     };
 
-    pub const AudioBuffer = struct {
-        samples: [*]i16,
+    pub const AudioBuffer = extern struct {
+        pub const Sample = i16;
+        pub const Frame = extern struct {
+            left: Sample = 0,
+            right: Sample = 0,
+        };
+
+        frames: [*]Frame,
         frame_count: i32,
         frames_per_second: i32,
     };
@@ -46,7 +52,7 @@ pub const game = struct {
         ended_down: bool = false,
     };
 
-    pub const ControllerInput = struct {
+    pub const ControllerInput = extern struct {
         is_analog: bool = false,
 
         start_x: f32 = 0,
@@ -70,11 +76,11 @@ pub const game = struct {
         right_shoulder: ButtonState = .{},
     };
 
-    pub const Input = struct {
+    pub const Input = extern struct {
         controllers: [4]ControllerInput = .{ControllerInput{}} ** 4,
     };
 
-    pub const GameState = struct {
+    pub const GameState = extern struct {
         blue_offset: i32 = 0,
         green_offset: i32 = 0,
         tone_hz: i32 = 256,
@@ -128,15 +134,13 @@ pub const game = struct {
         const tone_volume = 3000;
         const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
 
-        var sample_out: [*]i16 = buffer.samples;
+        var frame_out = buffer.frames;
         for (0..@intCast(buffer.frame_count)) |_| {
             const sine_value: f32 = @sin(game_state.t_sine);
             const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
-            sample_out[0] = sample_value;
-            sample_out += 1;
 
-            sample_out[0] = sample_value;
-            sample_out += 1;
+            frame_out[0] = .{ .left = sample_value, .right = sample_value };
+            frame_out += 1;
 
             game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
             if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;

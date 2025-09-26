@@ -179,7 +179,7 @@ pub fn main() !void {
             const r = wld.pending_resize.?;
             try resize(r.width, r.height);
             const buffer = aquireFreeBuffer().?;
-            linuxDisplayBufferInWindow(buffer);
+            displayBufferInWindow(buffer);
         }
 
         xdg_decor_toplevel = .{
@@ -234,7 +234,7 @@ pub fn main() !void {
                 try resize(r.width, r.height);
             }
             const buffer = aquireFreeBuffer().?;
-            linuxDisplayBufferInWindow(buffer);
+            displayBufferInWindow(buffer);
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         } else {
@@ -262,18 +262,16 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
-    var sound_output: SoundOutput = .{};
-    sound_output.frames_per_second = 48000;
-    sound_output.bytes_per_sample = @sizeOf(i16);
-    sound_output.bytes_per_frame = sound_output.bytes_per_sample * 2;
-    sound_output.buffer_byte_size = sound_output.frames_per_second * sound_output.bytes_per_frame / 15;
-    sound_output.period_size = 1024;
-    sound_output.latency_frame_count = sound_output.frames_per_second / 15;
+    var audio_output: AudioOutput = .{};
+    audio_output.frames_per_second = 48000;
+    audio_output.buffer_byte_size = audio_output.frames_per_second * @sizeOf(AudioOutput.Frame) / 15;
+    audio_output.period_size = 1024;
+    audio_output.latency_frame_count = audio_output.frames_per_second / 15;
 
-    linuxInitAlsa(sound_output.frames_per_second, sound_output.bytes_per_frame, &sound_output.buffer_byte_size, &sound_output.period_size);
-    if (requestSoundBufferFill(pcm_opt, &sound_output, sound_output.latency_frame_count)) |f| {
+    initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.buffer_byte_size, &audio_output.period_size);
+    if (requestAudioBufferFill(pcm_opt, audio_output.latency_frame_count)) |f| {
         const pcm = pcm_opt.?;
-        @memset(f.frames, .{ 0, 0 });
+        @memset(f.frames, .{});
         f.commit(pcm);
         _ = alsa.pcm_start(pcm);
     }
@@ -490,12 +488,14 @@ pub fn main() !void {
             // try js.setRumble(3000, 0);
         };
 
-        const audio_fill = requestSoundBufferFill(pcm_opt, &sound_output, audio_write_frame_count);
+        const audio_fill = requestAudioBufferFill(pcm_opt, audio_write_frame_count);
 
-        var game_sound_output_buffer: v10.game.AudioBuffer = .{
-            .samples = if (audio_fill) |f| @ptrCast(f.frames.ptr) else &.{},
-            .frame_count = if (audio_fill) |f| @intCast(f.frames.len) else 0,
-            .frames_per_second = @intCast(sound_output.frames_per_second),
+        const frames_ptr, const frames_len = if (audio_fill) |f| .{ f.frames.ptr, f.frames.len } else .{ undefined, 0 };
+
+        var game_audio_output_buffer: v10.game.AudioBuffer = .{
+            .frames = frames_ptr,
+            .frame_count = @intCast(frames_len),
+            .frames_per_second = @intCast(audio_output.frames_per_second),
         };
 
         var game_offscreen_buffer = v10.game.OffscreenBuffer{
@@ -505,7 +505,7 @@ pub fn main() !void {
             .pitch = global_back_buffer.pitch,
         };
 
-        v10.game.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_sound_output_buffer);
+        v10.game.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
 
         if (audio_fill) |f| {
             const pcm = pcm_opt.?;
@@ -525,7 +525,7 @@ pub fn main() !void {
                 const wl_buffer_mem: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
                 @memcpy(wl_buffer_mem[0..@intCast(wl_buffer.width * wl_buffer.height * bytes_per_pixel)], global_back_buffer.memory);
 
-                linuxDisplayBufferInWindow(wl_buffer);
+                displayBufferInWindow(wl_buffer);
                 wayland_blit = true;
             } else {
                 _ = wl.display_roundtrip(display);
@@ -1510,42 +1510,41 @@ fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8
     return null;
 }
 
-const SoundOutput = struct {
+const AudioOutput = struct {
     frames_per_second: u32 = 0,
-    bytes_per_sample: u32 = 0,
-    bytes_per_frame: u32 = 0,
     buffer_byte_size: u32 = 0,
     period_size: u32 = 0, // TODO: This should be set to latency_frame_count!
     latency_frame_count: u32 = 0,
+
+    const Frame = v10.game.AudioBuffer.Frame;
 };
 
-const SoundOutputFill = struct {
+const AudioOutputFill = struct {
     offset: alsa.PcmUFrames,
-    frames: [][2]i16,
+    frames: []AudioOutput.Frame,
 
-    fn commit(this: SoundOutputFill, pcm: *alsa.Pcm) void {
+    fn commit(this: AudioOutputFill, pcm: *alsa.Pcm) void {
         _ = alsa.pcm_mmap_commit(pcm, this.offset, @intCast(this.frames.len));
     }
 };
 
-fn requestSoundBufferFill(pcm: ?*alsa.Pcm, sound_output: *SoundOutput, frames: alsa.PcmSFrames) ?SoundOutputFill {
-    if (frames > 0) {
+fn requestAudioBufferFill(pcm: ?*alsa.Pcm, frame_count: alsa.PcmSFrames) ?AudioOutputFill {
+    if (frame_count > 0) {
         var area: [2]?*alsa.PcmChannelArea = .{ null, null };
         var offset: alsa.PcmUFrames = 0;
-        var frames_actual: alsa.PcmUFrames = @intCast(frames);
+        var actual_frame_count: alsa.PcmUFrames = @intCast(frame_count);
 
-        _ = alsa.pcm_mmap_begin(pcm.?, @ptrCast(&area), &offset, &frames_actual);
+        _ = alsa.pcm_mmap_begin(pcm.?, @ptrCast(&area), &offset, &actual_frame_count);
         assert(area[1] == null);
 
-        var writable_frames: [*][2]i16 = @ptrCast(@alignCast(area[0].?.addr + (offset * sound_output.bytes_per_frame)));
-
-        return .{ .offset = offset, .frames = writable_frames[0..frames_actual] };
+        var frames: [*]AudioOutput.Frame = @ptrCast(@alignCast(area[0].?.addr));
+        return .{ .offset = offset, .frames = frames[offset .. offset + actual_frame_count] };
     } else {
         return null;
     }
 }
 
-fn linuxInitAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size: *u32, period_size: *u32) void {
+fn initAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size: *u32, period_size: *u32) void {
     alsa.load();
 
     // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
@@ -1604,7 +1603,7 @@ fn linuxInitAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte
     }
 }
 
-fn linuxDisplayBufferInWindow(buffer: *WlBuffer) void {
+fn displayBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
     wld.surface.damage(0, 0, wld.window_width, wld.window_height);
     wld.surface.commit();
