@@ -167,12 +167,82 @@ fn win32InitDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32
     return sound_buffer_opt;
 }
 
-fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtons, old_state: *const v10.game.ButtonState, comptime button: @Type(.enum_literal), new_state: *v10.game.ButtonState) void {
+const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
+
+fn win32ProcessPendingMessages(keyboard_controller: *v10.game.ControllerInput) void {
+    var msg = win32.MSG{};
+
+    while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
+        switch (msg.message) {
+            win32.WM_QUIT => {
+                global_running = false;
+            },
+
+            win32.WM_SYSKEYDOWN,
+            win32.WM_SYSKEYUP,
+            win32.WM_KEYDOWN,
+            win32.WM_KEYUP,
+            => {
+                const vk_code = msg.wParam;
+                const was_down = (msg.lParam & (1 << 30)) != 0;
+                const is_down = (msg.lParam & (1 << 31)) == 0;
+
+                if (is_down != was_down) {
+                    if (vk_code == win32.VK_W) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_up, is_down);
+                    } else if (vk_code == win32.VK_A) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_left, is_down);
+                    } else if (vk_code == win32.VK_S) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_down, is_down);
+                    } else if (vk_code == win32.VK_D) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.dpad_right, is_down);
+                    } else if (vk_code == win32.VK_Q) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.left_shoulder, is_down);
+                    } else if (vk_code == win32.VK_E) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.right_shoulder, is_down);
+                    } else if (vk_code == win32.VK_UP) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.up, is_down);
+                    } else if (vk_code == win32.VK_LEFT) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.left, is_down);
+                    } else if (vk_code == win32.VK_DOWN) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.down, is_down);
+                    } else if (vk_code == win32.VK_RIGHT) {
+                        win32ProcessKeyboardMessage(&keyboard_controller.right, is_down);
+                    } else if (vk_code == win32.VK_ESCAPE) {
+                        global_running = false;
+                    } else if (vk_code == win32.VK_SPACE) {
+                        log.debug("space: {s} {s}", .{
+                            if (is_down) "is_down" else "",
+                            if (was_down) "was_down" else "",
+                        });
+                    }
+
+                    const alt_key_was_down = (msg.lParam & (1 << 29)) != 0;
+                    if ((vk_code == win32.VK_F4) and alt_key_was_down) {
+                        global_running = false;
+                    }
+                }
+            },
+
+            else => {
+                _ = win32.TranslateMessage(&msg);
+                _ = win32.DispatchMessageA(&msg);
+            },
+        }
+    }
+}
+
+fn win32ProcessKeyboardMessage(new_state: *v10.game.ButtonState, ended_down: bool) void {
+    new_state.ended_down = ended_down;
+    new_state.half_transition_count += 1;
+}
+
+fn win32ProcessXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.game.ButtonState, comptime button: GamepadButton, new_state: *v10.game.ButtonState) void {
     new_state.ended_down = @field(xinput_button_state, @tagName(button));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
 }
 
-fn getWindowDimension(window: win32.HWND) WindowDimensions {
+fn win32GetWindowDimension(window: win32.HWND) WindowDimensions {
     var client_rect: win32.RECT = undefined;
     _ = win32.GetClientRect(window, &client_rect);
     return .{
@@ -313,15 +383,10 @@ pub fn windowsEntry(
                 var last_cycle_count = x86_64.rdtsc();
 
                 while (global_running) {
-                    var msg = win32.MSG{};
+                    const keyboard_controller = &new_input.controllers[0];
+                    keyboard_controller.* = .{};
 
-                    while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
-                        if (msg.message == win32.WM_QUIT) {
-                            global_running = false;
-                        }
-                        _ = win32.TranslateMessage(&msg);
-                        _ = win32.DispatchMessageA(&msg);
-                    }
+                    win32ProcessPendingMessages(keyboard_controller);
 
                     var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
                     if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
@@ -352,16 +417,16 @@ pub fn windowsEntry(
                             new_controller.end_x = stick_x;
                             new_controller.end_y = stick_y;
 
-                            processXInputDigitalButton(pad.buttons, &old_controller.down, .a, &new_controller.down);
-                            processXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
-                            processXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
-                            processXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
-                            processXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
-                            processXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
-                            processXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.down, .a, &new_controller.down);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.right, .b, &new_controller.right);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.left, .x, &new_controller.left);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.up, .y, &new_controller.up);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_down, .dpad_down, &new_controller.dpad_down);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_right, .dpad_right, &new_controller.dpad_right);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_left, .dpad_left, &new_controller.dpad_left);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.dpad_up, .dpad_up, &new_controller.dpad_up);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.left_shoulder, .left_shoulder, &new_controller.left_shoulder);
+                            win32ProcessXInputDigitalButton(pad.buttons, &old_controller.right_shoulder, .right_shoulder, &new_controller.right_shoulder);
                         } else {
                             // Controller not present
                         }
@@ -409,7 +474,7 @@ pub fn windowsEntry(
                         win32FillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
                     }
 
-                    const dimension = getWindowDimension(window);
+                    const dimension = win32GetWindowDimension(window);
                     win32DisplayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
 
                     const end_cycle_count = x86_64.rdtscp();
@@ -463,6 +528,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
         win32.WM_KEYDOWN,
         win32.WM_KEYUP,
         => {
+            assert(false); // Assume keys are dispatched/handled in the main loop
             const vk_code = wparam;
             const was_down = (lparam & (1 << 30)) != 0;
             const is_down = (lparam & (1 << 31)) == 0;
@@ -508,7 +574,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             var paint: win32.PAINTSTRUCT = undefined;
             const dc = win32.BeginPaint(window, &paint);
             {
-                const dimension = getWindowDimension(window);
+                const dimension = win32GetWindowDimension(window);
                 win32DisplayBufferInWindow(dc, dimension.width, dimension.height, &global_back_buffer);
             }
             _ = win32.EndPaint(window, &paint);

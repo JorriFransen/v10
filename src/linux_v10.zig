@@ -127,7 +127,7 @@ pub fn main() !void {
         return error.UnexpectedWayland;
     };
 
-    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
+    wld.keyboard.add_listener(&wl_keyboard_listener, null);
 
     if (wli.xrgb8888 == false) {
         log.err("xrgb8888 format not avaliable", .{});
@@ -368,14 +368,20 @@ pub fn main() !void {
     log.debug("perm: {*}", .{game_memory.permanent.ptr});
     log.debug("trans: {*}", .{game_memory.transient.ptr});
 
-    var game_input = [_]v10.game.Input{.{}} ** 2;
-    var new_input = &game_input[0];
-    var old_input = &game_input[1];
+    wld.new_input = &wld.game_input[0];
+    wld.old_input = &wld.game_input[1];
 
     var last_counter = try std.time.Instant.now();
     var last_cycle_count = x86_64.rdtsc();
 
-    while (wl.display_dispatch(display) != -1 and running) {
+    while (running) {
+        const keyboard_controller = &wld.new_input.controllers[0];
+        keyboard_controller.* = .{};
+
+        if (wl.display_dispatch(display) == -1) {
+            running = false;
+        }
+
         var audio_write_frame_count: alsa.PcmSFrames = 0;
 
         if (try linux.poll(&poll_fds, 0) > 0) {
@@ -449,11 +455,11 @@ pub fn main() !void {
         }
 
         var max_controller_count: usize = joysticks.len;
-        if (max_controller_count > new_input.controllers.len) max_controller_count = new_input.controllers.len;
+        if (max_controller_count > wld.new_input.controllers.len) max_controller_count = wld.new_input.controllers.len;
 
         for (&joysticks, 0..) |*js, i| if (js.active) {
-            const old_controller = &old_input.controllers[i];
-            var new_controller = &new_input.controllers[i];
+            const old_controller = &wld.old_input.controllers[i];
+            var new_controller = &wld.new_input.controllers[i];
 
             // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
             js.processDigitalButton(&old_controller.down, .south, &new_controller.down);
@@ -499,7 +505,7 @@ pub fn main() !void {
             .pitch = global_back_buffer.pitch,
         };
 
-        v10.game.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
+        v10.game.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_sound_output_buffer);
 
         if (audio_fill) |f| {
             const pcm = pcm_opt.?;
@@ -542,9 +548,9 @@ pub fn main() !void {
         last_counter = end_counter;
         last_cycle_count = end_cycle_count;
 
-        const tmp = new_input;
-        new_input = old_input;
-        old_input = tmp;
+        const tmp = wld.new_input;
+        wld.new_input = wld.old_input;
+        wld.old_input = tmp;
     }
 }
 
@@ -608,6 +614,10 @@ const WlData = struct {
     shm_data: []align(std.heap.page_size_min) u8 = &.{},
 
     pending_resize: ?WlPendingResize = null,
+
+    game_input: [2]v10.game.Input = .{v10.game.Input{}} ** 2,
+    new_input: *v10.game.Input = undefined,
+    old_input: *v10.game.Input = undefined,
 };
 
 const WlBuffer = struct {
@@ -867,7 +877,7 @@ const Joystick = struct {
                 .type = .RUMBLE,
                 .id = this.rumble_event_id,
                 // NOTE: These magnitudes are treated as i16 values by the xpad driver!
-                // TODO: Queury the driver with udev, modify magnitude based on driver
+                // TODO: Query the driver with udev, modify magnitude based on driver
                 .u = .{ .rumble = .{ .strong_magnitude = this.rumble_strong, .weak_magnitude = this.rumble_weak } },
                 .replay = .{ .length = 0xffff },
             };
@@ -881,6 +891,11 @@ const Joystick = struct {
         }
     }
 };
+
+fn processKeyEvent(new_state: *v10.game.ButtonState, is_down: bool) void {
+    new_state.ended_down = is_down;
+    new_state.half_transition_count += 1;
+}
 
 const ShmError = error{
     ShmOpenFailed,
@@ -1246,27 +1261,29 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
     const was_down = state != .pressed;
     const is_down = state == .pressed or state == .repeated;
 
+    const keyboard_controller = &wld.new_input.controllers[0];
+
     if (is_down != was_down) {
         if (key == .W) {
-            //
+            processKeyEvent(&keyboard_controller.dpad_up, is_down);
         } else if (key == .A) {
-            //
+            processKeyEvent(&keyboard_controller.dpad_left, is_down);
         } else if (key == .S) {
-            //
+            processKeyEvent(&keyboard_controller.dpad_down, is_down);
         } else if (key == .D) {
-            //
+            processKeyEvent(&keyboard_controller.dpad_right, is_down);
         } else if (key == .Q) {
-            //
+            processKeyEvent(&keyboard_controller.left_shoulder, is_down);
         } else if (key == .E) {
-            //
+            processKeyEvent(&keyboard_controller.right_shoulder, is_down);
         } else if (key == .UP) {
-            //
+            processKeyEvent(&keyboard_controller.up, is_down);
         } else if (key == .LEFT) {
-            //
+            processKeyEvent(&keyboard_controller.left, is_down);
         } else if (key == .DOWN) {
-            //
+            processKeyEvent(&keyboard_controller.down, is_down);
         } else if (key == .RIGHT) {
-            //
+            processKeyEvent(&keyboard_controller.right, is_down);
         } else if (key == .ESC) {
             running = false;
         } else if (key == .CAPSLOCK) {

@@ -12,7 +12,7 @@ pub const STATE = extern struct {
 };
 
 pub const GAMEPAD = extern struct {
-    buttons: GamepadButtons,
+    buttons: GamepadButtonBits,
     left_trigger: win32.BYTE,
     right_trigger: win32.BYTE,
     thumb_l_x: win32.SHORT,
@@ -21,7 +21,7 @@ pub const GAMEPAD = extern struct {
     thumb_r_y: win32.SHORT,
 };
 
-pub const GamepadButtons = packed struct(win32.WORD) {
+pub const GamepadButtonBits = packed struct(win32.WORD) {
     dpad_up: bool,
     dpad_down: bool,
     dpad_left: bool,
