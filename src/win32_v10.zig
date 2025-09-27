@@ -12,6 +12,18 @@ const assert = std.debug.assert;
 
 var global_running = false;
 var global_back_buffer: OffscreenBuffer = undefined;
+var global_perf_count_frequency: u64 = undefined;
+
+inline fn getWallClock() win32.LARGE_INTEGER {
+    var result: win32.LARGE_INTEGER = .{ .quad_part = 0 };
+    _ = win32.QueryPerformanceCounter(&result);
+    return result;
+}
+
+inline fn getSecondsElapsed(start: win32.LARGE_INTEGER, end: win32.LARGE_INTEGER) f32 {
+    const diff: f32 = @floatFromInt(end.quad_part - start.quad_part);
+    return diff / @as(f32, @floatFromInt(global_perf_count_frequency));
+}
 
 pub const OffscreenBuffer = struct {
     info: win32.BITMAPINFO,
@@ -304,7 +316,10 @@ pub fn windowsEntry(
 
     var qpf_result: win32.LARGE_INTEGER = undefined;
     _ = win32.QueryPerformanceFrequency(&qpf_result);
-    const perf_count_frequency = qpf_result.quad_part;
+    global_perf_count_frequency = qpf_result.quad_part;
+
+    const desired_scheduler_ms = 1;
+    const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.TIMERR_NOERROR;
 
     const window_class = win32.WNDCLASSA{
         .style = win32.CS_OWNDC | win32.CS_HREDRAW | win32.CS_VREDRAW,
@@ -328,6 +343,10 @@ pub fn windowsEntry(
             instance,
             null,
         );
+
+        const monitor_refresh_hz = 60;
+        const game_update_hz = monitor_refresh_hz / 2;
+        const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
 
         if (window_opt) |window| {
             global_running = true;
@@ -389,19 +408,17 @@ pub fn windowsEntry(
                 var new_input = &input[0];
                 var old_input = &input[1];
 
-                var last_counter: win32.LARGE_INTEGER = undefined;
-                _ = win32.QueryPerformanceFrequency(&last_counter);
-
+                var last_counter = getWallClock();
                 var last_cycle_count = x86_64.rdtsc();
 
                 while (global_running) {
                     const keyboard_controller = &new_input.controllers[0];
-                    keyboard_controller.is_connected = true;
                     const old_keyboard_controller = &old_input.controllers[0];
                     keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
                     for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
                         new_button.ended_down = old_button.ended_down;
                     }
+                    keyboard_controller.is_connected = true;
 
                     processPendingMessages(keyboard_controller);
 
@@ -527,34 +544,48 @@ pub fn windowsEntry(
                         .pitch = global_back_buffer.pitch,
                     };
 
-                    v10.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
+                    const keep_running = v10.updateAndRender(&game_memory, new_input, &game_offscreen_buffer, &game_sound_output_buffer);
+                    if (!keep_running) global_running = false;
 
                     if (audio_valid) {
                         fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
                     }
 
+                    const work_counter = getWallClock();
+                    const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
+
+                    var seconds_elapsed_for_frame = work_seconds_elapsed;
+                    if (seconds_elapsed_for_frame < target_seconds_per_frame) {
+                        while (seconds_elapsed_for_frame < target_seconds_per_frame) {
+                            if (sleep_is_granular) {
+                                const sleep_ms: win32.DWORD = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
+                                win32.Sleep(sleep_ms);
+                            }
+                            seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
+                        }
+                    } else {
+                        log.debug("Missed frame time!", .{});
+                    }
+
                     const dimension = getWindowDimension(window);
                     displayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
-
-                    const end_cycle_count = x86_64.rdtscp();
-
-                    var end_counter: win32.LARGE_INTEGER = undefined;
-                    _ = win32.QueryPerformanceCounter(&end_counter);
-
-                    const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
-                    const counter_elapsed: f32 = @floatFromInt(end_counter.quad_part - last_counter.quad_part);
-                    const ms_per_frame = (1000 * counter_elapsed) / @as(f32, @floatFromInt(perf_count_frequency));
-                    const fps = @as(f32, @floatFromInt(perf_count_frequency)) / counter_elapsed;
-                    const mcps = cycles_elapsed / (1000 * 1000);
-                    // log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f", .{ ms_per_frame, fps, mcps });
-                    _ = .{ ms_per_frame, fps, mcps };
-
-                    last_counter = end_counter;
-                    last_cycle_count = end_cycle_count;
 
                     const tmp = new_input;
                     new_input = old_input;
                     old_input = tmp;
+
+                    const end_counter = getWallClock();
+                    const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
+                    last_counter = end_counter;
+
+                    const end_cycle_count = x86_64.rdtscp();
+                    const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
+                    last_cycle_count = end_cycle_count;
+
+                    const fps = std.time.ms_per_s / ms_per_frame;
+                    const mcps = cycles_elapsed / (1000 * 1000);
+                    log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f,  {d:.2}wms", .{ ms_per_frame, fps, mcps, work_seconds_elapsed * std.time.ms_per_s });
+                    _ = .{ ms_per_frame, fps, mcps };
                 }
             }
         } else {
@@ -571,9 +602,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
     var result: win32.LRESULT = 0;
 
     switch (message) {
-        win32.WM_SIZE => {
-            log.debug("Resize... ", .{});
-        },
+        win32.WM_SIZE => {},
 
         win32.WM_CLOSE, win32.WM_DESTROY => {
             global_running = false;

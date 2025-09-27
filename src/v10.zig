@@ -102,8 +102,10 @@ pub const Memory = struct {
     transient: []u8 = &.{},
 };
 
-pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) void {
+pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) bool {
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
+
+    var result = true;
 
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
     if (!game_memory.initialized) {
@@ -137,10 +139,16 @@ pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buff
         if (buttons.action_down.ended_down) {
             game_state.green_offset += 1;
         }
+
+        if (buttons.start.ended_down) {
+            result = false;
+        }
     };
 
     outputSound(game_state, sound_buffer);
     renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
+
+    return result;
 }
 
 pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {

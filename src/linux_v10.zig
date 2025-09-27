@@ -262,6 +262,10 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
+    const monitor_refresh_hz = 60;
+    const game_update_hz = monitor_refresh_hz / 2;
+    const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
+
     var audio_output: AudioOutput = .{};
     audio_output.frames_per_second = 48000;
     audio_output.buffer_byte_size = audio_output.frames_per_second * @sizeOf(AudioOutput.Frame) / 15;
@@ -369,17 +373,17 @@ pub fn main() !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    var last_counter = try std.time.Instant.now();
+    var last_counter = getWallClock();
     var last_cycle_count = x86_64.rdtsc();
 
     while (running) {
         const keyboard_controller = &wld.new_input.controllers[0];
-        keyboard_controller.is_connected = true;
         const old_keyboard_controller = &wld.old_input.controllers[0];
         keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
         for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
             new_button.ended_down = old_button.ended_down;
         }
+        keyboard_controller.is_connected = true;
 
         if (wl.display_dispatch(display) == -1) {
             running = false;
@@ -541,6 +545,7 @@ pub fn main() !void {
         }
 
         const audio_fill = requestAudioBufferFill(pcm_opt, audio_write_frame_count);
+        const audio_fill_requested = audio_fill != null;
 
         const frames_ptr, const frames_len = if (audio_fill) |f| .{ f.frames.ptr, f.frames.len } else .{ undefined, 0 };
 
@@ -557,7 +562,8 @@ pub fn main() !void {
             .pitch = global_back_buffer.pitch,
         };
 
-        v10.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
+        const keep_running = v10.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
+        if (!keep_running) running = false;
 
         if (audio_fill) |f| {
             const pcm = pcm_opt.?;
@@ -569,40 +575,66 @@ pub fn main() !void {
             }
         }
 
-        var wayland_blit = false;
-        if (wld.should_draw) {
-            if (aquireFreeBuffer()) |wl_buffer| {
+        const work_counter = getWallClock();
+        const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
-                // Copy global_back_buffer into wayland buffer
-                const wl_buffer_mem: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
-                @memcpy(wl_buffer_mem[0..@intCast(wl_buffer.width * wl_buffer.height * bytes_per_pixel)], global_back_buffer.memory);
+        var seconds_elapsed_for_frame = work_seconds_elapsed;
+        if (seconds_elapsed_for_frame < target_seconds_per_frame) {
+            while (seconds_elapsed_for_frame < target_seconds_per_frame) {
+                // if (sleep_is_granular) {
+                const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
+                std.Thread.sleep(sleep_ms * std.time.ns_per_ms);
+                // }
 
-                displayBufferInWindow(wl_buffer);
-                wayland_blit = true;
-            } else {
-                _ = wl.display_roundtrip(display);
-                continue;
+                seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
             }
+        } else {
+            log.debug("Missed frame time!", .{});
         }
 
+        var wayland_blit = false;
+        const should_draw = wld.should_draw;
+        // if (wld.should_draw) {
+        if (aquireFreeBuffer()) |wl_buffer| {
+
+            // Copy global_back_buffer into wayland buffer
+            const wl_buffer_mem: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
+            @memcpy(wl_buffer_mem[0..@intCast(wl_buffer.width * wl_buffer.height * bytes_per_pixel)], global_back_buffer.memory);
+
+            displayBufferInWindow(wl_buffer);
+            wayland_blit = true;
+        } else {
+            _ = wl.display_roundtrip(display);
+            unreachable; // might want to loop util a buffer is aquired
+            // continue;
+        }
+        // }
+
         _ = wl.display_flush(display);
-
-        const end_cycle_count = x86_64.rdtsc();
-        const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
-        const end_counter = try std.time.Instant.now();
-        const counter_elapsed: f32 = @floatFromInt(end_counter.since(last_counter));
-        const ms_per_frame = counter_elapsed / std.time.ns_per_ms;
-        const fps = std.time.ns_per_s / counter_elapsed;
-        const mcpf = cycles_elapsed / (1000 * 1000);
-        // log.info("{d:.2}ms/f,  {d:.2}f/s, {d:.2}mc/f {s}", .{ ms_per_frame, fps, mcpf, if (wayland_blit) "wl_blit" else "" });
-        _ = .{ ms_per_frame, fps, mcpf };
-
-        last_counter = end_counter;
-        last_cycle_count = end_cycle_count;
 
         const tmp = wld.new_input;
         wld.new_input = wld.old_input;
         wld.old_input = tmp;
+
+        const end_counter = getWallClock();
+        const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
+        last_counter = end_counter;
+
+        const end_cycle_count = x86_64.rdtsc();
+        const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
+        last_cycle_count = end_cycle_count;
+
+        const fps = std.time.ms_per_s / ms_per_frame;
+        const mcpf = cycles_elapsed / (1000 * 1000);
+        log.info("{d:.2}ms/f,  {d:.2}f/s, {d:.2}mc/f wl_blit:{}, should_draw:{}, audio_fill:{}", .{
+            ms_per_frame,
+            fps,
+            mcpf,
+            wayland_blit,
+            should_draw,
+            audio_fill_requested,
+        });
+        _ = .{ ms_per_frame, fps, mcpf };
     }
 }
 
@@ -948,6 +980,16 @@ fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const v10.ButtonS
 fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {
     new_state.ended_down = is_down;
     new_state.half_transition_count += 1;
+}
+
+inline fn getWallClock() std.time.Instant {
+    return std.time.Instant.now() catch {
+        @panic("Platform timer failure");
+    };
+}
+
+inline fn getSecondsElapsed(start: std.time.Instant, end: std.time.Instant) f32 {
+    return @as(f32, @floatFromInt(end.since(start))) / std.time.ns_per_s;
 }
 
 const ShmError = error{

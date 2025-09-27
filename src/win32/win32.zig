@@ -9,6 +9,7 @@ pub const HRESULT = zig_win32.HRESULT;
 pub const HDC = zig_win32.HDC;
 pub const HBITMAP = HANDLE;
 pub const HGDIOBJ = HANDLE;
+pub const MMRESULT = zig_win32.UINT;
 pub const PWSTR = zig_win32.PWSTR;
 pub const LPBYTE = *BYTE;
 pub const LPSTR = zig_win32.LPSTR;
@@ -26,10 +27,13 @@ pub const LPARAM = zig_win32.LPARAM;
 pub const LRESULT = zig_win32.LRESULT;
 pub const ATOM = zig_win32.ATOM;
 pub const BOOL = zig_win32.BOOL;
-pub const BYTE = zig_win32.BYTE;
-pub const SHORT = zig_win32.SHORT;
 pub const WORD = zig_win32.WORD;
 pub const DWORD = zig_win32.DWORD;
+pub const BYTE = zig_win32.BYTE;
+pub const SHORT = zig_win32.SHORT;
+pub const USHORT = zig_win32.USHORT;
+pub const INT = zig_win32.INT;
+pub const UINT = zig_win32.UINT;
 pub const LONG = zig_win32.LONG;
 pub const ULONG = zig_win32.ULONG;
 pub const ULONG_PTR = zig_win32.ULONG_PTR;
@@ -655,6 +659,11 @@ pub const FILE_FLAG_SESSION_AWARE = 0x00800000;
 pub const FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000;
 pub const FILE_FLAG_WRITE_THROUGH = 0x80000000;
 
+pub const TIMERR_BASE = 96;
+pub const TIMERR_NOERROR = 0;
+pub const TIMERR_NOCANDO = TIMERR_BASE + 1;
+pub const TIMERR_STRUCT = TIMERR_BASE + 33;
+
 pub const GUID = extern struct {
     data1: u32 = 0,
     data2: u16 = 0,
@@ -816,6 +825,9 @@ pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, size: *LARGE_INTEGER) cal
 pub extern "kernel32" fn ReadFile(handle: HANDLE, buffer: LPVOID, bytes_to_read: DWORD, bytes_read: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
 pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, bytes_written: *DWORD, overlapped: ?*OVERLAPPED) callconv(.c) BOOL;
 pub extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
+
+pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
 
 pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
 pub extern "user32" fn GetModuleHandleW(module_name: ?LPCWSTR) callconv(.winapi) HMODULE;

@@ -104,6 +104,7 @@ fn buildWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
     exe.linkSystemLibrary("kernel32");
     exe.linkSystemLibrary("user32");
     exe.linkSystemLibrary("gdi32");
+    exe.linkSystemLibrary("winmm");
     exe.subsystem = .Windows;
 
     return exe;
