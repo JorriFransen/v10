@@ -1,6 +1,9 @@
 const std = @import("std");
-const c_translation = std.zig.c_translation;
 const zig_win32 = std.os.windows;
+
+fn cLiteral(comptime T: type, value: comptime_int) T {
+    return @bitCast(@as(T, @truncate(value)));
+}
 
 pub const HINSTANCE = zig_win32.HINSTANCE;
 pub const HMODULE = zig_win32.HMODULE;
@@ -411,7 +414,7 @@ pub const WS_TILED: DWORD = 0x00000000;
 pub const WS_VISIBLE: DWORD = 0x10000000;
 pub const WS_VSCROLL: DWORD = 0x00200000;
 
-pub const CW_USEDEFAULT = c_translation.cast(c_int, c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
+pub const CW_USEDEFAULT = cLiteral(c_int, 0x80000000);
 
 pub const SRCCOPY: DWORD = 0x00CC0020;
 pub const SRCPAINT: DWORD = 0x00EE0086;

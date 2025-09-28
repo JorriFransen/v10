@@ -348,6 +348,7 @@ pub fn windowsEntry(
         const monitor_refresh_hz = 60;
         const game_update_hz = monitor_refresh_hz / 2;
         const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
+        const frames_of_audio_latency = 3;
 
         if (window_opt) |window| {
             global_running = true;
@@ -360,10 +361,10 @@ pub fn windowsEntry(
 
             var audio_output: AudioOutput = .{
                 .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size),
-                .frames_per_second = 48000,
+                .frames_per_second = audio_fps,
                 .buffer_byte_size = audio_buffer_byte_size,
                 .running_frame_index = 0,
-                .latency_frame_count = audio_fps / 15,
+                .latency_frame_count = frames_of_audio_latency * audio_fps / game_update_hz,
             };
 
             clearAudioBuffer(&audio_output);
@@ -412,8 +413,11 @@ pub fn windowsEntry(
                 var last_counter = getWallClock();
                 var last_cycle_count = x86_64.rdtsc();
 
-                var d_last_play_cursor_index: usize = 0;
-                var d_last_play_cursor = [_]win32.DWORD{0} ** (game_update_hz / 2);
+                var debug_time_marker_index: usize = 0;
+                var debug_time_markers = [_]DEBUG.AudioTimeMarker{.{}} ** (game_update_hz / 2);
+
+                var last_play_cursor: win32.DWORD = 0;
+                var audio_valid = false;
 
                 while (global_running) {
                     const keyboard_controller = &new_input.controllers[0];
@@ -430,9 +434,9 @@ pub fn windowsEntry(
                     if (max_controller_count > (new_input.controllers.len - 1)) max_controller_count = (new_input.controllers.len - 1);
 
                     for (0..max_controller_count) |controller_index| {
-                        const game_controller_index = controller_index + 1;
-                        var old_controller = &old_input.controllers[game_controller_index];
-                        var new_controller = &new_input.controllers[game_controller_index];
+                        const x_controller_index = controller_index + 1;
+                        var old_controller = &old_input.controllers[x_controller_index];
+                        var new_controller = &new_input.controllers[x_controller_index];
 
                         var controller_state: xinput.STATE = undefined;
                         if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
@@ -494,10 +498,6 @@ pub fn windowsEntry(
                                 &new_buttons.move_right,
                             );
 
-                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_up, .dpad_up, &new_buttons.move_up);
-                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_down, .dpad_down, &new_buttons.move_down);
-                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_left, .dpad_left, &new_buttons.move_left);
-                            // processXInputDigitalButton(pad.buttons, &old_buttons.move_right, .dpad_right, &new_buttons.move_right);
                             processXInputDigitalButton(pad.buttons, &old_buttons.action_up, .y, &new_buttons.action_up);
                             processXInputDigitalButton(pad.buttons, &old_buttons.action_down, .a, &new_buttons.action_down);
                             processXInputDigitalButton(pad.buttons, &old_buttons.action_left, .x, &new_buttons.action_left);
@@ -510,20 +510,18 @@ pub fn windowsEntry(
                             // Controller not present
                             new_controller.is_connected = false;
                         }
+
+                        const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
+                        _ = xinput.XInputSetState(@intCast(x_controller_index), &vibration);
                     }
 
-                    // const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
-                    // _ = xinput.XInputSetState(0, &vibration);
-
-                    var play_cursor: u32 = undefined;
-                    var write_cursor: u32 = undefined;
-                    var byte_to_lock: u32 = undefined;
-                    var bytes_to_write: u32 = undefined;
-                    var frames_to_write: u32 = undefined;
-                    var audio_valid = false;
-                    if (audio_output.dsound_buffer) |buf| if (buf.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
+                    var byte_to_lock: u32 = 0;
+                    var bytes_to_write: u32 = 0;
+                    var frames_to_write: u32 = 0;
+                    var target_cursor: u32 = 0;
+                    if (audio_valid) {
                         byte_to_lock = (audio_output.running_frame_index * @sizeOf(AudioOutput.Frame)) % audio_output.buffer_byte_size;
-                        const target_cursor: u32 = ((play_cursor + (audio_output.latency_frame_count * @sizeOf(AudioOutput.Frame))) % audio_output.buffer_byte_size);
+                        target_cursor = ((last_play_cursor + (audio_output.latency_frame_count * @sizeOf(AudioOutput.Frame))) % audio_output.buffer_byte_size);
 
                         bytes_to_write =
                             if (byte_to_lock > target_cursor)
@@ -532,8 +530,7 @@ pub fn windowsEntry(
                                 target_cursor - byte_to_lock;
 
                         frames_to_write = bytes_to_write / @sizeOf(AudioOutput.Frame);
-                        audio_valid = true;
-                    };
+                    }
 
                     var game_sound_output_buffer: v10.AudioBuffer = .{
                         .frames = @ptrCast(audio_output.buffer.ptr),
@@ -552,6 +549,14 @@ pub fn windowsEntry(
                     if (!keep_running) global_running = false;
 
                     if (audio_valid) {
+                        if (options.internal_build) {
+                            var play_cursor: win32.DWORD = 0;
+                            var write_cursor: win32.DWORD = 0;
+                            _ = audio_output.dsound_buffer.?.GetCurrentPosition(&play_cursor, &write_cursor);
+
+                            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{}", .{ last_play_cursor, byte_to_lock, target_cursor, bytes_to_write, play_cursor, write_cursor });
+                        }
+
                         fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
                     }
 
@@ -576,22 +581,31 @@ pub fn windowsEntry(
                     last_counter = end_counter;
 
                     if (options.internal_build) {
-                        DEBUGSyncDisplay(&global_back_buffer, &d_last_play_cursor, &audio_output, target_seconds_per_frame);
+                        DEBUG.syncDisplay(&global_back_buffer, @ptrCast(&debug_time_markers), debug_time_markers.len, &audio_output, target_seconds_per_frame);
                     }
 
                     const dimension = getWindowDimension(window);
                     displayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
 
+                    var play_cursor: win32.DWORD = 0;
+                    var write_cursor: win32.DWORD = 0;
+                    if (audio_output.dsound_buffer.?.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
+                        last_play_cursor = play_cursor;
+                        if (!audio_valid) {
+                            audio_output.running_frame_index = write_cursor / @sizeOf(v10.AudioBuffer.Frame);
+                            audio_valid = true;
+                        }
+                    } else {
+                        audio_valid = false;
+                    }
+
                     if (options.internal_build) {
-                        var d_play_cursor: win32.DWORD = undefined;
-                        var d_write_cursor: win32.DWORD = undefined;
+                        const marker = &debug_time_markers[debug_time_marker_index];
+                        marker.* = .{ .play_cursor = play_cursor, .write_cursor = write_cursor };
 
-                        _ = audio_output.dsound_buffer.?.GetCurrentPosition(&d_play_cursor, &d_write_cursor);
-
-                        d_last_play_cursor[d_last_play_cursor_index] = d_play_cursor;
-                        d_last_play_cursor_index += 1;
-                        if (d_last_play_cursor_index >= d_last_play_cursor.len) {
-                            d_last_play_cursor_index = 0;
+                        debug_time_marker_index += 1;
+                        if (debug_time_marker_index >= debug_time_markers.len) {
+                            debug_time_marker_index = 0;
                         }
                     }
 
@@ -813,27 +827,43 @@ pub const DEBUG = struct {
             cursor += @intCast(buffer.pitch);
         }
     }
+
+    pub fn drawAudioBufferMarker(buffer: *OffscreenBuffer, marker: *const AudioTimeMarker, c: f32, pad_x: i32, top: i32, bottom: i32) callconv(.c) void {
+        const play_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.play_cursor))));
+        const write_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.write_cursor))));
+
+        DEBUG.drawVertical(buffer, play_x, top, bottom, 0xffffff);
+        DEBUG.drawVertical(buffer, write_x, top, bottom, 0xffff0000);
+    }
+
+    pub fn syncDisplay(buffer: *OffscreenBuffer, markers: [*]AudioTimeMarker, markers_len: usize, audio_output: *AudioOutput, seconds_per_frame: f32) callconv(.c) void {
+        _ = seconds_per_frame;
+
+        const pad_x = 16;
+        const pad_y = 16;
+        const top = pad_y;
+        const bottom = global_back_buffer.height - pad_y;
+
+        const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.buffer_byte_size));
+
+        for (markers[0..markers_len]) |marker| {
+            drawAudioBufferMarker(buffer, &marker, c, pad_x, top, bottom);
+        }
+    }
+
+    pub const AudioTimeMarker = struct {
+        play_cursor: win32.DWORD = 0,
+        write_cursor: win32.DWORD = 0,
+    };
 };
 
 comptime {
     if (options.internal_build)
         for (@typeInfo(DEBUG).@"struct".decls) |decl| {
-            @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
+            const decl_type = @TypeOf(@field(DEBUG, decl.name));
+            const decl_type_info = @typeInfo(decl_type);
+            if (decl_type_info == .@"fn") {
+                @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
+            }
         };
-}
-
-pub fn DEBUGSyncDisplay(buffer: *OffscreenBuffer, last_cursors: []win32.DWORD, audio_output: *AudioOutput, seconds_per_frame: f32) void {
-    _ = seconds_per_frame;
-
-    const pad_x = 16;
-    const pad_y = 16;
-    const top = pad_y;
-    const bottom = global_back_buffer.height - pad_y;
-
-    const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.buffer_byte_size));
-
-    for (last_cursors) |pc| {
-        const x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(pc))));
-        DEBUG.drawVertical(buffer, x, top, bottom, 0xffffff);
-    }
 }

@@ -1,7 +1,7 @@
 .{
     .name = .v10,
     .version = "0.0.1",
-    .minimum_zig_version = "0.16.0-dev.225+0b75a2a1b",
+    .minimum_zig_version = "0.16.0-dev.452+1f7ee99b3",
     .paths = .{
         "build.zig",
         "LICENSE.md",

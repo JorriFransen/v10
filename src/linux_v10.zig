@@ -265,12 +265,13 @@ pub fn main() !void {
     const monitor_refresh_hz = 60;
     const game_update_hz = monitor_refresh_hz; // / 2;
     const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
+    const frames_of_audio_latency = 3;
 
     var audio_output: AudioOutput = .{};
     audio_output.frames_per_second = 48000;
     audio_output.buffer_byte_size = audio_output.frames_per_second * @sizeOf(AudioOutput.Frame) / 15;
     audio_output.period_size = 1024;
-    audio_output.latency_frame_count = audio_output.frames_per_second / 15;
+    audio_output.latency_frame_count = frames_of_audio_latency * audio_output.frames_per_second / game_update_hz;
 
     initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.buffer_byte_size, &audio_output.period_size);
     if (requestAudioBufferFill(pcm_opt, audio_output.latency_frame_count)) |f| {
