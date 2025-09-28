@@ -31,6 +31,7 @@ pub const OffscreenBuffer = struct {
     width: i32,
     height: i32,
     pitch: i32,
+    bytes_per_pixel: i32,
 };
 
 pub const WindowDimensions = struct {
@@ -411,6 +412,9 @@ pub fn windowsEntry(
                 var last_counter = getWallClock();
                 var last_cycle_count = x86_64.rdtsc();
 
+                var d_last_play_cursor_index: usize = 0;
+                var d_last_play_cursor = [_]win32.DWORD{0} ** (game_update_hz / 2);
+
                 while (global_running) {
                     const keyboard_controller = &new_input.controllers[0];
                     const old_keyboard_controller = &old_input.controllers[0];
@@ -559,7 +563,7 @@ pub fn windowsEntry(
                         while (seconds_elapsed_for_frame < target_seconds_per_frame) {
                             if (sleep_is_granular) {
                                 const sleep_ms: win32.DWORD = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
-                                win32.Sleep(sleep_ms);
+                                if (sleep_ms > 0) win32.Sleep(sleep_ms);
                             }
                             seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                         }
@@ -567,16 +571,33 @@ pub fn windowsEntry(
                         log.debug("Missed frame time!", .{});
                     }
 
+                    const end_counter = getWallClock();
+                    const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
+                    last_counter = end_counter;
+
+                    if (options.internal_build) {
+                        DEBUGSyncDisplay(&global_back_buffer, &d_last_play_cursor, &audio_output, target_seconds_per_frame);
+                    }
+
                     const dimension = getWindowDimension(window);
                     displayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
+
+                    if (options.internal_build) {
+                        var d_play_cursor: win32.DWORD = undefined;
+                        var d_write_cursor: win32.DWORD = undefined;
+
+                        _ = audio_output.dsound_buffer.?.GetCurrentPosition(&d_play_cursor, &d_write_cursor);
+
+                        d_last_play_cursor[d_last_play_cursor_index] = d_play_cursor;
+                        d_last_play_cursor_index += 1;
+                        if (d_last_play_cursor_index >= d_last_play_cursor.len) {
+                            d_last_play_cursor_index = 0;
+                        }
+                    }
 
                     const tmp = new_input;
                     new_input = old_input;
                     old_input = tmp;
-
-                    const end_counter = getWallClock();
-                    const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
-                    last_counter = end_counter;
 
                     const end_cycle_count = x86_64.rdtscp();
                     const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
@@ -584,7 +605,7 @@ pub fn windowsEntry(
 
                     const fps = std.time.ms_per_s / ms_per_frame;
                     const mcps = cycles_elapsed / (1000 * 1000);
-                    log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}kc/f,  {d:.2}wms", .{ ms_per_frame, fps, mcps, work_seconds_elapsed * std.time.ms_per_s });
+                    log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms", .{ ms_per_frame, fps, mcps, work_seconds_elapsed * std.time.ms_per_s });
                     _ = .{ ms_per_frame, fps, mcps };
                 }
             }
@@ -685,6 +706,7 @@ fn resizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) bool 
     buffer.width = width;
     buffer.height = height;
     buffer.pitch = buffer.width * bytes_per_pixel;
+    buffer.bytes_per_pixel = bytes_per_pixel;
 
     buffer.info = win32.BITMAPINFO{ .bmiHeader = .{
         .biWidth = buffer.width,
@@ -781,6 +803,16 @@ pub const DEBUG = struct {
             _ = win32.VirtualFree(m, 0, win32.MEM_DECOMMIT);
         }
     }
+
+    pub fn drawVertical(buffer: *OffscreenBuffer, x: i32, top: i32, bottom: i32, color: u32) callconv(.c) void {
+        var cursor: [*]u8 = buffer.memory.ptr + @as(usize, @intCast((x * buffer.bytes_per_pixel) + (top * buffer.pitch)));
+
+        for (@intCast(top)..@intCast(bottom + 1)) |_| {
+            const pixel: *u32 = @ptrCast(@alignCast(cursor));
+            pixel.* = color;
+            cursor += @intCast(buffer.pitch);
+        }
+    }
 };
 
 comptime {
@@ -788,4 +820,20 @@ comptime {
         for (@typeInfo(DEBUG).@"struct".decls) |decl| {
             @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
         };
+}
+
+pub fn DEBUGSyncDisplay(buffer: *OffscreenBuffer, last_cursors: []win32.DWORD, audio_output: *AudioOutput, seconds_per_frame: f32) void {
+    _ = seconds_per_frame;
+
+    const pad_x = 16;
+    const pad_y = 16;
+    const top = pad_y;
+    const bottom = global_back_buffer.height - pad_y;
+
+    const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.buffer_byte_size));
+
+    for (last_cursors) |pc| {
+        const x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(pc))));
+        DEBUG.drawVertical(buffer, x, top, bottom, 0xffffff);
+    }
 }

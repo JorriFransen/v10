@@ -19,6 +19,7 @@ pub fn build(b: *Build) !void {
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
+    options.addOption(bool, "debug", optimize == .Debug);
 
     const mem_module = b.createModule(.{
         .target = target,

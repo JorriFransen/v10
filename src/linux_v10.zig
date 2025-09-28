@@ -263,7 +263,7 @@ pub fn main() !void {
     wld.toplevel.set_title("v10");
 
     const monitor_refresh_hz = 60;
-    const game_update_hz = monitor_refresh_hz / 2;
+    const game_update_hz = monitor_refresh_hz; // / 2;
     const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
 
     var audio_output: AudioOutput = .{};
@@ -544,7 +544,8 @@ pub fn main() !void {
             }
         }
 
-        const audio_fill = requestAudioBufferFill(pcm_opt, audio_write_frame_count);
+        const audio_frame_count = @max(audio_write_frame_count, audio_output.latency_frame_count);
+        const audio_fill = requestAudioBufferFill(pcm_opt, audio_frame_count);
         const audio_fill_requested = audio_fill != null;
 
         const frames_ptr, const frames_len = if (audio_fill) |f| .{ f.frames.ptr, f.frames.len } else .{ undefined, 0 };
@@ -581,16 +582,18 @@ pub fn main() !void {
         var seconds_elapsed_for_frame = work_seconds_elapsed;
         if (seconds_elapsed_for_frame < target_seconds_per_frame) {
             while (seconds_elapsed_for_frame < target_seconds_per_frame) {
-                // if (sleep_is_granular) {
-                const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
-                std.Thread.sleep(sleep_ms * std.time.ns_per_ms);
-                // }
+                const sleep_ns: u64 = @intFromFloat(std.time.ns_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
+                if (sleep_ns > 0) std.Thread.sleep(sleep_ns);
 
                 seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
             }
         } else {
             log.debug("Missed frame time!", .{});
         }
+
+        const end_counter = getWallClock();
+        const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
+        last_counter = end_counter;
 
         var wayland_blit = false;
         const should_draw = wld.should_draw;
@@ -616,20 +619,17 @@ pub fn main() !void {
         wld.new_input = wld.old_input;
         wld.old_input = tmp;
 
-        const end_counter = getWallClock();
-        const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
-        last_counter = end_counter;
-
         const end_cycle_count = x86_64.rdtsc();
         const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
         last_cycle_count = end_cycle_count;
 
         const fps = std.time.ms_per_s / ms_per_frame;
         const mcpf = cycles_elapsed / (1000 * 1000);
-        log.info("{d:.2}ms/f,  {d:.2}f/s, {d:.2}mc/f wl_blit:{}, should_draw:{}, audio_fill:{}", .{
+        log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}, should_draw:{}, audio_fill:{}", .{
             ms_per_frame,
             fps,
             mcpf,
+            work_seconds_elapsed * std.time.ms_per_s,
             wayland_blit,
             should_draw,
             audio_fill_requested,
