@@ -263,15 +263,16 @@ pub fn main() !void {
     wld.toplevel.set_title("v10");
 
     const monitor_refresh_hz = 60;
-    const game_update_hz = monitor_refresh_hz; // / 2;
+    const game_update_hz = monitor_refresh_hz / 2;
     const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
     const frames_of_audio_latency = 3;
 
     var audio_output: AudioOutput = .{};
     audio_output.frames_per_second = 48000;
     audio_output.buffer_byte_size = audio_output.frames_per_second * @sizeOf(AudioOutput.Frame) / 15;
-    audio_output.period_size = 1024;
     audio_output.latency_frame_count = frames_of_audio_latency * audio_output.frames_per_second / game_update_hz;
+    // audio_output.period_size = 1024;
+    audio_output.period_size = audio_output.latency_frame_count;
 
     initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.buffer_byte_size, &audio_output.period_size);
     if (requestAudioBufferFill(pcm_opt, audio_output.latency_frame_count)) |f| {
@@ -548,8 +549,15 @@ pub fn main() !void {
         const audio_frame_count = @max(audio_write_frame_count, audio_output.latency_frame_count);
         const audio_fill = requestAudioBufferFill(pcm_opt, audio_frame_count);
         const audio_fill_requested = audio_fill != null;
+        if (audio_fill_requested) log.debug("audio fill: {} min: {}", .{
+            audio_fill.?.frames.len * @sizeOf(v10.AudioBuffer.Frame),
+            audio_output.latency_frame_count * @sizeOf(v10.AudioBuffer.Frame),
+        });
 
-        const frames_ptr, const frames_len = if (audio_fill) |f| .{ f.frames.ptr, f.frames.len } else .{ undefined, 0 };
+        const frames_ptr, const frames_len = if (audio_fill) |f|
+            .{ f.frames.ptr, f.frames.len }
+        else
+            .{ undefined, 0 };
 
         var game_audio_output_buffer: v10.AudioBuffer = .{
             .frames = frames_ptr,
@@ -583,8 +591,11 @@ pub fn main() !void {
         var seconds_elapsed_for_frame = work_seconds_elapsed;
         if (seconds_elapsed_for_frame < target_seconds_per_frame) {
             while (seconds_elapsed_for_frame < target_seconds_per_frame) {
-                const sleep_ns: u64 = @intFromFloat(std.time.ns_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
-                if (sleep_ns > 0) std.Thread.sleep(sleep_ns);
+                const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
+                if (sleep_ms > 1) {
+                    const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
+                    std.Thread.sleep(s);
+                }
 
                 seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
             }
