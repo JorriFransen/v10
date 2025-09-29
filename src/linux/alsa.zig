@@ -276,18 +276,32 @@ const FN_pcm_mmap_commit = @TypeOf(pcm_mmap_commit_stub);
 pub var pcm_mmap_commit: *const FN_pcm_mmap_commit = undefined;
 
 fn pcm_avail_update_stub(pcm: *Pcm) callconv(.c) PcmSFrames {
-    _ = pcm;
+    _ = .{pcm};
     return -1;
 }
 const FN_pcm_avail_update = @TypeOf(pcm_avail_update_stub);
 pub var pcm_avail_update: *const FN_pcm_avail_update = undefined;
 
+fn pcm_avail_delay_stub(pcm: *Pcm, avail: *PcmSFrames, delay: *PcmSFrames) callconv(.c) c_int {
+    _ = .{ pcm, avail, delay };
+    return -1;
+}
+const FN_pcm_avail_delay = @TypeOf(pcm_avail_delay_stub);
+pub var pcm_avail_delay: *const FN_pcm_avail_delay = undefined;
+
 fn pcm_avail_stub(pcm: *Pcm) callconv(.c) PcmSFrames {
-    _ = pcm;
+    _ = .{pcm};
     return -1;
 }
 const FN_pcm_avail = @TypeOf(pcm_avail_stub);
 pub var pcm_avail: *const FN_pcm_avail = undefined;
+
+fn pcm_delay_stub(pcm: *Pcm, delay: *PcmSFrames) callconv(.c) c_int {
+    _ = .{ pcm, delay };
+    return -1;
+}
+const FN_pcm_delay = @TypeOf(pcm_delay_stub);
+pub var pcm_delay: *const FN_pcm_delay = undefined;
 
 pub fn load() void {
     var lib = std.DynLib.open("libasound.so") catch {

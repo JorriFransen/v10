@@ -262,6 +262,8 @@ pub fn main() !void {
     wld.toplevel.set_app_id("v10");
     wld.toplevel.set_title("v10");
 
+    udev.load();
+
     const monitor_refresh_hz = 60;
     const game_update_hz = monitor_refresh_hz / 2;
     const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
@@ -308,7 +310,7 @@ pub fn main() !void {
 
     var audio_output: AudioOutput = .{};
     audio_output.frames_per_second = audio_fps;
-    audio_output.period_size = 512;
+    audio_output.period_size = 1024;
     audio_output.buffer_byte_size = audio_buffer_byte_size;
     audio_output.alsa_buffer_byte_size = alsa_buffer_byte_count;
     audio_output.latency_frame_count = frames_of_audio_latency * audio_fps / game_update_hz;
@@ -319,8 +321,8 @@ pub fn main() !void {
 
     initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.alsa_buffer_byte_size, &audio_output.period_size);
     _ = alsa.pcm_start(pcm_opt.?);
-
-    udev.load();
+    _ = alsa.pcm_prepare(pcm_opt.?);
+    drainAudioBuffer(&audio_output);
 
     var udev_monitor: *udev.Monitor = undefined;
 
@@ -577,7 +579,6 @@ pub fn main() !void {
 
             frames_to_write = bytes_to_write / @sizeOf(AudioOutput.Frame);
         }
-        log.debug("ftw: {}", .{frames_to_write});
 
         var game_audio_output_buffer: v10.AudioBuffer = .{
             .frames = audio_output.game_buffer.ptr,
@@ -596,74 +597,17 @@ pub fn main() !void {
         if (!keep_running) running = false;
 
         if (audio_valid) {
-            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{}", .{ last_play_cursor, byte_to_lock, target_cursor, bytes_to_write, audio_output.play_cursor, audio_output.write_cursor });
-
             fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_audio_output_buffer);
+
+            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{}", .{ last_play_cursor, byte_to_lock, target_cursor, bytes_to_write, audio_output.play_cursor, audio_output.write_cursor });
         }
 
         last_play_cursor = audio_output.play_cursor;
+        drainAudioBuffer(&audio_output);
+
         if (!audio_valid) {
             audio_output.running_frame_index = audio_output.write_cursor;
             audio_valid = true;
-        }
-
-        var alsa_frames_to_write = alsa.pcm_avail_update(pcm_opt.?);
-        if (alsa_frames_to_write < 0) {
-            _ = alsa.pcm_prepare(pcm_opt.?);
-            alsa_frames_to_write = alsa.pcm_avail(pcm_opt.?);
-            assert(alsa_frames_to_write >= 0);
-        }
-        if (alsa_frames_to_write > 0) {
-            const state = alsa.pcm_state(pcm_opt.?);
-            if (state == .XRUN) {
-                _ = alsa.pcm_prepare(pcm_opt.?);
-            }
-
-            const region_1_ptr = &audio_output.ring_buffer[audio_output.play_cursor];
-            const region_2_ptr = &audio_output.ring_buffer[0];
-            var region_1_size: u32 = @intCast(alsa_frames_to_write);
-            var region_2_size: u32 = 0;
-            if (audio_output.play_cursor + alsa_frames_to_write > audio_output.ring_buffer.len) {
-                region_1_size = @intCast(audio_output.ring_buffer.len - audio_output.play_cursor);
-                region_2_size = @intCast(alsa_frames_to_write - region_1_size);
-            }
-
-            // TODO: This is non blocking, handle incomplete writes!
-            //        It is probably best to just accept the incomplete writes,
-            //        and update the play and write cursors accordingly.
-            var written = alsa.pcm_writei(pcm_opt.?, region_1_ptr, @intCast(region_1_size));
-            if (written < 0) {
-                const e: std.os.linux.E = @enumFromInt(-written);
-                switch (e) {
-                    else => {},
-                    std.os.linux.E.BADF => unreachable,
-
-                    std.os.linux.E.STRPIPE,
-                    std.os.linux.E.PIPE,
-                    => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
-                }
-            }
-
-            if (region_2_size > 0) {
-                written = alsa.pcm_writei(pcm_opt.?, region_2_ptr, @intCast(region_2_size));
-                if (written < 0) {
-                    const e: std.os.linux.E = @enumFromInt(-written);
-                    switch (e) {
-                        else => {},
-                        std.os.linux.E.BADF => unreachable,
-
-                        std.os.linux.E.STRPIPE,
-                        std.os.linux.E.PIPE,
-                        => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
-                    }
-                }
-            }
-
-            audio_output.play_cursor = @as(u32, @intCast(audio_output.play_cursor + alsa_frames_to_write)) % @as(u32, @intCast(audio_output.ring_buffer.len));
-
-            // TODO: maybe use pcm_delay?
-            const write_cursor_offset = 2048;
-            audio_output.write_cursor = @intCast((audio_output.play_cursor + write_cursor_offset) % audio_output.ring_buffer.len);
         }
 
         const work_counter = getWallClock();
@@ -1582,18 +1526,6 @@ fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
         @memcpy(joystick.path[0..dnp.len], dnp);
         joystick.path[dnp.len] = 0;
 
-        // var string_buffer: [128]u8 = undefined;
-        // const invalid_rc: isize = -1;
-        // var rc: isize = invalid_rc;
-        // rc = ioctl.ioctl(fd, input.EVIOCGNAME(string_buffer.len), @intFromPtr(&string_buffer));
-        //
-        // rc = ioctl.ioctl(fd, input.EVIOCGPHYS(string_buffer.len), @intFromPtr(&string_buffer));
-        //
-        // rc = ioctl.ioctl(fd, input.EVIOCGUNIQ(string_buffer.len), @intFromPtr(&string_buffer));
-        //
-        // var properties: input.Prop = .{};
-        // rc = ioctl.ioctl(fd, input.EVIOCGPROP(@sizeOf(input.Prop)), @intFromPtr(&properties));
-
         switch (kind) {
             .default, .xbox => {
                 inline for (std.meta.fields(input.Abs)) |axis| {
@@ -1712,6 +1644,60 @@ const AudioOutput = struct {
     const Frame = v10.AudioBuffer.Frame;
 };
 
+fn drainAudioBuffer(audio_output: *AudioOutput) void {
+    var alsa_frames_to_write: alsa.PcmSFrames = 0;
+    var alsa_frame_delay: alsa.PcmSFrames = 0;
+    _ = alsa.pcm_avail_delay(pcm_opt.?, &alsa_frames_to_write, &alsa_frame_delay);
+
+    if (alsa_frames_to_write > 0) {
+        const region_1_ptr = &audio_output.ring_buffer[audio_output.play_cursor];
+        const region_2_ptr = &audio_output.ring_buffer[0];
+        var region_1_size: u32 = @intCast(alsa_frames_to_write);
+        var region_2_size: u32 = 0;
+        if (audio_output.play_cursor + alsa_frames_to_write > audio_output.ring_buffer.len) {
+            region_1_size = @intCast(audio_output.ring_buffer.len - audio_output.play_cursor);
+            region_2_size = @intCast(alsa_frames_to_write - region_1_size);
+        }
+
+        // TODO: This is non blocking, handle incomplete writes!
+        //        It is probably best to just accept the incomplete writes,
+        //        and update the play and write cursors accordingly.
+        var written = alsa.pcm_writei(pcm_opt.?, region_1_ptr, @intCast(region_1_size));
+        if (written < 0) {
+            const e: std.os.linux.E = @enumFromInt(-written);
+            switch (e) {
+                else => {},
+                std.os.linux.E.BADF => unreachable,
+
+                std.os.linux.E.STRPIPE,
+                std.os.linux.E.PIPE,
+                => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
+            }
+        }
+
+        if (region_2_size > 0) {
+            written = alsa.pcm_writei(pcm_opt.?, region_2_ptr, @intCast(region_2_size));
+            if (written < 0) {
+                const e: std.os.linux.E = @enumFromInt(-written);
+                switch (e) {
+                    else => {},
+                    std.os.linux.E.BADF => unreachable,
+
+                    std.os.linux.E.STRPIPE,
+                    std.os.linux.E.PIPE,
+                    => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
+                }
+            }
+        }
+
+        audio_output.play_cursor = @as(u32, @intCast(audio_output.play_cursor + alsa_frames_to_write)) % @as(u32, @intCast(audio_output.ring_buffer.len));
+        const delay: u32 = @intCast(alsa_frame_delay);
+        audio_output.write_cursor = @intCast((audio_output.play_cursor + delay) % audio_output.ring_buffer.len);
+    } else if (alsa_frames_to_write < 0) {
+        unreachable; // TODO: prepare?
+    }
+}
+
 fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.AudioBuffer) void {
     const region_1_ptr = @as([*]u8, @ptrCast(audio_output.ring_buffer.ptr)) + byte_to_lock;
     var region_1_size = bytes_to_write;
@@ -1723,15 +1709,11 @@ fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write
 
     const region_1_frame_count = region_1_size / @sizeOf(AudioOutput.Frame);
 
-    var dest_sample: [*]i16 = @ptrCast(@alignCast(region_1_ptr));
+    var dest_frame: [*]AudioOutput.Frame = @ptrCast(@alignCast(region_1_ptr));
     var source_frame = source_buffer.frames;
     for (0..region_1_frame_count) |_| {
-        dest_sample[0] = source_frame[0].left;
-        dest_sample += 1;
-
-        dest_sample[0] = source_frame[0].right;
-        dest_sample += 1;
-
+        dest_frame[0] = source_frame[0];
+        dest_frame += 1;
         source_frame += 1;
 
         audio_output.running_frame_index +%= 1;
@@ -1739,14 +1721,10 @@ fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write
 
     const region_2_frame_count = region_2_size / @sizeOf(AudioOutput.Frame);
 
-    dest_sample = @ptrCast(@alignCast(region_2_ptr));
+    dest_frame = @ptrCast(@alignCast(region_2_ptr));
     for (0..region_2_frame_count) |_| {
-        dest_sample[0] = source_frame[0].left;
-        dest_sample += 1;
-
-        dest_sample[0] = source_frame[0].right;
-        dest_sample += 1;
-
+        dest_frame[0] = source_frame[0];
+        dest_frame += 1;
         source_frame += 1;
 
         audio_output.running_frame_index +%= 1;
