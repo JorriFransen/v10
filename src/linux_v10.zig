@@ -267,20 +267,58 @@ pub fn main() !void {
     const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
     const frames_of_audio_latency = 3;
 
-    var audio_output: AudioOutput = .{};
-    audio_output.frames_per_second = 48000;
-    audio_output.buffer_byte_size = audio_output.frames_per_second * @sizeOf(AudioOutput.Frame) / 15;
-    audio_output.latency_frame_count = frames_of_audio_latency * audio_output.frames_per_second / game_update_hz;
-    // audio_output.period_size = 1024;
-    audio_output.period_size = audio_output.latency_frame_count;
+    const audio_fps = 48000;
+    const audio_buffer_byte_size = audio_fps * @sizeOf(AudioOutput.Frame);
+    const alsa_buffer_frame_count = frames_of_audio_latency * audio_fps / game_update_hz;
+    const alsa_buffer_byte_count = alsa_buffer_frame_count * @sizeOf(AudioOutput.Frame);
 
-    initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.buffer_byte_size, &audio_output.period_size);
-    if (requestAudioBufferFill(pcm_opt, audio_output.latency_frame_count)) |f| {
-        const pcm = pcm_opt.?;
-        @memset(f.frames, .{});
-        f.commit(pcm);
-        _ = alsa.pcm_start(pcm);
-    }
+    const audio_game_buffer_bytes = linux.mmap(
+        null,
+        audio_buffer_byte_size,
+        linux.PROT.NONE,
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    ) catch {
+        log.warn("mmap for audio game buffer failed", .{});
+        return error.MmapFailed;
+    };
+
+    linux.mprotect(audio_game_buffer_bytes, linux.PROT.READ | linux.PROT.WRITE) catch {
+        log.warn("mprotect for audio game buffer failed", .{});
+        return error.MProtectFailed;
+    };
+
+    const audio_ring_buffer_bytes = linux.mmap(
+        null,
+        audio_buffer_byte_size,
+        linux.PROT.NONE,
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    ) catch {
+        log.warn("mmap for audio ring buffer failed", .{});
+        return error.MmapFailed;
+    };
+
+    linux.mprotect(audio_ring_buffer_bytes, linux.PROT.READ | linux.PROT.WRITE) catch {
+        log.warn("mprotect for audio ring buffer failed", .{});
+        return error.MProtectFailed;
+    };
+
+    var audio_output: AudioOutput = .{};
+    audio_output.frames_per_second = audio_fps;
+    audio_output.period_size = 512;
+    audio_output.buffer_byte_size = audio_buffer_byte_size;
+    audio_output.alsa_buffer_byte_size = alsa_buffer_byte_count;
+    audio_output.latency_frame_count = frames_of_audio_latency * audio_fps / game_update_hz;
+    audio_output.game_buffer = @ptrCast(audio_game_buffer_bytes);
+    audio_output.ring_buffer = @ptrCast(audio_ring_buffer_bytes);
+    audio_output.write_cursor = 0;
+    audio_output.play_cursor = 0;
+
+    initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.alsa_buffer_byte_size, &audio_output.period_size);
+    _ = alsa.pcm_start(pcm_opt.?);
 
     udev.load();
 
@@ -378,6 +416,9 @@ pub fn main() !void {
     var last_counter = getWallClock();
     var last_cycle_count = x86_64.rdtsc();
 
+    var last_play_cursor: u32 = 0; // In frames
+    var audio_valid = false;
+
     while (running) {
         const keyboard_controller = &wld.new_input.controllers[0];
         const old_keyboard_controller = &wld.old_input.controllers[0];
@@ -391,36 +432,12 @@ pub fn main() !void {
             running = false;
         }
 
-        var audio_write_frame_count: alsa.PcmSFrames = 0;
-
         if (try linux.poll(&poll_fds, 0) > 0) {
             for (&poll_fds, 0..) |*pollfd, slot_index| {
                 const slot: PollFdSlot = @enumFromInt(slot_index);
                 const in = pollfd.revents & linux.POLL.IN != 0;
 
                 switch (slot) {
-                    .alsa => if (pcm_opt) |pcm| {
-                        var event: c_ushort = undefined;
-                        _ = alsa.pcm_poll_descriptors_revents(pcm, @ptrCast(pollfd), 1, &event);
-                        const out = (event & linux.POLL.OUT) != 0;
-                        const err = (event & linux.POLL.ERR) != 0;
-
-                        if (out or err) {
-                            audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
-                            const state = alsa.pcm_state(pcm);
-                            if (state == .XRUN or err) {
-                                _ = alsa.pcm_prepare(pcm);
-                                audio_write_frame_count = @intCast(alsa.pcm_avail_update(pcm));
-                            }
-                            assert(audio_write_frame_count >= 0);
-                        } else if (event == 0) {
-                            continue;
-                        } else {
-                            log.warn("Unhandled alsa poll: {}", .{event});
-                            unreachable;
-                        }
-                    },
-
                     .udev => if (in) {
                         const device = udev.monitor_receive_device(udev_monitor).?;
                         defer _ = udev.device_unref(device);
@@ -527,10 +544,6 @@ pub fn main() !void {
                 );
 
                 // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
-                // js.processDigitalButton(&old_buttons.move_up, .dpad_up, &new_buttons.move_up);
-                // js.processDigitalButton(&old_buttons.move_down, .dpad_down, &new_buttons.move_down);
-                // js.processDigitalButton(&old_buttons.move_left, .dpad_left, &new_buttons.move_left);
-                // js.processDigitalButton(&old_buttons.move_right, .dpad_right, &new_buttons.move_right);
                 processDigitalButton(js.buttons, &old_buttons.action_up, .north, &new_buttons.action_up);
                 processDigitalButton(js.buttons, &old_buttons.action_down, .south, &new_buttons.action_down);
                 processDigitalButton(js.buttons, &old_buttons.action_left, .west, &new_buttons.action_left);
@@ -546,22 +559,29 @@ pub fn main() !void {
             }
         }
 
-        const audio_frame_count = @max(audio_write_frame_count, audio_output.latency_frame_count);
-        const audio_fill = requestAudioBufferFill(pcm_opt, audio_frame_count);
-        const audio_fill_requested = audio_fill != null;
-        if (audio_fill_requested) log.debug("audio fill: {} min: {}", .{
-            audio_fill.?.frames.len * @sizeOf(v10.AudioBuffer.Frame),
-            audio_output.latency_frame_count * @sizeOf(v10.AudioBuffer.Frame),
-        });
+        var byte_to_lock: u32 = 0;
+        var bytes_to_write: u32 = 0;
+        var frames_to_write: u32 = 0;
+        var target_cursor: u32 = 0;
+        if (audio_valid) {
+            const last_play_cursor_bytes = last_play_cursor * @sizeOf(AudioOutput.Frame);
 
-        const frames_ptr, const frames_len = if (audio_fill) |f|
-            .{ f.frames.ptr, f.frames.len }
-        else
-            .{ undefined, 0 };
+            byte_to_lock = (audio_output.running_frame_index * @sizeOf(AudioOutput.Frame)) % audio_output.buffer_byte_size;
+            target_cursor = ((last_play_cursor_bytes + (audio_output.latency_frame_count * @sizeOf(AudioOutput.Frame))) % audio_output.buffer_byte_size);
+
+            bytes_to_write =
+                if (byte_to_lock > target_cursor)
+                    (audio_output.buffer_byte_size - byte_to_lock) + target_cursor
+                else
+                    target_cursor - byte_to_lock;
+
+            frames_to_write = bytes_to_write / @sizeOf(AudioOutput.Frame);
+        }
+        log.debug("ftw: {}", .{frames_to_write});
 
         var game_audio_output_buffer: v10.AudioBuffer = .{
-            .frames = frames_ptr,
-            .frame_count = @intCast(frames_len),
+            .frames = audio_output.game_buffer.ptr,
+            .frame_count = @intCast(frames_to_write),
             .frames_per_second = @intCast(audio_output.frames_per_second),
         };
 
@@ -575,14 +595,75 @@ pub fn main() !void {
         const keep_running = v10.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
         if (!keep_running) running = false;
 
-        if (audio_fill) |f| {
-            const pcm = pcm_opt.?;
-            f.commit(pcm);
+        if (audio_valid) {
+            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{}", .{ last_play_cursor, byte_to_lock, target_cursor, bytes_to_write, audio_output.play_cursor, audio_output.write_cursor });
 
-            const state = alsa.pcm_state(pcm);
-            if (state != .RUNNING) {
-                _ = alsa.pcm_start(pcm);
+            fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_audio_output_buffer);
+        }
+
+        last_play_cursor = audio_output.play_cursor;
+        if (!audio_valid) {
+            audio_output.running_frame_index = audio_output.write_cursor;
+            audio_valid = true;
+        }
+
+        var alsa_frames_to_write = alsa.pcm_avail_update(pcm_opt.?);
+        if (alsa_frames_to_write < 0) {
+            _ = alsa.pcm_prepare(pcm_opt.?);
+            alsa_frames_to_write = alsa.pcm_avail(pcm_opt.?);
+            assert(alsa_frames_to_write >= 0);
+        }
+        if (alsa_frames_to_write > 0) {
+            const state = alsa.pcm_state(pcm_opt.?);
+            if (state == .XRUN) {
+                _ = alsa.pcm_prepare(pcm_opt.?);
             }
+
+            const region_1_ptr = &audio_output.ring_buffer[audio_output.play_cursor];
+            const region_2_ptr = &audio_output.ring_buffer[0];
+            var region_1_size: u32 = @intCast(alsa_frames_to_write);
+            var region_2_size: u32 = 0;
+            if (audio_output.play_cursor + alsa_frames_to_write > audio_output.ring_buffer.len) {
+                region_1_size = @intCast(audio_output.ring_buffer.len - audio_output.play_cursor);
+                region_2_size = @intCast(alsa_frames_to_write - region_1_size);
+            }
+
+            // TODO: This is non blocking, handle incomplete writes!
+            //        It is probably best to just accept the incomplete writes,
+            //        and update the play and write cursors accordingly.
+            var written = alsa.pcm_writei(pcm_opt.?, region_1_ptr, @intCast(region_1_size));
+            if (written < 0) {
+                const e: std.os.linux.E = @enumFromInt(-written);
+                switch (e) {
+                    else => {},
+                    std.os.linux.E.BADF => unreachable,
+
+                    std.os.linux.E.STRPIPE,
+                    std.os.linux.E.PIPE,
+                    => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
+                }
+            }
+
+            if (region_2_size > 0) {
+                written = alsa.pcm_writei(pcm_opt.?, region_2_ptr, @intCast(region_2_size));
+                if (written < 0) {
+                    const e: std.os.linux.E = @enumFromInt(-written);
+                    switch (e) {
+                        else => {},
+                        std.os.linux.E.BADF => unreachable,
+
+                        std.os.linux.E.STRPIPE,
+                        std.os.linux.E.PIPE,
+                        => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
+                    }
+                }
+            }
+
+            audio_output.play_cursor = @as(u32, @intCast(audio_output.play_cursor + alsa_frames_to_write)) % @as(u32, @intCast(audio_output.ring_buffer.len));
+
+            // TODO: maybe use pcm_delay?
+            const write_cursor_offset = 2048;
+            audio_output.write_cursor = @intCast((audio_output.play_cursor + write_cursor_offset) % audio_output.ring_buffer.len);
         }
 
         const work_counter = getWallClock();
@@ -637,14 +718,13 @@ pub fn main() !void {
 
         const fps = std.time.ms_per_s / ms_per_frame;
         const mcpf = cycles_elapsed / (1000 * 1000);
-        log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}, should_draw:{}, audio_fill:{}", .{
+        log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}, should_draw:{}", .{
             ms_per_frame,
             fps,
             mcpf,
             work_seconds_elapsed * std.time.ms_per_s,
             wayland_blit,
             should_draw,
-            audio_fill_requested,
         });
         _ = .{ ms_per_frame, fps, mcpf };
     }
@@ -765,7 +845,6 @@ const WlPendingResize = struct {
 };
 
 const PollFdSlot = enum(usize) {
-    alsa,
     udev,
 
     // NOTE: !!! Update first/last when changing this!
@@ -1616,35 +1695,61 @@ fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8
 
 const AudioOutput = struct {
     frames_per_second: u32 = 0,
+    alsa_buffer_byte_size: u32 = 0,
     buffer_byte_size: u32 = 0,
     period_size: u32 = 0, // TODO: This should be set to latency_frame_count!
+
+    running_frame_index: u32 = 0,
     latency_frame_count: u32 = 0,
+
+    game_buffer: []Frame = &.{},
+    ring_buffer: []Frame = &.{},
+    /// In frames
+    write_cursor: u32 = 0,
+    /// In frames
+    play_cursor: u32 = 0,
 
     const Frame = v10.AudioBuffer.Frame;
 };
 
-const AudioOutputFill = struct {
-    offset: alsa.PcmUFrames,
-    frames: []AudioOutput.Frame,
-
-    fn commit(this: AudioOutputFill, pcm: *alsa.Pcm) void {
-        _ = alsa.pcm_mmap_commit(pcm, this.offset, @intCast(this.frames.len));
+fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.AudioBuffer) void {
+    const region_1_ptr = @as([*]u8, @ptrCast(audio_output.ring_buffer.ptr)) + byte_to_lock;
+    var region_1_size = bytes_to_write;
+    if (region_1_size + byte_to_lock > audio_output.buffer_byte_size) {
+        region_1_size = audio_output.buffer_byte_size - byte_to_lock;
     }
-};
+    const region_2_ptr = @as([*]u8, @ptrCast(audio_output.ring_buffer.ptr));
+    const region_2_size = bytes_to_write - region_1_size;
 
-fn requestAudioBufferFill(pcm: ?*alsa.Pcm, frame_count: alsa.PcmSFrames) ?AudioOutputFill {
-    if (frame_count > 0) {
-        var area: [2]?*alsa.PcmChannelArea = .{ null, null };
-        var offset: alsa.PcmUFrames = 0;
-        var actual_frame_count: alsa.PcmUFrames = @intCast(frame_count);
+    const region_1_frame_count = region_1_size / @sizeOf(AudioOutput.Frame);
 
-        _ = alsa.pcm_mmap_begin(pcm.?, @ptrCast(&area), &offset, &actual_frame_count);
-        assert(area[1] == null);
+    var dest_sample: [*]i16 = @ptrCast(@alignCast(region_1_ptr));
+    var source_frame = source_buffer.frames;
+    for (0..region_1_frame_count) |_| {
+        dest_sample[0] = source_frame[0].left;
+        dest_sample += 1;
 
-        var frames: [*]AudioOutput.Frame = @ptrCast(@alignCast(area[0].?.addr));
-        return .{ .offset = offset, .frames = frames[offset .. offset + actual_frame_count] };
-    } else {
-        return null;
+        dest_sample[0] = source_frame[0].right;
+        dest_sample += 1;
+
+        source_frame += 1;
+
+        audio_output.running_frame_index +%= 1;
+    }
+
+    const region_2_frame_count = region_2_size / @sizeOf(AudioOutput.Frame);
+
+    dest_sample = @ptrCast(@alignCast(region_2_ptr));
+    for (0..region_2_frame_count) |_| {
+        dest_sample[0] = source_frame[0].left;
+        dest_sample += 1;
+
+        dest_sample[0] = source_frame[0].right;
+        dest_sample += 1;
+
+        source_frame += 1;
+
+        audio_output.running_frame_index +%= 1;
     }
 }
 
@@ -1658,14 +1763,14 @@ fn initAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size
     //        or similar. But this takes contol over the hardware, and will not work
     //        if another application is using it already!
     var pcm_handle: *alsa.Pcm = undefined;
-    if (alsa.pcm_open(&pcm_handle, "default", .PLAYBACK, 0) == 0) {
+    if (alsa.pcm_open(&pcm_handle, "default", .PLAYBACK, .{ .NONBLOCK = false }) == 0) {
         pcm_opt = pcm_handle;
         var hw_params_opt: ?*alsa.PcmHwParams = undefined;
         if (alsa.pcm_hw_params_malloc(&hw_params_opt) == 0) {
             const hw_params = hw_params_opt.?;
 
             _ = alsa.pcm_hw_params_any(pcm_handle, hw_params);
-            _ = alsa.pcm_hw_params_set_access(pcm_handle, hw_params, .MMAP_COMPLEX);
+            _ = alsa.pcm_hw_params_set_access(pcm_handle, hw_params, .RW_INTERLEAVED);
             _ = alsa.pcm_hw_params_set_format(pcm_handle, hw_params, .S16);
             _ = alsa.pcm_hw_params_set_channels(pcm_handle, hw_params, 2);
             _ = alsa.pcm_hw_params_set_rate(pcm_handle, hw_params, audio_frames_per_second, 0);
@@ -1682,20 +1787,20 @@ fn initAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size
             _ = alsa.pcm_hw_params_free(hw_params);
 
             if (alsa.pcm_prepare(pcm_handle) == 0) {
-                const pfd_count = alsa.pcm_poll_descriptors_count(pcm_handle);
-                if (pfd_count == 1) {
-                    var alsa_pfd: linux.pollfd = undefined;
-                    if (alsa.pcm_poll_descriptors(pcm_handle, @ptrCast(&alsa_pfd), 1) == pfd_count) {
-                        poll_fds[@intFromEnum(PollFdSlot.alsa)] = alsa_pfd;
-
-                        log.debug("alsa pollfd setup", .{});
-                        log.debug("alsa initial state: {}", .{alsa.pcm_state(pcm_handle)});
-                    } else {
-                        log.warn("snd_pcm_poll_descriptors failed", .{});
-                    }
-                } else {
-                    log.warn("Alsa unexpected number of pollfds: {}", .{pfd_count});
-                }
+                // const pfd_count = alsa.pcm_poll_descriptors_count(pcm_handle);
+                // if (pfd_count == 1) {
+                //     var alsa_pfd: linux.pollfd = undefined;
+                //     if (alsa.pcm_poll_descriptors(pcm_handle, @ptrCast(&alsa_pfd), 1) == pfd_count) {
+                //         poll_fds[@intFromEnum(PollFdSlot.alsa)] = alsa_pfd;
+                //
+                //         log.debug("alsa pollfd setup", .{});
+                //         log.debug("alsa initial state: {}", .{alsa.pcm_state(pcm_handle)});
+                //     } else {
+                //         log.warn("snd_pcm_poll_descriptors failed", .{});
+                //     }
+                // } else {
+                //     log.warn("Alsa unexpected number of pollfds: {}", .{pfd_count});
+                // }
             } else {
                 log.warn("snd_pcm_prepare failed", .{});
             }

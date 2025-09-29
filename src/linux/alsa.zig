@@ -106,6 +106,20 @@ pub const PcmState = enum(c_int) {
     pub const LAST: PcmState = .DISCONNECTED;
 };
 
+pub const OpenMode = packed struct(c_int) {
+    NONBLOCK: bool = false,
+    ASYNC: bool = false,
+    _reserved0: u5 = 0,
+    EINTR: bool = false,
+    _reserved1: u3 = 0,
+    ABORT: bool = false,
+    NO_AUTO_RESAMPLE: bool = false,
+    NO_AUTO_CHANNELS: bool = false,
+    NO_AUTO_FORMAT: bool = false,
+    NO_SOFTVOL: bool = false,
+    _reserved2: u16 = 0,
+};
+
 pub const PcmChannelArea = extern struct {
     /// Base address of channel samples
     addr: [*]u8,
@@ -115,7 +129,7 @@ pub const PcmChannelArea = extern struct {
     step: c_uint,
 };
 
-fn pcm_open_stub(pcm: **Pcm, name: [*:0]const u8, stream: PcmStreamType, mode: c_int) callconv(.c) c_int {
+fn pcm_open_stub(pcm: **Pcm, name: [*:0]const u8, stream: PcmStreamType, mode: OpenMode) callconv(.c) c_int {
     _ = .{ pcm, name, stream, mode };
     return -1;
 }
@@ -198,6 +212,13 @@ fn pcm_prepare_stub(pcm: *Pcm) callconv(.c) c_int {
 const FN_pcm_prepare = @TypeOf(pcm_prepare_stub);
 pub var pcm_prepare: *const FN_pcm_prepare = undefined;
 
+fn pcm_recover_stub(pcm: *Pcm, err: c_int, silent: c_int) callconv(.c) c_int {
+    _ = .{ pcm, err, silent };
+    return -1;
+}
+const FN_pcm_recover = @TypeOf(pcm_recover_stub);
+pub var pcm_recover: *const FN_pcm_recover = undefined;
+
 fn pcm_writei_stub(pcm: *Pcm, buffer: *anyopaque, size: PcmUFrames) callconv(.c) c_int {
     _ = .{ pcm, buffer, size };
     return -1;
@@ -260,6 +281,13 @@ fn pcm_avail_update_stub(pcm: *Pcm) callconv(.c) PcmSFrames {
 }
 const FN_pcm_avail_update = @TypeOf(pcm_avail_update_stub);
 pub var pcm_avail_update: *const FN_pcm_avail_update = undefined;
+
+fn pcm_avail_stub(pcm: *Pcm) callconv(.c) PcmSFrames {
+    _ = pcm;
+    return -1;
+}
+const FN_pcm_avail = @TypeOf(pcm_avail_stub);
+pub var pcm_avail: *const FN_pcm_avail = undefined;
 
 pub fn load() void {
     var lib = std.DynLib.open("libasound.so") catch {

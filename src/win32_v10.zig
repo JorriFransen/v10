@@ -367,7 +367,9 @@ pub fn windowsEntry(
             };
 
             clearAudioBuffer(&audio_output);
+
             if (audio_output.dsound_buffer) |b| _ = b.Play(0, 0, dsound.BPLAY_LOOPING);
+
             const audio_frames = win32.VirtualAlloc(
                 null,
                 audio_output.buffer_byte_size,
