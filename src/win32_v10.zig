@@ -348,7 +348,6 @@ pub fn windowsEntry(
         const monitor_refresh_hz = 60;
         const game_update_hz = monitor_refresh_hz / 2;
         const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
-        const frames_of_audio_latency = 3;
 
         if (window_opt) |window| {
             global_running = true;
@@ -363,7 +362,7 @@ pub fn windowsEntry(
                 .frames_per_second = audio_fps,
                 .buffer_byte_size = audio_buffer_byte_size,
                 .running_frame_index = 0,
-                .latency_frame_count = frames_of_audio_latency * audio_fps / game_update_hz,
+                .latency_frame_count = 3 * audio_fps / game_update_hz,
             };
 
             clearAudioBuffer(&audio_output);
@@ -418,7 +417,10 @@ pub fn windowsEntry(
                 var debug_time_markers = [_]DEBUG.AudioTimeMarker{.{}} ** (game_update_hz / 2);
 
                 var last_play_cursor: win32.DWORD = 0;
+                var last_write_cursor: win32.DWORD = 0;
                 var audio_valid = false;
+                var audio_latency_bytes: win32.DWORD = 0;
+                var audio_latency_seconds: f32 = 0;
 
                 while (global_running) {
                     const keyboard_controller = &new_input.controllers[0];
@@ -522,7 +524,8 @@ pub fn windowsEntry(
                     var target_cursor: u32 = 0;
                     if (audio_valid) {
                         byte_to_lock = (audio_output.running_frame_index * @sizeOf(AudioOutput.Frame)) % audio_output.buffer_byte_size;
-                        target_cursor = ((last_play_cursor + (audio_output.latency_frame_count * @sizeOf(AudioOutput.Frame))) % audio_output.buffer_byte_size);
+
+                        target_cursor = ((last_write_cursor + (audio_output.latency_frame_count * @sizeOf(AudioOutput.Frame))) % audio_output.buffer_byte_size);
 
                         bytes_to_write =
                             if (byte_to_lock > target_cursor)
@@ -555,7 +558,24 @@ pub fn windowsEntry(
                             var write_cursor: win32.DWORD = 0;
                             _ = audio_output.dsound_buffer.?.GetCurrentPosition(&play_cursor, &write_cursor);
 
-                            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{}", .{ last_play_cursor, byte_to_lock, target_cursor, bytes_to_write, play_cursor, write_cursor });
+                            var unwrapped_write_cursor = write_cursor;
+                            if (unwrapped_write_cursor < play_cursor) {
+                                unwrapped_write_cursor += audio_output.buffer_byte_size;
+                            }
+                            audio_latency_bytes = unwrapped_write_cursor - play_cursor;
+                            audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
+                                @as(f32, @floatFromInt(audio_output.frames_per_second));
+
+                            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({})", .{
+                                last_play_cursor,
+                                byte_to_lock,
+                                target_cursor,
+                                bytes_to_write,
+                                play_cursor,
+                                write_cursor,
+                                audio_latency_bytes,
+                                audio_latency_seconds,
+                            });
                         }
 
                         fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
@@ -569,7 +589,9 @@ pub fn windowsEntry(
                         while (seconds_elapsed_for_frame < target_seconds_per_frame) {
                             if (sleep_is_granular) {
                                 const sleep_ms: win32.DWORD = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
-                                if (sleep_ms > 0) win32.Sleep(sleep_ms);
+                                if (sleep_ms > 0) {
+                                    win32.Sleep(sleep_ms);
+                                }
                             }
                             seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                         }
@@ -592,6 +614,7 @@ pub fn windowsEntry(
                     var write_cursor: win32.DWORD = 0;
                     if (audio_output.dsound_buffer.?.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
                         last_play_cursor = play_cursor;
+                        last_write_cursor = write_cursor;
                         if (!audio_valid) {
                             audio_output.running_frame_index = write_cursor / @sizeOf(v10.AudioBuffer.Frame);
                             audio_valid = true;
