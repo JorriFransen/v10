@@ -356,8 +356,7 @@ pub fn windowsEntry(
             const dib_allocated = resizeDibSection(&global_back_buffer, 1280, 720);
 
             const audio_fps = 48000;
-            const audio_bytes_per_frame = @sizeOf(AudioOutput.Sample) * 2;
-            const audio_buffer_byte_size = audio_fps * audio_bytes_per_frame;
+            const audio_buffer_byte_size = audio_fps * @sizeOf(v10.AudioBuffer.Frame);
 
             var audio_output: AudioOutput = .{
                 .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size),
@@ -599,7 +598,7 @@ pub fn windowsEntry(
                         audio_valid = false;
                     }
 
-                    if (options.internal_build) {
+                    if (options.internal_build and audio_valid) {
                         const marker = &debug_time_markers[debug_time_marker_index];
                         marker.* = .{ .play_cursor = play_cursor, .write_cursor = write_cursor };
 
