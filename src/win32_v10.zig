@@ -566,7 +566,7 @@ pub fn windowsEntry(
                             audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
                                 @as(f32, @floatFromInt(audio_output.frames_per_second));
 
-                            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({})", .{
+                            log.debug("LPC:{} BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
                                 last_play_cursor,
                                 byte_to_lock,
                                 target_cursor,
