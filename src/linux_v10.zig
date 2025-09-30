@@ -418,6 +418,9 @@ pub fn main() !void {
     var last_counter = getWallClock();
     var last_cycle_count = x86_64.rdtsc();
 
+    var debug_time_marker_index: usize = 0;
+    var debug_time_markers = [_]DEBUG.AudioTimeMarker{.{}} ** (game_update_hz / 2);
+
     var last_play_cursor: u32 = 0; // In frames
     var audio_valid = false;
 
@@ -603,6 +606,19 @@ pub fn main() !void {
         }
 
         last_play_cursor = audio_output.play_cursor;
+
+        if (options.internal_build and audio_valid) {
+            const marker = &debug_time_markers[debug_time_marker_index];
+            marker.* = .{
+                .play_cursor = audio_output.play_cursor,
+                .write_cursor = audio_output.write_cursor,
+            };
+
+            debug_time_marker_index += 1;
+            if (debug_time_marker_index >= debug_time_markers.len) {
+                debug_time_marker_index = 0;
+            }
+        }
         drainAudioBuffer(&audio_output);
 
         if (!audio_valid) {
@@ -632,8 +648,11 @@ pub fn main() !void {
         const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
         last_counter = end_counter;
 
+        if (options.internal_build) {
+            DEBUG.syncDisplay(&global_back_buffer, @ptrCast(&debug_time_markers), debug_time_markers.len, &audio_output, target_seconds_per_frame);
+        }
+
         var wayland_blit = false;
-        const should_draw = wld.should_draw;
         // if (wld.should_draw) {
         if (aquireFreeBuffer()) |wl_buffer| {
 
@@ -662,13 +681,12 @@ pub fn main() !void {
 
         const fps = std.time.ms_per_s / ms_per_frame;
         const mcpf = cycles_elapsed / (1000 * 1000);
-        log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}, should_draw:{}", .{
+        log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}", .{
             ms_per_frame,
             fps,
             mcpf,
             work_seconds_elapsed * std.time.ms_per_s,
             wayland_blit,
-            should_draw,
         });
         _ = .{ ms_per_frame, fps, mcpf };
     }
@@ -1254,13 +1272,55 @@ pub const DEBUG = struct {
             linux.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(m)))[0..size]);
         }
     }
+
+    pub fn drawVertical(buffer: *OffscreenBuffer, x: i32, top: i32, bottom: i32, color: u32) callconv(.c) void {
+        var cursor: [*]u8 = buffer.memory.ptr + @as(usize, @intCast((x * bytes_per_pixel) + (top * buffer.pitch)));
+
+        for (@intCast(top)..@intCast(bottom + 1)) |_| {
+            const pixel: *u32 = @ptrCast(@alignCast(cursor));
+            pixel.* = color;
+            cursor += @intCast(buffer.pitch);
+        }
+    }
+
+    pub fn drawAudioBufferMarker(buffer: *OffscreenBuffer, marker: *const AudioTimeMarker, c: f32, pad_x: i32, top: i32, bottom: i32) callconv(.c) void {
+        const play_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.play_cursor))));
+        const write_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.write_cursor))));
+
+        DEBUG.drawVertical(buffer, play_x, top, bottom, 0xffffff);
+        DEBUG.drawVertical(buffer, write_x, top, bottom, 0xffff0000);
+    }
+    pub fn syncDisplay(buffer: *OffscreenBuffer, markers: [*]AudioTimeMarker, markers_len: usize, audio_output: *AudioOutput, seconds_per_frame: f32) callconv(.c) void {
+        _ = seconds_per_frame;
+
+        const pad_x = 16;
+        const pad_y = 16;
+        const top = pad_y;
+        const bottom = global_back_buffer.height - pad_y;
+
+        const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.buffer_byte_size / @sizeOf(AudioOutput.Frame)));
+
+        for (markers[0..markers_len]) |marker| {
+            drawAudioBufferMarker(buffer, &marker, c, pad_x, top, bottom);
+        }
+    }
+
+    pub const AudioTimeMarker = struct {
+        play_cursor: u32 = 0,
+        write_cursor: u32 = 0,
+    };
 };
 
 comptime {
-    if (options.internal_build)
+    if (options.internal_build) {
         for (@typeInfo(DEBUG).@"struct".decls) |decl| {
-            @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
-        };
+            const decl_type = @TypeOf(@field(DEBUG, decl.name));
+            const decl_type_info = @typeInfo(decl_type);
+            if (decl_type_info == .@"fn") {
+                @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
+            }
+        }
+    }
 }
 
 fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: [*:0]const u8, version: u32) callconv(.c) void {
@@ -1659,34 +1719,39 @@ fn drainAudioBuffer(audio_output: *AudioOutput) void {
             region_2_size = @intCast(alsa_frames_to_write - region_1_size);
         }
 
+        var total_written: c_int = 0;
+
         // TODO: This is non blocking, handle incomplete writes!
         //        It is probably best to just accept the incomplete writes,
         //        and update the play and write cursors accordingly.
         var written = alsa.pcm_writei(pcm_opt.?, region_1_ptr, @intCast(region_1_size));
-        if (written < 0) {
+        if (written >= 0) {
+            total_written += written;
+
+            if (region_2_size > 0) {
+                written = alsa.pcm_writei(pcm_opt.?, region_2_ptr, @intCast(region_2_size));
+                if (written >= 0) {
+                    total_written += written;
+                } else {
+                    const e: std.os.linux.E = @enumFromInt(-written);
+                    switch (e) {
+                        else => {},
+                        std.os.linux.E.BADF => unreachable,
+
+                        std.os.linux.E.STRPIPE,
+                        std.os.linux.E.PIPE,
+                        => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
+                    }
+                }
+            }
+        } else {
             const e: std.os.linux.E = @enumFromInt(-written);
             switch (e) {
                 else => {},
-                std.os.linux.E.BADF => unreachable,
-
+                std.os.linux.E.BADF,
                 std.os.linux.E.STRPIPE,
                 std.os.linux.E.PIPE,
                 => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
-            }
-        }
-
-        if (region_2_size > 0) {
-            written = alsa.pcm_writei(pcm_opt.?, region_2_ptr, @intCast(region_2_size));
-            if (written < 0) {
-                const e: std.os.linux.E = @enumFromInt(-written);
-                switch (e) {
-                    else => {},
-                    std.os.linux.E.BADF => unreachable,
-
-                    std.os.linux.E.STRPIPE,
-                    std.os.linux.E.PIPE,
-                    => _ = alsa.pcm_recover(pcm_opt.?, written, 1),
-                }
             }
         }
 

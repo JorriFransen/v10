@@ -859,12 +859,13 @@ pub const DEBUG = struct {
 };
 
 comptime {
-    if (options.internal_build)
+    if (options.internal_build) {
         for (@typeInfo(DEBUG).@"struct".decls) |decl| {
             const decl_type = @TypeOf(@field(DEBUG, decl.name));
             const decl_type_info = @typeInfo(decl_type);
             if (decl_type_info == .@"fn") {
                 @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
             }
-        };
+        }
+    }
 }
