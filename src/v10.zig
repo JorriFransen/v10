@@ -27,131 +27,136 @@ pub inline fn safeTruncateU64(value: u64) u32 {
     return @intCast(value);
 }
 
-pub const OffscreenBuffer = struct {
-    memory: []u8,
-    width: i32,
-    height: i32,
-    pitch: i32,
-};
-
-pub const AudioBuffer = extern struct {
-    pub const Sample = i16;
-    pub const Frame = extern struct {
-        left: Sample = 0,
-        right: Sample = 0,
+pub const game = struct {
+    pub const OffscreenBuffer = struct {
+        memory: []u8,
+        width: i32,
+        height: i32,
+        pitch: i32,
     };
 
-    frames: [*]Frame,
-    frame_count: i32,
-    frames_per_second: i32,
-};
+    pub const AudioBuffer = extern struct {
+        pub const Sample = i16;
+        pub const Frame = extern struct {
+            left: Sample = 0,
+            right: Sample = 0,
+        };
 
-pub const ButtonState = extern struct {
-    half_transition_count: i32 = 0,
-    ended_down: bool = false,
-};
+        frames: [*]Frame,
+        frame_count: i32,
+        frames_per_second: i32,
+    };
 
-pub const ControllerInput = extern struct {
-    is_connected: bool = false,
-    is_analog: bool = false,
+    pub const ButtonState = extern struct {
+        half_transition_count: i32 = 0,
+        ended_down: bool = false,
+    };
 
-    stick_average_x: f32 = 0,
-    stick_average_y: f32 = 0,
+    pub const ControllerInput = extern struct {
+        is_connected: bool = false,
+        is_analog: bool = false,
 
-    buttons: extern union {
-        array: [12]ButtonState,
+        stick_average_x: f32 = 0,
+        stick_average_y: f32 = 0,
 
-        named: extern struct {
-            move_up: ButtonState,
-            move_down: ButtonState,
-            move_left: ButtonState,
-            move_right: ButtonState,
+        buttons: extern union {
+            array: [12]ButtonState,
 
-            action_up: ButtonState,
-            action_down: ButtonState,
-            action_left: ButtonState,
-            action_right: ButtonState,
+            named: extern struct {
+                move_up: ButtonState,
+                move_down: ButtonState,
+                move_left: ButtonState,
+                move_right: ButtonState,
 
-            left_shoulder: ButtonState,
-            right_shoulder: ButtonState,
+                action_up: ButtonState,
+                action_down: ButtonState,
+                action_left: ButtonState,
+                action_right: ButtonState,
 
-            back: ButtonState,
-            start: ButtonState,
+                left_shoulder: ButtonState,
+                right_shoulder: ButtonState,
+
+                back: ButtonState,
+                start: ButtonState,
+            },
+            comptime {
+                const dummy: @This() = std.mem.zeroes(@This());
+                assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+            }
         },
-        comptime {
-            const dummy: @This() = std.mem.zeroes(@This());
-            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+    };
+
+    pub const Input = extern struct {
+        controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
+    };
+
+    pub const GameState = extern struct {
+        blue_offset: i32 = 0,
+        green_offset: i32 = 0,
+        tone_hz: i32 = 0,
+        t_sine: f32 = 0,
+    };
+
+    pub const Memory = struct {
+        initialized: bool = false,
+        permanent: []u8 = &.{},
+        transient: []u8 = &.{},
+    };
+
+    pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) bool {
+        assert(@sizeOf(GameState) <= game_memory.permanent.len);
+
+        var result = true;
+
+        const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+        if (!game_memory.initialized) {
+            game_state.tone_hz = 512;
+
+            game_memory.initialized = true;
         }
-    },
-};
 
-pub const Input = extern struct {
-    controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
-};
+        for (input.controllers) |controller| if (controller.is_connected) {
+            const buttons = &controller.buttons.named;
 
-pub const GameState = extern struct {
-    blue_offset: i32 = 0,
-    green_offset: i32 = 0,
-    tone_hz: i32 = 256,
-    t_sine: f32 = 0,
-};
+            if (controller.is_analog) {
+                game_state.blue_offset += @intFromFloat(4 * controller.stick_average_x);
+                game_state.tone_hz = @intFromFloat(512 + (128 * controller.stick_average_y));
+            } else {
+                if (buttons.move_left.ended_down) {
+                    game_state.blue_offset -= 4;
+                }
+                if (buttons.move_right.ended_down) {
+                    game_state.blue_offset += 4;
+                }
+                if (buttons.move_up.ended_down) {
+                    game_state.green_offset -= 4;
+                }
+                if (buttons.move_down.ended_down) {
+                    game_state.green_offset += 4;
+                }
+            }
 
-pub const Memory = struct {
-    initialized: bool = false,
-    permanent: []u8 = &.{},
-    transient: []u8 = &.{},
-};
+            if (buttons.action_down.ended_down) {
+                game_state.green_offset += 1;
+            }
 
-pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer, sound_buffer: *AudioBuffer) bool {
-    assert(@sizeOf(GameState) <= game_memory.permanent.len);
+            if (buttons.start.ended_down) {
+                result = false;
+            }
+        };
 
-    var result = true;
+        renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
 
-    const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
-    if (!game_memory.initialized) {
-        game_state.tone_hz = 256;
-
-        game_memory.initialized = true;
+        return result;
     }
 
-    for (input.controllers) |controller| if (controller.is_connected) {
-        const buttons = &controller.buttons.named;
+    pub fn getAudioFrames(game_memory: *Memory, sound_buffer: *AudioBuffer) void {
+        const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+        outputSound(game_state, sound_buffer);
+    }
+};
 
-        if (controller.is_analog) {
-            game_state.blue_offset += @intFromFloat(4 * controller.stick_average_x);
-            game_state.tone_hz = @intFromFloat(256 + (128 * controller.stick_average_y));
-        } else {
-            game_state.tone_hz = 256;
-            if (buttons.move_left.ended_down) {
-                game_state.blue_offset -= 4;
-            }
-            if (buttons.move_right.ended_down) {
-                game_state.blue_offset += 4;
-            }
-            if (buttons.move_up.ended_down) {
-                game_state.green_offset -= 4;
-            }
-            if (buttons.move_down.ended_down) {
-                game_state.green_offset += 4;
-            }
-        }
-
-        if (buttons.action_down.ended_down) {
-            game_state.green_offset += 1;
-        }
-
-        if (buttons.start.ended_down) {
-            result = false;
-        }
-    };
-
-    outputSound(game_state, sound_buffer);
-    renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
-
-    return result;
-}
-
-pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
+pub fn outputSound(game_state: *game.GameState, buffer: *game.AudioBuffer) void {
     const tone_volume = 3000;
     const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
 
@@ -170,7 +175,7 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     }
 }
 
-fn renderWeirdGradient(buffer: *OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
+fn renderWeirdGradient(buffer: *game.OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
     const uwidth: usize = @intCast(buffer.width);
     const uheight: usize = @intCast(buffer.height);
 
