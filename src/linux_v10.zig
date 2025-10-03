@@ -268,11 +268,13 @@ pub fn main() !void {
     const game_update_hz = monitor_refresh_hz / 2;
     const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
 
-    const audio_latency_video_frames = 3;
+    const audio_latency_video_frames = 2;
 
     const audio_fps = 48000;
     const audio_latency_frames = audio_latency_video_frames * audio_fps / game_update_hz;
-    const audio_buffer_byte_size = audio_latency_frames * @sizeOf(AudioOutput.Frame) * 2;
+    // const audio_buffer_byte_size = audio_latency_frames * @sizeOf(AudioOutput.Frame) * 2;
+    const audio_buffer_byte_size = audio_latency_frames * @sizeOf(AudioOutput.Frame) * 10;
+    // const audio_buffer_byte_size = audio_fps * @sizeOf(AudioOutput.Frame);
 
     const audio_game_buffer_bytes = linux.mmap(
         null,
@@ -405,6 +407,9 @@ pub fn main() !void {
 
     var last_counter = getWallClock();
     var last_cycle_count = x86_64.rdtsc();
+
+    var debug_time_marker_index: usize = 0;
+    var debug_time_markers = [_]DEBUG.AudioTimeMarker{.{}} ** (game_update_hz / 2);
 
     while (running) {
         const keyboard_controller = &wld.new_input.controllers[0];
@@ -574,6 +579,32 @@ pub fn main() !void {
         const keep_running = v10.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
         if (!keep_running) running = false;
 
+        if (options.internal_build) {
+            const bytes_to_write = frames_to_write * @sizeOf(AudioOutput.Frame);
+            const play_cursor = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
+            const write_cursor = ((audio_output.debug_play_cursor + @as(u32, @intCast(alsa_delay))) * @sizeOf(AudioOutput.Frame)) % audio_output.alsa_buffer_byte_size;
+            const audio_latency_bytes = alsa_delay * @sizeOf(AudioOutput.Frame);
+            const audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
+                @as(f32, @floatFromInt(audio_output.frames_per_second));
+
+            log.debug("BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
+                bytes_to_write,
+                play_cursor,
+                write_cursor,
+                audio_latency_bytes,
+                audio_latency_seconds,
+            });
+        }
+
+        if (frames_to_write > 0) {
+            const written = alsa.pcm_writei(pcm_opt.?, game_audio_output_buffer.frames, @intCast(game_audio_output_buffer.frame_count));
+            if (written <= 0) {
+                _ = alsa.pcm_recover(pcm_opt.?, written, 0);
+            } else {
+                audio_output.debug_play_cursor = (audio_output.debug_play_cursor + @as(u32, @intCast(written))) % (audio_output.alsa_buffer_byte_size / @sizeOf(AudioOutput.Frame));
+            }
+        }
+
         const work_counter = getWallClock();
         const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
@@ -597,30 +628,9 @@ pub fn main() !void {
         const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
         last_counter = end_counter;
 
-        if (frames_to_write > 0) {
-            const written = alsa.pcm_writei(pcm_opt.?, game_audio_output_buffer.frames, @intCast(game_audio_output_buffer.frame_count));
-            if (written <= 0) {
-                _ = alsa.pcm_recover(pcm_opt.?, written, 0);
-            } else {
-                audio_output.debug_play_cursor = (audio_output.debug_play_cursor + @as(u32, @intCast(written))) % (audio_output.alsa_buffer_byte_size / @sizeOf(AudioOutput.Frame));
-            }
-        }
-
         if (options.internal_build) {
-            const bytes_to_write = frames_to_write * @sizeOf(AudioOutput.Frame);
-            const play_cursor = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
-            const write_cursor = (audio_output.debug_play_cursor + alsa_delay) * @sizeOf(AudioOutput.Frame);
-            const audio_latency_bytes = alsa_delay * @sizeOf(AudioOutput.Frame);
-            const audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
-                @as(f32, @floatFromInt(audio_output.frames_per_second));
-
-            log.debug("BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
-                bytes_to_write,
-                play_cursor,
-                write_cursor,
-                audio_latency_bytes,
-                audio_latency_seconds,
-            });
+            DEBUG.audioSyncDisplay(&global_back_buffer, @ptrCast(&debug_time_markers), debug_time_markers.len, &audio_output, target_seconds_per_frame);
+            _ = &debug_time_marker_index;
         }
 
         var wayland_blit = false;
@@ -641,6 +651,18 @@ pub fn main() !void {
         // }
 
         _ = wl.display_flush(display);
+
+        if (options.internal_build) {
+            const marker = &debug_time_markers[debug_time_marker_index];
+            const play_cursor: u32 = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
+            const write_cursor = ((audio_output.debug_play_cursor + @as(u32, @intCast(alsa_delay))) * @sizeOf(AudioOutput.Frame)) % audio_output.alsa_buffer_byte_size;
+            marker.* = .{ .play_cursor = play_cursor, .write_cursor = write_cursor };
+
+            debug_time_marker_index += 1;
+            if (debug_time_marker_index >= debug_time_markers.len) {
+                debug_time_marker_index = 0;
+            }
+        }
 
         const tmp = wld.new_input;
         wld.new_input = wld.old_input;
@@ -1243,6 +1265,45 @@ pub const DEBUG = struct {
             linux.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(m)))[0..size]);
         }
     }
+
+    pub fn drawVertical(buffer: *OffscreenBuffer, x: i32, top: i32, bottom: i32, color: u32) callconv(.c) void {
+        var cursor: [*]u8 = buffer.memory.ptr + @as(usize, @intCast((x * bytes_per_pixel) + (top * buffer.pitch)));
+
+        for (@intCast(top)..@intCast(bottom + 1)) |_| {
+            const pixel: *u32 = @ptrCast(@alignCast(cursor));
+            pixel.* = color;
+            cursor += @intCast(buffer.pitch);
+        }
+    }
+
+    pub fn drawAudioBufferMarker(buffer: *OffscreenBuffer, marker: *const AudioTimeMarker, c: f32, pad_x: i32, top: i32, mid: i32, bottom: i32) callconv(.c) void {
+        const play_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.play_cursor))));
+        const write_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.write_cursor))));
+
+        DEBUG.drawVertical(buffer, play_x, top, mid, 0xffffff);
+        DEBUG.drawVertical(buffer, write_x, mid, bottom, 0xffff0000);
+    }
+
+    pub fn audioSyncDisplay(buffer: *OffscreenBuffer, markers: [*]AudioTimeMarker, markers_len: usize, audio_output: *AudioOutput, seconds_per_frame: f32) callconv(.c) void {
+        _ = seconds_per_frame;
+
+        const pad_x = 16;
+        const pad_y = 16;
+        const top = pad_y;
+        const mid = @divTrunc(global_back_buffer.height, 2);
+        const bottom = global_back_buffer.height - pad_y;
+
+        const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.alsa_buffer_byte_size));
+
+        for (markers[0..markers_len]) |marker| {
+            drawAudioBufferMarker(buffer, &marker, c, pad_x, top, mid, bottom);
+        }
+    }
+
+    pub const AudioTimeMarker = struct {
+        play_cursor: u32 = 0,
+        write_cursor: u32 = 0,
+    };
 };
 
 comptime {

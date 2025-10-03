@@ -604,7 +604,7 @@ pub fn windowsEntry(
                     last_counter = end_counter;
 
                     if (options.internal_build) {
-                        DEBUG.syncDisplay(&global_back_buffer, @ptrCast(&debug_time_markers), debug_time_markers.len, &audio_output, target_seconds_per_frame);
+                        DEBUG.audioSyncDisplay(&global_back_buffer, @ptrCast(&debug_time_markers), debug_time_markers.len, &audio_output, target_seconds_per_frame);
                     }
 
                     const dimension = getWindowDimension(window);
@@ -852,26 +852,27 @@ pub const DEBUG = struct {
         }
     }
 
-    pub fn drawAudioBufferMarker(buffer: *OffscreenBuffer, marker: *const AudioTimeMarker, c: f32, pad_x: i32, top: i32, bottom: i32) callconv(.c) void {
+    pub fn drawAudioBufferMarker(buffer: *OffscreenBuffer, marker: *const AudioTimeMarker, c: f32, pad_x: i32, top: i32, mid: i32, bottom: i32) callconv(.c) void {
         const play_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.play_cursor))));
         const write_x: i32 = pad_x + @as(i32, @intFromFloat(c * @as(f32, @floatFromInt(marker.write_cursor))));
 
-        DEBUG.drawVertical(buffer, play_x, top, bottom, 0xffffff);
-        DEBUG.drawVertical(buffer, write_x, top, bottom, 0xffff0000);
+        DEBUG.drawVertical(buffer, play_x, top, mid, 0xffffff);
+        DEBUG.drawVertical(buffer, write_x, mid, bottom, 0xffff0000);
     }
 
-    pub fn syncDisplay(buffer: *OffscreenBuffer, markers: [*]AudioTimeMarker, markers_len: usize, audio_output: *AudioOutput, seconds_per_frame: f32) callconv(.c) void {
+    pub fn audioSyncDisplay(buffer: *OffscreenBuffer, markers: [*]AudioTimeMarker, markers_len: usize, audio_output: *AudioOutput, seconds_per_frame: f32) callconv(.c) void {
         _ = seconds_per_frame;
 
         const pad_x = 16;
         const pad_y = 16;
         const top = pad_y;
+        const mid = @divTrunc(global_back_buffer.height, 2);
         const bottom = global_back_buffer.height - pad_y;
 
         const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.buffer_byte_size));
 
         for (markers[0..markers_len]) |marker| {
-            drawAudioBufferMarker(buffer, &marker, c, pad_x, top, bottom);
+            drawAudioBufferMarker(buffer, &marker, c, pad_x, top, mid, bottom);
         }
     }
 
