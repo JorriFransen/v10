@@ -155,6 +155,8 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     const tone_volume = 3000;
     const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
 
+    assert(buffer.frame_count >= 0);
+
     var frame_out = buffer.frames;
     for (0..@intCast(buffer.frame_count)) |_| {
         const sine_value: f32 = @sin(game_state.t_sine);

@@ -3,6 +3,7 @@ const log = std.log.scoped(.alsa);
 
 pub const Pcm = opaque {};
 pub const PcmHwParams = opaque {};
+pub const PcmSwParams = opaque {};
 pub const PcmUFrames = c_ulong;
 pub const PcmSFrames = c_long;
 
@@ -149,6 +150,13 @@ fn pcm_hw_params_free_stub(obj: *PcmHwParams) callconv(.c) void {
 const FN_pcm_hw_params_free = @TypeOf(pcm_hw_params_free_stub);
 pub var pcm_hw_params_free: *const FN_pcm_hw_params_free = undefined;
 
+fn pcm_hw_params_current_stub(pcm: *Pcm, params: *PcmHwParams) callconv(.c) c_int {
+    _ = .{ pcm, params };
+    return -1;
+}
+const FN_pcm_hw_params_current = @TypeOf(pcm_hw_params_current_stub);
+pub var pcm_hw_params_current: *const FN_pcm_hw_params_current = undefined;
+
 fn pcm_hw_params_any_stub(pcm: *Pcm, params: *PcmHwParams) callconv(.c) c_int {
     _ = .{ pcm, params };
     return -1;
@@ -204,6 +212,40 @@ fn pcm_hw_params_stub(pcm: *Pcm, params: *PcmHwParams) callconv(.c) c_int {
 }
 const FN_pcm_hw_params = @TypeOf(pcm_hw_params_stub);
 pub var pcm_hw_params: *const FN_pcm_hw_params = undefined;
+
+fn pcm_sw_params_malloc_stub(ptr: *?*PcmSwParams) callconv(.c) c_int {
+    ptr.* = null;
+    return -1;
+}
+const FN_pcm_sw_params_malloc = @TypeOf(pcm_sw_params_malloc_stub);
+pub var pcm_sw_params_malloc: *const FN_pcm_sw_params_malloc = undefined;
+
+fn pcm_sw_params_free_stub(obj: *PcmSwParams) callconv(.c) void {
+    _ = .{obj};
+}
+const FN_pcm_sw_params_free = @TypeOf(pcm_sw_params_free_stub);
+pub var pcm_sw_params_free: *const FN_pcm_sw_params_free = undefined;
+
+fn pcm_sw_params_current_stub(pcm: *Pcm, params: *PcmSwParams) callconv(.c) c_int {
+    _ = .{ pcm, params };
+    return -1;
+}
+const FN_pcm_sw_params_current = @TypeOf(pcm_sw_params_current_stub);
+pub var pcm_sw_params_current: *const FN_pcm_sw_params_current = undefined;
+
+fn pcm_sw_params_set_start_threshold_stub(pcm: *Pcm, params: *PcmSwParams, val: PcmUFrames) callconv(.c) c_int {
+    _ = .{ pcm, params, val };
+    return -1;
+}
+const FN_pcm_sw_params_set_start_threshold = @TypeOf(pcm_sw_params_set_start_threshold_stub);
+pub var pcm_sw_params_set_start_threshold: *const FN_pcm_sw_params_set_start_threshold = undefined;
+
+fn pcm_sw_params_stub(pcm: *Pcm, params: *PcmSwParams) callconv(.c) c_int {
+    _ = .{ pcm, params };
+    return -1;
+}
+const FN_pcm_sw_params = @TypeOf(pcm_sw_params_stub);
+pub var pcm_sw_params: *const FN_pcm_sw_params = undefined;
 
 fn pcm_prepare_stub(pcm: *Pcm) callconv(.c) c_int {
     _ = .{pcm};
