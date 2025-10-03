@@ -4,6 +4,7 @@ const mem = @import("mem");
 const options = @import("options");
 
 const v10 = @import("v10.zig");
+const game = v10.game;
 
 const x86_64 = @import("x86_64.zig");
 
@@ -369,7 +370,7 @@ pub fn main() !void {
     const transient_storage_size = mem.GiB * 4;
     const total_size = permanent_storage_size + transient_storage_size;
 
-    var game_memory = v10.Memory{
+    var game_memory = game.Memory{
         .initialized = false,
     };
 
@@ -414,7 +415,7 @@ pub fn main() !void {
     while (running) {
         const keyboard_controller = &wld.new_input.controllers[0];
         const old_keyboard_controller = &wld.old_input.controllers[0];
-        keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
+        keyboard_controller.* = std.mem.zeroes(game.ControllerInput);
         for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
             new_button.ended_down = old_button.ended_down;
         }
@@ -551,6 +552,16 @@ pub fn main() !void {
             }
         }
 
+        var game_offscreen_buffer = game.OffscreenBuffer{
+            .memory = global_back_buffer.memory,
+            .width = global_back_buffer.width,
+            .height = global_back_buffer.height,
+            .pitch = global_back_buffer.pitch,
+        };
+
+        const keep_running = game.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer);
+        if (!keep_running) running = false;
+
         var frames_to_write: i32 = 0;
 
         var alsa_avail: alsa.PcmSFrames = 0;
@@ -563,28 +574,20 @@ pub fn main() !void {
         }
         frames_to_write = @intCast(@min(@max(audio_output.latency_frames - alsa_delay, 0), alsa_avail));
 
-        var game_audio_output_buffer: v10.AudioBuffer = .{
+        var game_audio_output_buffer: game.AudioBuffer = .{
             .frames = audio_output.game_buffer.ptr,
             .frame_count = frames_to_write,
             .frames_per_second = @intCast(audio_output.frames_per_second),
         };
 
-        var game_offscreen_buffer = v10.OffscreenBuffer{
-            .memory = global_back_buffer.memory,
-            .width = global_back_buffer.width,
-            .height = global_back_buffer.height,
-            .pitch = global_back_buffer.pitch,
-        };
-
-        const keep_running = v10.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer, &game_audio_output_buffer);
-        if (!keep_running) running = false;
+        game.getAudioFrames(&game_memory, &game_audio_output_buffer);
 
         if (options.internal_build) {
             const bytes_to_write = frames_to_write * @sizeOf(AudioOutput.Frame);
             const play_cursor = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
             const write_cursor = ((audio_output.debug_play_cursor + @as(u32, @intCast(alsa_delay))) * @sizeOf(AudioOutput.Frame)) % audio_output.alsa_buffer_byte_size;
             const audio_latency_bytes = alsa_delay * @sizeOf(AudioOutput.Frame);
-            const audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
+            const audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(AudioOutput.Frame)) /
                 @as(f32, @floatFromInt(audio_output.frames_per_second));
 
             log.debug("BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
@@ -746,9 +749,9 @@ const WlData = struct {
 
     pending_resize: ?WlPendingResize = null,
 
-    game_input: [2]v10.Input = .{v10.Input{}} ** 2,
-    new_input: *v10.Input = undefined,
-    old_input: *v10.Input = undefined,
+    game_input: [2]game.Input = .{game.Input{}} ** 2,
+    new_input: *game.Input = undefined,
+    old_input: *game.Input = undefined,
 };
 
 const WlBuffer = struct {
@@ -1018,12 +1021,12 @@ const Joystick = struct {
     }
 };
 
-fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const v10.ButtonState, btn: Joystick.Button, new_state: *v10.ButtonState) void {
+fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const game.ButtonState, btn: Joystick.Button, new_state: *game.ButtonState) void {
     new_state.ended_down = buttons[@intFromEnum(btn)] == 1;
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
 }
 
-fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {
+fn processKeyEvent(new_state: *game.ButtonState, is_down: bool) void {
     new_state.ended_down = is_down;
     new_state.half_transition_count += 1;
 }
@@ -1690,7 +1693,7 @@ const AudioOutput = struct {
 
     debug_play_cursor: u32 = 0,
 
-    const Frame = v10.AudioBuffer.Frame;
+    const Frame = game.AudioBuffer.Frame;
 };
 
 fn initAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size: *u32, period_size: *u32) void {
