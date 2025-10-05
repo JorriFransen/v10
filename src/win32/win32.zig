@@ -48,6 +48,9 @@ pub const POINT = zig_win32.POINT;
 pub const RECT = zig_win32.RECT;
 pub const LPRECT = *RECT;
 
+pub const TRUE = 1;
+pub const FALSE = 0;
+
 pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
 
 pub const ERROR_SUCCESS = 0x0;
@@ -829,6 +832,7 @@ pub extern "kernel32" fn ReadFile(handle: HANDLE, buffer: LPVOID, bytes_to_read:
 pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, bytes_written: *DWORD, overlapped: ?*OVERLAPPED) callconv(.c) BOOL;
 pub extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
+pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LPCSTR, fail_if_exists: BOOL) callconv(.c) BOOL;
 
 pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
 

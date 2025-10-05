@@ -3,8 +3,7 @@ const log = std.log.scoped(.linux_v10);
 const mem = @import("mem");
 const options = @import("options");
 
-const v10 = @import("v10.zig");
-const game = v10.game;
+const v10 = @import("v10_shared.zig");
 
 const x86_64 = @import("x86_64.zig");
 
@@ -269,13 +268,12 @@ pub fn main() !void {
     const game_update_hz = monitor_refresh_hz / 2;
     const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
 
-    const audio_latency_video_frames = 2;
+    // TODO: Replace this with something similar to what is used for win32/dsound
+    const audio_latency_video_frames = 3; // 2 works on non bluetooth
 
     const audio_fps = 48000;
     const audio_latency_frames = audio_latency_video_frames * audio_fps / game_update_hz;
-    // const audio_buffer_byte_size = audio_latency_frames * @sizeOf(AudioOutput.Frame) * 2;
     const audio_buffer_byte_size = audio_latency_frames * @sizeOf(AudioOutput.Frame) * 10;
-    // const audio_buffer_byte_size = audio_fps * @sizeOf(AudioOutput.Frame);
 
     const audio_game_buffer_bytes = linux.mmap(
         null,
@@ -370,8 +368,13 @@ pub fn main() !void {
     const transient_storage_size = mem.GiB * 4;
     const total_size = permanent_storage_size + transient_storage_size;
 
-    var game_memory = game.Memory{
+    var game_memory = v10.Memory{
         .initialized = false,
+        .debug = if (options.internal_build) .{
+            .readEntireFile = &DEBUG.readEntireFile,
+            .freeFileMemory = &DEBUG.freeFileMemory,
+            .writeEntireFile = &DEBUG.writeEntireFile,
+        } else .{},
     };
 
     if (linux.mmap(
@@ -406,6 +409,10 @@ pub fn main() !void {
     assert(prefill_frames == pwritten);
     audio_output.debug_play_cursor += prefill_frames;
 
+    var game = v10.loadGameCode("./libv10_game.so");
+    game.init(&game_memory);
+    var load_counter: u32 = 0;
+
     var last_counter = getWallClock();
     var last_cycle_count = x86_64.rdtsc();
 
@@ -413,9 +420,16 @@ pub fn main() !void {
     var debug_time_markers = [_]DEBUG.AudioTimeMarker{.{}} ** (game_update_hz / 2);
 
     while (running) {
+        if (load_counter > 60) {
+            v10.unloadGameCode(&game);
+            game = v10.loadGameCode("./libv10_game.so");
+            load_counter = 0;
+        }
+        load_counter += 1;
+
         const keyboard_controller = &wld.new_input.controllers[0];
         const old_keyboard_controller = &wld.old_input.controllers[0];
-        keyboard_controller.* = std.mem.zeroes(game.ControllerInput);
+        keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
         for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
             new_button.ended_down = old_button.ended_down;
         }
@@ -511,26 +525,27 @@ pub fn main() !void {
                 }
 
                 const threshold = 0.5;
+                const target_type = @Type(.{ .int = .{ .bits = @bitSizeOf(Joystick.Buttons), .signedness = .signed } });
                 processDigitalButton(
-                    @bitCast(@as(u15, if (new_controller.stick_average_x < -threshold) 1 else 0)),
+                    @bitCast(@as(target_type, if (new_controller.stick_average_x < -threshold) 1 else 0)),
                     &old_buttons.move_left,
                     @enumFromInt(0),
                     &new_buttons.move_left,
                 );
                 processDigitalButton(
-                    @bitCast(@as(u15, if (new_controller.stick_average_x > threshold) 1 else 0)),
+                    @bitCast(@as(target_type, if (new_controller.stick_average_x > threshold) 1 else 0)),
                     &old_buttons.move_right,
                     @enumFromInt(0),
                     &new_buttons.move_right,
                 );
                 processDigitalButton(
-                    @bitCast(@as(u15, if (new_controller.stick_average_y < -threshold) 1 else 0)),
+                    @bitCast(@as(target_type, if (new_controller.stick_average_y < -threshold) 1 else 0)),
                     &old_buttons.move_down,
                     @enumFromInt(0),
                     &new_buttons.move_down,
                 );
                 processDigitalButton(
-                    @bitCast(@as(u15, if (new_controller.stick_average_y > threshold) 1 else 0)),
+                    @bitCast(@as(target_type, if (new_controller.stick_average_y > threshold) 1 else 0)),
                     &old_buttons.move_up,
                     @enumFromInt(0),
                     &new_buttons.move_up,
@@ -552,7 +567,7 @@ pub fn main() !void {
             }
         }
 
-        var game_offscreen_buffer = game.OffscreenBuffer{
+        var game_offscreen_buffer = v10.OffscreenBuffer{
             .memory = global_back_buffer.memory,
             .width = global_back_buffer.width,
             .height = global_back_buffer.height,
@@ -574,7 +589,7 @@ pub fn main() !void {
         }
         frames_to_write = @intCast(@min(@max(audio_output.latency_frames - alsa_delay, 0), alsa_avail));
 
-        var game_audio_output_buffer: game.AudioBuffer = .{
+        var game_audio_output_buffer: v10.AudioBuffer = .{
             .frames = audio_output.game_buffer.ptr,
             .frame_count = frames_to_write,
             .frames_per_second = @intCast(audio_output.frames_per_second),
@@ -749,9 +764,9 @@ const WlData = struct {
 
     pending_resize: ?WlPendingResize = null,
 
-    game_input: [2]game.Input = .{game.Input{}} ** 2,
-    new_input: *game.Input = undefined,
-    old_input: *game.Input = undefined,
+    game_input: [2]v10.Input = .{v10.Input{}} ** 2,
+    new_input: *v10.Input = undefined,
+    old_input: *v10.Input = undefined,
 };
 
 const WlBuffer = struct {
@@ -1021,12 +1036,12 @@ const Joystick = struct {
     }
 };
 
-fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const game.ButtonState, btn: Joystick.Button, new_state: *game.ButtonState) void {
+fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const v10.ButtonState, btn: Joystick.Button, new_state: *v10.ButtonState) void {
     new_state.ended_down = buttons[@intFromEnum(btn)] == 1;
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
 }
 
-fn processKeyEvent(new_state: *game.ButtonState, is_down: bool) void {
+fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {
     new_state.ended_down = is_down;
     new_state.half_transition_count += 1;
 }
@@ -1693,12 +1708,14 @@ const AudioOutput = struct {
 
     debug_play_cursor: u32 = 0,
 
-    const Frame = game.AudioBuffer.Frame;
+    const Frame = v10.AudioBuffer.Frame;
 };
 
 fn initAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size: *u32, period_size: *u32) void {
     alsa.load();
 
+    // TODO: Bluetooth headphones only work (on arch) after restarting pipewire service!
+    //
     // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
     //        required for mixing with other applications. For pipewire, the alsa
     //        plugin is required (pipewire-alsa on arch). Same for pulse

@@ -2,6 +2,8 @@ const std = @import("std");
 const log = std.log.scoped(.v10);
 const options = @import("options");
 
+const v10 = @import("v10_shared.zig");
+
 const assert = std.debug.assert;
 
 const os = @import("builtin").os.tag;
@@ -11,152 +13,64 @@ pub const platform = switch (os) {
     else => @compileError("Unsupported platform"),
 };
 
-pub const DEBUG = if (options.internal_build) struct {
-    pub const ReadFileResult = extern struct {
-        size: usize = 0,
-        content: *anyopaque = undefined,
-    };
-
-    pub extern fn readEntireFile(path: [*:0]const u8) callconv(.c) ReadFileResult;
-    pub extern fn freeFileMemory(memory: ?*anyopaque, size: usize) void;
-    pub extern fn writeEntireFile(path: [*:0]const u8, memory: *anyopaque, size: usize) bool;
-} else struct {};
-
-pub inline fn safeTruncateU64(value: u64) u32 {
-    assert(value <= std.math.maxInt(u32));
-    return @intCast(value);
+pub export fn init(game_memory: *v10.Memory) callconv(.c) void {
+    _ = game_memory;
 }
 
-pub const game = struct {
-    pub const OffscreenBuffer = struct {
-        memory: []u8,
-        width: i32,
-        height: i32,
-        pitch: i32,
-    };
+pub export fn updateAndRender(game_memory: *v10.Memory, input: *const v10.Input, offscreen_buffer: *v10.OffscreenBuffer) callconv(.c) bool {
+    assert(@sizeOf(v10.GameState) <= game_memory.permanent.len);
 
-    pub const AudioBuffer = extern struct {
-        pub const Sample = i16;
-        pub const Frame = extern struct {
-            left: Sample = 0,
-            right: Sample = 0,
-        };
+    var result = true;
 
-        frames: [*]Frame,
-        frame_count: i32,
-        frames_per_second: i32,
-    };
+    const game_state: *v10.GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+    if (!game_memory.initialized) {
+        game_state.* = .{};
+        game_state.tone_hz = 512;
 
-    pub const ButtonState = extern struct {
-        half_transition_count: i32 = 0,
-        ended_down: bool = false,
-    };
+        game_memory.initialized = true;
+    }
 
-    pub const ControllerInput = extern struct {
-        is_connected: bool = false,
-        is_analog: bool = false,
+    for (input.controllers) |controller| if (controller.is_connected) {
+        const buttons = &controller.buttons.named;
 
-        stick_average_x: f32 = 0,
-        stick_average_y: f32 = 0,
-
-        buttons: extern union {
-            array: [12]ButtonState,
-
-            named: extern struct {
-                move_up: ButtonState,
-                move_down: ButtonState,
-                move_left: ButtonState,
-                move_right: ButtonState,
-
-                action_up: ButtonState,
-                action_down: ButtonState,
-                action_left: ButtonState,
-                action_right: ButtonState,
-
-                left_shoulder: ButtonState,
-                right_shoulder: ButtonState,
-
-                back: ButtonState,
-                start: ButtonState,
-            },
-            comptime {
-                const dummy: @This() = std.mem.zeroes(@This());
-                assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+        if (controller.is_analog) {
+            game_state.blue_offset += @intFromFloat(4 * controller.stick_average_x);
+            game_state.tone_hz = @intFromFloat(512 + (128 * controller.stick_average_y));
+        } else {
+            if (buttons.move_left.ended_down) {
+                game_state.blue_offset -= 4;
             }
-        },
-    };
-
-    pub const Input = extern struct {
-        controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
-    };
-
-    pub const GameState = extern struct {
-        blue_offset: i32 = 0,
-        green_offset: i32 = 0,
-        tone_hz: i32 = 0,
-        t_sine: f32 = 0,
-    };
-
-    pub const Memory = struct {
-        initialized: bool = false,
-        permanent: []u8 = &.{},
-        transient: []u8 = &.{},
-    };
-
-    pub fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) bool {
-        assert(@sizeOf(GameState) <= game_memory.permanent.len);
-
-        var result = true;
-
-        const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
-        if (!game_memory.initialized) {
-            game_state.tone_hz = 512;
-
-            game_memory.initialized = true;
+            if (buttons.move_right.ended_down) {
+                game_state.blue_offset += 4;
+            }
+            if (buttons.move_up.ended_down) {
+                game_state.green_offset -= 4;
+            }
+            if (buttons.move_down.ended_down) {
+                game_state.green_offset += 4;
+            }
         }
 
-        for (input.controllers) |controller| if (controller.is_connected) {
-            const buttons = &controller.buttons.named;
+        if (buttons.action_down.ended_down) {
+            game_state.green_offset += 1;
+        }
 
-            if (controller.is_analog) {
-                game_state.blue_offset += @intFromFloat(4 * controller.stick_average_x);
-                game_state.tone_hz = @intFromFloat(512 + (128 * controller.stick_average_y));
-            } else {
-                if (buttons.move_left.ended_down) {
-                    game_state.blue_offset -= 4;
-                }
-                if (buttons.move_right.ended_down) {
-                    game_state.blue_offset += 4;
-                }
-                if (buttons.move_up.ended_down) {
-                    game_state.green_offset -= 4;
-                }
-                if (buttons.move_down.ended_down) {
-                    game_state.green_offset += 4;
-                }
-            }
+        if (buttons.start.ended_down) {
+            result = false;
+        }
+    };
 
-            if (buttons.action_down.ended_down) {
-                game_state.green_offset += 1;
-            }
+    renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
 
-            if (buttons.start.ended_down) {
-                result = false;
-            }
-        };
+    return result;
+}
 
-        renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
+pub export fn getAudioFrames(game_memory: *v10.Memory, sound_buffer: *v10.AudioBuffer) callconv(.c) void {
+    const game_state: *v10.GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+    outputSound(game_state, sound_buffer);
+}
 
-        return result;
-    }
-
-    pub fn getAudioFrames(game_memory: *Memory, sound_buffer: *AudioBuffer) void {
-        const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
-        outputSound(game_state, sound_buffer);
-    }
-};
-
-pub fn outputSound(game_state: *game.GameState, buffer: *game.AudioBuffer) void {
+pub fn outputSound(game_state: *v10.GameState, buffer: *v10.AudioBuffer) void {
     const tone_volume = 3000;
     const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
 
@@ -175,7 +89,7 @@ pub fn outputSound(game_state: *game.GameState, buffer: *game.AudioBuffer) void 
     }
 }
 
-fn renderWeirdGradient(buffer: *game.OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
+fn renderWeirdGradient(buffer: *v10.OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
     const uwidth: usize = @intCast(buffer.width);
     const uheight: usize = @intCast(buffer.height);
 
@@ -188,7 +102,7 @@ fn renderWeirdGradient(buffer: *game.OffscreenBuffer, blue_offset: i32, green_of
 
             const b: u8 = @truncate(@as(u32, @bitCast(x +% blue_offset)));
             const g: u8 = @truncate(@as(u32, @bitCast(y +% green_offset)));
-            pixel[0] = (@as(u16, g) << 8) | b;
+            pixel[0] = (@as(u32, g) << 16) | b;
             pixel += 1;
         }
         row += @intCast(buffer.pitch);

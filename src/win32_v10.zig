@@ -6,9 +6,8 @@ const win32 = @import("win32/win32.zig");
 const xinput = @import("win32/xinput.zig");
 const dsound = @import("win32/direct_sound.zig");
 const x86_64 = @import("x86_64.zig");
-const v10 = @import("v10.zig");
 
-const game = v10.game;
+const v10 = @import("v10_shared.zig");
 
 const assert = std.debug.assert;
 
@@ -52,8 +51,8 @@ pub const AudioOutput = struct {
     latency_frame_count: u32,
     safety_frame_bytes: u32,
 
-    const Sample = game.AudioBuffer.Sample;
-    const Frame = game.AudioBuffer.Frame;
+    const Sample = v10.AudioBuffer.Sample;
+    const Frame = v10.AudioBuffer.Frame;
 };
 
 fn clearAudioBuffer(audio_output: *AudioOutput) void {
@@ -87,7 +86,7 @@ fn clearAudioBuffer(audio_output: *AudioOutput) void {
     };
 }
 
-fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *game.AudioBuffer) void {
+fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.AudioBuffer) void {
     var region1_ptr: *anyopaque = undefined;
     var region1_bytes: u32 = undefined;
     var region2_ptr: *anyopaque = undefined;
@@ -187,7 +186,7 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn processPendingMessages(keyboard_controller: *game.ControllerInput) void {
+fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
     var msg = win32.MSG{};
 
     const buttons = &keyboard_controller.buttons.named;
@@ -255,14 +254,14 @@ fn processPendingMessages(keyboard_controller: *game.ControllerInput) void {
     }
 }
 
-fn processKeyboardMessage(new_state: *game.ButtonState, ended_down: bool) void {
+fn processKeyboardMessage(new_state: *v10.ButtonState, ended_down: bool) void {
     assert(new_state.ended_down != ended_down);
 
     new_state.ended_down = ended_down;
     new_state.half_transition_count += 1;
 }
 
-fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const game.ButtonState, comptime button: GamepadButton, new_state: *game.ButtonState) void {
+fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.ButtonState, comptime button: GamepadButton, new_state: *v10.ButtonState) void {
     new_state.ended_down = @field(xinput_button_state, @tagName(button));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
 }
@@ -365,7 +364,7 @@ pub fn windowsEntry(
             const dib_allocated = resizeDibSection(&global_back_buffer, 1280, 720);
 
             const audio_fps = 48000;
-            const audio_buffer_byte_size = audio_fps * @sizeOf(game.AudioBuffer.Frame);
+            const audio_buffer_byte_size = audio_fps * @sizeOf(v10.AudioBuffer.Frame);
 
             var audio_output: AudioOutput = .{
                 .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size),
@@ -408,16 +407,22 @@ pub fn windowsEntry(
             log.debug("perm:  {*}", .{perm});
             log.debug("trans: {*}", .{trans});
 
-            var game_memory = game.Memory{
+            var game_memory = v10.Memory{
                 .initialized = false,
                 .permanent = @as([*]u8, @ptrCast(perm))[0..permanent_storage_size],
                 .transient = @as([*]u8, @ptrCast(trans))[0..transient_storage_size],
+
+                .debug = if (options.internal_build) .{
+                    .readEntireFile = &DEBUG.readEntireFile,
+                    .freeFileMemory = &DEBUG.freeFileMemory,
+                    .writeEntireFile = &DEBUG.writeEntireFile,
+                } else .{},
             };
 
             if (dib_allocated and audio_frames != null and perm != null and trans != null) {
                 xinput.load();
 
-                var input = [_]game.Input{.{}} ** 2;
+                var input = [_]v10.Input{.{}} ** 2;
                 var new_input = &input[0];
                 var old_input = &input[1];
 
@@ -431,11 +436,25 @@ pub fn windowsEntry(
                 var audio_latency_seconds: f32 = 0;
                 var audio_valid = false;
 
+                var game = v10.loadGameCode("v10_game.dll");
+                game.init(&game_memory);
+                var load_counter: u32 = 0;
+
                 var last_cycle_count = x86_64.rdtsc();
+
                 while (global_running) {
+                    if (load_counter > 60) {
+                        v10.unloadGameCode(&game);
+
+                        _ = win32.CopyFileA("v10_game.dll", "v10_temp.dll", win32.FALSE);
+                        game = v10.loadGameCode("v10_temp.dll");
+                        load_counter = 0;
+                    }
+                    load_counter += 1;
+
                     const keyboard_controller = &new_input.controllers[0];
                     const old_keyboard_controller = &old_input.controllers[0];
-                    keyboard_controller.* = std.mem.zeroes(game.ControllerInput);
+                    keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
                     for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
                         new_button.ended_down = old_button.ended_down;
                     }
@@ -529,7 +548,7 @@ pub fn windowsEntry(
                             _ = xinput.XInputSetState(@intCast(x_controller_index), &vibration);
                         }
 
-                        var game_offscreen_buffer: game.OffscreenBuffer = .{
+                        var game_offscreen_buffer: v10.OffscreenBuffer = .{
                             .memory = global_back_buffer.memory,
                             .width = global_back_buffer.width,
                             .height = global_back_buffer.height,
@@ -582,7 +601,7 @@ pub fn windowsEntry(
 
                             const frames_to_write: u32 = bytes_to_write / @sizeOf(AudioOutput.Frame);
 
-                            var game_sound_output_buffer: game.AudioBuffer = .{
+                            var game_sound_output_buffer: v10.AudioBuffer = .{
                                 .frames = @ptrCast(audio_output.buffer.ptr),
                                 .frame_count = @intCast(frames_to_write),
                                 .frames_per_second = audio_fps,
@@ -605,7 +624,7 @@ pub fn windowsEntry(
                                     unwrapped_write_cursor += audio_output.buffer_byte_size;
                                 }
                                 audio_latency_bytes = unwrapped_write_cursor - play_cursor;
-                                audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(game.AudioBuffer.Frame)) /
+                                audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
                                     @as(f32, @floatFromInt(audio_output.frames_per_second));
 
                                 log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
@@ -833,7 +852,7 @@ pub const DEBUG = struct {
             var file_size: win32.LARGE_INTEGER = undefined;
             if (win32.GetFileSizeEx(handle, &file_size) != 0) {
                 if (win32.VirtualAlloc(null, file_size.quad_part, win32.MEM_RESERVE | win32.MEM_COMMIT, win32.PAGE_READWRITE)) |alloc_res| {
-                    const file_size_32 = v10.safeTruncateU64(file_size.quad_part);
+                    const file_size_32 = safeTruncateU64(file_size.quad_part);
 
                     var bytes_read: win32.DWORD = undefined;
                     if (win32.ReadFile(handle, alloc_res, file_size_32, &bytes_read, null) != 0 and
@@ -865,7 +884,7 @@ pub const DEBUG = struct {
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var written: win32.DWORD = undefined;
 
-            const memory_size_32 = v10.safeTruncateU64(size);
+            const memory_size_32 = safeTruncateU64(size);
 
             if (win32.WriteFile(handle, memory, memory_size_32, &written, null) != 0) {
                 result = true;
@@ -975,4 +994,9 @@ comptime {
             }
         }
     }
+}
+
+inline fn safeTruncateU64(value: u64) u32 {
+    assert(value <= std.math.maxInt(u32));
+    return @intCast(value);
 }
