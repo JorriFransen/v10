@@ -102,7 +102,7 @@ fn renderWeirdGradient(buffer: *v10.OffscreenBuffer, blue_offset: i32, green_off
 
             const b: u8 = @truncate(@as(u32, @bitCast(x +% blue_offset)));
             const g: u8 = @truncate(@as(u32, @bitCast(y +% green_offset)));
-            pixel[0] = (@as(u32, g) << 16) | b;
+            pixel[0] = (@as(u32, g) << 8) | b;
             pixel += 1;
         }
         row += @intCast(buffer.pitch);

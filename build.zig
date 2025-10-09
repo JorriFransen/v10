@@ -170,11 +170,13 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
         .use_llvm = use_llvm,
     });
 
-    const lib_install = b.addInstallArtifact(lib, .{ .dest_dir = .{ .override = .prefix } });
+    const lib_install = b.addInstallArtifact(lib, .{ .dest_dir = .{
+        .override = .prefix,
+    } });
     b.getInstallStep().dependOn(&lib_install.step);
 
-    if (lib_install.implib_dir) |*implib_dir| {
-        implib_dir.* = .{ .prefix = {} };
+    if (lib_install.implib_dir) |_| {
+        lib_install.implib_dir = null;
     }
 
     return .{

@@ -5,14 +5,30 @@ const options = @import("options");
 const assert = std.debug.assert;
 
 pub const GameCode = struct {
+    valid: bool = false,
     dll: ?std.DynLib = null,
+    last_write_time: i128 = 0,
 
     init: FN_init = initStub,
     updateAndRender: FN_updateAndRender = updateAndRenderStub,
     getAudioFrames: FN_getAudioFrames = getAudioFramesStub,
 };
 
+pub fn getLastWriteTime(file_name: []const u8) i128 {
+    var result: i128 = 0;
+
+    if (std.fs.cwd().openFile(file_name, .{ .mode = .read_only })) |dll_file| {
+        if (dll_file.stat()) |stat| {
+            result = stat.mtime;
+        } else |_| {}
+        dll_file.close();
+    } else |_| {}
+
+    return result;
+}
+
 pub fn loadGameCode(libname: []const u8) GameCode {
+    const last_write_time = getLastWriteTime(libname);
     var lib = std.DynLib.open(libname) catch |e| {
         log.err("Failed to load game code: {}", .{e});
         return .{};
@@ -29,7 +45,9 @@ pub fn loadGameCode(libname: []const u8) GameCode {
 
     if (valid) {
         return .{
+            .valid = true,
             .dll = lib,
+            .last_write_time = last_write_time,
             .init = init.?,
             .updateAndRender = update_and_render.?,
             .getAudioFrames = get_audio_frames.?,

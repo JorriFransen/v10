@@ -309,7 +309,7 @@ pub fn main() u8 {
     var startup_info: win32.STARTUPINFOA = undefined;
     win32.GetStartupInfoA(&startup_info);
 
-    const ret_code = windowsEntry(instance, null, command_line, startup_info.wShowWindow);
+    const ret_code = windowsEntry(instance, null, command_line, startup_info.wShowWindow) catch 1;
     assert(ret_code >= 0);
     return @intCast(ret_code);
 }
@@ -319,7 +319,7 @@ pub fn windowsEntry(
     prev_instance: ?win32.HINSTANCE,
     command_line: win32.LPCSTR,
     cmd_show: c_int,
-) c_int {
+) !c_int {
     _ = prev_instance;
     _ = command_line;
     _ = cmd_show;
@@ -436,21 +436,22 @@ pub fn windowsEntry(
                 var audio_latency_seconds: f32 = 0;
                 var audio_valid = false;
 
-                var game = v10.loadGameCode("v10_game.dll");
+                const source_dll_name = "v10_game.dll";
+                const temp_dll_name = "v10_temp.dll";
+
+                var game = v10.loadGameCode(source_dll_name);
                 game.init(&game_memory);
-                var load_counter: u32 = 0;
 
                 var last_cycle_count = x86_64.rdtsc();
 
                 while (global_running) {
-                    if (load_counter > 60) {
+                    const new_dll_write_time = v10.getLastWriteTime(source_dll_name);
+                    if (new_dll_write_time > game.last_write_time) {
                         v10.unloadGameCode(&game);
 
-                        _ = win32.CopyFileA("v10_game.dll", "v10_temp.dll", win32.FALSE);
-                        game = v10.loadGameCode("v10_temp.dll");
-                        load_counter = 0;
+                        _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
+                        game = v10.loadGameCode(temp_dll_name);
                     }
-                    load_counter += 1;
 
                     const keyboard_controller = &new_input.controllers[0];
                     const old_keyboard_controller = &old_input.controllers[0];

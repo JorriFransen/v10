@@ -33,6 +33,7 @@ pub const BOOL = zig_win32.BOOL;
 pub const WORD = zig_win32.WORD;
 pub const DWORD = zig_win32.DWORD;
 pub const BYTE = zig_win32.BYTE;
+pub const CHAR = zig_win32.CHAR;
 pub const SHORT = zig_win32.SHORT;
 pub const USHORT = zig_win32.USHORT;
 pub const INT = zig_win32.INT;
@@ -50,6 +51,7 @@ pub const LPRECT = *RECT;
 
 pub const TRUE = 1;
 pub const FALSE = 0;
+pub const MAX_PATH = 260;
 
 pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
 
@@ -819,6 +821,30 @@ pub const OVERLAPPED = extern struct {
     event: HANDLE,
 };
 
+pub const FILETIME = extern struct {
+    low_date_time: DWORD = 0,
+    high_date_time: DWORD = 0,
+};
+
+pub const WIN32_FIND_DATA = extern struct {
+    file_attributes: DWORD = 0,
+    creation_time: FILETIME = .{},
+    last_access_time: FILETIME = .{},
+    last_write_time: FILETIME = .{},
+    file_size_high: DWORD = 0,
+    file_size_low: DWORD = 0,
+    dwReserved0: DWORD = 0,
+    dwReserved1: DWORD = 0,
+    cFileName: [MAX_PATH]CHAR = std.mem.zeroes([MAX_PATH]CHAR),
+    cAlternateFileName: [14]CHAR = std.mem.zeroes([14]CHAR),
+    /// Obsolete
+    dwFileType: DWORD = 0,
+    /// Obsolete
+    dwCreatorType: DWORD = 0,
+    /// Obsolete
+    wFinderFlags: WORD = 0,
+};
+
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
 pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) BOOL;
@@ -833,6 +859,8 @@ pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_wri
 pub extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
 pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LPCSTR, fail_if_exists: BOOL) callconv(.c) BOOL;
+pub extern "kernel32" fn FindFirstFileA(file_name: LPCSTR, find_file_data: *WIN32_FIND_DATA) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn FindClose(find_file: HANDLE) callconv(.winapi) BOOL;
 
 pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
 
