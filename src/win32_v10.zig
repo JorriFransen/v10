@@ -453,7 +453,6 @@ pub fn windowsEntry(
                 var audio_valid = false;
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-
                 var game = v10.loadGameCode(temp_dll_name);
                 game.init(&game_memory);
 

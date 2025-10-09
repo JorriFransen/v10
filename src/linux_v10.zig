@@ -48,6 +48,11 @@ var poll_fds: [poll_fd_count]linux.pollfd = [1]linux.pollfd{.{
 }} ** poll_fd_count;
 
 pub fn main() !void {
+    var exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe_dir = try std.fs.selfExeDirPath(&exe_dir_path_buf);
+
+    var game_lib_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const game_lib_name = try std.fmt.bufPrintSentinel(&game_lib_name_buf, "{s}/libv10_game.so", .{exe_dir}, 0);
 
     // TODO: Move this into the generator
     var lwl = try std.DynLib.open("libwayland-client.so");
@@ -409,9 +414,8 @@ pub fn main() !void {
     assert(prefill_frames == pwritten);
     audio_output.debug_play_cursor += prefill_frames;
 
-    var game = v10.loadGameCode("./libv10_game.so");
+    var game = v10.loadGameCode(game_lib_name);
     game.init(&game_memory);
-    var load_counter: u32 = 0;
 
     var last_counter = getWallClock();
     var last_cycle_count = x86_64.rdtsc();
@@ -420,12 +424,11 @@ pub fn main() !void {
     var debug_time_markers = [_]DEBUG.AudioTimeMarker{.{}} ** (game_update_hz / 2);
 
     while (running) {
-        if (load_counter > 60) {
+        const new_lib_write_time = v10.getLastWriteTime(game_lib_name);
+        if (new_lib_write_time > game.last_write_time) {
             v10.unloadGameCode(&game);
-            game = v10.loadGameCode("./libv10_game.so");
-            load_counter = 0;
+            game = v10.loadGameCode(game_lib_name);
         }
-        load_counter += 1;
 
         const keyboard_controller = &wld.new_input.controllers[0];
         const old_keyboard_controller = &wld.old_input.controllers[0];
@@ -605,13 +608,14 @@ pub fn main() !void {
             const audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(AudioOutput.Frame)) /
                 @as(f32, @floatFromInt(audio_output.frames_per_second));
 
-            log.debug("BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
-                bytes_to_write,
-                play_cursor,
-                write_cursor,
-                audio_latency_bytes,
-                audio_latency_seconds,
-            });
+            // log.debug("BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
+            //     bytes_to_write,
+            //     play_cursor,
+            //     write_cursor,
+            //     audio_latency_bytes,
+            //     audio_latency_seconds,
+            // });
+            _ = .{ bytes_to_write, play_cursor, write_cursor, audio_latency_seconds };
         }
 
         if (frames_to_write > 0) {
@@ -692,13 +696,13 @@ pub fn main() !void {
 
         const fps = std.time.ms_per_s / ms_per_frame;
         const mcpf = cycles_elapsed / (1000 * 1000);
-        log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}", .{
-            ms_per_frame,
-            fps,
-            mcpf,
-            work_seconds_elapsed * std.time.ms_per_s,
-            wayland_blit,
-        });
+        // log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}", .{
+        //     ms_per_frame,
+        //     fps,
+        //     mcpf,
+        //     work_seconds_elapsed * std.time.ms_per_s,
+        //     wayland_blit,
+        // });
         _ = .{ ms_per_frame, fps, mcpf };
     }
 }
