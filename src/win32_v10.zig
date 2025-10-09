@@ -324,6 +324,22 @@ pub fn windowsEntry(
     _ = command_line;
     _ = cmd_show;
 
+    var exe_name_buf: [win32.MAX_PATH]u8 = undefined;
+    const exe_name: [*:0]u8 = @ptrCast(&exe_name_buf);
+    _ = win32.GetModuleFileNameA(null, exe_name, win32.MAX_PATH);
+    log.debug("exe name: '{s}'", .{exe_name});
+    const exe_dir = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
+    log.debug("exe dir: '{s}'", .{exe_dir});
+
+    var source_dll_name_buf: [win32.MAX_PATH]u8 = undefined;
+    var temp_dll_name_buf: [win32.MAX_PATH]u8 = undefined;
+
+    const source_dll_name = try std.fmt.bufPrintSentinel(&source_dll_name_buf, "{s}\\v10_game.dll", .{exe_dir}, 0);
+    const temp_dll_name = try std.fmt.bufPrintSentinel(&temp_dll_name_buf, "{s}\\v10_temp.dll", .{exe_dir}, 0);
+
+    log.debug("source dll: '{s}'", .{source_dll_name});
+    log.debug("temp dll: '{s}'", .{temp_dll_name});
+
     var qpf_result: win32.LARGE_INTEGER = undefined;
     _ = win32.QueryPerformanceFrequency(&qpf_result);
     global_perf_count_frequency = qpf_result.quad_part;
@@ -436,10 +452,9 @@ pub fn windowsEntry(
                 var audio_latency_seconds: f32 = 0;
                 var audio_valid = false;
 
-                const source_dll_name = "v10_game.dll";
-                const temp_dll_name = "v10_temp.dll";
+                _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
 
-                var game = v10.loadGameCode(source_dll_name);
+                var game = v10.loadGameCode(temp_dll_name);
                 game.init(&game_memory);
 
                 var last_cycle_count = x86_64.rdtsc();
@@ -449,7 +464,8 @@ pub fn windowsEntry(
                     if (new_dll_write_time > game.last_write_time) {
                         v10.unloadGameCode(&game);
 
-                        _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
+                        const copy_res = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
+                        log.debug("Copy res: {}", .{copy_res});
                         game = v10.loadGameCode(temp_dll_name);
                     }
 
@@ -628,16 +644,16 @@ pub fn windowsEntry(
                                 audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
                                     @as(f32, @floatFromInt(audio_output.frames_per_second));
 
-                                log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
-                                    byte_to_lock,
-                                    target_cursor,
-                                    bytes_to_write,
-                                    play_cursor,
-                                    write_cursor,
-                                    audio_latency_bytes,
-                                    audio_latency_seconds,
-                                    audio_card_is_low_latency,
-                                });
+                                // log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
+                                //     byte_to_lock,
+                                //     target_cursor,
+                                //     bytes_to_write,
+                                //     play_cursor,
+                                //     write_cursor,
+                                //     audio_latency_bytes,
+                                //     audio_latency_seconds,
+                                //     audio_card_is_low_latency,
+                                // });
                             }
                         } else {
                             audio_valid = false;
@@ -702,7 +718,8 @@ pub fn windowsEntry(
 
                         const fps = std.time.ms_per_s / ms_per_frame;
                         const mcps = cycles_elapsed / (1000 * 1000);
-                        log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms", .{ ms_per_frame, fps, mcps, work_seconds_elapsed * std.time.ms_per_s });
+                        // log.debug("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms", .{ ms_per_frame, fps, mcps, work_seconds_elapsed * std.time.ms_per_s });
+                        _ = .{ fps, mcps };
 
                         if (options.internal_build) {
                             debug_time_marker_index += 1;

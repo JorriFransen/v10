@@ -29,6 +29,7 @@ pub fn getLastWriteTime(file_name: []const u8) i128 {
 
 pub fn loadGameCode(libname: []const u8) GameCode {
     const last_write_time = getLastWriteTime(libname);
+
     var lib = std.DynLib.open(libname) catch |e| {
         log.err("Failed to load game code: {}", .{e});
         return .{};

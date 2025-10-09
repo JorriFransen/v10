@@ -861,6 +861,7 @@ pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
 pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LPCSTR, fail_if_exists: BOOL) callconv(.c) BOOL;
 pub extern "kernel32" fn FindFirstFileA(file_name: LPCSTR, find_file_data: *WIN32_FIND_DATA) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn FindClose(find_file: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetModuleFileNameA(module: ?HMODULE, file_name: LPSTR, size: DWORD) callconv(.winapi) DWORD;
 
 pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
 
