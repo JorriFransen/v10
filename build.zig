@@ -91,7 +91,6 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
     run_exe.setCwd(b.path(runtree_dir));
-    // run_exe.setCwd(Build.LazyPath{ .cwd_relative = b.getInstallPath(.{ .prefix = {} }, "") });
     if (b.args) |a| run_exe.addArgs(a);
 
     return .{
