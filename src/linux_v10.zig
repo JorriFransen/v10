@@ -15,7 +15,7 @@ const viewporter = wayland.viewporter;
 
 const linux = @import("linux/linux.zig");
 const input = linux.input;
-const alsa = linux.alsa;
+const pulse = linux.pulse;
 const ioctl = linux.ioctl;
 const udev = linux.libudev;
 const libdecor = linux.libdecor;
@@ -36,7 +36,8 @@ const bytes_per_pixel = 4;
 var global_back_buffer: OffscreenBuffer = .{};
 var running: bool = false;
 var wld: WlData = .{};
-var pcm_opt: ?*alsa.Pcm = null;
+// ALSA
+// var pcm_opt: ?*alsa.Pcm = null;
 
 var joysticks = [_]Joystick{.{ .fd = -1, .kind = undefined }} ** PollFdSlot.joystick_count;
 
@@ -307,7 +308,8 @@ pub fn main() !void {
     log.debug("Suggested buffer size: {}", .{audio_output.alsa_buffer_byte_size / @sizeOf(AudioOutput.Frame)});
     log.debug("Suggested period size: {}", .{audio_output.period_size});
 
-    initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.alsa_buffer_byte_size, &audio_output.period_size);
+    // ALSA
+    // initAlsa(audio_output.frames_per_second, @sizeOf(AudioOutput.Frame), &audio_output.alsa_buffer_byte_size, &audio_output.period_size);
 
     log.debug("Buffer size: {}", .{audio_output.alsa_buffer_byte_size / @sizeOf(AudioOutput.Frame)});
     log.debug("Period size: {}", .{audio_output.period_size});
@@ -409,10 +411,11 @@ pub fn main() !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    const prefill_frames = audio_fps / game_update_hz;
-    const pwritten = alsa.pcm_writei(pcm_opt.?, audio_output.game_buffer.ptr, prefill_frames);
-    assert(prefill_frames == pwritten);
-    audio_output.debug_play_cursor += prefill_frames;
+    // ALSA
+    // const prefill_frames = audio_fps / game_update_hz;
+    // const pwritten = alsa.pcm_writei(pcm_opt.?, audio_output.game_buffer.ptr, prefill_frames);
+    // assert(prefill_frames == pwritten);
+    // audio_output.debug_play_cursor += prefill_frames;
 
     var game = v10.loadGameCode(game_lib_name);
     game.init(&game_memory);
@@ -581,16 +584,18 @@ pub fn main() !void {
         if (!keep_running) running = false;
 
         var frames_to_write: i32 = 0;
+        _ = &frames_to_write;
 
-        var alsa_avail: alsa.PcmSFrames = 0;
-        var alsa_delay: alsa.PcmSFrames = 0;
-        const avail_delay_rc = alsa.pcm_avail_delay(pcm_opt.?, &alsa_avail, &alsa_delay);
-        if (avail_delay_rc != 0) {
-            _ = alsa.pcm_recover(pcm_opt.?, avail_delay_rc, 1);
-
-            _ = alsa.pcm_avail_delay(pcm_opt.?, &alsa_avail, &alsa_delay);
-        }
-        frames_to_write = @intCast(@min(@max(audio_output.latency_frames - alsa_delay, 0), alsa_avail));
+        // ALSA
+        // var alsa_avail: alsa.PcmSFrames = 0;
+        // var alsa_delay: alsa.PcmSFrames = 0;
+        // const avail_delay_rc = alsa.pcm_avail_delay(pcm_opt.?, &alsa_avail, &alsa_delay);
+        // if (avail_delay_rc != 0) {
+        //     _ = alsa.pcm_recover(pcm_opt.?, avail_delay_rc, 1);
+        //
+        //     _ = alsa.pcm_avail_delay(pcm_opt.?, &alsa_avail, &alsa_delay);
+        // }
+        // frames_to_write = @intCast(@min(@max(audio_output.latency_frames - alsa_delay, 0), alsa_avail));
 
         var game_audio_output_buffer: v10.AudioBuffer = .{
             .frames = audio_output.game_buffer.ptr,
@@ -601,30 +606,32 @@ pub fn main() !void {
         game.getAudioFrames(&game_memory, &game_audio_output_buffer);
 
         if (options.internal_build) {
-            const bytes_to_write = frames_to_write * @sizeOf(AudioOutput.Frame);
-            const play_cursor = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
-            const write_cursor = ((audio_output.debug_play_cursor + @as(u32, @intCast(alsa_delay))) * @sizeOf(AudioOutput.Frame)) % audio_output.alsa_buffer_byte_size;
-            const audio_latency_bytes = alsa_delay * @sizeOf(AudioOutput.Frame);
-            const audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(AudioOutput.Frame)) /
-                @as(f32, @floatFromInt(audio_output.frames_per_second));
-
-            // log.debug("BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
-            //     bytes_to_write,
-            //     play_cursor,
-            //     write_cursor,
-            //     audio_latency_bytes,
-            //     audio_latency_seconds,
-            // });
-            _ = .{ bytes_to_write, play_cursor, write_cursor, audio_latency_seconds };
+            // ALSA
+            // const bytes_to_write = frames_to_write * @sizeOf(AudioOutput.Frame);
+            // const play_cursor = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
+            // const write_cursor = ((audio_output.debug_play_cursor + @as(u32, @intCast(alsa_delay))) * @sizeOf(AudioOutput.Frame)) % audio_output.alsa_buffer_byte_size;
+            // const audio_latency_bytes = alsa_delay * @sizeOf(AudioOutput.Frame);
+            // const audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(AudioOutput.Frame)) /
+            //     @as(f32, @floatFromInt(audio_output.frames_per_second));
+            //
+            // // log.debug("BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3})", .{
+            // //     bytes_to_write,
+            // //     play_cursor,
+            // //     write_cursor,
+            // //     audio_latency_bytes,
+            // //     audio_latency_seconds,
+            // // });
+            // _ = .{ bytes_to_write, play_cursor, write_cursor, audio_latency_seconds };
         }
 
         if (frames_to_write > 0) {
-            const written = alsa.pcm_writei(pcm_opt.?, game_audio_output_buffer.frames, @intCast(game_audio_output_buffer.frame_count));
-            if (written <= 0) {
-                _ = alsa.pcm_recover(pcm_opt.?, written, 0);
-            } else {
-                audio_output.debug_play_cursor = (audio_output.debug_play_cursor + @as(u32, @intCast(written))) % (audio_output.alsa_buffer_byte_size / @sizeOf(AudioOutput.Frame));
-            }
+            // ALSA
+            // const written = alsa.pcm_writei(pcm_opt.?, game_audio_output_buffer.frames, @intCast(game_audio_output_buffer.frame_count));
+            // if (written <= 0) {
+            //     _ = alsa.pcm_recover(pcm_opt.?, written, 0);
+            // } else {
+            //     audio_output.debug_play_cursor = (audio_output.debug_play_cursor + @as(u32, @intCast(written))) % (audio_output.alsa_buffer_byte_size / @sizeOf(AudioOutput.Frame));
+            // }
         }
 
         const work_counter = getWallClock();
@@ -675,15 +682,16 @@ pub fn main() !void {
         _ = wl.display_flush(display);
 
         if (options.internal_build) {
-            const marker = &debug_time_markers[debug_time_marker_index];
-            const play_cursor: u32 = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
-            const write_cursor = ((audio_output.debug_play_cursor + @as(u32, @intCast(alsa_delay))) * @sizeOf(AudioOutput.Frame)) % audio_output.alsa_buffer_byte_size;
-            marker.* = .{ .play_cursor = play_cursor, .write_cursor = write_cursor };
-
-            debug_time_marker_index += 1;
-            if (debug_time_marker_index >= debug_time_markers.len) {
-                debug_time_marker_index = 0;
-            }
+            // ALSA
+            // const marker = &debug_time_markers[debug_time_marker_index];
+            // const play_cursor: u32 = audio_output.debug_play_cursor * @sizeOf(AudioOutput.Frame);
+            // const write_cursor = ((audio_output.debug_play_cursor + @as(u32, @intCast(alsa_delay))) * @sizeOf(AudioOutput.Frame)) % audio_output.alsa_buffer_byte_size;
+            // marker.* = .{ .play_cursor = play_cursor, .write_cursor = write_cursor };
+            //
+            // debug_time_marker_index += 1;
+            // if (debug_time_marker_index >= debug_time_markers.len) {
+            //     debug_time_marker_index = 0;
+            // }
         }
 
         const tmp = wld.new_input;
@@ -1715,69 +1723,69 @@ const AudioOutput = struct {
     const Frame = v10.AudioBuffer.Frame;
 };
 
-fn initAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size: *u32, period_size: *u32) void {
-    alsa.load();
-
-    // TODO: Bluetooth headphones only work (on arch) after restarting pipewire service!
-    //
-    // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
-    //        required for mixing with other applications. For pipewire, the alsa
-    //        plugin is required (pipewire-alsa on arch). Same for pulse
-    //        (alsa-plugins on arch). The alternative is using hw:0,0 or plughw:0,0;
-    //        or similar. But this takes contol over the hardware, and will not work
-    //        if another application is using it already!
-    var pcm_handle: *alsa.Pcm = undefined;
-    if (alsa.pcm_open(&pcm_handle, "default", .PLAYBACK, .{ .NONBLOCK = false }) == 0) {
-        pcm_opt = pcm_handle;
-        var hw_params_opt: ?*alsa.PcmHwParams = undefined;
-        if (alsa.pcm_hw_params_malloc(&hw_params_opt) == 0) {
-            const hw_params = hw_params_opt.?;
-
-            _ = alsa.pcm_hw_params_current(pcm_opt.?, hw_params);
-
-            _ = alsa.pcm_hw_params_any(pcm_handle, hw_params);
-            _ = alsa.pcm_hw_params_set_access(pcm_handle, hw_params, .RW_INTERLEAVED);
-            _ = alsa.pcm_hw_params_set_format(pcm_handle, hw_params, .S16);
-            _ = alsa.pcm_hw_params_set_channels(pcm_handle, hw_params, 2);
-            _ = alsa.pcm_hw_params_set_rate(pcm_handle, hw_params, audio_frames_per_second, 0);
-
-            var buffer_size_frames: c_ulong = buffer_byte_size.* / bytes_per_frame;
-            _ = alsa.pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size_frames);
-            buffer_byte_size.* = @intCast(buffer_size_frames * bytes_per_frame);
-
-            var ps: c_ulong = period_size.*;
-            _ = alsa.pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &ps, null);
-            period_size.* = @intCast(ps);
-
-            _ = alsa.pcm_hw_params(pcm_handle, hw_params);
-            _ = alsa.pcm_hw_params_free(hw_params);
-        } else {
-            log.warn("snd_pcm_hw_params_malloc failed", .{});
-        }
-
-        var sw_params_opt: ?*alsa.PcmSwParams = undefined;
-        if (alsa.pcm_sw_params_malloc(&sw_params_opt) == 0) {
-            const sw_params = sw_params_opt.?;
-
-            _ = alsa.pcm_sw_params_current(pcm_opt.?, sw_params);
-
-            // _ = alsa.pcm_sw_params_set_start_threshold(pcm_handle, sw_params, period_size.*);
-
-            _ = alsa.pcm_sw_params(pcm_opt.?, sw_params);
-            _ = alsa.pcm_sw_params_free(sw_params);
-        } else {
-            log.warn("snd_pcm_sw_params_malloc failed", .{});
-        }
-
-        if (alsa.pcm_prepare(pcm_handle) == 0) {
-            //
-        } else {
-            log.warn("snd_pcm_prepare failed", .{});
-        }
-    } else {
-        log.warn("snd_pcm_open failed", .{});
-    }
-}
+// fn initAlsa(audio_frames_per_second: u32, bytes_per_frame: u32, buffer_byte_size: *u32, period_size: *u32) void {
+//     alsa.load();
+//
+//     // TODO: Bluetooth headphones only work (on arch) after restarting pipewire service!
+//     //
+//     // NOTE: This "default" device is a sink pipewire/pulse expose. Using this is
+//     //        required for mixing with other applications. For pipewire, the alsa
+//     //        plugin is required (pipewire-alsa on arch). Same for pulse
+//     //        (alsa-plugins on arch). The alternative is using hw:0,0 or plughw:0,0;
+//     //        or similar. But this takes contol over the hardware, and will not work
+//     //        if another application is using it already!
+//     var pcm_handle: *alsa.Pcm = undefined;
+//     if (alsa.pcm_open(&pcm_handle, "default", .PLAYBACK, .{ .NONBLOCK = false }) == 0) {
+//         pcm_opt = pcm_handle;
+//         var hw_params_opt: ?*alsa.PcmHwParams = undefined;
+//         if (alsa.pcm_hw_params_malloc(&hw_params_opt) == 0) {
+//             const hw_params = hw_params_opt.?;
+//
+//             _ = alsa.pcm_hw_params_current(pcm_opt.?, hw_params);
+//
+//             _ = alsa.pcm_hw_params_any(pcm_handle, hw_params);
+//             _ = alsa.pcm_hw_params_set_access(pcm_handle, hw_params, .RW_INTERLEAVED);
+//             _ = alsa.pcm_hw_params_set_format(pcm_handle, hw_params, .S16);
+//             _ = alsa.pcm_hw_params_set_channels(pcm_handle, hw_params, 2);
+//             _ = alsa.pcm_hw_params_set_rate(pcm_handle, hw_params, audio_frames_per_second, 0);
+//
+//             var buffer_size_frames: c_ulong = buffer_byte_size.* / bytes_per_frame;
+//             _ = alsa.pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_size_frames);
+//             buffer_byte_size.* = @intCast(buffer_size_frames * bytes_per_frame);
+//
+//             var ps: c_ulong = period_size.*;
+//             _ = alsa.pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &ps, null);
+//             period_size.* = @intCast(ps);
+//
+//             _ = alsa.pcm_hw_params(pcm_handle, hw_params);
+//             _ = alsa.pcm_hw_params_free(hw_params);
+//         } else {
+//             log.warn("snd_pcm_hw_params_malloc failed", .{});
+//         }
+//
+//         var sw_params_opt: ?*alsa.PcmSwParams = undefined;
+//         if (alsa.pcm_sw_params_malloc(&sw_params_opt) == 0) {
+//             const sw_params = sw_params_opt.?;
+//
+//             _ = alsa.pcm_sw_params_current(pcm_opt.?, sw_params);
+//
+//             // _ = alsa.pcm_sw_params_set_start_threshold(pcm_handle, sw_params, period_size.*);
+//
+//             _ = alsa.pcm_sw_params(pcm_opt.?, sw_params);
+//             _ = alsa.pcm_sw_params_free(sw_params);
+//         } else {
+//             log.warn("snd_pcm_sw_params_malloc failed", .{});
+//         }
+//
+//         if (alsa.pcm_prepare(pcm_handle) == 0) {
+//             //
+//         } else {
+//             log.warn("snd_pcm_prepare failed", .{});
+//         }
+//     } else {
+//         log.warn("snd_pcm_open failed", .{});
+//     }
+// }
 
 fn displayBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.attach(buffer.handle, 0, 0);

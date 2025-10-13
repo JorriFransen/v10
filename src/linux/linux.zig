@@ -5,7 +5,7 @@ const posix = std.posix;
 pub const input = @import("input.zig");
 pub const ioctl = @import("ioctl.zig");
 
-pub const alsa = @import("alsa.zig");
+pub const pulse = @import("pulse.zig");
 pub const libudev = @import("libudev.zig");
 pub const libdecor = @import("libdecor.zig");
 
