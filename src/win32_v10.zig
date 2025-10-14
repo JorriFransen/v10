@@ -496,6 +496,7 @@ pub fn windowsEntry(
                                 const new_buttons = &new_controller.buttons.named;
 
                                 new_controller.is_connected = true;
+                                new_controller.is_analog = false;
 
                                 new_controller.stick_average_x = processXInputStickValue(pad.thumb_l_x, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
                                 new_controller.stick_average_y = processXInputStickValue(pad.thumb_l_y, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);

@@ -4,6 +4,7 @@ const options = @import("options");
 
 pub const Context = opaque {};
 pub const MainLoop = opaque {};
+pub const ThreadedMainLoop = opaque {};
 pub const MainLoopApi = opaque {};
 pub const Stream = opaque {};
 pub const Operation = opaque {};
@@ -130,11 +131,11 @@ pub const ChannelMap = extern struct {
 };
 
 pub const BufferAttr = extern struct {
-    max_length: u32,
-    t_length: u32,
-    pre_buf: u32,
-    min_req: u32,
-    frag_size: u32,
+    max_length: u32 = undefined,
+    t_length: u32 = undefined,
+    pre_buf: u32 = undefined,
+    min_req: u32 = undefined,
+    frag_size: u32 = undefined,
 };
 
 pub const StreamFlags = packed struct(c_int) {
@@ -227,7 +228,41 @@ pub const ErrorCode = enum(c_int) {
 };
 
 pub const FreeCb = *const fn (p: ?*anyopaque) callconv(.c) void;
-pub const StreamSuccessCb = *const fn (s: ?*Stream, success: c_int, userdata: *anyopaque) callconv(.c) void;
+pub const StreamSuccessCb = *const fn (s: ?*Stream, success: c_int, userdata: ?*anyopaque) callconv(.c) void;
+pub const StreamRequestCb = *const fn (p: ?*Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void;
+pub const StreamNotifyCb = *const fn (p: ?*Stream, userdata: ?*anyopaque) callconv(.c) void;
+
+pub var threaded_mainloop_new: *const @TypeOf(threaded_mainloop_new_stub) = undefined;
+fn threaded_mainloop_new_stub() callconv(.c) ?*ThreadedMainLoop {
+    return null;
+}
+
+pub var threaded_mainloop_start: *const @TypeOf(threaded_mainloop_start_stub) = undefined;
+fn threaded_mainloop_start_stub(m: ?*ThreadedMainLoop) callconv(.c) ?*ThreadedMainLoop {
+    _ = .{m};
+    return null;
+}
+
+pub var threaded_mainloop_get_api: *const @TypeOf(threaded_mainloop_get_api_stub) = undefined;
+fn threaded_mainloop_get_api_stub(m: ?*ThreadedMainLoop) callconv(.c) ?*MainLoopApi {
+    _ = .{m};
+    return null;
+}
+
+pub var threaded_mainloop_lock: *const @TypeOf(threaded_mainloop_lock_stub) = undefined;
+fn threaded_mainloop_lock_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
+    _ = .{m};
+}
+
+pub var threaded_mainloop_unlock: *const @TypeOf(threaded_mainloop_unlock_stub) = undefined;
+fn threaded_mainloop_unlock_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
+    _ = .{m};
+}
+
+pub var threaded_mainloop_wait: *const @TypeOf(threaded_mainloop_wait_stub) = undefined;
+fn threaded_mainloop_wait_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
+    _ = .{m};
+}
 
 pub var mainloop_new: *const @TypeOf(mainloop_new_stub) = undefined;
 fn mainloop_new_stub() callconv(.c) ?*MainLoop {
@@ -289,7 +324,7 @@ fn stream_new_stub(c: ?*Context, name: ?[*:0]const u8, ss: *const SampleSpec, ma
 }
 
 pub var stream_connect_playback: *const @TypeOf(stream_connect_playback_stub) = undefined;
-fn stream_connect_playback_stub(s: ?*Stream, dev: ?[*:0]const u8, attr: *const BufferAttr, flags: StreamFlags, volume: ?*const CVolume, sync_stream: ?*Stream) callconv(.c) c_int {
+fn stream_connect_playback_stub(s: ?*Stream, dev: ?[*:0]const u8, attr: ?*const BufferAttr, flags: StreamFlags, volume: ?*const CVolume, sync_stream: ?*Stream) callconv(.c) c_int {
     _ = .{ s, dev, attr, flags, volume, sync_stream };
     return -1;
 }
@@ -326,6 +361,42 @@ fn stream_cork_stub(p: ?*const Stream, b: c_int, cb: ?StreamSuccessCb, userdata:
 
 pub var stream_update_timing_info: *const @TypeOf(stream_update_timing_info_stub) = undefined;
 fn stream_update_timing_info_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+    _ = .{ p, cb, userdata };
+    return null;
+}
+
+pub var stream_set_write_callback: *const @TypeOf(stream_set_write_callback_stub) = undefined;
+fn stream_set_write_callback_stub(p: ?*const Stream, cb: StreamRequestCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+    _ = .{ p, cb, userdata };
+    return null;
+}
+
+pub var stream_set_underflow_callback: *const @TypeOf(stream_set_underflow_callback_stub) = undefined;
+fn stream_set_underflow_callback_stub(p: ?*const Stream, cb: StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+    _ = .{ p, cb, userdata };
+    return null;
+}
+
+pub var stream_set_state_callback: *const @TypeOf(stream_set_state_callback_stub) = undefined;
+fn stream_set_state_callback_stub(p: ?*const Stream, cb: StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+    _ = .{ p, cb, userdata };
+    return null;
+}
+
+pub var stream_get_buffer_attr: *const @TypeOf(stream_get_buffer_attr_stub) = undefined;
+fn stream_get_buffer_attr_stub(p: ?*const Stream) callconv(.c) BufferAttr {
+    _ = .{p};
+    return .{};
+}
+
+pub var stream_trigger: *const @TypeOf(stream_trigger_stub) = undefined;
+fn stream_trigger_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+    _ = .{ p, cb, userdata };
+    return null;
+}
+
+pub var stream_flush: *const @TypeOf(stream_flush_stub) = undefined;
+fn stream_flush_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, cb, userdata };
     return null;
 }

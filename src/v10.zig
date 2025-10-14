@@ -30,6 +30,8 @@ pub export fn updateAndRender(game_memory: *v10.Memory, input: *const v10.Input,
         game_memory.initialized = true;
     }
 
+    game_state.tone_hz = 512;
+
     for (input.controllers) |controller| if (controller.is_connected) {
         const buttons = &controller.buttons.named;
 
@@ -43,16 +45,16 @@ pub export fn updateAndRender(game_memory: *v10.Memory, input: *const v10.Input,
             if (buttons.move_right.ended_down) {
                 game_state.blue_offset += 4;
             }
-            if (buttons.move_up.ended_down) {
-                game_state.green_offset -= 4;
-            }
-            if (buttons.move_down.ended_down) {
-                game_state.green_offset += 4;
-            }
         }
 
         if (buttons.action_down.ended_down) {
             game_state.green_offset += 1;
+        }
+
+        if (buttons.action_up.ended_down) {
+            game_state.tone_hz = 512 + 256;
+        } else if (buttons.action_down.ended_down) {
+            game_state.tone_hz = 256;
         }
 
         if (buttons.start.ended_down) {
