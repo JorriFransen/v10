@@ -373,8 +373,15 @@ fn stream_get_latency_stub(p: ?*const Stream, usec: *USec, neg: ?*c_int) callcon
 }
 
 pub var stream_get_underflow_index: *const @TypeOf(stream_get_underflow_index_stub) = undefined;
-fn stream_get_underflow_index_stub(s: ?*const Stream) callconv(.c) i64 {
-    _ = .{s};
+fn stream_get_underflow_index_stub(p: ?*const Stream) callconv(.c) i64 {
+    _ = .{p};
+    return -1;
+}
+
+pub var stream_begin_write: *const @TypeOf(stream_begin_write_stub) = undefined;
+fn stream_begin_write_stub(p: ?*const Stream, data: *?*anyopaque, nbytes: *usize) callconv(.c) c_int {
+    _ = .{ p, data, nbytes };
+    data.* = null;
     return -1;
 }
 
