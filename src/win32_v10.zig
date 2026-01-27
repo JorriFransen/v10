@@ -48,7 +48,6 @@ pub const AudioOutput = struct {
     frames_per_second: u32,
     buffer_byte_size: u32,
     running_frame_index: u32,
-    latency_frame_count: u32,
     safety_frame_bytes: u32,
 
     const Sample = v10.AudioBuffer.Sample;
@@ -387,9 +386,11 @@ pub fn windowsEntry(
                 .frames_per_second = audio_fps,
                 .buffer_byte_size = audio_buffer_byte_size,
                 .running_frame_index = 0,
-                .latency_frame_count = 3 * audio_fps / game_update_hz,
                 .safety_frame_bytes = (audio_fps / game_update_hz * @sizeOf(AudioOutput.Frame)) / 3,
             };
+
+            log.debug("sfb:{}", .{audio_output.safety_frame_bytes});
+            log.debug("one frame: {}", .{audio_fps / game_update_hz * @sizeOf(AudioOutput.Frame)});
 
             clearAudioBuffer(&audio_output);
 

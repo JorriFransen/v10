@@ -237,10 +237,15 @@ fn threaded_mainloop_new_stub() callconv(.c) ?*ThreadedMainLoop {
     return null;
 }
 
-pub var threaded_mainloop_start: *const @TypeOf(threaded_mainloop_start_stub) = undefined;
-fn threaded_mainloop_start_stub(m: ?*ThreadedMainLoop) callconv(.c) ?*ThreadedMainLoop {
+pub var threaded_mainloop_free: *const @TypeOf(threaded_mainloop_free_stub) = undefined;
+fn threaded_mainloop_free_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
     _ = .{m};
-    return null;
+}
+
+pub var threaded_mainloop_start: *const @TypeOf(threaded_mainloop_start_stub) = undefined;
+fn threaded_mainloop_start_stub(m: ?*ThreadedMainLoop) callconv(.c) c_int {
+    _ = .{m};
+    return -1;
 }
 
 pub var threaded_mainloop_get_api: *const @TypeOf(threaded_mainloop_get_api_stub) = undefined;
@@ -267,6 +272,11 @@ fn threaded_mainloop_wait_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
 pub var mainloop_new: *const @TypeOf(mainloop_new_stub) = undefined;
 fn mainloop_new_stub() callconv(.c) ?*MainLoop {
     return null;
+}
+
+pub var mainloop_free: *const @TypeOf(mainloop_free_stub) = undefined;
+fn mainloop_free_stub(m: ?*MainLoop) callconv(.c) void {
+    _ = .{m};
 }
 
 pub var mainloop_get_api: *const @TypeOf(mainloop_get_api_stub) = undefined;
@@ -305,10 +315,20 @@ fn context_new_stub(mainloop: ?*MainLoopApi, name: [*:0]const u8) callconv(.c) ?
     return null;
 }
 
+pub var context_unref: *const @TypeOf(context_unref_stub) = undefined;
+fn context_unref_stub(ctx: ?*Context) callconv(.c) void {
+    _ = .{ctx};
+}
+
 pub var context_connect: *const @TypeOf(context_connect_stub) = undefined;
 fn context_connect_stub(c: ?*Context, server: ?[*:0]const u8, flags: ContextFlags, api: ?*const SpawnApi) callconv(.c) c_int {
     _ = .{ c, server, flags, api };
     return -1;
+}
+
+pub var context_disconnect: *const @TypeOf(context_disconnect_stub) = undefined;
+fn context_disconnect_stub(c: ?*Context) callconv(.c) void {
+    _ = .{c};
 }
 
 pub var context_get_state: *const @TypeOf(context_get_state_stub) = undefined;
@@ -321,6 +341,11 @@ pub var stream_new: *const @TypeOf(stream_new_stub) = undefined;
 fn stream_new_stub(c: ?*Context, name: ?[*:0]const u8, ss: *const SampleSpec, map: ?*ChannelMap) callconv(.c) ?*Stream {
     _ = .{ c, name, ss, map };
     return null;
+}
+
+pub var stream_unref: *const @TypeOf(stream_unref_stub) = undefined;
+fn stream_unref_stub(s: ?*Stream) callconv(.c) void {
+    _ = .{s};
 }
 
 pub var stream_connect_playback: *const @TypeOf(stream_connect_playback_stub) = undefined;
@@ -345,6 +370,12 @@ pub var stream_get_latency: *const @TypeOf(stream_get_latency_stub) = undefined;
 fn stream_get_latency_stub(p: ?*const Stream, usec: *USec, neg: ?*c_int) callconv(.c) c_int {
     _ = .{ p, usec, neg };
     return ErrorCode.nodata.int();
+}
+
+pub var stream_get_underflow_index: *const @TypeOf(stream_get_underflow_index_stub) = undefined;
+fn stream_get_underflow_index_stub(s: ?*const Stream) callconv(.c) i64 {
+    _ = .{s};
+    return -1;
 }
 
 pub var stream_write: *const @TypeOf(stream_write_stub) = undefined;
