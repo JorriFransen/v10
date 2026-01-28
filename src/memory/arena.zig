@@ -49,6 +49,7 @@ pub const Arena = struct {
         AccessDenied,
         CantGrow,
         ReachedReservedCapacity,
+        CommitFailed,
         Unexpected,
     };
 
@@ -78,7 +79,8 @@ pub const Arena = struct {
                 const data: []align(page_size_min) u8 = posix.mmap(
                     null,
                     options.reserved_capacity,
-                    std.c.PROT.NONE,
+                    // std.c.PROT.NONE,
+                    .{},
                     .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
                     -1,
                     0,
@@ -88,11 +90,9 @@ pub const Arena = struct {
                 };
 
                 const committed = data[0..options.initial_commit];
-                posix.mprotect(committed, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.AccessDenied => return error.AccessDenied,
-                    error.Unexpected => return error.Unexpected,
-                };
+                if (std.os.linux.mprotect(committed.ptr, committed.len, .{ .READ = true, .WRITE = true }) != 0) {
+                    return error.CommitFailed;
+                }
 
                 return .{
                     .data = committed,
@@ -120,7 +120,7 @@ pub const Arena = struct {
                     windows.MEM_COMMIT,
                     windows.PAGE_READWRITE,
                 ) catch |err| switch (err) {
-                    error.Unexpected => return error.Unexpected,
+                    error.Unexpected => return error.CommitFailed,
                 };
 
                 const ptr: [*]u8 = @ptrCast(commit_ptr);
@@ -184,11 +184,9 @@ pub const Arena = struct {
             else => @compileError("missing implementation for platform for 'Arena.grow'"),
 
             .linux => {
-                posix.mprotect(new_slice, std.c.PROT.READ | std.c.PROT.WRITE) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.AccessDenied => return error.AccessDenied,
-                    error.Unexpected => return error.Unexpected,
-                };
+                if (std.os.linux.mprotect(new_slice.ptr, new_slice.len, .{ .READ = true, .WRITE = true }) != 0) {
+                    return error.CommitFailed;
+                }
             },
 
             .windows => {

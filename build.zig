@@ -42,7 +42,7 @@ pub fn build(b: *Build) !void {
         }),
     };
 
-    std.fs.cwd().makeDir(runtree_dir) catch |e| switch (e) {
+    std.Io.Dir.cwd().createDirPath(b.graph.io, runtree_dir) catch |e| switch (e) {
         error.PathAlreadyExists => {},
         else => return e,
     };
@@ -52,12 +52,6 @@ pub fn build(b: *Build) !void {
     const game = try buildGameLib(b, optimize, target, &modules);
     const engine = try buildEngine(b, optimize, target, &modules, &tools);
     engine.run.step.dependOn(&game.install.step);
-
-    const clean_step = b.step("clean", "Clean build and cache");
-    const rm_zig_out = b.addRemoveDirTree(b.path("zig-out"));
-    const rm_cache = b.addRemoveDirTree(b.path(".zig-cache"));
-    clean_step.dependOn(&rm_zig_out.step);
-    clean_step.dependOn(&rm_cache.step);
 }
 
 const Modules = struct {
@@ -77,7 +71,7 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
 
     const exe = switch (os) {
         else => return error.PlatformNotSupported,
-        .windows => try buildEngineWindows(b, optimize, target, modules, tools),
+        // .windows => try buildEngineWindows(b, optimize, target, modules, tools),
         .linux => try buildEngineLinux(b, optimize, target, modules, tools),
     };
     exe.root_module.addImport("mem", modules.memory);
@@ -100,30 +94,30 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     };
 }
 
-fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
-    _ = modules;
-    _ = tools;
-
-    const root_module = b.addModule("main", .{
-        .optimize = optimize,
-        .target = target,
-        .root_source_file = b.path("src/win32_v10.zig"),
-        .link_libc = true,
-        .imports = &.{},
-    });
-
-    const exe = b.addExecutable(.{
-        .name = "v10",
-        .root_module = root_module,
-    });
-    exe.linkSystemLibrary("kernel32");
-    exe.linkSystemLibrary("user32");
-    exe.linkSystemLibrary("gdi32");
-    exe.linkSystemLibrary("winmm");
-    exe.subsystem = .Windows;
-
-    return exe;
-}
+// fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
+//     _ = modules;
+//     _ = tools;
+//
+//     const root_module = b.addModule("main", .{
+//         .optimize = optimize,
+//         .target = target,
+//         .root_source_file = b.path("src/win32_v10.zig"),
+//         .link_libc = true,
+//         .imports = &.{},
+//     });
+//
+//     const exe = b.addExecutable(.{
+//         .name = "v10",
+//         .root_module = root_module,
+//     });
+//     exe.linkSystemLibrary("kernel32");
+//     exe.linkSystemLibrary("user32");
+//     exe.linkSystemLibrary("gdi32");
+//     exe.linkSystemLibrary("winmm");
+//     exe.subsystem = .Windows;
+//
+//     return exe;
+// }
 
 fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
     _ = modules;

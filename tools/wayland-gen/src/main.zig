@@ -19,15 +19,17 @@ const OptionParser = clip.OptionParser("wayland-gen", &.{
     clip.option(false, "help", 'h', "Print this help message"),
 });
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     try mem.init();
 
     var tmp = mem.getTemp();
     defer tmp.release();
 
-    const options = try OptionParser.parse(gpa, tmp.allocator());
+    const io = std.Io.Threaded.global_single_threaded;
+
+    const options = try OptionParser.parse(init.args, gpa, tmp.allocator());
     if (options.help) {
-        try OptionParser.usage(std.fs.File.stdout());
+        try OptionParser.usage(&io.stderr_writer);
         std.process.exit(0);
     }
 
@@ -43,7 +45,7 @@ pub fn main() !void {
     }
 
     if (!args_valid) {
-        try OptionParser.usage(std.fs.File.stderr());
+        try OptionParser.usage(&io.stderr_writer);
         std.process.exit(1);
     }
 
@@ -51,25 +53,22 @@ pub fn main() !void {
     var parse_arena = try mem.Arena.init(.{ .virtual = .{} });
     var gen_arena = try mem.Arena.init(.{ .virtual = .{} });
 
-    var stderr_buf: [mem.KiB]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
-
-    var wayland_protocol = try parser.parse(parse_arena.allocator(), &xml_arena, options.wayland, &stderr_writer.interface);
+    var wayland_protocol = try parser.parse(io, parse_arena.allocator(), &xml_arena, options.wayland);
 
     const protocols = try parse_arena.allocator().alloc(types.Protocol, options.protocol.items.len);
     for (options.protocol.items, protocols) |protocol_xml_file, *dst| {
-        dst.* = try parser.parse(parse_arena.allocator(), &xml_arena, protocol_xml_file, &stderr_writer.interface);
+        dst.* = try parser.parse(io, parse_arena.allocator(), &xml_arena, protocol_xml_file);
     }
 
     const result = try generator.generate(gen_arena.allocator(), &wayland_protocol, protocols);
 
-    try stderr_writer.interface.flush();
+    try io.stderr_writer.interface.flush();
 
-    const out_file = try std.fs.cwd().createFile(options.out, .{ .read = false });
-    defer out_file.close();
+    const out_file = try std.Io.Dir.cwd().createFile(io.io(), options.out, .{ .read = false });
+    defer out_file.close(io.io());
 
     var out_buf: [mem.KiB * 8]u8 = undefined;
-    var out_writer = out_file.writer(&out_buf);
+    var out_writer = out_file.writer(io.io(), &out_buf);
     _ = try out_writer.interface.write(result);
     try out_writer.interface.flush();
 }

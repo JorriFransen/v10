@@ -14,21 +14,21 @@ pub const GameCode = struct {
     getAudioFrames: FN_getAudioFrames = getAudioFramesStub,
 };
 
-pub fn getLastWriteTime(file_name: []const u8) i128 {
+pub fn getLastWriteTime(io: std.Io, file_name: []const u8) i128 {
     var result: i128 = 0;
 
-    if (std.fs.cwd().openFile(file_name, .{ .mode = .read_only })) |dll_file| {
-        if (dll_file.stat()) |stat| {
-            result = stat.mtime;
+    if (std.Io.Dir.cwd().openFile(io, file_name, .{ .mode = .read_only })) |dll_file| {
+        if (dll_file.stat(io)) |stat| {
+            result = stat.mtime.toNanoseconds();
         } else |_| {}
-        dll_file.close();
+        dll_file.close(io);
     } else |_| {}
 
     return result;
 }
 
-pub fn loadGameCode(libname: []const u8) GameCode {
-    const last_write_time = getLastWriteTime(libname);
+pub fn loadGameCode(io: std.Io, libname: []const u8) GameCode {
+    const last_write_time = getLastWriteTime(io, libname);
 
     var lib = std.DynLib.open(libname) catch |e| {
         log.err("Failed to load game code: {}", .{e});
