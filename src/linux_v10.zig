@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.linux_v10);
 const mem = @import("mem");
 const options = @import("options");
+const builtin = @import("builtin");
 
 const v10 = @import("v10_shared.zig");
 
@@ -29,7 +30,6 @@ const Abs = input.Abs;
 
 const assert = std.debug.assert;
 
-const io = std.Io.Threaded.global_single_threaded.io();
 var prng: std.Random = undefined;
 
 const initial_window_width: i32 = 1280;
@@ -55,8 +55,40 @@ var poll_fds: [poll_fd_count]linux.pollfd = [1]linux.pollfd{.{
     .revents = undefined,
 }} ** poll_fd_count;
 
-pub fn main() !void {
-    var prng_impl = std.Random.DefaultPrng.init(0);
+const use_debug_allocator = switch (builtin.mode) {
+    .Debug => true,
+    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
+    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+};
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+
+pub fn main(init: std.process.Init.Minimal) !void {
+    const gpa = if (use_debug_allocator)
+        debug_allocator.allocator()
+    else if (builtin.link_libc)
+        std.heap.c_allocator
+    else if (!builtin.single_threaded)
+        std.heap.smp_allocator
+    else
+        comptime unreachable;
+
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .argv0 = .init(.{ .vector = init.args.vector }),
+        .environ = .{ .block = init.environ.block },
+    });
+    defer threaded.deinit();
+
+    defer {
+        if (use_debug_allocator) {
+            _ = debug_allocator.detectLeaks();
+            _ = debug_allocator.deinit();
+        }
+    }
+
+    const io = threaded.io();
+
+    const prng_seed = (try std.time.Instant.now()).timestamp.nsec;
+    var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
 
     var exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -335,7 +367,7 @@ pub fn main() !void {
             defer _ = udev.device_unref(device);
 
             if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
-                try addJoystick(device, devnode_path);
+                try addJoystick(io, device, devnode_path);
             }
 
             udev_list_entry = udev.list_entry_get_next(e);
@@ -456,7 +488,7 @@ pub fn main() !void {
 
                         if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
                             if (std.mem.eql(u8, action, "add")) {
-                                try addJoystick(device, path);
+                                try addJoystick(io, device, path);
                             } else if (std.mem.eql(u8, action, "remove")) {
                                 removeJoystick(device, path);
                             } else {
@@ -1546,7 +1578,7 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
     }
 }
 
-fn addJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
+fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
     log.debug("Adding joystick: '{s}'", .{devnode_path});
 
     const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;

@@ -4,6 +4,8 @@ const xml = @import("xml");
 const types = @import("types.zig");
 const mem = @import("mem");
 
+const IoContext = @import("main.zig").IoContext;
+
 const assert = std.debug.assert;
 
 const Parser = @This();
@@ -54,24 +56,24 @@ pub const Error =
 
 /// xml_temp_arena is used by the xml parser.
 /// It will be reset for each node, so don't use it for anyting else!
-pub fn parse(io: *std.Io.Threaded, allocator: Allocator, xml_temp_arena: *mem.Arena, xml_path: []const u8) Error!Protocol {
+pub fn parse(ioc: *const IoContext, allocator: Allocator, xml_temp_arena: *mem.Arena, xml_path: []const u8) Error!Protocol {
     var parser: Parser = .{
         .allocator = allocator,
         .xml_file_path = xml_path,
         .xml_file_reader = undefined,
         .xml_reader = undefined,
-        .err_writer = &io.stderr_writer.interface,
+        .err_writer = ioc.stderr_writer,
         .read_buf = undefined,
     };
 
-    var xml_file = std.Io.Dir.cwd().openFile(io.io(), xml_path, .{ .mode = .read_only }) catch |e| {
+    var xml_file = std.Io.Dir.cwd().openFile(ioc.io, xml_path, .{ .mode = .read_only }) catch |e| {
         log.err("Unable to open file: '{s}'", .{xml_path});
         return e;
     };
-    defer xml_file.close(io.io());
+    defer xml_file.close(ioc.io);
 
-    parser.xml_file_reader = xml_file.reader(io.io(), &parser.read_buf);
-    parser.xml_reader = .init(&parser.xml_file_reader.interface, xml_path, xml_temp_arena, &io.stderr_writer.interface);
+    parser.xml_file_reader = xml_file.reader(ioc.io, &parser.read_buf);
+    parser.xml_reader = .init(&parser.xml_file_reader.interface, xml_path, xml_temp_arena, ioc.stderr_writer);
     defer parser.xml_reader.deinit();
 
     while (true) {
