@@ -6,6 +6,7 @@ const win32 = @import("win32/win32.zig");
 const xinput = @import("win32/xinput.zig");
 const dsound = @import("win32/direct_sound.zig");
 const x86_64 = @import("x86_64.zig");
+const builtin = @import("builtin");
 
 const v10 = @import("v10_shared.zig");
 
@@ -287,7 +288,38 @@ fn getWindowDimension(window: win32.HWND) WindowDimensions {
     };
 }
 
-pub fn main() u8 {
+const use_debug_allocator = switch (builtin.mode) {
+    .Debug => true,
+    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
+    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+};
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+
+pub fn main(init: std.process.Init.Minimal) u8 {
+    const gpa = if (use_debug_allocator)
+        debug_allocator.allocator()
+    else if (builtin.link_libc)
+        std.heap.c_allocator
+    else if (!builtin.single_threaded)
+        std.heap.smp_allocator
+    else
+        comptime unreachable;
+
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .argv0 = .init(.{ .vector = init.args.vector }),
+        .environ = .{ .block = init.environ.block },
+    });
+    defer threaded.deinit();
+
+    defer {
+        if (use_debug_allocator) {
+            _ = debug_allocator.detectLeaks();
+            _ = debug_allocator.deinit();
+        }
+    }
+
+    const io = threaded.io();
+
     if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS) == 0) {
         // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
 
@@ -303,26 +335,20 @@ pub fn main() u8 {
     }
 
     const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
-    const command_line = win32.GetCommandLineA();
+    // const command_line = win32.GetCommandLineA();
+    //
+    // var startup_info: win32.STARTUPINFOA = undefined;
+    // win32.GetStartupInfoA(&startup_info);
 
-    var startup_info: win32.STARTUPINFOA = undefined;
-    win32.GetStartupInfoA(&startup_info);
-
-    const ret_code = windowsEntry(instance, null, command_line, startup_info.wShowWindow) catch 1;
+    const ret_code = windowsEntry(io, instance) catch 1;
     assert(ret_code >= 0);
     return @intCast(ret_code);
 }
 
 pub fn windowsEntry(
+    io: std.Io,
     instance: win32.HINSTANCE,
-    prev_instance: ?win32.HINSTANCE,
-    command_line: win32.LPCSTR,
-    cmd_show: c_int,
 ) !c_int {
-    _ = prev_instance;
-    _ = command_line;
-    _ = cmd_show;
-
     var exe_name_buf: [win32.MAX_PATH]u8 = undefined;
     const exe_name: [*:0]u8 = @ptrCast(&exe_name_buf);
     _ = win32.GetModuleFileNameA(null, exe_name, win32.MAX_PATH);
@@ -454,19 +480,19 @@ pub fn windowsEntry(
                 var audio_valid = false;
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-                var game = v10.loadGameCode(temp_dll_name);
+                var game = v10.loadGameCode(io, temp_dll_name);
                 game.init(&game_memory);
 
                 var last_cycle_count = x86_64.rdtsc();
 
                 while (global_running) {
-                    const new_dll_write_time = v10.getLastWriteTime(source_dll_name);
+                    const new_dll_write_time = v10.getLastWriteTime(io, source_dll_name);
                     if (new_dll_write_time > game.last_write_time) {
                         v10.unloadGameCode(&game);
 
                         const copy_res = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
                         log.debug("Copy res: {}", .{copy_res});
-                        game = v10.loadGameCode(temp_dll_name);
+                        game = v10.loadGameCode(io, temp_dll_name);
                     }
 
                     const keyboard_controller = &new_input.controllers[0];

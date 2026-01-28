@@ -71,7 +71,7 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
 
     const exe = switch (os) {
         else => return error.PlatformNotSupported,
-        // .windows => try buildEngineWindows(b, optimize, target, modules, tools),
+        .windows => try buildEngineWindows(b, optimize, target, modules, tools),
         .linux => try buildEngineLinux(b, optimize, target, modules, tools),
     };
     exe.root_module.addImport("mem", modules.memory);
@@ -94,30 +94,31 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     };
 }
 
-// fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
-//     _ = modules;
-//     _ = tools;
-//
-//     const root_module = b.addModule("main", .{
-//         .optimize = optimize,
-//         .target = target,
-//         .root_source_file = b.path("src/win32_v10.zig"),
-//         .link_libc = true,
-//         .imports = &.{},
-//     });
-//
-//     const exe = b.addExecutable(.{
-//         .name = "v10",
-//         .root_module = root_module,
-//     });
-//     exe.linkSystemLibrary("kernel32");
-//     exe.linkSystemLibrary("user32");
-//     exe.linkSystemLibrary("gdi32");
-//     exe.linkSystemLibrary("winmm");
-//     exe.subsystem = .Windows;
-//
-//     return exe;
-// }
+fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
+    _ = modules;
+    _ = tools;
+
+    const root_module = b.addModule("main", .{
+        .optimize = optimize,
+        .target = target,
+        .root_source_file = b.path("src/win32_v10.zig"),
+        .link_libc = true,
+        .imports = &.{},
+    });
+
+    root_module.linkSystemLibrary("kernel32", .{});
+    root_module.linkSystemLibrary("user32", .{});
+    root_module.linkSystemLibrary("gdi32", .{});
+    root_module.linkSystemLibrary("winmm", .{});
+
+    const exe = b.addExecutable(.{
+        .name = "v10",
+        .root_module = root_module,
+    });
+    exe.subsystem = .Windows;
+
+    return exe;
+}
 
 fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
     _ = modules;
