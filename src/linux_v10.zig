@@ -4,7 +4,8 @@ const mem = @import("mem");
 const options = @import("options");
 const builtin = @import("builtin");
 
-const v10 = @import("v10_shared.zig");
+const v10 = @import("v10.zig");
+const v10s = @import("v10_shared.zig");
 
 const x86_64 = @import("x86_64.zig");
 
@@ -446,7 +447,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    var game = v10.loadGameCode(io, game_lib_name);
+    var game = v10s.loadGameCode(io, game_lib_name);
     game.init(&game_memory);
 
     _ = pa.stream_cork(pa_stream, 0, null, null);
@@ -457,10 +458,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var last_cycle_count = x86_64.rdtsc();
 
     while (running) {
-        const new_lib_write_time = v10.getLastWriteTime(io, game_lib_name);
+        const new_lib_write_time = v10s.getLastWriteTime(io, game_lib_name);
         if (new_lib_write_time > game.last_write_time) {
-            v10.unloadGameCode(&game);
-            game = v10.loadGameCode(io, game_lib_name);
+            v10s.unloadGameCode(&game);
+            game = v10s.loadGameCode(io, game_lib_name);
         }
 
         const keyboard_controller = &wld.new_input.controllers[0];

@@ -2,8 +2,6 @@ const std = @import("std");
 const log = std.log.scoped(.v10);
 const options = @import("options");
 
-const v10 = @import("v10_shared.zig");
-
 const assert = std.debug.assert;
 
 const os = @import("builtin").os.tag;
@@ -12,6 +10,104 @@ pub const platform = switch (os) {
     .linux => @import("linux_v10.zig"),
     else => @compileError("Unsupported platform"),
 };
+
+pub const FN_init = *const @TypeOf(initStub);
+pub fn initStub(memory: *Memory) callconv(.c) void {
+    _ = .{memory};
+}
+
+pub const FN_updateAndRender = *const @TypeOf(updateAndRenderStub);
+pub fn updateAndRenderStub(memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool {
+    _ = .{ memory, input, offscreen_buffer };
+    return true;
+}
+
+pub const FN_getAudioFrames = *const @TypeOf(getAudioFramesStub);
+pub fn getAudioFramesStub(memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
+    _ = .{ memory, sound_buffer };
+}
+
+pub const OffscreenBuffer = struct {
+    memory: []u8,
+    width: i32,
+    height: i32,
+    pitch: i32,
+    bytes_per_pixel: i32,
+};
+
+pub const AudioBuffer = extern struct {
+    pub const Sample = i16;
+    pub const Frame = extern struct {
+        left: Sample = 0,
+        right: Sample = 0,
+    };
+
+    frames: [*]Frame,
+    frame_count: i32,
+    frames_per_second: i32,
+};
+
+pub const ButtonState = extern struct {
+    half_transition_count: i32 = 0,
+    ended_down: bool = false,
+};
+
+pub const ControllerInput = extern struct {
+    is_connected: bool = false,
+    is_analog: bool = false,
+
+    stick_average_x: f32 = 0,
+    stick_average_y: f32 = 0,
+
+    buttons: extern union {
+        array: [12]ButtonState,
+
+        named: extern struct {
+            move_up: ButtonState,
+            move_down: ButtonState,
+            move_left: ButtonState,
+            move_right: ButtonState,
+
+            action_up: ButtonState,
+            action_down: ButtonState,
+            action_left: ButtonState,
+            action_right: ButtonState,
+
+            left_shoulder: ButtonState,
+            right_shoulder: ButtonState,
+
+            back: ButtonState,
+            start: ButtonState,
+        },
+        comptime {
+            const dummy: @This() = std.mem.zeroes(@This());
+            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+        }
+    },
+};
+
+pub const Input = extern struct {
+    controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
+};
+
+pub const Memory = struct {
+    initialized: bool = false,
+    permanent: []u8 = &.{},
+    transient: []u8 = &.{},
+
+    debug: DEBUG,
+};
+
+pub const DEBUG = if (options.internal_build) struct {
+    pub const ReadFileResult = extern struct {
+        size: usize = 0,
+        content: *anyopaque = undefined,
+    };
+
+    readEntireFile: *const fn (path: [*:0]const u8) callconv(.c) ReadFileResult = undefined,
+    freeFileMemory: *const fn (memory: ?*anyopaque, size: usize) callconv(.c) void = undefined,
+    writeEntireFile: *const fn (path: [*:0]const u8, memory: *anyopaque, size: usize) callconv(.c) bool = undefined,
+} else struct {};
 
 pub const GameState = extern struct {
     blue_offset: i32 = 0,
@@ -24,11 +120,11 @@ pub const GameState = extern struct {
     jump_timer: f32 = 0,
 };
 
-pub export fn init(game_memory: *v10.Memory) callconv(.c) void {
+pub export fn init(game_memory: *Memory) callconv(.c) void {
     _ = game_memory;
 }
 
-pub export fn updateAndRender(game_memory: *v10.Memory, input: *const v10.Input, offscreen_buffer: *v10.OffscreenBuffer) callconv(.c) bool {
+pub export fn updateAndRender(game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool {
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
     var result = true;
@@ -93,12 +189,12 @@ pub export fn updateAndRender(game_memory: *v10.Memory, input: *const v10.Input,
     return result;
 }
 
-pub export fn getAudioFrames(game_memory: *v10.Memory, sound_buffer: *v10.AudioBuffer) callconv(.c) void {
+pub export fn getAudioFrames(game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
     outputSound(game_state, sound_buffer);
 }
 
-pub fn outputSound(game_state: *GameState, buffer: *v10.AudioBuffer) void {
+pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     const tone_volume = 3000;
     const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
 
@@ -120,7 +216,7 @@ pub fn outputSound(game_state: *GameState, buffer: *v10.AudioBuffer) void {
     }
 }
 
-fn renderWeirdGradient(buffer: *v10.OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
+fn renderWeirdGradient(buffer: *OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
     const uwidth: usize = @intCast(buffer.width);
     const uheight: usize = @intCast(buffer.height);
 
@@ -140,7 +236,7 @@ fn renderWeirdGradient(buffer: *v10.OffscreenBuffer, blue_offset: i32, green_off
     }
 }
 
-fn renderPlayer(buffer: *v10.OffscreenBuffer, player_x: i32, player_y: i32) void {
+fn renderPlayer(buffer: *OffscreenBuffer, player_x: i32, player_y: i32) void {
     const width = 10;
     const height = 10;
     const color = 0xffffffff;

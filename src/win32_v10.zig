@@ -8,7 +8,8 @@ const dsound = @import("win32/direct_sound.zig");
 const x86_64 = @import("x86_64.zig");
 const builtin = @import("builtin");
 
-const v10 = @import("v10_shared.zig");
+const v10 = @import("v10.zig");
+const v10s = @import("v10_shared.zig");
 
 const assert = std.debug.assert;
 
@@ -502,18 +503,18 @@ pub fn windowsEntry(
                 var audio_valid = false;
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-                var game = v10.loadGameCode(io, temp_dll_name);
+                var game = v10s.loadGameCode(io, temp_dll_name);
                 game.init(&game_memory);
 
                 var last_cycle_count = x86_64.rdtsc();
 
                 while (global_running) {
-                    const new_dll_write_time = v10.getLastWriteTime(io, source_dll_name);
+                    const new_dll_write_time = v10s.getLastWriteTime(io, source_dll_name);
                     if (new_dll_write_time > game.last_write_time) {
-                        v10.unloadGameCode(&game);
+                        v10s.unloadGameCode(&game);
 
                         _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-                        game = v10.loadGameCode(io, temp_dll_name);
+                        game = v10s.loadGameCode(io, temp_dll_name);
                     }
 
                     const keyboard_controller = &new_input.controllers[0];
