@@ -86,6 +86,7 @@ pub const OffscreenBuffer = struct {
     width: i32,
     height: i32,
     pitch: i32,
+    bytes_per_pixel: i32,
 };
 
 pub const AudioBuffer = extern struct {
@@ -143,13 +144,6 @@ pub const Input = extern struct {
     controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
 };
 
-pub const GameState = extern struct {
-    blue_offset: i32 = 0,
-    green_offset: i32 = 0,
-    tone_hz: i32 = 0,
-    t_sine: f32 = 0,
-};
-
 pub const Memory = struct {
     initialized: bool = false,
     permanent: []u8 = &.{},
@@ -164,7 +158,7 @@ pub const DEBUG = if (options.internal_build) struct {
         content: *anyopaque = undefined,
     };
 
-    readEntireFile: *const fn (path: [*:0]const u8) callconv(.c) ReadFileResult,
-    freeFileMemory: *const fn (memory: ?*anyopaque, size: usize) callconv(.c) void,
-    writeEntireFile: *const fn (path: [*:0]const u8, memory: *anyopaque, size: usize) callconv(.c) bool,
+    readEntireFile: *const fn (path: [*:0]const u8) callconv(.c) ReadFileResult = undefined,
+    freeFileMemory: *const fn (memory: ?*anyopaque, size: usize) callconv(.c) void = undefined,
+    writeEntireFile: *const fn (path: [*:0]const u8, memory: *anyopaque, size: usize) callconv(.c) bool = undefined,
 } else struct {};

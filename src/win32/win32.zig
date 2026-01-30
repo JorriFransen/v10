@@ -419,6 +419,34 @@ pub const WS_TILED: DWORD = 0x00000000;
 pub const WS_VISIBLE: DWORD = 0x10000000;
 pub const WS_VSCROLL: DWORD = 0x00200000;
 
+pub const WS_EX_ACCEPTFILES: DWORD = 0x00000010;
+pub const WS_EX_APPWINDOW: DWORD = 0x00040000;
+pub const WS_EX_CLIENTEDGE: DWORD = 0x00000200;
+pub const WS_EX_COMPOSITED: DWORD = 0x02000000;
+pub const WS_EX_CONTEXTHELP: DWORD = 0x00000400;
+pub const WS_EX_CONTROLPARENT: DWORD = 0x00010000;
+pub const WS_EX_DLGMODALFRAME: DWORD = 0x00000001;
+pub const WS_EX_LAYERED: DWORD = 0x00080000;
+pub const WS_EX_LAYOUTRTL: DWORD = 0x00400000;
+pub const WS_EX_LEFT: DWORD = 0x00000000;
+pub const WS_EX_LEFTSCROLLBAR: DWORD = 0x00004000;
+pub const WS_EX_LTRREADING: DWORD = 0x00000000;
+pub const WS_EX_MDICHILD: DWORD = 0x00000040;
+pub const WS_EX_NOACTIVATE: DWORD = 0x08000000;
+pub const WS_EX_NOINHERITLAYOUT: DWORD = 0x00100000;
+pub const WS_EX_NOPARENTNOTIFY: DWORD = 0x00000004;
+pub const WS_EX_NOREDIRECTIONBITMAP: DWORD = 0x00200000;
+pub const WS_EX_OVERLAPPEDWINDOW: DWORD = (WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE);
+pub const WS_EX_PALETTEWINDOW: DWORD = (WS_EX_WINDOWEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST);
+pub const WS_EX_RIGHT: DWORD = 0x00001000;
+pub const WS_EX_RIGHTSCROLLBAR: DWORD = 0x00000000;
+pub const WS_EX_RTLREADING: DWORD = 0x00002000;
+pub const WS_EX_STATICEDGE: DWORD = 0x00020000;
+pub const WS_EX_TOOLWINDOW: DWORD = 0x00000080;
+pub const WS_EX_TOPMOST: DWORD = 0x00000008;
+pub const WS_EX_TRANSPARENT: DWORD = 0x00000020;
+pub const WS_EX_WINDOWEDGE: DWORD = 0x00000100;
+
 pub const CW_USEDEFAULT = cLiteral(c_int, 0x80000000);
 
 pub const SRCCOPY: DWORD = 0x00CC0020;
@@ -672,6 +700,9 @@ pub const TIMERR_NOERROR = 0;
 pub const TIMERR_NOCANDO = TIMERR_BASE + 1;
 pub const TIMERR_STRUCT = TIMERR_BASE + 33;
 
+pub const LWA_ALPHA = 0x00000002;
+pub const LWA_COLORKEY = 0x00000001;
+
 pub const GUID = extern struct {
     data1: u32 = 0,
     data2: u16 = 0,
@@ -845,6 +876,17 @@ pub const WIN32_FIND_DATA = extern struct {
     wFinderFlags: WORD = 0,
 };
 
+pub const COLORREF = packed struct(DWORD) {
+    red: BYTE = 0,
+    green: BYTE = 0,
+    blue: BYTE = 0,
+    reserved: BYTE = 0,
+};
+
+pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
+    return .{ .red = r, .green = g, .blue = b };
+}
+
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
 pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) BOOL;
@@ -883,6 +925,7 @@ pub extern "user32" fn RegisterClassW(class: *const WNDCLASSW) callconv(.winapi)
 
 pub extern "user32" fn CreateWindowExA(ex_style: DWORD, class_name: ?LPCSTR, window_name: ?LPCSTR, style: DWORD, x: c_int, y: c_int, width: c_int, height: c_int, parent_window: ?HWND, menu: ?HMENU, instance: ?HINSTANCE, param: ?LPVOID) callconv(.winapi) ?HWND;
 pub extern "user32" fn DestroyWindow(hwnd: HWND) callconv(.c) BOOL;
+pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, crKey: COLORREF, bAlpha: BYTE, dwFlags: DWORD) callconv(.c) BOOL;
 
 pub extern "user32" fn GetMessageA(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
 pub extern "user32" fn GetMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;

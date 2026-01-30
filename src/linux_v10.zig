@@ -117,6 +117,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
 
     running = true;
+
     wld = .{
         .display = display,
         .window_width = initial_window_width,
@@ -610,6 +611,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 .width = global_back_buffer.width,
                 .height = global_back_buffer.height,
                 .pitch = global_back_buffer.pitch,
+                .bytes_per_pixel = bytes_per_pixel,
             };
 
             const keep_running = game.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer);
@@ -1079,7 +1081,7 @@ const Joystick = struct {
 
 fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const v10.ButtonState, btn: Joystick.Button, new_state: *v10.ButtonState) void {
     new_state.ended_down = buttons[@intFromEnum(btn)] == 1;
-    new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
+    new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 0 else 1;
 }
 
 fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {

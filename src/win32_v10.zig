@@ -29,12 +29,12 @@ inline fn getSecondsElapsed(start: win32.LARGE_INTEGER, end: win32.LARGE_INTEGER
 }
 
 pub const OffscreenBuffer = struct {
-    info: win32.BITMAPINFO,
     memory: []u8,
     width: i32,
     height: i32,
     pitch: i32,
     bytes_per_pixel: i32,
+    info: win32.BITMAPINFO,
 };
 
 pub const WindowDimensions = struct {
@@ -53,6 +53,16 @@ pub const AudioOutput = struct {
 
     const Sample = v10.AudioBuffer.Sample;
     const Frame = v10.AudioBuffer.Frame;
+};
+
+pub const Win32State = struct {
+    game_memory_block: []u8 = &.{},
+
+    recording_handle: win32.HANDLE = undefined,
+    input_recording_index: usize = 0,
+
+    playback_handle: win32.HANDLE = undefined,
+    input_playing_index: usize = 0,
 };
 
 fn clearAudioBuffer(audio_output: *AudioOutput) void {
@@ -186,7 +196,7 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
+fn processPendingMessages(win32_state: *Win32State, keyboard_controller: *v10.ControllerInput) void {
     var msg = win32.MSG{};
 
     const buttons = &keyboard_controller.buttons.named;
@@ -236,6 +246,14 @@ fn processPendingMessages(keyboard_controller: *v10.ControllerInput) void {
                     if (options.internal_build) {
                         if (vk_code == win32.VK_P and is_down) {
                             global_pause = !global_pause;
+                        } else if (vk_code == win32.VK_L and is_down) {
+                            if (win32_state.input_recording_index == 0) {
+                                endInputPlayback(win32_state);
+                                beginRecordingInput(win32_state, 1);
+                            } else {
+                                endRecordingInput(win32_state);
+                                beginInputPlayback(win32_state, 1);
+                            }
                         }
                     }
 
@@ -373,7 +391,7 @@ pub fn windowsEntry(
     const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.TIMERR_NOERROR;
 
     const window_class = win32.WNDCLASSA{
-        .style = win32.CS_OWNDC | win32.CS_HREDRAW | win32.CS_VREDRAW,
+        .style = win32.CS_HREDRAW | win32.CS_VREDRAW,
         .lpfnWndProc = windowProcA,
         .hInstance = instance,
         .lpszClassName = "v10_window_class",
@@ -381,7 +399,7 @@ pub fn windowsEntry(
 
     if (win32.RegisterClassA(&window_class) != 0) {
         const window_opt = win32.CreateWindowExA(
-            0,
+            win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED,
             window_class.lpszClassName,
             "v10",
             win32.WS_OVERLAPPEDWINDOW | win32.WS_VISIBLE,
@@ -401,7 +419,7 @@ pub fn windowsEntry(
 
         if (window_opt) |window| {
             global_running = true;
-            const device_context = win32.GetDC(window);
+
             const dib_allocated = resizeDibSection(&global_back_buffer, 1280, 720);
 
             const audio_fps = 48000;
@@ -435,8 +453,10 @@ pub fn windowsEntry(
             else
                 null;
 
+            var win32_state: Win32State = .{};
+
             const permanent_storage_size = mem.MiB * 64;
-            const transient_storage_size = mem.GiB * 4;
+            const transient_storage_size = mem.GiB * 1;
             const total_size = permanent_storage_size + transient_storage_size;
 
             const perm: ?[*]u8 = @ptrCast(win32.VirtualAlloc(
@@ -447,10 +467,12 @@ pub fn windowsEntry(
             ));
             const trans: ?[*]u8 = @as([*]u8, @ptrCast(perm)) + permanent_storage_size;
 
+            win32_state.game_memory_block = perm.?[0..total_size];
+
             log.debug("perm:  {*}", .{perm});
             log.debug("trans: {*}", .{trans});
 
-            var game_memory = v10.Memory{
+            var game_memory: v10.Memory = .{
                 .initialized = false,
                 .permanent = @as([*]u8, @ptrCast(perm))[0..permanent_storage_size],
                 .transient = @as([*]u8, @ptrCast(trans))[0..transient_storage_size],
@@ -490,8 +512,7 @@ pub fn windowsEntry(
                     if (new_dll_write_time > game.last_write_time) {
                         v10.unloadGameCode(&game);
 
-                        const copy_res = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-                        log.debug("Copy res: {}", .{copy_res});
+                        _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
                         game = v10.loadGameCode(io, temp_dll_name);
                     }
 
@@ -503,7 +524,7 @@ pub fn windowsEntry(
                     }
                     keyboard_controller.is_connected = true;
 
-                    processPendingMessages(keyboard_controller);
+                    processPendingMessages(&win32_state, keyboard_controller);
 
                     if (!global_pause) {
                         var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
@@ -597,7 +618,16 @@ pub fn windowsEntry(
                             .width = global_back_buffer.width,
                             .height = global_back_buffer.height,
                             .pitch = global_back_buffer.pitch,
+                            .bytes_per_pixel = global_back_buffer.bytes_per_pixel,
                         };
+
+                        if (win32_state.input_recording_index > 0) {
+                            recordInput(&win32_state, new_input);
+                        }
+
+                        if (win32_state.input_playing_index > 0) {
+                            playbackInput(&win32_state, new_input);
+                        }
 
                         const keep_running = game.updateAndRender(&game_memory, new_input, &game_offscreen_buffer);
                         if (!keep_running) global_running = false;
@@ -720,7 +750,9 @@ pub fn windowsEntry(
                         }
 
                         const dimension = getWindowDimension(window);
+                        const device_context = win32.GetDC(window);
                         displayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
+                        _ = win32.ReleaseDC(window, device_context);
 
                         flip_wall_clock = getWallClock();
 
@@ -777,7 +809,11 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             global_running = false;
         },
         win32.WM_ACTIVATEAPP => {
-            log.debug("WM_ACTIVATEAPP", .{});
+            if (wparam != 0) {
+                _ = win32.SetLayeredWindowAttributes(window, win32.RGB(0, 0, 0), 255, win32.LWA_ALPHA);
+            } else {
+                _ = win32.SetLayeredWindowAttributes(window, win32.RGB(0, 0, 0), 128, win32.LWA_ALPHA);
+            }
         },
 
         win32.WM_SYSKEYDOWN,
@@ -885,6 +921,66 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     }
 
     win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+}
+
+fn beginRecordingInput(win32_state: *Win32State, input_recording_index: usize) void {
+    win32_state.input_recording_index = input_recording_index;
+
+    const filename = "foo.hmi";
+    win32_state.recording_handle = win32.CreateFileA(filename, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
+
+    var total_written: usize = 0;
+    while (total_written < win32_state.game_memory_block.len) {
+        var written: win32.DWORD = undefined;
+        const length = @min(win32_state.game_memory_block.len - total_written, std.math.maxInt(win32.DWORD));
+        _ = win32.WriteFile(win32_state.recording_handle, &win32_state.game_memory_block[total_written], length, &written, null);
+        total_written += written;
+    }
+
+    assert(total_written == win32_state.game_memory_block.len);
+}
+
+fn endRecordingInput(win32_state: *Win32State) void {
+    win32_state.input_recording_index = 0;
+    _ = win32.CloseHandle(win32_state.recording_handle);
+}
+
+fn beginInputPlayback(win32_state: *Win32State, input_playing_index: usize) void {
+    win32_state.input_playing_index = input_playing_index;
+
+    const filename = "foo.hmi";
+    win32_state.playback_handle = win32.CreateFileA(filename, win32.GENERIC_READ, win32.FILE_SHARE_READ, null, win32.OPEN_EXISTING, 0, null);
+
+    var total_read: usize = 0;
+    var buffer_offset = win32_state.game_memory_block.ptr;
+    var read: win32.DWORD = undefined;
+
+    while (total_read < win32_state.game_memory_block.len) {
+        const length = @min(win32_state.game_memory_block.len - total_read, std.math.maxInt(win32.DWORD));
+        _ = win32.ReadFile(win32_state.playback_handle, buffer_offset, length, &read, null);
+        total_read += read;
+        buffer_offset = @ptrCast(&buffer_offset[read]);
+    }
+    assert(total_read == win32_state.game_memory_block.len);
+}
+
+fn endInputPlayback(win32_state: *Win32State) void {
+    win32_state.input_playing_index = 0;
+    _ = win32.CloseHandle(win32_state.playback_handle);
+}
+
+fn recordInput(win32_state: *Win32State, input: *v10.Input) void {
+    var bytes_written: win32.DWORD = undefined;
+    _ = win32.WriteFile(win32_state.recording_handle, input, @sizeOf(v10.Input), &bytes_written, null);
+}
+
+fn playbackInput(win32_state: *Win32State, input: *v10.Input) void {
+    var bytes_read: win32.DWORD = undefined;
+    if (win32.ReadFile(win32_state.playback_handle, input, @sizeOf(v10.Input), &bytes_read, null) == win32.FALSE or bytes_read < @sizeOf(v10.Input)) {
+        const index = win32_state.input_playing_index;
+        endInputPlayback(win32_state);
+        beginInputPlayback(win32_state, index);
+    }
 }
 
 pub const DEBUG = struct {
