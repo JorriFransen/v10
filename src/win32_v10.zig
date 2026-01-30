@@ -977,10 +977,14 @@ fn recordInput(win32_state: *Win32State, input: *v10.Input) void {
 
 fn playbackInput(win32_state: *Win32State, input: *v10.Input) void {
     var bytes_read: win32.DWORD = undefined;
-    if (win32.ReadFile(win32_state.playback_handle, input, @sizeOf(v10.Input), &bytes_read, null) == win32.FALSE or bytes_read < @sizeOf(v10.Input)) {
-        const index = win32_state.input_playing_index;
-        endInputPlayback(win32_state);
-        beginInputPlayback(win32_state, index);
+    if (win32.ReadFile(win32_state.playback_handle, input, @sizeOf(v10.Input), &bytes_read, null) == win32.TRUE) {
+        if (bytes_read == 0) {
+            const index = win32_state.input_playing_index;
+            endInputPlayback(win32_state);
+            beginInputPlayback(win32_state, index);
+
+            _ = win32.ReadFile(win32_state.playback_handle, input, @sizeOf(v10.Input), &bytes_read, null);
+        }
     }
 }
 
