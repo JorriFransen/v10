@@ -202,7 +202,6 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
 
     var frame_out = buffer.frames;
     for (0..@intCast(buffer.frame_count)) |_| {
-
         // const sine_value: f32 = @sin(game_state.t_sine);
         // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
         _ = tone_volume;

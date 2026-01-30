@@ -86,14 +86,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
-    const io = threaded.io();
-
     const prng_seed = (try std.time.Instant.now()).timestamp.nsec;
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
 
     var exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_dir_path_len = try std.process.executableDirPath(io, &exe_dir_path_buf);
+    const exe_dir_path_len = try std.process.executableDirPath(threaded.io(), &exe_dir_path_buf);
     const exe_dir = exe_dir_path_buf[0..exe_dir_path_len];
 
     var game_lib_name_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -123,6 +121,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .display = display,
         .window_width = initial_window_width,
         .window_height = initial_window_height,
+        .io = threaded.io(),
     };
 
     var wli = WlInitData{ .wld = &wld };
@@ -178,7 +177,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     };
 
-    wld.keyboard.add_listener(&wl_keyboard_listener, null);
+    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
 
     if (wli.xrgb8888 == false) {
         log.err("xrgb8888 format not avaliable", .{});
@@ -369,7 +368,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             defer _ = udev.device_unref(device);
 
             if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
-                try addJoystick(io, device, devnode_path);
+                try addJoystick(wld.io, device, devnode_path);
             }
 
             udev_list_entry = udev.list_entry_get_next(e);
@@ -408,7 +407,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .{ null, false };
 
     const permanent_storage_size = mem.MiB * 64;
-    const transient_storage_size = mem.GiB * 4;
+    const transient_storage_size = mem.MiB * 256;
     const total_size = permanent_storage_size + transient_storage_size;
 
     var game_memory = v10.Memory{
@@ -436,6 +435,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         game_memory.permanent = all_memory[0..permanent_storage_size];
         game_memory.transient = all_memory[permanent_storage_size..];
         assert(game_memory.transient.len == transient_storage_size);
+
+        wld.shared_state.game_memory_block = all_memory;
     } else |_| {
         log.err("mmap call for game memory failed", .{});
         return error.MMapFailed;
@@ -447,8 +448,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    var game = v10s.loadGameCode(io, game_lib_name);
-    game.init(&game_memory);
+    var game_code = v10s.GameCode.load(wld.io, game_lib_name);
+    game_code.init(&game_memory);
 
     _ = pa.stream_cork(pa_stream, 0, null, null);
 
@@ -458,10 +459,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var last_cycle_count = x86_64.rdtsc();
 
     while (running) {
-        const new_lib_write_time = v10s.getLastWriteTime(io, game_lib_name);
-        if (new_lib_write_time > game.last_write_time) {
-            v10s.unloadGameCode(&game);
-            game = v10s.loadGameCode(io, game_lib_name);
+        const new_lib_write_time = v10s.getLastWriteTime(wld.io, game_lib_name);
+        if (new_lib_write_time > game_code.last_write_time) {
+            game_code.unload();
+            game_code = v10s.GameCode.load(wld.io, game_lib_name);
         }
 
         const keyboard_controller = &wld.new_input.controllers[0];
@@ -490,7 +491,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                         if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
                             if (std.mem.eql(u8, action, "add")) {
-                                try addJoystick(io, device, path);
+                                try addJoystick(wld.io, device, path);
                             } else if (std.mem.eql(u8, action, "remove")) {
                                 removeJoystick(device, path);
                             } else {
@@ -615,7 +616,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 .bytes_per_pixel = bytes_per_pixel,
             };
 
-            const keep_running = game.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer);
+            if (wld.shared_state.input_recording_index > 0) {
+                wld.shared_state.recordInput(wld.io, wld.new_input);
+            }
+
+            if (wld.shared_state.input_playing_index > 0) {
+                wld.shared_state.playbackInput(wld.io, wld.new_input);
+            }
+
+            const keep_running = game_code.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer);
             if (!keep_running) running = false;
 
             pa.threaded_mainloop_lock(pa_ml);
@@ -659,7 +668,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             .frames_per_second = @intCast(audio_output.frames_per_second),
                         };
 
-                        game.getAudioFrames(&game_memory, &game_sound_output_buffer);
+                        game_code.getAudioFrames(&game_memory, &game_sound_output_buffer);
 
                         _ = pa.stream_write(
                             pa_stream,
@@ -687,7 +696,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     if (sleep_ms > 1) {
                         const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
                         // linux.sleep(s);
-                        try std.Io.sleep(io, std.Io.Duration.fromNanoseconds(s), .real);
+                        try std.Io.sleep(wld.io, std.Io.Duration.fromNanoseconds(s), .real);
                     }
 
                     seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
@@ -811,6 +820,10 @@ const WlData = struct {
     game_input: [2]v10.Input = .{v10.Input{}} ** 2,
     new_input: *v10.Input = undefined,
     old_input: *v10.Input = undefined,
+
+    shared_state: v10s.SharedState = .{},
+
+    io: std.Io = undefined,
 };
 
 const WlBuffer = struct {
@@ -1517,10 +1530,17 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
         } else if (key == .SPACE) {
             processKeyEvent(&buttons.back, is_down);
         }
-
-        if (options.internal_build) {
-            if (key == .P and is_down) {
+        if (options.internal_build and is_down) {
+            if (key == .P) {
                 pause = !pause;
+            } else if (key == .L) {
+                if (wld.shared_state.input_recording_index == 0) {
+                    wld.shared_state.endInputPlayback(wld.io);
+                    wld.shared_state.beginRecordingInput(wld.io, 1);
+                } else {
+                    wld.shared_state.endRecordingInput(wld.io);
+                    wld.shared_state.beginInputPlayback(wld.io, 1);
+                }
             }
         }
     }
