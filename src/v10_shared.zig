@@ -59,7 +59,11 @@ pub const SharedState = struct {
     pub fn playbackInput(shared_state: *SharedState, io: std.Io, input: *v10.Input) void {
         _ = .{ shared_state, input };
 
-        const bytes_read = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(input))}) catch @panic("Input playback read failed");
+        const bytes_read = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(input))}) catch |e| switch (e) {
+            error.EndOfStream => 0,
+            else => @panic("Input playback read failed"),
+        };
+
         if (bytes_read == 0) {
             const index = shared_state.input_playing_index;
 

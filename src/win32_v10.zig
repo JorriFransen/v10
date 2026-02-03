@@ -424,9 +424,6 @@ pub fn windowsEntry(
                 .safety_frame_bytes = (audio_fps / game_update_hz * @sizeOf(AudioOutput.Frame)) / 3,
             };
 
-            log.debug("sfb:{}", .{audio_output.safety_frame_bytes});
-            log.debug("one frame: {}", .{audio_fps / game_update_hz * @sizeOf(AudioOutput.Frame)});
-
             clearAudioBuffer(&audio_output);
 
             if (audio_output.dsound_buffer) |b| _ = b.Play(0, 0, dsound.BPLAY_LOOPING);
