@@ -13,7 +13,6 @@ const wayland = @import("wayland");
 const wl = wayland.wl;
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
-const viewporter = wayland.viewporter;
 
 const linux = @import("linux/linux.zig");
 const input = linux.input;
@@ -148,10 +147,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.err("xdg_wm_base not available", .{});
         return error.UnexpectedWayland;
     }
-    if (wli.viewporter) |vp| wld.viewporter = vp else {
-        log.err("wl_viewporter not available", .{});
-        return error.UnexpectedWayland;
-    }
 
     // for format events, seat, outputs
     wld.shm.add_listener(&wl_shm_listener, &wli);
@@ -191,11 +186,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     };
     wld.surface.add_listener(&wl_surface_listener, null);
-
-    wld.viewport = wld.viewporter.get_viewport(wld.surface) orelse {
-        log.err("wl_viewporter_get_viewport failed", .{});
-        return error.UnexpectedWayland;
-    };
 
     var xdg_decor_toplevel: WlToplevel = undefined;
     if (wli.xdg_decoration_manager) |manager| {
@@ -770,7 +760,6 @@ const WlInitData = struct {
     wl_seat: ?*wl.Seat = null,
     xdg_wm_base: ?*xdg_shell.WmBase = null,
     xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
-    viewporter: ?*viewporter.Viewporter = null,
 
     xrgb8888: bool = false,
     seat_capabilities: wl.Seat.Capability = .{},
@@ -787,8 +776,6 @@ const WlData = struct {
     compositor: *wl.Compositor = undefined,
     seat: *wl.Seat = undefined,
     surface: *wl.Surface = undefined,
-    viewporter: *viewporter.Viewporter = undefined,
-    viewport: *viewporter.Viewport = undefined,
     wm_base: *xdg_shell.WmBase = undefined,
     keyboard: *wl.Keyboard = undefined,
 
@@ -1214,49 +1201,51 @@ fn resize_shm() ShmError!void {
     }
 }
 
+/// This only resizes the window, and becuase the backbuffer is not resized, this will not be reflected in the visible window size.
+/// To get this closer to windows behaviour, the back buffer always needs to match the window size, and writes into this buffer
+/// need to be abstracted in such a way that anything outside the logical back buffer size is discarded, and the real pitch is
+/// taken into account.
 fn resize(width: i32, height: i32) !void {
     // Back buffer
     wld.width = initial_window_width;
     wld.height = initial_window_height;
 
-    if (global_back_buffer.memory.len > 0) {
-        linux.munmap(global_back_buffer.memory);
-    }
     global_back_buffer.width = wld.width;
     global_back_buffer.height = wld.height;
     global_back_buffer.pitch = initial_window_width * bytes_per_pixel;
 
     const back_buffer_memory_size: usize = @intCast(global_back_buffer.width * global_back_buffer.height * bytes_per_pixel);
-
-    if (linux.mmap(
-        null,
-        back_buffer_memory_size,
-        .{},
-        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
-        -1,
-        0,
-    )) |mapped| {
-        global_back_buffer.memory = mapped;
-        if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) != 0) {
-            log.err("mprotect call failed during back buffer resize", .{});
-            return error.MProtectFailed;
+    if (global_back_buffer.memory.len == 0) {
+        if (linux.mmap(
+            null,
+            back_buffer_memory_size,
+            .{},
+            .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+            -1,
+            0,
+        )) |mapped| {
+            global_back_buffer.memory = mapped;
+            if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) != 0) {
+                log.err("mprotect call failed during back buffer resize", .{});
+                return error.MProtectFailed;
+            }
+        } else |_| {
+            log.err("mmap call failed during back buffer resize", .{});
+            return error.MmapFailed;
         }
-
-        // Window
-        var window_width = width;
-        var window_height = height;
-        if (window_width == 0) window_width = wld.width;
-        if (window_height == 0) window_height = wld.height;
-        wld.window_width = window_width;
-        wld.window_height = window_height;
-        wld.viewport.set_destination(window_width, window_height);
-
-        wld.should_draw = true;
-        wld.pending_resize = null;
-    } else |_| {
-        log.err("mmap call failed during back buffer resize", .{});
-        return error.MmapFailed;
+    } else {
+        assert(global_back_buffer.memory.len == back_buffer_memory_size);
     }
+
+    var window_width = width;
+    var window_height = height;
+    if (window_width == 0) window_width = wld.width;
+    if (window_height == 0) window_height = wld.height;
+    wld.window_width = window_width;
+    wld.window_height = window_height;
+
+    wld.should_draw = true;
+    wld.pending_resize = null;
 }
 
 fn aquireFreeBuffer() ?*WlBuffer {
@@ -1396,8 +1385,6 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     } else if (eq(interface_name, wl.Output)) {
         const output = registry.bind(name, wl.Output, version).?;
         output.add_listener(&wl_output_listener, wli.wld);
-    } else if (eq(interface_name, viewporter.Viewporter)) {
-        wli.viewporter = registry.bind(name, viewporter.Viewporter, version);
     }
 }
 
@@ -1870,7 +1857,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
 
 fn displayBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
-    wld.surface.damage(0, 0, wld.window_width, wld.window_height);
+    wld.surface.damage(0, 0, buffer.width, buffer.height);
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.?.add_listener(&wl_callback_listener, &wld);
