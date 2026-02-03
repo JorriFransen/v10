@@ -32,8 +32,8 @@ const assert = std.debug.assert;
 
 var prng: std.Random = undefined;
 
-const initial_window_width: i32 = 1280;
-const initial_window_height: i32 = 720;
+const back_buffer_width: i32 = 1280;
+const back_buffer_height: i32 = 720;
 const bytes_per_pixel = 4;
 
 var global_back_buffer: OffscreenBuffer = .{};
@@ -116,10 +116,33 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     running = true;
 
+    global_back_buffer.width = back_buffer_width;
+    global_back_buffer.height = back_buffer_height;
+    global_back_buffer.pitch = global_back_buffer.width * bytes_per_pixel;
+
+    const back_buffer_memory_size: usize = @intCast(global_back_buffer.width * global_back_buffer.height * bytes_per_pixel);
+    if (linux.mmap(
+        null,
+        back_buffer_memory_size,
+        .{},
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    )) |mapped| {
+        global_back_buffer.memory = mapped;
+        if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) != 0) {
+            log.err("mprotect call failed during back buffer resize", .{});
+            return error.MProtectFailed;
+        }
+    } else |_| {
+        log.err("mmap call failed during back buffer resize", .{});
+        return error.MmapFailed;
+    }
+
     wld = .{
         .display = display,
-        .window_width = initial_window_width,
-        .window_height = initial_window_height,
+        .window_width = back_buffer_width,
+        .window_height = back_buffer_height,
         .io = threaded.io(),
     };
 
@@ -600,8 +623,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             var game_offscreen_buffer = v10.OffscreenBuffer{
                 .memory = global_back_buffer.memory,
-                .width = global_back_buffer.width,
-                .height = global_back_buffer.height,
+                .width = back_buffer_width,
+                .height = back_buffer_height,
                 .pitch = global_back_buffer.pitch,
                 .bytes_per_pixel = bytes_per_pixel,
             };
@@ -707,8 +730,33 @@ pub fn main(init: std.process.Init.Minimal) !void {
             if (aquireFreeBuffer()) |wl_buffer| {
 
                 // Copy global_back_buffer into wayland buffer
-                const wl_buffer_mem: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
-                @memcpy(wl_buffer_mem[0..@intCast(wl_buffer.width * wl_buffer.height * bytes_per_pixel)], global_back_buffer.memory);
+                const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
+                const wl_buffer_pitch: usize = @intCast(wl_buffer.width * bytes_per_pixel);
+                const wl_buffer_mem: []u8 = wl_buffer_ptr[0 .. wl_buffer_pitch * @as(usize, @intCast(wl_buffer.height))];
+
+                if (options.internal_build) {
+                    @memset(wl_buffer_mem, 0);
+                }
+
+                const line_length: usize = @intCast(@min(global_back_buffer.width, wl_buffer.width) * bytes_per_pixel);
+                const row_count: usize = @intCast(@min(global_back_buffer.height, wl_buffer.height));
+
+                // NOTE: This could be a single memcopy if:
+                //  - We reallocate the global_back_buffer in the same way as the wayland buffers (same size).
+                //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
+                //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
+                //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
+                //
+                //  I might actually prefer that, but for now this matches hh on win32.
+                for (0..row_count) |y| {
+                    const dest_offset = y * wl_buffer_pitch;
+                    const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
+
+                    const source_offset = y * @as(usize, @intCast(global_back_buffer.pitch));
+                    const source_line = global_back_buffer.memory[source_offset .. source_offset + line_length];
+
+                    @memcpy(dest_line, source_line);
+                }
 
                 displayBufferInWindow(wl_buffer);
                 wayland_blit = true;
@@ -1167,8 +1215,8 @@ fn resize_shm() ShmError!void {
         var width = wld.width;
         var height = wld.height;
         if (width == -1 and height == -1) {
-            width = initial_window_width;
-            height = initial_window_height;
+            width = back_buffer_width;
+            height = back_buffer_height;
         }
         const stride = width * bytes_per_pixel;
 
@@ -1201,41 +1249,10 @@ fn resize_shm() ShmError!void {
     }
 }
 
-/// This only resizes the window, and becuase the backbuffer is not resized, this will not be reflected in the visible window size.
-/// To get this closer to windows behaviour, the back buffer always needs to match the window size, and writes into this buffer
-/// need to be abstracted in such a way that anything outside the logical back buffer size is discarded, and the real pitch is
-/// taken into account.
 fn resize(width: i32, height: i32) !void {
     // Back buffer
-    wld.width = initial_window_width;
-    wld.height = initial_window_height;
-
-    global_back_buffer.width = wld.width;
-    global_back_buffer.height = wld.height;
-    global_back_buffer.pitch = initial_window_width * bytes_per_pixel;
-
-    const back_buffer_memory_size: usize = @intCast(global_back_buffer.width * global_back_buffer.height * bytes_per_pixel);
-    if (global_back_buffer.memory.len == 0) {
-        if (linux.mmap(
-            null,
-            back_buffer_memory_size,
-            .{},
-            .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
-            -1,
-            0,
-        )) |mapped| {
-            global_back_buffer.memory = mapped;
-            if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) != 0) {
-                log.err("mprotect call failed during back buffer resize", .{});
-                return error.MProtectFailed;
-            }
-        } else |_| {
-            log.err("mmap call failed during back buffer resize", .{});
-            return error.MmapFailed;
-        }
-    } else {
-        assert(global_back_buffer.memory.len == back_buffer_memory_size);
-    }
+    wld.width = back_buffer_width;
+    wld.height = back_buffer_height;
 
     var window_width = width;
     var window_height = height;
@@ -1251,14 +1268,14 @@ fn resize(width: i32, height: i32) !void {
 fn aquireFreeBuffer() ?*WlBuffer {
     for (&wld.buffers) |*buffer| {
         if (buffer.free) {
-            if (buffer.handle == null or buffer.width != wld.width or buffer.height != wld.height) {
+            if (buffer.handle == null or buffer.width != wld.window_width or buffer.height != wld.window_height) {
                 if (buffer.handle) |h| h.destroy();
 
-                const new_buf = wld.pool.?.create_buffer(buffer.offset, wld.width, wld.height, wld.width * bytes_per_pixel, .xrgb8888) orelse @panic("Buffer recreation failed");
+                const new_buf = wld.pool.?.create_buffer(buffer.offset, wld.window_width, wld.window_height, wld.window_width * bytes_per_pixel, .xrgb8888) orelse @panic("Buffer recreation failed");
                 new_buf.add_listener(&wl_buffer_listener, buffer);
                 buffer.handle = new_buf;
-                buffer.width = wld.width;
-                buffer.height = wld.height;
+                buffer.width = wld.window_width;
+                buffer.height = wld.window_height;
             }
 
             buffer.free = false;
@@ -1462,7 +1479,7 @@ fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) callconv(.c)
     _ = wl_buffer;
     const buffer: *WlBuffer = @ptrCast(@alignCast(data));
 
-    if (buffer.width != wld.width or buffer.height != wld.height) {
+    if (buffer.width != wld.window_width or buffer.height != wld.window_height) {
         buffer.handle.?.destroy();
         buffer.handle = null;
     }
@@ -1539,8 +1556,8 @@ fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configurati
     var width: c_int = undefined;
     var height: c_int = undefined;
     if (!libdecor.configuration_get_content_size(config, frame, &width, &height)) {
-        width = initial_window_width;
-        height = initial_window_height;
+        width = back_buffer_width;
+        height = back_buffer_height;
     }
 
     const state = libdecor.state_new(width, height) orelse @panic("libdecor_state_new failed");
@@ -1857,7 +1874,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
 
 fn displayBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
-    wld.surface.damage(0, 0, buffer.width, buffer.height);
+    wld.surface.damage(0, 0, @min(global_back_buffer.width, buffer.width), @min(global_back_buffer.height, buffer.height));
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.?.add_listener(&wl_callback_listener, &wld);
