@@ -196,8 +196,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.debug("wl_seat_get_keyboard failed", .{});
         return error.UnexpectedWayland;
     };
-
     wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
+
+    if (options.internal_build) {
+        wld.mouse = wld.seat.get_pointer() orelse {
+            log.debug("wl_set_get_pointer failed", .{});
+            return error.UnexpectedWayland;
+        };
+        wld.mouse.add_listener(&wl_mouse_listener, &wld);
+    }
 
     if (wli.xrgb8888 == false) {
         log.err("xrgb8888 format not avaliable", .{});
@@ -431,7 +438,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .{ null, false };
 
     const permanent_storage_size = mem.MiB * 64;
-    const transient_storage_size = mem.MiB * 256;
+    const transient_storage_size = mem.GiB * 1;
     const total_size = permanent_storage_size + transient_storage_size;
 
     var game_memory = v10.Memory{
@@ -472,8 +479,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
+    var thread_context: v10.ThreadContext = .{ .io = wld.io };
+
     var game_code = v10s.GameCode.load(wld.io, game_lib_name);
-    if (game_code.init) |gameCodeInit| gameCodeInit(&game_memory);
+    if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
     _ = pa.stream_cork(pa_stream, 0, null, null);
 
@@ -496,6 +505,18 @@ pub fn main(init: std.process.Init.Minimal) !void {
             new_button.ended_down = old_button.ended_down;
         }
         keyboard_controller.is_connected = true;
+
+        if (options.internal_build) {
+            const mouse = &wld.new_input.debug_mouse;
+            const old_mouse = &wld.old_input.debug_mouse;
+            mouse.* = std.mem.zeroes(v10.DebugMouseInput);
+            mouse.x = old_mouse.x;
+            mouse.y = old_mouse.y;
+            mouse.z = old_mouse.z;
+            for (&mouse.buttons.array, old_mouse.buttons.array) |*new_button, old_button| {
+                new_button.ended_down = old_button.ended_down;
+            }
+        }
 
         if (wl.display_dispatch(display) == -1) {
             running = false;
@@ -648,7 +669,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 wld.shared_state.playbackInput(wld.io, wld.new_input);
             }
 
-            const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer) else true;
+            const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer) else true;
             if (!keep_running) running = false;
 
             pa.threaded_mainloop_lock(pa_ml);
@@ -701,16 +722,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                     if (begin_write_rc == 0 and buffer_ptr != null) {
                         var game_sound_output_buffer: v10.AudioBuffer = .{
-                            .frames = @ptrCast(@alignCast(buffer_ptr)),
-                            .frame_count = @intCast(actual_frame_count),
+                            .frames = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(buffer_ptr)))[0..actual_frame_count],
                             .frames_per_second = @intCast(audio_output.frames_per_second),
                         };
 
-                        if (game_code.getAudioFrames) |getAudioFrames| getAudioFrames(&game_memory, &game_sound_output_buffer);
+                        if (game_code.getAudioFrames) |getAudioFrames| getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
 
                         _ = pa.stream_write(
                             pa_stream,
-                            game_sound_output_buffer.frames,
+                            game_sound_output_buffer.frames.ptr,
                             buffer_size,
                             null,
                             0,
@@ -851,6 +871,7 @@ const WlData = struct {
     surface: *wl.Surface = undefined,
     wm_base: *xdg_shell.WmBase = undefined,
     keyboard: *wl.Keyboard = undefined,
+    mouse: *wl.Pointer = undefined,
 
     toplevel: WlToplevel = undefined,
 
@@ -1314,11 +1335,12 @@ fn aquireFreeBuffer() ?*WlBuffer {
 }
 
 pub const DEBUG = struct {
-    pub fn readEntireFile(path: [*:0]const u8) callconv(.c) v10.DEBUG.ReadFileResult {
+    pub fn readEntireFile(thread_context: *v10.ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) v10.DEBUG.ReadFileResult {
+        assert(std.mem.span(path).len == path_len);
         var result = v10.DEBUG.ReadFileResult{};
 
         const open_rc = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
-        if (open_rc != -1) {
+        if (@as(isize, @intCast(open_rc)) >= 0) {
             const handle: linux.fd_t = @intCast(open_rc);
 
             var stat: linux.Statx = undefined;
@@ -1332,7 +1354,7 @@ pub const DEBUG = struct {
                             result.size = bytes_read;
                             result.content = mapped.ptr;
                         } else |_| {
-                            freeFileMemory(mapped.ptr, file_size);
+                            freeFileMemory(thread_context, mapped.ptr, file_size);
                             log.warn("File read failed: '{s}'", .{path});
                         }
                     } else {
@@ -1353,7 +1375,9 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn writeEntireFile(path: [*:0]const u8, memory: *anyopaque, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *v10.ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool {
+        _ = thread_context;
+        assert(std.mem.span(path).len == path_len);
         var result = false;
 
         const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
@@ -1376,7 +1400,9 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn freeFileMemory(memory: ?*anyopaque, size: usize) callconv(.c) void {
+    pub fn freeFileMemory(thread_context: *v10.ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void {
+        _ = thread_context;
+
         if (memory) |m| {
             assert(size > 0);
             linux.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(m)))[0..size]);
@@ -1573,6 +1599,46 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
                     wld.shared_state.beginInputPlayback(wld.io, 1);
                 }
             }
+        }
+    }
+}
+
+fn handleWlMouseEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
+    _ = .{ data, pointer, serial, surface };
+
+    wld.new_input.debug_mouse.x = surface_x.toInt();
+    wld.new_input.debug_mouse.y = surface_y.toInt();
+}
+
+fn handleWlMouseMotion(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
+    _ = .{ data, pointer, time };
+
+    wld.new_input.debug_mouse.x = surface_x.toInt();
+    wld.new_input.debug_mouse.y = surface_y.toInt();
+}
+
+fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) callconv(.c) void {
+    _ = .{ data, pointer, serial, time };
+
+    const button: input.Key = @enumFromInt(raw_button);
+    const was_down = state == .released;
+    const is_down = state == .pressed;
+
+    const mouse = &wld.new_input.debug_mouse;
+    const buttons = &mouse.buttons.array;
+
+    if (is_down != was_down) {
+        const key_index_opt: ?usize = switch (button) {
+            .BTN_LEFT => 0,
+            .BTN_RIGHT => 1,
+            .BTN_MIDDLE => 2,
+            .BTN_SIDE => 3,
+            .BTN_EXTRA => 4,
+            else => null,
+        };
+
+        if (key_index_opt) |key_index| {
+            processKeyEvent(&buttons[key_index], is_down);
         }
     }
 }
@@ -1962,6 +2028,19 @@ const wl_keyboard_listener = wl.Keyboard.Listener{
     .modifiers = @ptrCast(&nop),
     .repeat_info = @ptrCast(&nop),
     .keymap = @ptrCast(&nop),
+};
+
+const wl_mouse_listener = wl.Pointer.Listener{
+    .enter = handleWlMouseEnter,
+    .leave = @ptrCast(&nop),
+    .motion = handleWlMouseMotion,
+    .button = handleWlMouseButton,
+    .axis = @ptrCast(&nop),
+    .frame = @ptrCast(&nop),
+    .axis_source = @ptrCast(&nop),
+    .axis_stop = @ptrCast(&nop),
+    .axis_value120 = @ptrCast(&nop),
+    .axis_relative_direction = @ptrCast(&nop),
 };
 
 const libdecor_listener = libdecor.FrameInterface{

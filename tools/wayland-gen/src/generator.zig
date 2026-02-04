@@ -188,10 +188,16 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\};
         \\
         \\pub const Fixed = extern struct {
-        \\    integer: i16 = 0,
-        \\    fraction: u16 = 0,
+        \\    value: i32,
+        \\
+        \\    pub inline fn toDouble(fixed: Fixed) f64 {
+        \\        return @as(f64, @floatFromInt(fixed.value)) / 256;
+        \\    }
+        \\
+        \\    pub inline fn toInt(fixed: Fixed) c_int {
+        \\        return @divTrunc(@as(c_int, @intCast(fixed.value)), 256);
+        \\    }
         \\};
-        \\ 
         \\
         \\pub const Array = extern struct {
         \\    size: usize,

@@ -5,6 +5,15 @@ const v10 = @import("v10.zig");
 
 const assert = std.debug.assert;
 
+pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8 {
+    return std.fmt.bufPrintSentinel(buffer, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{ base, sub }, 0) catch |e| switch (e) {
+        error.NoSpaceLeft => {
+            log.err("File path too big! base path: \"{s}\" sub_path: \"{s}\"", .{ base, sub });
+            return e;
+        },
+    };
+}
+
 // Note: In the original handmade hero this is in the platform layer, but in zig we can do this (for our current target platforms) in platform agnostic code.
 pub const SharedState = struct {
     game_memory_block: []u8 = &.{},
@@ -20,11 +29,8 @@ pub const SharedState = struct {
     exe_dir_path: []const u8 = &.{},
 
     pub fn buildExePathFilename(shared_state: *const SharedState, buffer: []u8, sub_path: []const u8) ![:0]const u8 {
-        return std.fmt.bufPrintSentinel(buffer, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{ shared_state.exe_dir_path, sub_path }, 0) catch |e| switch (e) {
-            error.NoSpaceLeft => {
-                log.err("File path too big! base path: \"{s}\" sub_path: \"{s}\"", .{ shared_state.exe_dir_path, sub_path });
-                return e;
-            },
+        return joinPathsZ(buffer, shared_state.exe_dir_path, sub_path) catch |e| switch (e) {
+            error.NoSpaceLeft => return e,
         };
     }
 

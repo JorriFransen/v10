@@ -8,6 +8,10 @@ const Step = Build.Step;
 var use_llvm: bool = undefined;
 var internal_build: bool = true;
 
+const src_path = "src";
+
+const win32 = @import("src/win32/win32.zig");
+
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
@@ -17,14 +21,19 @@ pub fn build(b: *Build) !void {
 
     internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
 
+    var src_dir_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const src_dir_path_len = std.Io.Dir.cwd().realPathFile(b.graph.io, src_path, &src_dir_path_buffer) catch @panic("realPathFile failed!");
+    const src_dir_path = src_dir_path_buffer[0..src_dir_path_len];
+
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
     options.addOption(bool, "debug", optimize == .Debug);
+    options.addOption([]const u8, "src_dir_path", src_dir_path);
 
     const mem_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("src/memory/memory.zig"),
+        .root_source_file = b.path(src_path ++ "/memory/memory.zig"),
     });
 
     const modules = Modules{
@@ -33,7 +42,7 @@ pub fn build(b: *Build) !void {
         .xml = b.createModule(.{
             .target = target,
             .optimize = optimize,
-            .root_source_file = b.path("src/xml.zig"),
+            .root_source_file = b.path(src_path ++ "/xml.zig"),
             .imports = &.{
                 .{ .name = "mem", .module = mem_module },
             },
@@ -94,7 +103,7 @@ fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget,
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
-        .root_source_file = b.path("src/win32_v10.zig"),
+        .root_source_file = b.path(src_path ++ "/win32_v10.zig"),
         .link_libc = true,
         .imports = &.{},
     });
@@ -119,7 +128,7 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
-        .root_source_file = b.path("src/linux_v10.zig"),
+        .root_source_file = b.path(src_path ++ "/linux_v10.zig"),
         .link_libc = true, // Required for dlopen, maybe more
         .imports = &.{
             .{ .name = "wayland", .module = tools.wayland_module },
@@ -144,7 +153,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
     const game_root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
-        .root_source_file = b.path("src/v10.zig"),
+        .root_source_file = b.path(src_path ++ "/v10.zig"),
         .imports = &.{
             .{ .module = modules.options, .name = "options" },
         },

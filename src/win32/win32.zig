@@ -703,6 +703,48 @@ pub const TIMERR_STRUCT = TIMERR_BASE + 33;
 pub const LWA_ALPHA = 0x00000002;
 pub const LWA_COLORKEY = 0x00000001;
 
+pub const DRIVERVERSION = 0;
+pub const TECHNOLOGY = 2;
+pub const HORZSIZE = 4;
+pub const VERTSIZE = 6;
+pub const HORZRES = 8;
+pub const VERTRES = 10;
+pub const BITSPIXEL = 12;
+pub const PLANES = 14;
+pub const NUMBRUSHES = 16;
+pub const NUMPENS = 18;
+pub const NUMMARKERS = 20;
+pub const NUMFONTS = 22;
+pub const NUMCOLORS = 24;
+pub const PDEVICESIZE = 26;
+pub const CURVECAPS = 28;
+pub const LINECAPS = 30;
+pub const POLYGONALCAPS = 32;
+pub const TEXTCAPS = 34;
+pub const CLIPCAPS = 36;
+pub const RASTERCAPS = 38;
+pub const ASPECTX = 40;
+pub const ASPECTY = 42;
+pub const ASPECTXY = 44;
+pub const LOGPIXELSX = 88;
+pub const LOGPIXELSY = 90;
+pub const CAPS1 = 94;
+pub const SIZEPALETTE = 104;
+pub const NUMRESERVED = 106;
+pub const COLORRES = 108;
+pub const PHYSICALWIDTH = 110;
+pub const PHYSICALHEIGHT = 111;
+pub const PHYSICALOFFSETX = 112;
+pub const PHYSICALOFFSETY = 113;
+pub const SCALINGFACTORX = 114;
+pub const SCALINGFACTORY = 115;
+pub const VREFRESH = 116;
+pub const DESKTOPVERTRES = 117;
+pub const DESKTOPHORZRES = 118;
+pub const BLTALIGNMENT = 119;
+pub const SHADEBLENDCAPS = 120;
+pub const COLORMGMTCAPS = 121;
+
 pub const GUID = extern struct {
     data1: u32 = 0,
     data2: u16 = 0,
@@ -897,6 +939,12 @@ pub const GET_FILEEX_INFO_LEVELS = enum(c_int) {
     max,
 };
 
+pub const KeyState = packed struct(SHORT) {
+    toggled: bool,
+    reserved: u14,
+    down: bool,
+};
+
 pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
     return .{ .red = r, .green = g, .blue = b };
 }
@@ -956,6 +1004,11 @@ pub extern "user32" fn PostQuitMessage(exit_code: c_int) callconv(.winapi) void;
 pub extern "user32" fn BeginPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) HDC;
 pub extern "user32" fn EndPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetClientRect(hwnd: HWND, rect: LPRECT) callconv(.winapi) BOOL;
+pub extern "user32" fn GetCursorPos(point: *POINT) callconv(.winapi) BOOL;
+pub extern "user32" fn ScreenToClient(hwnd: HWND, point: *POINT) callconv(.winapi) BOOL;
+pub extern "user32" fn GetKeyState(key: c_int) callconv(.winapi) KeyState;
+
+pub extern "gdi32" fn GetDeviceCaps(hdc: HDC, index: c_int) callconv(.winapi) c_int;
 pub extern "gdi32" fn PatBlt(hdc: ?HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: DWORD) callconv(.winapi) BOOL;
 pub extern "gdi32" fn CreateDIBSection(hdc: ?HDC, bitmap_info: *const BITMAPINFO, usage: c_uint, ppv_bit: **anyopaque, section: ?HANDLE, offset: DWORD) callconv(.winapi) HBITMAP;
 pub extern "gdi32" fn StretchDIBits(hdc: HDC, xdest: c_int, ydest: c_int, wdest: c_int, hdest: c_int, xsrc: c_int, ysrc: c_int, wsrc: c_int, hsrc: c_int, bits: *const anyopaque, bits_info: *const BITMAPINFO, usage: c_uint, rop: DWORD) callconv(.winapi) void;
