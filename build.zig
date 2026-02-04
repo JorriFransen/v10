@@ -8,8 +8,6 @@ const Step = Build.Step;
 var use_llvm: bool = undefined;
 var internal_build: bool = true;
 
-const runtree_dir = "runtree";
-
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
@@ -40,11 +38,6 @@ pub fn build(b: *Build) !void {
                 .{ .name = "mem", .module = mem_module },
             },
         }),
-    };
-
-    std.Io.Dir.cwd().createDirPath(b.graph.io, runtree_dir) catch |e| switch (e) {
-        error.PathAlreadyExists => {},
-        else => return e,
     };
 
     const tools = try buildTools(b, optimize, target, &modules);
@@ -84,7 +77,7 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     run_exe.step.dependOn(&exe_install.step);
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
-    run_exe.setCwd(b.path(runtree_dir));
+    run_exe.setCwd(Build.LazyPath{ .cwd_relative = b.install_prefix });
     if (b.args) |a| run_exe.addArgs(a);
 
     return .{
@@ -212,7 +205,6 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules
     _ = run_exe.addPrefixedFileArg("--wayland=", b.path("vendor/wayland/wayland.xml"));
     _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
     _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg-decoration-unstable-v1.xml"));
-    _ = run_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/viewporter.xml"));
 
     const wayland_source = run_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
 

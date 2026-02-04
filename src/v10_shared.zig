@@ -16,11 +16,30 @@ pub const SharedState = struct {
     playback_handle: std.Io.File = undefined,
     input_playing_index: usize = 0,
 
+    exe_dir_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined,
+    exe_dir_path: []const u8 = &.{},
+
+    pub fn buildExePathFilename(shared_state: *const SharedState, buffer: []u8, sub_path: []const u8) ![:0]const u8 {
+        return std.fmt.bufPrintSentinel(buffer, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{ shared_state.exe_dir_path, sub_path }, 0) catch |e| switch (e) {
+            error.NoSpaceLeft => {
+                log.err("File path too big! base path: \"{s}\" sub_path: \"{s}\"", .{ shared_state.exe_dir_path, sub_path });
+                return e;
+            },
+        };
+    }
+
+    pub fn getInputRecordingPath(shared_state: *const SharedState, buffer: []u8, recording_index: usize) [:0]const u8 {
+        _ = recording_index;
+        return shared_state.buildExePathFilename(buffer, "input_recording.hmi") catch @panic("File path too big!");
+    }
+
     pub fn beginRecordingInput(shared_state: *SharedState, io: std.Io, input_recording_index: usize) void {
         shared_state.input_recording_index = input_recording_index;
 
-        const filename = "foo.hmi";
-        shared_state.recording_handle = std.Io.Dir.cwd().createFile(io, filename, .{ .truncate = true }) catch @panic("Input recording createFile failed");
+        var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const filename = shared_state.getInputRecordingPath(&filename_buf, input_recording_index);
+
+        shared_state.recording_handle = std.Io.Dir.createFileAbsolute(io, filename, .{ .truncate = true }) catch @panic("Input recording createFile failed");
 
         shared_state.recording_handle.writeStreamingAll(io, shared_state.game_memory_block) catch @panic("Input recording memory write failed");
     }
@@ -35,7 +54,9 @@ pub const SharedState = struct {
     pub fn beginInputPlayback(shared_state: *SharedState, io: std.Io, input_playing_index: usize) void {
         shared_state.input_playing_index = input_playing_index;
 
-        const filename = "foo.hmi";
+        var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const filename = shared_state.getInputRecordingPath(&filename_buf, input_playing_index);
+
         shared_state.playback_handle = std.Io.Dir.cwd().openFile(io, filename, .{}) catch @panic("Input playback openFile failed");
 
         var total_read: usize = 0;
@@ -80,9 +101,9 @@ pub const GameCode = struct {
     dll: ?std.DynLib = null,
     last_write_time: i128 = 0,
 
-    init: v10.FN_init = v10.initStub,
-    updateAndRender: v10.FN_updateAndRender = v10.updateAndRenderStub,
-    getAudioFrames: v10.FN_getAudioFrames = v10.getAudioFramesStub,
+    init: ?v10.FN_init = null,
+    updateAndRender: ?v10.FN_updateAndRender = null,
+    getAudioFrames: ?v10.FN_getAudioFrames = null,
 
     pub fn load(io: std.Io, libname: []const u8) GameCode {
         const last_write_time = getLastWriteTime(io, libname);
@@ -123,15 +144,23 @@ pub const GameCode = struct {
     }
 };
 
-pub fn getLastWriteTime(io: std.Io, file_name: []const u8) i128 {
+pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
     var result: i128 = 0;
 
-    if (std.Io.Dir.cwd().openFile(io, file_name, .{ .mode = .read_only })) |dll_file| {
-        if (dll_file.stat(io)) |stat| {
-            result = stat.mtime.toNanoseconds();
-        } else |_| {}
-        dll_file.close(io);
-    } else |_| {}
+    switch (@import("builtin").os.tag) {
+        .windows => {
+            const win32 = @import("win32/win32.zig");
+            var data: win32.FILE_ATTRIBUTE_DATA = undefined;
+            if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data) == win32.TRUE) {
+                result = @as(u64, @bitCast(data.last_write_time));
+            }
+        },
 
+        else => {
+            if (std.Io.Dir.statFile(undefined, io, absolute_file_name, .{})) |stat| {
+                result = stat.mtime.toNanoseconds();
+            } else |_| {}
+        },
+    }
     return result;
 }

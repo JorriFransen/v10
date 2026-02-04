@@ -11,21 +11,9 @@ pub const platform = switch (os) {
     else => @compileError("Unsupported platform"),
 };
 
-pub const FN_init = *const @TypeOf(initStub);
-pub fn initStub(memory: *Memory) callconv(.c) void {
-    _ = .{memory};
-}
-
-pub const FN_updateAndRender = *const @TypeOf(updateAndRenderStub);
-pub fn updateAndRenderStub(memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool {
-    _ = .{ memory, input, offscreen_buffer };
-    return true;
-}
-
-pub const FN_getAudioFrames = *const @TypeOf(getAudioFramesStub);
-pub fn getAudioFramesStub(memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
-    _ = .{ memory, sound_buffer };
-}
+pub const FN_init = *const fn (memory: *Memory) callconv(.c) void;
+pub const FN_updateAndRender = *const fn (memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool;
+pub const FN_getAudioFrames = *const fn (memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void;
 
 pub const OffscreenBuffer = struct {
     memory: []u8,
@@ -177,7 +165,7 @@ pub export fn updateAndRender(game_memory: *Memory, input: *const Input, offscre
             game_state.player_y += @intFromFloat(@sin(0.5 * std.math.pi * game_state.jump_timer) * 10);
         }
 
-        if (buttons.action_down.ended_down) {
+        if (buttons.action_down.ended_down and game_state.jump_timer <= 0) {
             game_state.jump_timer = 4;
         }
         game_state.jump_timer -= 0.033;
@@ -240,25 +228,17 @@ fn renderPlayer(buffer: *OffscreenBuffer, player_x: i32, player_y: i32) void {
     const height = 10;
     const color = 0xffffffff;
 
-    const px: isize = @intCast(player_x);
-    const bytes_per_pixel: isize = @intCast(buffer.bytes_per_pixel);
-    const pitch: isize = @intCast(buffer.pitch);
+    const left: usize = @intCast(@min(buffer.width, @max(player_x, 0)));
+    const right: usize = @intCast(@min(buffer.width, @max(player_x + width, 0)));
+    const top: usize = @intCast(@min(buffer.height, @max(player_y, 0)));
+    const bottom: usize = @intCast(@min(buffer.height, @max(player_y + height, 0)));
+    const pitch: usize = @intCast(buffer.pitch);
+    const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
-    const top: isize = @intCast(player_y);
-    const bottom: isize = @intCast(player_y + height);
-
-    const utop: usize = @max(0, top);
-    const ubottom: usize = @intCast(@min(buffer.height, @max(0, bottom)));
-
-    for (0..width) |x_offset| {
-        const offset: isize = ((px + @as(isize, @intCast(x_offset))) * bytes_per_pixel) + (top * pitch);
-        if (offset >= 0 and offset < buffer.memory.len) {
-            var pixel: [*]u8 = @ptrCast(&buffer.memory[@intCast(offset)]);
-
-            for (utop..ubottom) |_| {
-                @as(*u32, @ptrCast(@alignCast(pixel))).* = color;
-                pixel += @intCast(pitch);
-            }
+    for (top..bottom) |y| {
+        for (left..right) |x| {
+            const pixel: *u32 = @ptrCast(@alignCast(&buffer.memory[(y * pitch) + x * bpp]));
+            pixel.* = color;
         }
     }
 }

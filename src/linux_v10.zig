@@ -89,12 +89,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
 
-    var exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_dir_path_len = try std.process.executableDirPath(threaded.io(), &exe_dir_path_buf);
-    const exe_dir = exe_dir_path_buf[0..exe_dir_path_len];
+    var shared_state: v10s.SharedState = .{};
 
-    var game_lib_name_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const game_lib_name = try std.fmt.bufPrintSentinel(&game_lib_name_buf, "{s}/libv10_game.so", .{exe_dir}, 0);
+    const exe_dir_path_len = try std.process.executableDirPath(threaded.io(), &shared_state.exe_dir_path_buf);
+    shared_state.exe_dir_path = shared_state.exe_dir_path_buf[0..exe_dir_path_len];
+
+    var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
     // TODO: Move this into the generator
     var lwl = try std.DynLib.open("libwayland-client.so");
@@ -144,6 +145,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .window_width = back_buffer_width,
         .window_height = back_buffer_height,
         .io = threaded.io(),
+        .shared_state = &shared_state,
     };
 
     var wli = WlInitData{ .wld = &wld };
@@ -462,7 +464,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.old_input = &wld.game_input[1];
 
     var game_code = v10s.GameCode.load(wld.io, game_lib_name);
-    game_code.init(&game_memory);
+    if (game_code.init) |gameCodeInit| gameCodeInit(&game_memory);
 
     _ = pa.stream_cork(pa_stream, 0, null, null);
 
@@ -551,7 +553,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 if (js.active) {
                     new_controller.is_connected = true;
-                    new_controller.is_analog = true;
+                    new_controller.is_analog = old_controller.is_analog;
 
                     new_controller.stick_average_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
                     new_controller.stick_average_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
@@ -637,7 +639,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 wld.shared_state.playbackInput(wld.io, wld.new_input);
             }
 
-            const keep_running = game_code.updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer);
+            const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&game_memory, wld.new_input, &game_offscreen_buffer) else true;
             if (!keep_running) running = false;
 
             pa.threaded_mainloop_lock(pa_ml);
@@ -681,7 +683,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             .frames_per_second = @intCast(audio_output.frames_per_second),
                         };
 
-                        game_code.getAudioFrames(&game_memory, &game_sound_output_buffer);
+                        if (game_code.getAudioFrames) |getAudioFrames| getAudioFrames(&game_memory, &game_sound_output_buffer);
 
                         _ = pa.stream_write(
                             pa_stream,
@@ -856,7 +858,7 @@ const WlData = struct {
     new_input: *v10.Input = undefined,
     old_input: *v10.Input = undefined,
 
-    shared_state: v10s.SharedState = .{},
+    shared_state: *v10s.SharedState = undefined,
 
     io: std.Io = undefined,
 };

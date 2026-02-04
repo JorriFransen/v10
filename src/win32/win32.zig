@@ -883,6 +883,20 @@ pub const COLORREF = packed struct(DWORD) {
     reserved: BYTE = 0,
 };
 
+pub const FILE_ATTRIBUTE_DATA = extern struct {
+    file_attributes: DWORD,
+    creation_time: FILETIME,
+    last_access_time: FILETIME,
+    last_write_time: FILETIME,
+    file_size_high: DWORD,
+    file_size_low: DWORD,
+};
+
+pub const GET_FILEEX_INFO_LEVELS = enum(c_int) {
+    standard,
+    max,
+};
+
 pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
     return .{ .red = r, .green = g, .blue = b };
 }
@@ -895,6 +909,7 @@ pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation
 pub extern "kernel32" fn VirtualFree(address: LPVOID, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, share_mode: DWORD, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn GetFileAttributesExA(file_name: LPCSTR, info_level_id: GET_FILEEX_INFO_LEVELS, file_info: LPVOID) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, size: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn ReadFile(handle: HANDLE, buffer: LPVOID, bytes_to_read: DWORD, bytes_read: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
 pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, bytes_written: *DWORD, overlapped: ?*OVERLAPPED) callconv(.c) BOOL;
@@ -923,6 +938,7 @@ pub extern "user32" fn DefWindowProcW(window: HWND, msg: c_uint, wparam: WPARAM,
 pub extern "user32" fn RegisterClassA(class: *const WNDCLASSA) callconv(.winapi) ATOM;
 pub extern "user32" fn RegisterClassW(class: *const WNDCLASSW) callconv(.winapi) ATOM;
 
+pub extern "user32" fn AdjustWindowRectEx(rect: *RECT, style: DWORD, menu: BOOL, ex_style: DWORD) callconv(.winapi) BOOL;
 pub extern "user32" fn CreateWindowExA(ex_style: DWORD, class_name: ?LPCSTR, window_name: ?LPCSTR, style: DWORD, x: c_int, y: c_int, width: c_int, height: c_int, parent_window: ?HWND, menu: ?HMENU, instance: ?HINSTANCE, param: ?LPVOID) callconv(.winapi) ?HWND;
 pub extern "user32" fn DestroyWindow(hwnd: HWND) callconv(.c) BOOL;
 pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, crKey: COLORREF, bAlpha: BYTE, dwFlags: DWORD) callconv(.c) BOOL;

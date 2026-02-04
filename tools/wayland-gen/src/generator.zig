@@ -187,7 +187,11 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    types: ?[*]const ?*const Interface,
         \\};
         \\
-        \\const Fixed = enum(u32) {};
+        \\pub const Fixed = extern struct {
+        \\    integer: i16 = 0,
+        \\    fraction: u16 = 0,
+        \\};
+        \\ 
         \\
         \\pub const Array = extern struct {
         \\    size: usize,

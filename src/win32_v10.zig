@@ -358,18 +358,19 @@ pub fn windowsEntry(
     io: std.Io,
     instance: win32.HINSTANCE,
 ) !c_int {
-    var exe_name_buf: [win32.MAX_PATH]u8 = undefined;
-    const exe_name: [*:0]u8 = @ptrCast(&exe_name_buf);
-    _ = win32.GetModuleFileNameA(null, exe_name, win32.MAX_PATH);
+    var shared_state: v10s.SharedState = .{};
+
+    _ = win32.GetModuleFileNameA(null, @ptrCast(&shared_state.exe_dir_path_buf), shared_state.exe_dir_path_buf.len);
+    const exe_name: [*:0]u8 = @ptrCast(&shared_state.exe_dir_path_buf);
     log.debug("exe name: '{s}'", .{exe_name});
-    const exe_dir = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
-    log.debug("exe dir: '{s}'", .{exe_dir});
+    shared_state.exe_dir_path = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
+    log.debug("exe dir: '{s}'", .{shared_state.exe_dir_path});
 
-    var source_dll_name_buf: [win32.MAX_PATH]u8 = undefined;
-    var temp_dll_name_buf: [win32.MAX_PATH]u8 = undefined;
+    var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
 
-    const source_dll_name = try std.fmt.bufPrintSentinel(&source_dll_name_buf, "{s}\\v10_game.dll", .{exe_dir}, 0);
-    const temp_dll_name = try std.fmt.bufPrintSentinel(&temp_dll_name_buf, "{s}\\v10_temp.dll", .{exe_dir}, 0);
+    const source_dll_name = try shared_state.buildExePathFilename(&source_dll_name_buf, "v10_game.dll");
+    const temp_dll_name = try shared_state.buildExePathFilename(&temp_dll_name_buf, "v10_temp.dll");
 
     log.debug("source dll: '{s}'", .{source_dll_name});
     log.debug("temp dll: '{s}'", .{temp_dll_name});
@@ -381,6 +382,9 @@ pub fn windowsEntry(
     const desired_scheduler_ms = 1;
     const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.TIMERR_NOERROR;
 
+    const back_buffer_width = 1280;
+    const back_buffer_height = 720;
+
     const window_class = win32.WNDCLASSA{
         .style = win32.CS_HREDRAW | win32.CS_VREDRAW,
         .lpfnWndProc = windowProcA,
@@ -389,15 +393,21 @@ pub fn windowsEntry(
     };
 
     if (win32.RegisterClassA(&window_class) != 0) {
+        const style: win32.DWORD = win32.WS_OVERLAPPEDWINDOW | win32.WS_VISIBLE;
+        const ex_style: win32.DWORD = 0; //win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED;
+
+        var rc = win32.RECT{ .left = 0, .top = 0, .right = back_buffer_width, .bottom = back_buffer_height };
+        _ = win32.AdjustWindowRectEx(&rc, style, 0, ex_style);
+
         const window_opt = win32.CreateWindowExA(
-            win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED,
+            ex_style,
             window_class.lpszClassName,
             "v10",
-            win32.WS_OVERLAPPEDWINDOW | win32.WS_VISIBLE,
+            style,
             win32.CW_USEDEFAULT,
             win32.CW_USEDEFAULT,
-            win32.CW_USEDEFAULT,
-            win32.CW_USEDEFAULT,
+            rc.right - rc.left,
+            rc.bottom - rc.top,
             null,
             null,
             instance,
@@ -411,7 +421,7 @@ pub fn windowsEntry(
         if (window_opt) |window| {
             global_running = true;
 
-            const dib_allocated = resizeDibSection(&global_back_buffer, 1280, 720);
+            const dib_allocated = resizeDibSection(&global_back_buffer, back_buffer_width, back_buffer_height);
 
             const audio_fps = 48000;
             const audio_buffer_byte_size = audio_fps * @sizeOf(v10.AudioBuffer.Frame);
@@ -440,8 +450,6 @@ pub fn windowsEntry(
                 @ptrFromInt(mem.TiB * 2)
             else
                 null;
-
-            var shared_state: v10s.SharedState = .{};
 
             const permanent_storage_size = mem.MiB * 64;
             const transient_storage_size = mem.MiB * 256;
@@ -491,7 +499,7 @@ pub fn windowsEntry(
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
                 var game_code = v10s.GameCode.load(io, temp_dll_name);
-                game_code.init(&game_memory);
+                if (game_code.init) |gameCodeInit| gameCodeInit(&game_memory);
 
                 var last_cycle_count = x86_64.rdtsc();
 
@@ -532,7 +540,7 @@ pub fn windowsEntry(
                                 const new_buttons = &new_controller.buttons.named;
 
                                 new_controller.is_connected = true;
-                                new_controller.is_analog = false;
+                                new_controller.is_analog = old_controller.is_analog;
 
                                 new_controller.stick_average_x = processXInputStickValue(pad.thumb_l_x, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
                                 new_controller.stick_average_y = processXInputStickValue(pad.thumb_l_y, xinput.GAMEPAD_LEFT_THUMB_DEADZONE);
@@ -617,7 +625,7 @@ pub fn windowsEntry(
                             shared_state.playbackInput(io, new_input);
                         }
 
-                        const keep_running = game_code.updateAndRender(&game_memory, new_input, &game_offscreen_buffer);
+                        const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&game_memory, new_input, &game_offscreen_buffer) else true;
                         if (!keep_running) global_running = false;
 
                         const audio_wall_clock = getWallClock();
@@ -669,7 +677,7 @@ pub fn windowsEntry(
                                 .frames_per_second = audio_fps,
                             };
 
-                            game_code.getAudioFrames(&game_memory, &game_sound_output_buffer);
+                            if (game_code.getAudioFrames) |getAudioFrames| getAudioFrames(&game_memory, &game_sound_output_buffer);
 
                             fillAudioBuffer(&audio_output, byte_to_lock, bytes_to_write, &game_sound_output_buffer);
 
@@ -797,11 +805,11 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             global_running = false;
         },
         win32.WM_ACTIVATEAPP => {
-            if (wparam != 0) {
-                _ = win32.SetLayeredWindowAttributes(window, win32.RGB(0, 0, 0), 255, win32.LWA_ALPHA);
-            } else {
-                _ = win32.SetLayeredWindowAttributes(window, win32.RGB(0, 0, 0), 128, win32.LWA_ALPHA);
-            }
+            // if (wparam != 0) {
+            //     _ = win32.SetLayeredWindowAttributes(window, win32.RGB(0, 0, 0), 255, win32.LWA_ALPHA);
+            // } else {
+            //     _ = win32.SetLayeredWindowAttributes(window, win32.RGB(0, 0, 0), 128, win32.LWA_ALPHA);
+            // }
         },
 
         win32.WM_SYSKEYDOWN,
@@ -901,14 +909,17 @@ fn resizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) bool 
 
 fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: *OffscreenBuffer) void {
 
-    // TODO: Only set this after resize?
-    if (window_width < buffer.width or window_height < buffer.height) {
-        _ = win32.SetStretchBltMode(dc, win32.STRETCH_DELETESCANS);
-    } else {
-        _ = win32.SetStretchBltMode(dc, 0);
-    }
+    // // When stretching, and the windows is smaller than the buffer, this avoids artifacts
+    // // TODO: Only set this after resize?
+    // if (window_width < buffer.width or window_height < buffer.height) {
+    //     _ = win32.SetStretchBltMode(dc, win32.STRETCH_DELETESCANS);
+    // } else {
+    //     _ = win32.SetStretchBltMode(dc, 0);
+    // }
 
-    win32.StretchDIBits(dc, 0, 0, window_width, window_height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+    _ = .{ window_width, window_height };
+
+    win32.StretchDIBits(dc, 0, 0, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
 }
 
 pub const DEBUG = struct {
@@ -1013,6 +1024,7 @@ pub const DEBUG = struct {
             const play_color = 0xffffffff;
             const write_color = 0xffff0000;
             const expected_flip_color = 0xffffff00;
+            const play_window_color = 0xffff00ff;
 
             var top: i32 = pad_y;
             var bottom: i32 = pad_y + line_height;
@@ -1037,6 +1049,7 @@ pub const DEBUG = struct {
             }
 
             drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_play_cursor, play_color);
+            drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_play_cursor + (480 * @sizeOf(AudioOutput.Frame)), play_window_color);
             drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_write_cursor, write_color);
         }
     }
