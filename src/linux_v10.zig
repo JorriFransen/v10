@@ -329,15 +329,24 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     udev.load();
 
-    const monitor_refresh_hz = 60;
-    const game_update_hz = monitor_refresh_hz / 2;
-    const target_seconds_per_frame: f32 = 1.0 / @as(f32, @floatFromInt(game_update_hz));
+    // log.debug("wl_output.refresh: {}", .{wld});
+
+    // At this point this should be set by the callback (handleWlOutputMode), if not set a default value
+    if (wld.monitor_refresh_hz == 0) {
+        wld.monitor_refresh_hz = 60;
+        log.warn("Could not detect monitor refresh rate, fallback to: {}", .{wld.monitor_refresh_hz});
+    } else {
+        log.debug("Detected monitory refresh rate: {}", .{wld.monitor_refresh_hz});
+    }
+
+    const game_update_hz: f32 = @as(f32, @floatFromInt(wld.monitor_refresh_hz)) / 2;
+    const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
     var audio_output: AudioOutput = .{};
     audio_output.frames_per_second = 48000;
-    audio_output.frames_per_game_frame = audio_output.frames_per_second / game_update_hz;
+    audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
     audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 3);
-    audio_output.drift_justification_offset = 48;
+    audio_output.drift_justification_offset = @max(32, audio_output.frames_per_second / @as(u32, @intFromFloat(game_update_hz * 32)));
 
     try initPulse(&audio_output);
 
@@ -644,11 +653,25 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             pa.threaded_mainloop_lock(pa_ml);
             {
+                if (pa.stream_get_state(pa_stream) != .ready) {
+                    log.warn("Pulse stream not ready!", .{});
+                    @panic("Unexpected pulse stream state");
+                }
+
+                const underflow_index = pa.stream_get_underflow_index(pa_stream);
+                if (underflow_index > audio_output.last_underflow_index) {
+                    audio_output.last_underflow_index = underflow_index;
+                    log.warn("Pulse stream underflow!", .{});
+                    @panic("Unhandled pulse stream overflow");
+                }
+
                 var usec: pa.USec = undefined;
                 _ = pa.stream_get_latency(pa_stream, &usec, null);
                 const latency_frames = usec * audio_output.frames_per_second / std.time.us_per_s;
 
-                const target_frames = audio_output.frames_per_game_frame + audio_output.safety_frames;
+                const min_target_frames = latency_frames + audio_output.frames_per_game_frame;
+                const base_target_frames = audio_output.frames_per_game_frame + audio_output.safety_frames;
+                const target_frames = @max(base_target_frames, min_target_frames);
 
                 const writable_frames = pa.stream_writable_size(pa_stream) / @sizeOf(AudioOutput.Frame);
 
@@ -853,6 +876,8 @@ const WlData = struct {
     shm_data: []align(std.heap.page_size_min) u8 = &.{},
 
     pending_resize: ?WlPendingResize = null,
+
+    monitor_refresh_hz: c_int = 0,
 
     game_input: [2]v10.Input = .{v10.Input{}} ** 2,
     new_input: *v10.Input = undefined,
@@ -1596,7 +1621,6 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
     _ = data;
     _ = output;
     _ = flags;
-    _ = refresh;
 
     const new_pixel_count = width * height;
     const max_pixel_count = wld.max_width * wld.max_height;
@@ -1605,6 +1629,8 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
         wld.max_height = height;
         wld.should_resize_shm = true;
     }
+
+    wld.monitor_refresh_hz = @divTrunc(refresh, 1000);
 }
 
 fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
@@ -1763,13 +1789,14 @@ const AudioOutput = struct {
     safety_frames: u32 = 0,
     drift_justification_offset: u32 = 0,
 
+    last_underflow_index: i64 = -1,
+
     const Sample = v10.AudioBuffer.Sample;
     const Frame = v10.AudioBuffer.Frame;
 };
 
 // TODO: signal invalid pa_* variables on failure
 fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
-    log.debug("Frame size: {}", .{@sizeOf(AudioOutput.Frame)});
     pa.load();
 
     pa_ml = pa.threaded_mainloop_new() orelse {
@@ -1777,7 +1804,6 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
         return error.PulseInitFailed;
     };
     errdefer pa.threaded_mainloop_free(pa_ml);
-    log.debug("Pulse mainloop created", .{});
 
     const ml_api = pa.threaded_mainloop_get_api(pa_ml) orelse {
         log.err("Pulse failed to get mainloop api", .{});
@@ -1789,14 +1815,12 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
         return error.PulseInitFailed;
     };
     errdefer pa.context_unref(pa_ctx);
-    log.debug("Pulse context created", .{});
 
     if (pa.context_connect(pa_ctx, null, .{}, null) < 0) {
         log.err("Pulse failed to connect context", .{});
         return error.PulseInitFailed;
     }
     errdefer pa.context_disconnect(pa_ctx);
-    log.debug("Pulse contect connected", .{});
 
     if (pa.threaded_mainloop_start(pa_ml) < 0) {
         log.err("Pulse failed to start mainloop", .{});
@@ -1819,7 +1843,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
         cstate = pa.context_get_state(pa_ctx);
         pa.threaded_mainloop_unlock(pa_ml);
     }
-    log.debug("Pulse context reached ready state", .{});
+    // log.debug("Pulse context reached ready state", .{});
 
     pa_sample_spec = .{
         .format = .s16le,
@@ -1832,7 +1856,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
         return error.PulseInitFailed;
     };
     errdefer pa.stream_unref(pa_stream);
-    log.debug("Pulse stream created", .{});
+    // log.debug("Pulse stream created", .{});
 
     const attr = pa.BufferAttr{
         .max_length = std.math.maxInt(u32),
@@ -1842,7 +1866,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
         .frag_size = audio_output.frames_per_game_frame * @sizeOf(AudioOutput.Frame),
     };
 
-    log.debug("Pulse requested playback attributes: {}", .{attr});
+    // log.debug("Pulse requested playback attributes: {}", .{attr});
 
     pa.threaded_mainloop_lock(pa_ml);
     if (pa.stream_connect_playback(pa_stream, null, &attr, .{
@@ -1855,8 +1879,8 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
         log.err("Pulse failed connect playback!", .{});
         return error.PulseInitFailed;
     }
-    log.debug("Pulse stream connected", .{});
-    log.debug("Pulse actual playback attributes: {}", .{attr});
+    // log.debug("Pulse stream connected", .{});
+    // log.debug("Pulse actual playback attributes: {}", .{attr});
 
     var sstate = pa.stream_get_state(pa_stream);
     pa.threaded_mainloop_unlock(pa_ml);
