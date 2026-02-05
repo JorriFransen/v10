@@ -182,7 +182,7 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn processPendingMessages(io: std.Io, shared_state: *v10s.SharedState, keyboard_controller: *v10.ControllerInput) void {
+fn processPendingMessages(shared_state: *v10s.SharedState, keyboard_controller: *v10.ControllerInput) void {
     var msg = win32.MSG{};
 
     const buttons = &keyboard_controller.buttons.named;
@@ -234,11 +234,11 @@ fn processPendingMessages(io: std.Io, shared_state: *v10s.SharedState, keyboard_
                             global_pause = !global_pause;
                         } else if (vk_code == win32.VK_L and is_down) {
                             if (shared_state.input_recording_index == 0) {
-                                shared_state.endInputPlayback(io);
-                                shared_state.beginRecordingInput(io, 1);
+                                endInputPlayback(shared_state);
+                                beginRecordingInput(shared_state, 1);
                             } else {
-                                shared_state.endRecordingInput(io);
-                                shared_state.beginInputPlayback(io, 1);
+                                endRecordingInput(shared_state);
+                                beginInputPlayback(shared_state, 1);
                             }
                         }
                     }
@@ -485,6 +485,26 @@ pub fn windowsEntry(
                 } else .{},
             };
 
+            if (options.internal_build) {
+                for (&shared_state.replay_buffers, 1..) |*replay_buffer, i| {
+                    const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
+
+                    const file_handle = win32.CreateFileA(file_name, win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
+                    replay_buffer.file_handle = .{ .handle = file_handle, .flags = .{ .nonblocking = false } };
+
+                    const max_size: win32.LARGE_INTEGER = .{ .quad_part = shared_state.game_memory_block.len };
+
+                    const mapping = win32.CreateFileMappingA(file_handle, null, win32.PAGE_READWRITE, @intCast(max_size.u.high_part), max_size.u.low_part, null);
+                    replay_buffer.memory_map = .{ .handle = mapping, .flags = .{ .nonblocking = false } };
+
+                    if (win32.MapViewOfFile(mapping, win32.FILE_MAP_ALL_ACCESS, 0, 0, shared_state.game_memory_block.len)) |ptr| {
+                        replay_buffer.memory = @as([*]u8, @ptrCast(ptr))[0..shared_state.game_memory_block.len];
+                    } else {
+                        log.warn("MapViewOfFile failed!", .{});
+                    }
+                }
+            }
+
             if (dib_allocated and audio_frames != null and perm != null and trans != null) {
                 xinput.load();
 
@@ -527,7 +547,7 @@ pub fn windowsEntry(
                     }
                     keyboard_controller.is_connected = true;
 
-                    processPendingMessages(io, &shared_state, keyboard_controller);
+                    processPendingMessages(&shared_state, keyboard_controller);
 
                     if (options.internal_build) {
                         const mouse = &new_input.debug_mouse;
@@ -662,11 +682,11 @@ pub fn windowsEntry(
                         };
 
                         if (shared_state.input_recording_index > 0) {
-                            shared_state.recordInput(io, new_input);
+                            recordInput(&shared_state, new_input);
                         }
 
                         if (shared_state.input_playing_index > 0) {
-                            shared_state.playbackInput(io, new_input);
+                            playbackInput(&shared_state, new_input);
                         }
 
                         const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, new_input, &game_offscreen_buffer) else true;
@@ -963,6 +983,67 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     _ = .{ window_width, window_height };
 
     win32.StretchDIBits(dc, 0, 0, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+}
+
+pub fn beginRecordingInput(shared_state: *v10s.SharedState, input_recording_index: usize) void {
+    const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
+
+    if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
+        shared_state.input_recording_index = input_recording_index;
+
+        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
+
+        const handle = win32.CreateFileA(file_name, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
+        shared_state.recording_handle = .{ .handle = handle, .flags = .{ .nonblocking = false } };
+
+        @memcpy(replay_buffer.memory, shared_state.game_memory_block);
+    }
+}
+
+pub fn endRecordingInput(shared_state: *v10s.SharedState) void {
+    _ = win32.CloseHandle(shared_state.recording_handle.handle);
+    shared_state.input_recording_index = 0;
+}
+
+pub fn beginInputPlayback(shared_state: *v10s.SharedState, input_playing_index: usize) void {
+    const replay_buffer = shared_state.getReplayBuffer(input_playing_index);
+
+    if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
+        shared_state.input_playing_index = input_playing_index;
+
+        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
+
+        const handle = win32.CreateFileA(file_name, win32.GENERIC_READ, 0, null, win32.OPEN_EXISTING, 0, null);
+        shared_state.playback_handle = .{ .handle = handle, .flags = .{ .nonblocking = false } };
+
+        @memcpy(shared_state.game_memory_block, replay_buffer.memory);
+    }
+}
+
+pub fn endInputPlayback(shared_state: *v10s.SharedState) void {
+    _ = win32.CloseHandle(shared_state.playback_handle.handle);
+    shared_state.input_playing_index = 0;
+}
+
+pub fn recordInput(shared_state: *v10s.SharedState, input: *v10.Input) void {
+    var written: win32.DWORD = undefined;
+    _ = win32.WriteFile(shared_state.recording_handle.handle, input, @sizeOf(v10.Input), &written, null);
+    assert(written == @sizeOf(v10.Input));
+}
+
+pub fn playbackInput(shared_state: *v10s.SharedState, input: *v10.Input) void {
+    var read: win32.DWORD = 0;
+    if (win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(v10.Input), &read, null) != win32.FALSE) {
+        if (read == 0) {
+            const playing_index = shared_state.input_playing_index;
+            endInputPlayback(shared_state);
+            beginInputPlayback(shared_state, playing_index);
+            _ = win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(v10.Input), &read, null);
+            assert(read == @sizeOf(v10.Input));
+        }
+    }
 }
 
 pub const DEBUG = struct {

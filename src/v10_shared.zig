@@ -14,12 +14,18 @@ pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8
     };
 }
 
-// Note: In the original handmade hero this is in the platform layer, but in zig we can do this (for our current target platforms) in platform agnostic code.
+pub const ReplayBuffer = struct {
+    file_handle: std.Io.File,
+    memory_map: std.Io.File,
+    filname_buf: [std.Io.Dir.max_path_bytes]u8 = .{0} ** std.Io.Dir.max_path_bytes,
+    memory: []u8 = &.{},
+};
+
 pub const SharedState = struct {
     game_memory_block: []u8 = &.{},
+    replay_buffers: [4]ReplayBuffer = undefined,
 
     recording_handle: std.Io.File = undefined,
-    recording_reader: std.Io.Reader = undefined,
     input_recording_index: usize = 0,
 
     playback_handle: std.Io.File = undefined,
@@ -34,71 +40,22 @@ pub const SharedState = struct {
         };
     }
 
-    pub fn getInputRecordingPath(shared_state: *const SharedState, buffer: []u8, recording_index: usize) [:0]const u8 {
-        _ = recording_index;
-        return shared_state.buildExePathFilename(buffer, "input_recording.hmi") catch @panic("File path too big!");
+    pub fn getInputRecordingPath(shared_state: *const SharedState, buffer: []u8, input_stream: bool, recording_index: usize) [:0]const u8 {
+        var name_buf: [128]u8 = undefined;
+
+        const name = std.fmt.bufPrintSentinel(
+            &name_buf,
+            "input_recording_{}_{s}.hmi",
+            .{ recording_index, if (input_stream) "input" else "state" },
+            0,
+        ) catch @panic("Input recording file name generation failed!");
+
+        return shared_state.buildExePathFilename(buffer, name) catch @panic("File path too big!");
     }
 
-    pub fn beginRecordingInput(shared_state: *SharedState, io: std.Io, input_recording_index: usize) void {
-        shared_state.input_recording_index = input_recording_index;
-
-        var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const filename = shared_state.getInputRecordingPath(&filename_buf, input_recording_index);
-
-        shared_state.recording_handle = std.Io.Dir.createFileAbsolute(io, filename, .{ .truncate = true }) catch @panic("Input recording createFile failed");
-
-        shared_state.recording_handle.writeStreamingAll(io, shared_state.game_memory_block) catch @panic("Input recording memory write failed");
-    }
-
-    pub fn endRecordingInput(shared_state: *SharedState, io: std.Io) void {
-        if (shared_state.input_recording_index > 0) {
-            shared_state.recording_handle.close(io);
-        }
-        shared_state.input_recording_index = 0;
-    }
-
-    pub fn beginInputPlayback(shared_state: *SharedState, io: std.Io, input_playing_index: usize) void {
-        shared_state.input_playing_index = input_playing_index;
-
-        var filename_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const filename = shared_state.getInputRecordingPath(&filename_buf, input_playing_index);
-
-        shared_state.playback_handle = std.Io.Dir.cwd().openFile(io, filename, .{}) catch @panic("Input playback openFile failed");
-
-        var total_read: usize = 0;
-        while (total_read < shared_state.game_memory_block.len) {
-            const read = shared_state.playback_handle.readStreaming(io, &.{shared_state.game_memory_block[total_read..]}) catch @panic("Input playback memory read failed");
-            total_read += read;
-        }
-    }
-
-    pub fn endInputPlayback(shared_state: *SharedState, io: std.Io) void {
-        if (shared_state.input_playing_index > 0) {
-            shared_state.playback_handle.close(io);
-        }
-        shared_state.input_playing_index = 0;
-    }
-
-    pub fn recordInput(shared_state: *SharedState, io: std.Io, input: *v10.Input) void {
-        shared_state.recording_handle.writeStreamingAll(io, &std.mem.toBytes(input.*)) catch @panic("Input recording write failed");
-    }
-
-    pub fn playbackInput(shared_state: *SharedState, io: std.Io, input: *v10.Input) void {
-        _ = .{ shared_state, input };
-
-        const bytes_read = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(input))}) catch |e| switch (e) {
-            error.EndOfStream => 0,
-            else => @panic("Input playback read failed"),
-        };
-
-        if (bytes_read == 0) {
-            const index = shared_state.input_playing_index;
-
-            shared_state.endInputPlayback(io);
-            shared_state.beginInputPlayback(io, index);
-
-            _ = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(input))}) catch @panic("Input playback read failed");
-        }
+    pub fn getReplayBuffer(shared_state: *SharedState, index: usize) *ReplayBuffer {
+        assert(index < shared_state.replay_buffers.len);
+        return &shared_state.replay_buffers[index];
     }
 };
 

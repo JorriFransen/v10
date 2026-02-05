@@ -695,6 +695,15 @@ pub const FILE_FLAG_SESSION_AWARE = 0x00800000;
 pub const FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000;
 pub const FILE_FLAG_WRITE_THROUGH = 0x80000000;
 
+pub const FILE_MAP_WRITE = 0x0002;
+pub const FILE_MAP_READ = 0x0004;
+pub const FILE_MAP_COPY = 0x0001;
+pub const FILE_MAP_EXECUTE = 0x0020;
+pub const FILE_MAP_ALL_ACCESS = 0x001F;
+pub const FILE_MAP_LARGE_PAGES = 0x20000000;
+pub const FILE_MAP_TARGETS_INVALID = 0x40000000;
+pub const FILE_MAP_RESERVE = 0x80000000;
+
 pub const TIMERR_BASE = 96;
 pub const TIMERR_NOERROR = 0;
 pub const TIMERR_NOCANDO = TIMERR_BASE + 1;
@@ -955,6 +964,8 @@ pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) cal
 pub extern "kernel32" fn QueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) ?LPVOID;
 pub extern "kernel32" fn VirtualFree(address: LPVOID, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
+pub extern "kernel32" fn CreateFileMappingA(file: HANDLE, file_mapping_attributes: ?*SECURITY_ATTRIBUTES, protect: DWORD, maximum_size_high: DWORD, maximum_size_low: DWORD, name: ?LPCSTR) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn MapViewOfFile(file_mapping_object: HANDLE, desired_access: DWORD, file_offset_high: DWORD, file_offset_low: DWORD, number_of_bytes_to_map: SIZE_T) callconv(.winapi) ?LPVOID;
 pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, share_mode: DWORD, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn GetFileAttributesExA(file_name: LPCSTR, info_level_id: GET_FILEEX_INFO_LEVELS, file_info: LPVOID) callconv(.winapi) BOOL;
