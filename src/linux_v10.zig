@@ -661,13 +661,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 const underflow_index = pa.stream_get_underflow_index(pa_stream);
                 if (underflow_index > audio_output.last_underflow_index) {
                     audio_output.last_underflow_index = underflow_index;
-                    log.warn("Pulse stream underflow!", .{});
-                    @panic("Unhandled pulse stream overflow");
+                    log.debug("Pulse stream underflow!", .{});
+                    _ = pa.stream_flush(pa_stream, null, null);
                 }
 
                 var usec: pa.USec = undefined;
                 _ = pa.stream_get_latency(pa_stream, &usec, null);
-                const latency_frames = usec * audio_output.frames_per_second / std.time.us_per_s;
+                const latency_frames = usec * @as(u64, @intCast(audio_output.frames_per_second / std.time.us_per_s));
 
                 const min_target_frames = latency_frames + audio_output.frames_per_game_frame;
                 const base_target_frames = audio_output.frames_per_game_frame + audio_output.safety_frames;
