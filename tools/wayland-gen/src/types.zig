@@ -31,6 +31,7 @@ pub const Event = struct {
     name: []const u8,
     destructor: bool,
     since: u32,
+    deprecated: bool,
     summary: []const u8,
     description: []const u8,
     args: []Arg,

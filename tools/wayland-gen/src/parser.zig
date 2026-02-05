@@ -385,21 +385,15 @@ fn parseEvent(this: *Parser) Error!?Event {
         }
     }
 
-    if (deprecated) {
-        this.allocator.free(name);
-        description.free(this.allocator);
-        args.deinit(this.allocator);
-        return null;
-    } else {
-        return .{
-            .name = name,
-            .destructor = destructor,
-            .since = since,
-            .summary = description.summary,
-            .description = description.text,
-            .args = try args.toOwnedSlice(this.allocator),
-        };
-    }
+    return .{
+        .name = name,
+        .destructor = destructor,
+        .since = since,
+        .deprecated = deprecated,
+        .summary = description.summary,
+        .description = description.text,
+        .args = try args.toOwnedSlice(this.allocator),
+    };
 }
 
 fn parseEnum(this: *Parser) Error!Enum {

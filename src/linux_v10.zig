@@ -172,6 +172,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.err("xdg_wm_base not available", .{});
         return error.UnexpectedWayland;
     }
+    if (wli.wl_output) |output| {
+        output.add_listener(&wl_output_listener, wli.wld);
+    } else {
+        log.err("wl_output not available", .{});
+        return error.UnexpectedWayland;
+    }
 
     // for format events, seat, outputs
     wld.shm.add_listener(&wl_shm_listener, &wli);
@@ -853,6 +859,7 @@ const WlInitData = struct {
     wl_seat: ?*wl.Seat = null,
     xdg_wm_base: ?*xdg_shell.WmBase = null,
     xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
+    wl_output: ?*wl.Output = null,
 
     xrgb8888: bool = false,
     seat_capabilities: wl.Seat.Capability = .{},
@@ -1436,25 +1443,28 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     const registry = registry_opt.?;
 
-    const eq = struct {
-        pub inline fn eq(a: [*:0]const u8, b: anytype) bool {
-            return std.mem.eql(u8, std.mem.span(a), std.mem.span(b.interface.name));
-        }
-    }.eq;
+    const Mapping = struct {
+        []const u8,
+        type,
+    };
 
-    if (eq(interface_name, wl.Shm)) {
-        wli.wl_shm = registry.bind(name, wl.Shm, version);
-    } else if (eq(interface_name, wl.Seat)) {
-        wli.wl_seat = registry.bind(name, wl.Seat, version);
-    } else if (eq(interface_name, wl.Compositor)) {
-        wli.wl_compositor = registry.bind(name, wl.Compositor, version);
-    } else if (eq(interface_name, xdg_shell.WmBase)) {
-        wli.xdg_wm_base = registry.bind(name, xdg_shell.WmBase, version);
-    } else if (eq(interface_name, xdg_decoration.DecorationManagerV1)) {
-        wli.xdg_decoration_manager = registry.bind(name, xdg_decoration.DecorationManagerV1, version);
-    } else if (eq(interface_name, wl.Output)) {
-        const output = registry.bind(name, wl.Output, version).?;
-        output.add_listener(&wl_output_listener, wli.wld);
+    const mappings = [_]Mapping{
+        .{ "wl_shm", wl.Shm },
+        .{ "wl_seat", wl.Seat },
+        .{ "wl_compositor", wl.Compositor },
+        .{ "xdg_wm_base", xdg_shell.WmBase },
+        .{ "xdg_decoration_manager", xdg_decoration.DecorationManagerV1 },
+        .{ "wl_output", wl.Output },
+    };
+
+    inline for (mappings) |map| {
+        const target_field_name: []const u8 = map[0];
+        const Interface: type = map[1];
+
+        if (std.mem.eql(u8, std.mem.span(interface_name), std.mem.span(Interface.interface.name))) {
+            @field(wli, target_field_name) = registry.bind(name, Interface, @min(version, Interface.interface.version));
+            break;
+        }
     }
 }
 
@@ -1641,6 +1651,11 @@ fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, ti
             processKeyEvent(&buttons[key_index], is_down);
         }
     }
+}
+
+fn handleWlMouseAxis(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wayland.Fixed) callconv(.c) void {
+    _ = .{ data, pointer, time };
+    log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
 }
 
 fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configuration, data: ?*anyopaque) callconv(.c) void {
@@ -2035,8 +2050,9 @@ const wl_mouse_listener = wl.Pointer.Listener{
     .leave = @ptrCast(&nop),
     .motion = handleWlMouseMotion,
     .button = handleWlMouseButton,
-    .axis = @ptrCast(&nop),
-    .frame = @ptrCast(&nop),
+    .axis = handleWlMouseAxis,
+    .frame = @ptrCast(&nop), // TODO: Use this to handle incoming data correctly in relation to frame boundaries
+    .axis_discrete = @ptrCast(&nop),
     .axis_source = @ptrCast(&nop),
     .axis_stop = @ptrCast(&nop),
     .axis_value120 = @ptrCast(&nop),
