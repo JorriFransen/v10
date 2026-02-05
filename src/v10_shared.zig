@@ -43,10 +43,18 @@ pub const SharedState = struct {
     pub fn getInputRecordingPath(shared_state: *const SharedState, buffer: []u8, input_stream: bool, recording_index: usize) [:0]const u8 {
         var name_buf: [128]u8 = undefined;
 
+        var index = recording_index;
+
+        // zero index is a special value
+        if (input_stream) {
+            assert(index > 0);
+            index -= 1;
+        }
+
         const name = std.fmt.bufPrintSentinel(
             &name_buf,
             "input_recording_{}_{s}.hmi",
-            .{ recording_index, if (input_stream) "input" else "state" },
+            .{ index, if (input_stream) "input" else "state" },
             0,
         ) catch @panic("Input recording file name generation failed!");
 
@@ -55,7 +63,7 @@ pub const SharedState = struct {
 
     pub fn getReplayBuffer(shared_state: *SharedState, index: usize) *ReplayBuffer {
         assert(index < shared_state.replay_buffers.len);
-        return &shared_state.replay_buffers[index];
+        return &shared_state.replay_buffers[index - 1];
     }
 };
 

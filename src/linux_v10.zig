@@ -482,6 +482,27 @@ pub fn main(init: std.process.Init.Minimal) !void {
     log.debug("perm: {*}", .{game_memory.permanent.ptr});
     log.debug("trans: {*}", .{game_memory.transient.ptr});
 
+    if (options.internal_build) {
+        for (&shared_state.replay_buffers, 0..) |*replay_buffer, i| {
+            const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
+
+            const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
+            const open_rc = linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true }, permissions);
+            if (@as(isize, @bitCast(open_rc)) >= 0) {
+                const file_handle: linux.fd_t = @intCast(open_rc);
+
+                if (linux.mmap(null, total_size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, @intCast(file_handle), 0)) |buf| {
+                    _ = linux.ftruncate(file_handle, total_size);
+                    replay_buffer.memory = buf;
+                } else |_| {
+                    log.warn("mmap for input recording file failed", .{});
+                }
+            } else {
+                log.warn("open for input recording file failed", .{});
+            }
+        }
+    }
+
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
@@ -668,11 +689,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
             };
 
             if (wld.shared_state.input_recording_index > 0) {
-                wld.shared_state.recordInput(wld.io, wld.new_input);
+                recordInput(wld.shared_state, wld.io, wld.new_input);
             }
 
             if (wld.shared_state.input_playing_index > 0) {
-                wld.shared_state.playbackInput(wld.io, wld.new_input);
+                playbackInput(wld.shared_state, wld.io, wld.new_input);
             }
 
             const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer) else true;
@@ -686,7 +707,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 }
 
                 const underflow_index = pa.stream_get_underflow_index(pa_stream);
-                if (underflow_index > audio_output.last_underflow_index) {
+                if (underflow_index != audio_output.last_underflow_index) {
                     audio_output.last_underflow_index = underflow_index;
                     log.debug("Pulse stream underflow!", .{});
                     _ = pa.stream_flush(pa_stream, null, null);
@@ -1602,11 +1623,11 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
                 pause = !pause;
             } else if (key == .L) {
                 if (wld.shared_state.input_recording_index == 0) {
-                    wld.shared_state.endInputPlayback(wld.io);
-                    wld.shared_state.beginRecordingInput(wld.io, 1);
+                    endInputPlayback(wld.shared_state, wld.io);
+                    beginRecordingInput(wld.shared_state, wld.io, 1);
                 } else {
-                    wld.shared_state.endRecordingInput(wld.io);
-                    wld.shared_state.beginInputPlayback(wld.io, 1);
+                    endRecordingInput(wld.shared_state, wld.io);
+                    beginInputPlayback(wld.shared_state, wld.io, 1);
                 }
             }
         }
@@ -1654,8 +1675,8 @@ fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, ti
 }
 
 fn handleWlMouseAxis(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wayland.Fixed) callconv(.c) void {
-    _ = .{ data, pointer, time };
-    log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
+    _ = .{ data, pointer, time, axis, value };
+    // log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
 }
 
 fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configuration, data: ?*anyopaque) callconv(.c) void {
@@ -1988,6 +2009,70 @@ fn displayBufferInWindow(buffer: *WlBuffer) void {
     _ = wl.display_flush(wld.display);
 
     wld.should_draw = false;
+}
+
+pub fn beginRecordingInput(shared_state: *v10s.SharedState, io: std.Io, input_recording_index: usize) void {
+    const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
+
+    if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
+        shared_state.input_recording_index = input_recording_index;
+
+        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
+
+        shared_state.recording_handle = std.Io.Dir.createFileAbsolute(io, file_name, .{}) catch @panic("Input recording file creation failed");
+
+        @memcpy(replay_buffer.memory, shared_state.game_memory_block);
+    } else log.warn("Invalid recording buffer: {}", .{input_recording_index});
+}
+
+pub fn endRecordingInput(shared_state: *v10s.SharedState, io: std.Io) void {
+    if (shared_state.input_recording_index != 0) {
+        shared_state.recording_handle.close(io);
+        shared_state.input_recording_index = 0;
+    }
+}
+
+pub fn beginInputPlayback(shared_state: *v10s.SharedState, io: std.Io, input_playing_index: usize) void {
+    const replay_buffer = shared_state.getReplayBuffer(input_playing_index);
+
+    if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
+        shared_state.input_playing_index = input_playing_index;
+
+        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
+
+        shared_state.playback_handle = std.Io.Dir.openFileAbsolute(io, file_name, .{ .mode = .read_only }) catch @panic("Input playback file open failed");
+
+        @memcpy(shared_state.game_memory_block, replay_buffer.memory);
+    } else log.warn("Invalid replay buffer: {}", .{input_playing_index});
+}
+
+pub fn endInputPlayback(shared_state: *v10s.SharedState, io: std.Io) void {
+    if (shared_state.input_playing_index != 0) {
+        shared_state.playback_handle.close(io);
+        shared_state.input_playing_index = 0;
+    }
+}
+
+pub fn recordInput(shared_state: *v10s.SharedState, io: std.Io, new_input: *v10.Input) void {
+    shared_state.recording_handle.writeStreamingAll(io, @ptrCast(new_input)) catch @panic("Input recording write failed");
+}
+
+pub fn playbackInput(shared_state: *v10s.SharedState, io: std.Io, new_input: *v10.Input) void {
+    const bytes_read = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(new_input))}) catch |e| switch (e) {
+        error.EndOfStream => 0,
+        else => @panic("Input playback read failed"),
+    };
+
+    if (bytes_read == 0) {
+        const index = shared_state.input_playing_index;
+
+        endInputPlayback(shared_state, io);
+        beginInputPlayback(shared_state, io, index);
+
+        _ = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(new_input))}) catch @panic("Input playback read failed");
+    }
 }
 
 fn nop() callconv(.c) void {}
