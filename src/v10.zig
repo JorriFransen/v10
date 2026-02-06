@@ -242,10 +242,10 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     assert(buffer.frames.len >= 0);
 
     for (buffer.frames) |*frame| {
-        const sine_value: f32 = @sin(game_state.t_sine);
-        const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
-        // _ = tone_volume;
-        // const sample_value: i16 = 0;
+        // const sine_value: f32 = @sin(game_state.t_sine);
+        // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
+        _ = tone_volume;
+        const sample_value: i16 = 0;
 
         frame.* = .{ .left = sample_value, .right = sample_value };
 

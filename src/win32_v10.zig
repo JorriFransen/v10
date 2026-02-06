@@ -797,17 +797,6 @@ pub fn windowsEntry(
                         const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
                         last_counter = end_counter;
 
-                        if (options.internal_build) {
-                            DEBUG.audioSyncDisplay(
-                                &global_back_buffer,
-                                @ptrCast(&debug_time_markers),
-                                debug_time_markers.len,
-                                @as(isize, @intCast(debug_time_marker_index)) - 1,
-                                &audio_output,
-                                target_seconds_per_frame,
-                            );
-                        }
-
                         const dimension = getWindowDimension(window);
                         const device_context = win32.GetDC(window);
                         displayBufferInWindow(device_context, dimension.width, dimension.height, &global_back_buffer);
@@ -1139,49 +1128,49 @@ pub const DEBUG = struct {
         drawVertical(buffer, x, top, bottom, color);
     }
 
-    pub fn audioSyncDisplay(buffer: *OffscreenBuffer, markers: [*]AudioTimeMarker, markers_len: usize, current_marker: isize, audio_output: *AudioOutput, seconds_per_frame: f32) callconv(.c) void {
-        _ = seconds_per_frame;
-
-        const pad_x = 16;
-        const pad_y = 16;
-
-        const line_height = 64;
-
-        const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.buffer_byte_size));
-
-        for (markers[0..markers_len], 0..) |marker, marker_index| {
-            const play_color = 0xffffffff;
-            const write_color = 0xffff0000;
-            const expected_flip_color = 0xffffff00;
-            const play_window_color = 0xffff00ff;
-
-            var top: i32 = pad_y;
-            var bottom: i32 = pad_y + line_height;
-
-            if (marker_index == current_marker) {
-                top += line_height + pad_y;
-                bottom += line_height + pad_y;
-
-                drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_play_cursor, play_color);
-                drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_write_cursor, write_color);
-
-                top += line_height + pad_y;
-                bottom += line_height + pad_y;
-
-                drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_location, play_color);
-                drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_location + marker.output_byte_count, write_color);
-
-                top += line_height + pad_y;
-                bottom += line_height + pad_y;
-
-                drawAudioBufferMarker(buffer, audio_output, c, pad_x, pad_x, bottom, marker.expected_flip_cursor, expected_flip_color);
-            }
-
-            drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_play_cursor, play_color);
-            drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_play_cursor + (480 * @sizeOf(AudioOutput.Frame)), play_window_color);
-            drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_write_cursor, write_color);
-        }
-    }
+    // pub fn audioSyncDisplay(buffer: *OffscreenBuffer, markers: [*]AudioTimeMarker, markers_len: usize, current_marker: isize, audio_output: *AudioOutput, seconds_per_frame: f32) callconv(.c) void {
+    //     _ = seconds_per_frame;
+    //
+    //     const pad_x = 16;
+    //     const pad_y = 16;
+    //
+    //     const line_height = 64;
+    //
+    //     const c = @as(f32, @floatFromInt(buffer.width - (2 * pad_x))) / @as(f32, @floatFromInt(audio_output.buffer_byte_size));
+    //
+    //     for (markers[0..markers_len], 0..) |marker, marker_index| {
+    //         const play_color = 0xffffffff;
+    //         const write_color = 0xffff0000;
+    //         const expected_flip_color = 0xffffff00;
+    //         const play_window_color = 0xffff00ff;
+    //
+    //         var top: i32 = pad_y;
+    //         var bottom: i32 = pad_y + line_height;
+    //
+    //         if (marker_index == current_marker) {
+    //             top += line_height + pad_y;
+    //             bottom += line_height + pad_y;
+    //
+    //             drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_play_cursor, play_color);
+    //             drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_write_cursor, write_color);
+    //
+    //             top += line_height + pad_y;
+    //             bottom += line_height + pad_y;
+    //
+    //             drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_location, play_color);
+    //             drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.output_location + marker.output_byte_count, write_color);
+    //
+    //             top += line_height + pad_y;
+    //             bottom += line_height + pad_y;
+    //
+    //             drawAudioBufferMarker(buffer, audio_output, c, pad_x, pad_x, bottom, marker.expected_flip_cursor, expected_flip_color);
+    //         }
+    //
+    //         drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_play_cursor, play_color);
+    //         drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_play_cursor + (480 * @sizeOf(AudioOutput.Frame)), play_window_color);
+    //         drawAudioBufferMarker(buffer, audio_output, c, pad_x, top, bottom, marker.flip_write_cursor, write_color);
+    //     }
+    // }
 
     pub const audio_time_marker_count = 25;
 
