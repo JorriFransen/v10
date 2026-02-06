@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.xinput);
 const win32 = @import("win32.zig");
+const DynLib = @import("../dynlib.zig");
 
 const XInput = @This();
 
@@ -69,9 +70,9 @@ pub fn load() void {
         "xinput1_3.dll",
     };
 
-    var lib: ?std.DynLib = null;
+    var lib: ?DynLib = null;
     for (versions) |version| {
-        lib = std.DynLib.open(version) catch continue;
+        lib = DynLib.open(version) catch continue;
         log.debug("Loaded {s}", .{version});
         break;
     }

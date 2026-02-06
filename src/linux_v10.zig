@@ -78,6 +78,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     });
     defer threaded.deinit();
 
+    const io = threaded.io();
+
     defer {
         if (use_debug_allocator) {
             _ = debug_allocator.detectLeaks();
@@ -85,13 +87,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
-    const prng_seed = (try std.time.Instant.now()).timestamp.nsec;
+    const prng_seed = std.Io.Timestamp.now(io, .real).toNanoseconds();
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
 
     var shared_state: v10s.SharedState = .{};
 
-    const exe_dir_path_len = try std.process.executableDirPath(threaded.io(), &shared_state.exe_dir_path_buf);
+    const exe_dir_path_len = try std.process.executableDirPath(io, &shared_state.exe_dir_path_buf);
     shared_state.exe_dir_path = shared_state.exe_dir_path_buf[0..exe_dir_path_len];
 
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -144,7 +146,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .display = display,
         .window_width = back_buffer_width,
         .window_height = back_buffer_height,
-        .io = threaded.io(),
+        .io = io,
         .shared_state = &shared_state,
     };
 
@@ -405,7 +407,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             defer _ = udev.device_unref(device);
 
             if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
-                try addJoystick(wld.io, device, devnode_path);
+                try addJoystick(io, device, devnode_path);
             }
 
             udev_list_entry = udev.list_entry_get_next(e);
@@ -506,23 +508,23 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    var thread_context: v10.ThreadContext = .{ .io = wld.io };
+    var thread_context: v10.ThreadContext = .{ .io = io };
 
-    var game_code = v10s.GameCode.load(wld.io, game_lib_name);
+    var game_code = v10s.GameCode.load(io, game_lib_name);
     if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
     _ = pa.stream_cork(pa_stream, 0, null, null);
 
-    var last_counter = getWallClock();
-    var flip_wall_clock = getWallClock();
+    var last_counter = getWallClock(io);
+    var flip_wall_clock = getWallClock(io);
 
     var last_cycle_count = x86_64.rdtsc();
 
     while (running) {
-        const new_lib_write_time = v10s.getLastWriteTime(wld.io, game_lib_name);
+        const new_lib_write_time = v10s.getLastWriteTime(io, game_lib_name);
         if (new_lib_write_time > game_code.last_write_time) {
             game_code.unload();
-            game_code = v10s.GameCode.load(wld.io, game_lib_name);
+            game_code = v10s.GameCode.load(io, game_lib_name);
         }
 
         const keyboard_controller = &wld.new_input.controllers[0];
@@ -563,7 +565,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                         if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |path| {
                             if (std.mem.eql(u8, action, "add")) {
-                                try addJoystick(wld.io, device, path);
+                                try addJoystick(io, device, path);
                             } else if (std.mem.eql(u8, action, "remove")) {
                                 removeJoystick(device, path);
                             } else {
@@ -689,11 +691,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
             };
 
             if (wld.shared_state.input_recording_index > 0) {
-                recordInput(wld.shared_state, wld.io, wld.new_input);
+                recordInput(wld.shared_state, io, wld.new_input);
             }
 
             if (wld.shared_state.input_playing_index > 0) {
-                playbackInput(wld.shared_state, wld.io, wld.new_input);
+                playbackInput(wld.shared_state, io, wld.new_input);
             }
 
             const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer) else true;
@@ -770,7 +772,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
             pa.threaded_mainloop_unlock(pa_ml);
 
-            const work_counter = getWallClock();
+            const work_counter = getWallClock(io);
             const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
             var seconds_elapsed_for_frame = work_seconds_elapsed;
@@ -781,16 +783,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     if (sleep_ms > 1) {
                         const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
                         // linux.sleep(s);
-                        try std.Io.sleep(wld.io, std.Io.Duration.fromNanoseconds(s), .real);
+                        try std.Io.sleep(io, std.Io.Duration.fromNanoseconds(s), .real);
                     }
 
-                    seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
+                    seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
                 }
             } else {
                 log.debug("Missed frame time!", .{});
             }
 
-            const end_counter = getWallClock();
+            const end_counter = getWallClock(io);
             const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
 
@@ -842,7 +844,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             _ = wl.display_flush(display);
 
-            flip_wall_clock = getWallClock();
+            flip_wall_clock = getWallClock(io);
 
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
@@ -1214,14 +1216,12 @@ fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {
     new_state.half_transition_count += 1;
 }
 
-inline fn getWallClock() std.time.Instant {
-    return std.time.Instant.now() catch {
-        @panic("Platform timer failure");
-    };
+inline fn getWallClock(io: std.Io) std.Io.Timestamp {
+    return std.Io.Timestamp.now(io, .real);
 }
 
-inline fn getSecondsElapsed(start: std.time.Instant, end: std.time.Instant) f32 {
-    return @as(f32, @floatFromInt(end.since(start))) / std.time.ns_per_s;
+inline fn getSecondsElapsed(start: std.Io.Timestamp, end: std.Io.Timestamp) f32 {
+    return @as(f32, @floatFromInt(start.durationTo(end).toNanoseconds())) / std.time.ns_per_s;
 }
 
 const ShmError = error{

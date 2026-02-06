@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.dsound);
 const win32 = @import("win32.zig");
+const DynLib = @import("../dynlib.zig");
 
 pub const OK: u32 = 0x00000000;
 pub const ERR_OUTOFMEMORY: u32 = 0x00000007;
@@ -259,7 +260,7 @@ const FN_DirectSoundCreate = @TypeOf(DirectSoundCreateStub);
 pub var DirectSoundCreate: *const FN_DirectSoundCreate = undefined;
 
 pub fn load() void {
-    var lib = std.DynLib.open("dsound.dll") catch {
+    var lib = DynLib.open("dsound.dll") catch {
         log.warn("DSound not found, loading stubs", .{});
         loadStubs();
         return;

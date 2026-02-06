@@ -48,6 +48,7 @@ pub const LPCVOID = zig_win32.LPCVOID;
 pub const POINT = zig_win32.POINT;
 pub const RECT = zig_win32.RECT;
 pub const LPRECT = *RECT;
+pub const FARPROC = *anyopaque;
 
 pub const TRUE = 1;
 pub const FALSE = 0;
@@ -978,6 +979,9 @@ pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LP
 pub extern "kernel32" fn FindFirstFileA(file_name: LPCSTR, find_file_data: *WIN32_FIND_DATA) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn FindClose(find_file: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetModuleFileNameA(module: ?HMODULE, file_name: LPSTR, size: DWORD) callconv(.winapi) DWORD;
+pub extern "kernel32" fn LoadLibraryA(lib_file_name: LPCSTR) callconv(.winapi) ?HMODULE;
+pub extern "kernel32" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) callconv(.winapi) ?FARPROC;
+pub extern "kernel32" fn FreeLibrary(lib_module: HMODULE) callconv(.winapi) BOOL;
 
 pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
 

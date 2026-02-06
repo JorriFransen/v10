@@ -2,6 +2,8 @@ const std = @import("std");
 const log = std.log.scoped(.v10_shared);
 const options = @import("options");
 const v10 = @import("v10.zig");
+const builtin = @import("builtin");
+const DynLib = @import("dynlib.zig");
 
 const assert = std.debug.assert;
 
@@ -69,7 +71,7 @@ pub const SharedState = struct {
 
 pub const GameCode = struct {
     valid: bool = false,
-    dll: ?std.DynLib = null,
+    dll: ?DynLib = null,
     last_write_time: i128 = 0,
 
     init: ?v10.FN_init = null,
@@ -79,7 +81,7 @@ pub const GameCode = struct {
     pub fn load(io: std.Io, libname: []const u8) GameCode {
         const last_write_time = getLastWriteTime(io, libname);
 
-        var lib = std.DynLib.open(libname) catch |e| {
+        var lib = DynLib.open(libname) catch |e| {
             log.err("Failed to load game code: {}", .{e});
             return .{};
         };
@@ -118,7 +120,7 @@ pub const GameCode = struct {
 pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
     var result: i128 = 0;
 
-    switch (@import("builtin").os.tag) {
+    switch (builtin.os.tag) {
         .windows => {
             const win32 = @import("win32/win32.zig");
             var data: win32.FILE_ATTRIBUTE_DATA = undefined;
