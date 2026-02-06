@@ -32,8 +32,8 @@ const assert = std.debug.assert;
 
 var prng: std.Random = undefined;
 
-const back_buffer_width: i32 = 1280;
-const back_buffer_height: i32 = 720;
+const back_buffer_width: i32 = 960;
+const back_buffer_height: i32 = 540;
 const bytes_per_pixel = 4;
 
 var global_back_buffer: OffscreenBuffer = .{};
@@ -144,8 +144,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     wld = .{
         .display = display,
-        .window_width = back_buffer_width,
-        .window_height = back_buffer_height,
         .io = io,
         .shared_state = &shared_state,
     };
@@ -188,6 +186,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
+
+    wld.window_width = @divTrunc(wld.max_width, 2);
+    wld.window_height = @divTrunc(wld.max_height, 2);
 
     try resize_shm();
 
@@ -1330,12 +1331,12 @@ fn resize(width: i32, height: i32) !void {
     wld.width = back_buffer_width;
     wld.height = back_buffer_height;
 
-    var window_width = width;
-    var window_height = height;
-    if (window_width == 0) window_width = wld.width;
-    if (window_height == 0) window_height = wld.height;
-    wld.window_width = window_width;
-    wld.window_height = window_height;
+    if (width != 0) {
+        wld.window_width = width;
+    }
+    if (height != 0) {
+        wld.window_height = height;
+    }
 
     wld.should_draw = true;
     wld.pending_resize = null;

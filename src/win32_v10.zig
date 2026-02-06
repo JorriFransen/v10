@@ -377,8 +377,8 @@ pub fn windowsEntry(
     const desired_scheduler_ms = 1;
     const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.TIMERR_NOERROR;
 
-    const back_buffer_width = 1280;
-    const back_buffer_height = 720;
+    const back_buffer_width = 960;
+    const back_buffer_height = 540;
 
     const window_class = win32.WNDCLASSA{
         .style = win32.CS_HREDRAW | win32.CS_VREDRAW,
@@ -401,8 +401,8 @@ pub fn windowsEntry(
             style,
             win32.CW_USEDEFAULT,
             win32.CW_USEDEFAULT,
-            rc.right - rc.left,
-            rc.bottom - rc.top,
+            win32.CW_USEDEFAULT,
+            win32.CW_USEDEFAULT,
             null,
             null,
             instance,
@@ -538,6 +538,8 @@ pub fn windowsEntry(
                         _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
                         game_code = v10s.GameCode.load(io, temp_dll_name);
                     }
+
+                    new_input.dt = target_seconds_per_frame;
 
                     const keyboard_controller = &new_input.controllers[0];
                     const old_keyboard_controller = &old_input.controllers[0];

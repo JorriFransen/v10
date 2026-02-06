@@ -103,6 +103,8 @@ pub const DebugMouseInput = if (options.internal_build) struct {
 
 pub const Input = struct {
     debug_mouse: DebugMouseInput = .{},
+
+    dt: f32 = 0,
     controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
 };
 
@@ -125,16 +127,7 @@ pub const DEBUG = if (options.internal_build) struct {
     writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool = undefined,
 } else struct {};
 
-pub const GameState = struct {
-    blue_offset: i32 = 0,
-    green_offset: i32 = 0,
-    tone_hz: i32 = 0,
-    t_sine: f32 = 0,
-
-    player_x: i32 = 0,
-    player_y: i32 = 0,
-    jump_timer: f32 = 0,
-};
+pub const GameState = struct {};
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
     _ = thread_context;
@@ -142,6 +135,8 @@ pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callcon
 }
 
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool {
+    _ = thread_context;
+
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
     var result = true;
@@ -149,82 +144,23 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
     if (!game_memory.initialized) {
         game_state.* = .{};
-        game_state.tone_hz = 512;
-
-        game_state.player_x = 100;
-        game_state.player_y = 100;
-
         game_memory.initialized = true;
-
-        var this_file_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        var this_file_name = v10s.joinPathsZ(&this_file_name_buf, options.src_dir_path, @src().file) catch unreachable;
-
-        const file = game_memory.debug.readEntireFile(thread_context, this_file_name.ptr, this_file_name.len);
-        if (file.size > 0) {
-            const out_name = "test.out";
-            _ = game_memory.debug.writeEntireFile(thread_context, out_name.ptr, out_name.len, file.content, file.size);
-            game_memory.debug.freeFileMemory(thread_context, file.content, file.size);
-        } else unreachable;
     }
-
-    game_state.tone_hz = 512;
 
     for (input.controllers) |controller| if (controller.is_connected) {
         const buttons = &controller.buttons.named;
 
-        if (controller.is_analog) {
-            game_state.blue_offset += @intFromFloat(4 * controller.stick_average_x);
-            game_state.tone_hz = @intFromFloat(512 + (128 * controller.stick_average_y));
-        } else {
-            if (buttons.move_left.ended_down) {
-                game_state.blue_offset -= 4;
-            }
-            if (buttons.move_right.ended_down) {
-                game_state.blue_offset += 4;
-            }
-        }
-
-        // if (buttons.action_down.ended_down) {
-        //     game_state.green_offset += 1;
-        // }
-
-        if (buttons.action_up.ended_down) {
-            game_state.tone_hz = 512 + 256;
-        } else if (buttons.action_down.ended_down) {
-            game_state.tone_hz = 256;
-        }
-
         if (buttons.start.ended_down) {
             result = false;
         }
-
-        game_state.player_x += @intFromFloat(4 * controller.stick_average_x);
-        game_state.player_y -= @intFromFloat(4 * controller.stick_average_y);
-        if (game_state.jump_timer > 0) {
-            game_state.player_y += @intFromFloat(@sin(0.5 * std.math.pi * game_state.jump_timer) * 10);
-        }
-
-        if (buttons.action_down.ended_down and buttons.action_down.half_transition_count > 0 and game_state.jump_timer <= 0) {
-            game_state.jump_timer = 4;
-        }
-        game_state.jump_timer -= 0.033;
     };
 
-    renderWeirdGradient(offscreen_buffer, game_state.blue_offset, game_state.green_offset);
-    renderPlayer(offscreen_buffer, game_state.player_x, game_state.player_y);
+    @memset(offscreen_buffer.memory, 128);
+    drawRectangle(offscreen_buffer, 100, 100, 110, 110, 0xFFFFFFFF);
 
-    if (options.internal_build) {
-        const mouse = &input.debug_mouse;
-
-        renderPlayer(offscreen_buffer, input.debug_mouse.x, input.debug_mouse.y);
-
-        for (mouse.buttons.array, 0..) |button, i| {
-            if (button.ended_down) {
-                const x_pos: i32 = 10 + (20 * @as(i32, @intCast(i)));
-                renderPlayer(offscreen_buffer, x_pos, 10);
-            }
-        }
-    }
+    const mpx: f32 = @floatFromInt(input.debug_mouse.x);
+    const mpy: f32 = @floatFromInt(input.debug_mouse.y);
+    drawRectangle(offscreen_buffer, mpx - 50, mpy - 50, mpx + 50, mpy + 50, 0xffff0000);
 
     return result;
 }
@@ -232,64 +168,55 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
     _ = thread_context;
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
-    outputSound(game_state, sound_buffer);
+    outputSound(game_state, sound_buffer, 400);
 }
 
-pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
-    const tone_volume = 3000;
-    const wave_period = @divTrunc(buffer.frames_per_second, game_state.tone_hz);
+pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) void {
+    _ = game_state;
+    _ = tone_hz;
+    // const tone_volume = 3000;
+    // const wave_period = @divTrunc(buffer.frames_per_second, tone_hz);
 
     assert(buffer.frames.len >= 0);
 
     for (buffer.frames) |*frame| {
         // const sine_value: f32 = @sin(game_state.t_sine);
         // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
-        _ = tone_volume;
         const sample_value: i16 = 0;
 
         frame.* = .{ .left = sample_value, .right = sample_value };
 
-        game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
-        if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
+        // game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
+        // if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
     }
 }
 
-fn renderWeirdGradient(buffer: *OffscreenBuffer, blue_offset: i32, green_offset: i32) void {
-    const uwidth: usize = @intCast(buffer.width);
-    const uheight: usize = @intCast(buffer.height);
-
-    var row: [*]u8 = buffer.memory.ptr;
-    for (0..uheight) |uy| {
-        const y: i32 = @intCast(uy);
-        var pixel: [*]u32 = @ptrCast(@alignCast(row));
-        for (0..uwidth) |ux| {
-            const x: i32 = @intCast(ux);
-
-            const b: u8 = @truncate(@as(u32, @bitCast(x +% blue_offset)));
-            const g: u8 = @truncate(@as(u32, @bitCast(y +% green_offset)));
-            pixel[0] = (@as(u32, g) << 16) | b;
-            pixel += 1;
-        }
-        row += @intCast(buffer.pitch);
-    }
-}
-
-fn renderPlayer(buffer: *OffscreenBuffer, player_x: i32, player_y: i32) void {
-    const width = 10;
-    const height = 10;
-    const color = 0xffffffff;
-
-    const left: usize = @intCast(@min(buffer.width, @max(player_x, 0)));
-    const right: usize = @intCast(@min(buffer.width, @max(player_x + width, 0)));
-    const top: usize = @intCast(@min(buffer.height, @max(player_y, 0)));
-    const bottom: usize = @intCast(@min(buffer.height, @max(player_y + height, 0)));
+fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f32, max_y: f32, color: u32) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
-    for (top..bottom) |y| {
-        for (left..right) |x| {
-            const pixel: *u32 = @ptrCast(@alignCast(&buffer.memory[(y * pitch) + x * bpp]));
-            pixel.* = color;
+    const minx_: isize = @intFromFloat(@round(min_x));
+    const miny_: isize = @intFromFloat(@round(min_y));
+    const maxx_: isize = @intFromFloat(@round(max_x));
+    const maxy_: isize = @intFromFloat(@round(max_y));
+
+    const minx: usize = @intCast(@min(@max(minx_, 0), buffer.width));
+    const miny: usize = @intCast(@min(@max(miny_, 0), buffer.height));
+    const maxx: usize = @intCast(@min(@max(maxx_, 0), buffer.width));
+    const maxy: usize = @intCast(@min(@max(maxy_, 0), buffer.height));
+
+    assert(bpp == @sizeOf(u32));
+
+    var row: [*]u8 = buffer.memory.ptr + (minx * bpp) + (miny * pitch);
+    var y: usize = @intCast(miny);
+    while (y < maxy) : (y += 1) {
+        var pixel: [*]u32 = @ptrCast(@alignCast(row));
+        var x: usize = @intCast(minx);
+        while (x < maxx) : (x += 1) {
+            pixel[0] = color;
+            pixel += 1;
         }
+
+        row += pitch;
     }
 }
