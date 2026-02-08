@@ -1039,6 +1039,8 @@ const Joystick = struct {
         right_x = 3,
         right_y = 4,
         right_z = 5,
+        hat_x = 6,
+        hat_y = 7,
     };
 
     pub const button_count = @typeInfo(Button).@"enum".fields.len;
@@ -1061,11 +1063,11 @@ const Joystick = struct {
         mode,
     };
 
-    pub fn getButtonState(this: *const Joystick, button: Button) bool {
+    pub inline fn getButtonState(this: *const Joystick, button: Button) bool {
         return this.buttons.isSet(@intFromEnum(button));
     }
 
-    pub fn setButtonState(this: *Joystick, button: Button, state: bool) void {
+    pub inline fn setButtonState(this: *Joystick, button: Button, state: bool) void {
         this.buttons.setValue(@intFromEnum(button), state);
     }
 
@@ -1081,42 +1083,20 @@ const Joystick = struct {
                         return null;
                     },
 
-                    // Don't warn for unhandled, these are handled later!
-                    Abs.HAT0X,
-                    Abs.HAT0Y,
-                    => null,
-
                     Abs.X => .left_x,
                     Abs.Y => .left_y,
                     Abs.Z => .left_z,
                     Abs.RX => .right_x,
                     Abs.RY => .right_y,
                     Abs.RZ => .right_z,
+
+                    Abs.HAT0X => .hat_x,
+                    Abs.HAT0Y => .hat_y,
                 };
 
                 if (axis_opt) |axis| {
                     return @intFromEnum(axis);
                 } else return null;
-            },
-        }
-    }
-
-    fn absEventCodeToHatAxisIndex(kind: Kind, code: u16) ?struct { Button, Button } {
-        switch (kind) {
-            .default,
-            .xbox,
-            => {
-                const abs: Abs = @enumFromInt(code);
-                const btns_opt: ?struct { Button, Button } = switch (abs) {
-                    else => {
-                        log.warn("Unhandled {s} controller event: {s}", .{ @tagName(kind), @tagName(abs) });
-                        return null;
-                    },
-                    Abs.HAT0X => .{ .dpad_left, .dpad_right },
-                    Abs.HAT0Y => .{ .dpad_up, .dpad_down },
-                };
-
-                return btns_opt orelse null;
             },
         }
     }
@@ -1159,21 +1139,37 @@ const Joystick = struct {
                 if (absEventCodeToAxisIndex(this.kind, event.code)) |axis_idx| {
                     const meta = this.axis_meta[axis_idx];
 
+                    var value: f32 = 0;
                     if (event.value < -meta.deadzone or event.value > meta.deadzone) {
                         const min: f32 = @floatFromInt(meta.min);
                         const max: f32 = @floatFromInt(meta.max);
-                        this.axis[axis_idx] = @as(f32, @floatFromInt(event.value)) / if (event.value < 0) -min else max;
-                    } else {
-                        this.axis[axis_idx] = 0;
+                        value = @as(f32, @floatFromInt(event.value)) / if (event.value < 0) -min else max;
                     }
-                } else if (absEventCodeToHatAxisIndex(this.kind, event.code)) |hat_btns| {
-                    if (event.value == 0) {
-                        this.setButtonState(hat_btns[0], false);
-                        this.setButtonState(hat_btns[1], false);
-                    } else if (event.value < 0) {
-                        this.setButtonState(hat_btns[0], true);
-                    } else {
-                        this.setButtonState(hat_btns[1], true);
+                    this.axis[axis_idx] = value;
+
+                    const axis: Joystick.Axis = @enumFromInt(axis_idx);
+                    if (axis == .hat_x) {
+                        if (value == 0) {
+                            this.setButtonState(.dpad_left, false);
+                            this.setButtonState(.dpad_right, false);
+                        } else if (value > 0) {
+                            this.setButtonState(.dpad_left, false);
+                            this.setButtonState(.dpad_right, true);
+                        } else {
+                            this.setButtonState(.dpad_left, true);
+                            this.setButtonState(.dpad_right, false);
+                        }
+                    } else if (axis == .hat_y) {
+                        if (value == 0) {
+                            this.setButtonState(.dpad_up, false);
+                            this.setButtonState(.dpad_down, false);
+                        } else if (value > 0) {
+                            this.setButtonState(.dpad_up, false);
+                            this.setButtonState(.dpad_down, true);
+                        } else {
+                            this.setButtonState(.dpad_up, true);
+                            this.setButtonState(.dpad_down, false);
+                        }
                     }
                 }
             },
