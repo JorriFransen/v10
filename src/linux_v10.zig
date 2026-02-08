@@ -622,46 +622,45 @@ pub fn main(init: std.process.Init.Minimal) !void {
                         new_controller.is_analog = true;
                     }
 
-                    if (js.buttons[@intFromEnum(Joystick.Button.dpad_up)] == 1) {
+                    if (js.getButtonState(.dpad_up)) {
                         new_controller.stick_average_y = 1;
                         new_controller.is_analog = false;
                     }
-                    if (js.buttons[@intFromEnum(Joystick.Button.dpad_down)] == 1) {
+                    if (js.getButtonState(.dpad_down)) {
                         new_controller.stick_average_y = -1;
                         new_controller.is_analog = false;
                     }
-                    if (js.buttons[@intFromEnum(Joystick.Button.dpad_left)] == 1) {
+                    if (js.getButtonState(.dpad_left)) {
                         new_controller.stick_average_x = -1;
                         new_controller.is_analog = false;
                     }
-                    if (js.buttons[@intFromEnum(Joystick.Button.dpad_right)] == 1) {
+                    if (js.getButtonState(.dpad_right)) {
                         new_controller.stick_average_x = 1;
                         new_controller.is_analog = false;
                     }
 
                     const threshold = 0.5;
-                    const target_type = @Int(.signed, @bitSizeOf(Joystick.Buttons));
 
                     processDigitalButton(
-                        @bitCast(@as(target_type, if (new_controller.stick_average_x < -threshold) 1 else 0)),
+                        .{ .mask = if (new_controller.stick_average_x < -threshold) 1 else 0 },
                         &old_buttons.move_left,
                         @enumFromInt(0),
                         &new_buttons.move_left,
                     );
                     processDigitalButton(
-                        @bitCast(@as(target_type, if (new_controller.stick_average_x > threshold) 1 else 0)),
+                        .{ .mask = if (new_controller.stick_average_x > threshold) 1 else 0 },
                         &old_buttons.move_right,
                         @enumFromInt(0),
                         &new_buttons.move_right,
                     );
                     processDigitalButton(
-                        @bitCast(@as(target_type, if (new_controller.stick_average_y < -threshold) 1 else 0)),
+                        .{ .mask = if (new_controller.stick_average_y < -threshold) 1 else 0 },
                         &old_buttons.move_down,
                         @enumFromInt(0),
                         &new_buttons.move_down,
                     );
                     processDigitalButton(
-                        @bitCast(@as(target_type, if (new_controller.stick_average_y > threshold) 1 else 0)),
+                        .{ .mask = if (new_controller.stick_average_y > threshold) 1 else 0 },
                         &old_buttons.move_up,
                         @enumFromInt(0),
                         &new_buttons.move_up,
@@ -1015,7 +1014,8 @@ const Joystick = struct {
     axis_meta: [axis_count]AxisMeta = [_]AxisMeta{.{}} ** axis_count,
     axis: [axis_count]f32 = [_]f32{0} ** axis_count,
 
-    buttons: Buttons = [_]u1{0} ** button_count,
+    // buttons: Buttons = [_]u1{0} ** button_count,
+    buttons: Buttons = .initEmpty(),
 
     /// Zero terminated devnode path
     path: [32]u8 = [1]u8{0} ** 32,
@@ -1041,9 +1041,9 @@ const Joystick = struct {
         right_z = 5,
     };
 
-    const button_count = @typeInfo(Button).@"enum".fields.len;
-    const Buttons = [button_count]u1;
-    const Button = enum(usize) {
+    pub const button_count = @typeInfo(Button).@"enum".fields.len;
+    pub const Buttons = std.StaticBitSet(button_count);
+    pub const Button = enum {
         north,
         east,
         south,
@@ -1060,6 +1060,14 @@ const Joystick = struct {
         start,
         mode,
     };
+
+    pub fn getButtonState(this: *const Joystick, button: Button) bool {
+        return this.buttons.isSet(@intFromEnum(button));
+    }
+
+    pub fn setButtonState(this: *Joystick, button: Button, state: bool) void {
+        this.buttons.setValue(@intFromEnum(button), state);
+    }
 
     fn absEventCodeToAxisIndex(kind: Kind, code: u16) ?usize {
         switch (kind) {
@@ -1093,7 +1101,7 @@ const Joystick = struct {
         }
     }
 
-    fn absEventCodeToHatButtonIndices(kind: Kind, code: u16) ?struct { usize, usize } {
+    fn absEventCodeToHatAxisIndex(kind: Kind, code: u16) ?struct { Button, Button } {
         switch (kind) {
             .default,
             .xbox,
@@ -1108,9 +1116,7 @@ const Joystick = struct {
                     Abs.HAT0Y => .{ .dpad_up, .dpad_down },
                 };
 
-                if (btns_opt) |btns| {
-                    return .{ @intFromEnum(btns[0]), @intFromEnum(btns[1]) };
-                } else return null;
+                return btns_opt orelse null;
             },
         }
     }
@@ -1160,20 +1166,20 @@ const Joystick = struct {
                     } else {
                         this.axis[axis_idx] = 0;
                     }
-                } else if (absEventCodeToHatButtonIndices(this.kind, event.code)) |hat_btns| {
+                } else if (absEventCodeToHatAxisIndex(this.kind, event.code)) |hat_btns| {
                     if (event.value == 0) {
-                        this.buttons[hat_btns[0]] = 0;
-                        this.buttons[hat_btns[1]] = 0;
+                        this.setButtonState(hat_btns[0], false);
+                        this.setButtonState(hat_btns[1], false);
                     } else if (event.value < 0) {
-                        this.buttons[hat_btns[0]] = if (event.value != 0) 1 else 0;
+                        this.setButtonState(hat_btns[0], true);
                     } else {
-                        this.buttons[hat_btns[1]] = if (event.value != 0) 1 else 0;
+                        this.setButtonState(hat_btns[1], true);
                     }
                 }
             },
             .KEY => {
                 if (keyEventCodeToButtonIndex(this.kind, event.code)) |btn_idx| {
-                    this.buttons[btn_idx] = if (event.value != 0) 1 else 0;
+                    this.buttons.setValue(btn_idx, event.value != 0);
                 }
             },
             else => log.warn("Unhandled event: {}", .{event.type}),
@@ -1208,7 +1214,7 @@ const Joystick = struct {
 };
 
 fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const v10.ButtonState, btn: Joystick.Button, new_state: *v10.ButtonState) void {
-    new_state.ended_down = buttons[@intFromEnum(btn)] == 1;
+    new_state.ended_down = buttons.isSet(@intFromEnum(btn));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 0 else 1;
 }
 
