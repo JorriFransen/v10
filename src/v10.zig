@@ -1,131 +1,17 @@
 const std = @import("std");
 const log = std.log.scoped(.v10);
 const options = @import("options");
-const v10s = @import("v10_shared.zig");
+const platform = @import("v10_platform.zig");
 
 const assert = std.debug.assert;
 
+const ThreadContext = platform.ThreadContext;
+const Memory = platform.Memory;
+const Input = platform.Input;
+const OffscreenBuffer = platform.OffscreenBuffer;
+const AudioBuffer = platform.AudioBuffer;
+
 const os = @import("builtin").os.tag;
-pub const platform = switch (os) {
-    .windows => @import("win32_v10.zig"),
-    .linux => @import("linux_v10.zig"),
-    else => @compileError("Unsupported platform"),
-};
-
-pub const ThreadContext = struct {
-    io: std.Io,
-};
-
-pub const FN_init = *const fn (thread_context: *ThreadContext, memory: *Memory) callconv(.c) void;
-pub const FN_updateAndRender = *const fn (thread_context: *ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool;
-pub const FN_getAudioFrames = *const fn (thread_context: *ThreadContext, memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void;
-
-pub const OffscreenBuffer = struct {
-    memory: []u8,
-    width: i32,
-    height: i32,
-    pitch: i32,
-    bytes_per_pixel: i32,
-};
-
-pub const AudioBuffer = struct {
-    pub const Sample = i16;
-    pub const Frame = struct {
-        left: Sample = 0,
-        right: Sample = 0,
-    };
-
-    frames: []Frame,
-    frames_per_second: i32,
-};
-
-pub const ButtonState = extern struct {
-    half_transition_count: i32 = 0,
-    ended_down: bool = false,
-};
-
-pub const ControllerInput = struct {
-    is_connected: bool = false,
-    is_analog: bool = false,
-
-    stick_average_x: f32 = 0,
-    stick_average_y: f32 = 0,
-
-    buttons: extern union {
-        array: [12]ButtonState,
-
-        named: extern struct {
-            move_up: ButtonState,
-            move_down: ButtonState,
-            move_left: ButtonState,
-            move_right: ButtonState,
-
-            action_up: ButtonState,
-            action_down: ButtonState,
-            action_left: ButtonState,
-            action_right: ButtonState,
-
-            left_shoulder: ButtonState,
-            right_shoulder: ButtonState,
-
-            back: ButtonState,
-            start: ButtonState,
-        },
-        comptime {
-            const dummy: @This() = std.mem.zeroes(@This());
-            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
-        }
-    },
-};
-
-pub const DebugMouseInput = if (options.internal_build) struct {
-    buttons: extern union {
-        array: [5]ButtonState,
-        named: extern struct {
-            left: ButtonState,
-            right: ButtonState,
-            middle: ButtonState,
-
-            extra0: ButtonState,
-            extra1: ButtonState,
-        },
-
-        comptime {
-            const dummy: @This() = std.mem.zeroes(@This());
-            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
-        }
-    } = std.mem.zeroes(@FieldType(@This(), "buttons")),
-
-    x: i32 = 0,
-    y: i32 = 0,
-    z: i32 = 0,
-} else void;
-
-pub const Input = struct {
-    debug_mouse: DebugMouseInput = .{},
-
-    dt: f32 = 0,
-    controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
-};
-
-pub const Memory = struct {
-    initialized: bool = false,
-    permanent: []u8 = &.{},
-    transient: []u8 = &.{},
-
-    debug: DEBUG,
-};
-
-pub const DEBUG = if (options.internal_build) struct {
-    pub const ReadFileResult = extern struct {
-        size: usize = 0,
-        content: *anyopaque = undefined,
-    };
-
-    readEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) ReadFileResult = undefined,
-    freeFileMemory: *const fn (thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void = undefined,
-    writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool = undefined,
-} else struct {};
 
 pub const GameState = struct {
     player_x: f32,

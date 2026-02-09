@@ -7,6 +7,121 @@ const DynLib = @import("dynlib.zig");
 
 const assert = std.debug.assert;
 
+pub const ThreadContext = struct {
+    io: std.Io,
+};
+
+pub const FN_init = *const fn (thread_context: *ThreadContext, memory: *Memory) callconv(.c) void;
+pub const FN_updateAndRender = *const fn (thread_context: *ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool;
+pub const FN_getAudioFrames = *const fn (thread_context: *ThreadContext, memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void;
+
+pub const OffscreenBuffer = struct {
+    memory: []u8,
+    width: i32,
+    height: i32,
+    pitch: i32,
+    bytes_per_pixel: i32,
+};
+
+pub const AudioBuffer = struct {
+    pub const Sample = i16;
+    pub const Frame = struct {
+        left: Sample = 0,
+        right: Sample = 0,
+    };
+
+    frames: []Frame,
+    frames_per_second: i32,
+};
+
+pub const ButtonState = extern struct {
+    half_transition_count: i32 = 0,
+    ended_down: bool = false,
+};
+
+pub const ControllerInput = struct {
+    is_connected: bool = false,
+    is_analog: bool = false,
+
+    stick_average_x: f32 = 0,
+    stick_average_y: f32 = 0,
+
+    buttons: extern union {
+        array: [12]ButtonState,
+
+        named: extern struct {
+            move_up: ButtonState,
+            move_down: ButtonState,
+            move_left: ButtonState,
+            move_right: ButtonState,
+
+            action_up: ButtonState,
+            action_down: ButtonState,
+            action_left: ButtonState,
+            action_right: ButtonState,
+
+            left_shoulder: ButtonState,
+            right_shoulder: ButtonState,
+
+            back: ButtonState,
+            start: ButtonState,
+        },
+        comptime {
+            const dummy: @This() = std.mem.zeroes(@This());
+            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+        }
+    },
+};
+
+pub const DebugMouseInput = if (options.internal_build) struct {
+    buttons: extern union {
+        array: [5]ButtonState,
+        named: extern struct {
+            left: ButtonState,
+            right: ButtonState,
+            middle: ButtonState,
+
+            extra0: ButtonState,
+            extra1: ButtonState,
+        },
+
+        comptime {
+            const dummy: @This() = std.mem.zeroes(@This());
+            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+        }
+    } = std.mem.zeroes(@FieldType(@This(), "buttons")),
+
+    x: i32 = 0,
+    y: i32 = 0,
+    z: i32 = 0,
+} else void;
+
+pub const Input = struct {
+    debug_mouse: DebugMouseInput = .{},
+
+    dt: f32 = 0,
+    controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
+};
+
+pub const Memory = struct {
+    initialized: bool = false,
+    permanent: []u8 = &.{},
+    transient: []u8 = &.{},
+
+    debug: DEBUG,
+};
+
+pub const DEBUG = if (options.internal_build) struct {
+    pub const ReadFileResult = extern struct {
+        size: usize = 0,
+        content: *anyopaque = undefined,
+    };
+
+    readEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) ReadFileResult = undefined,
+    freeFileMemory: *const fn (thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void = undefined,
+    writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool = undefined,
+} else struct {};
+
 pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8 {
     return std.fmt.bufPrintSentinel(buffer, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{ base, sub }, 0) catch |e| switch (e) {
         error.NoSpaceLeft => {
@@ -74,9 +189,9 @@ pub const GameCode = struct {
     dll: ?DynLib = null,
     last_write_time: i128 = 0,
 
-    init: ?v10.FN_init = null,
-    updateAndRender: ?v10.FN_updateAndRender = null,
-    getAudioFrames: ?v10.FN_getAudioFrames = null,
+    init: ?FN_init = null,
+    updateAndRender: ?FN_updateAndRender = null,
+    getAudioFrames: ?FN_getAudioFrames = null,
 
     pub fn load(io: std.Io, libname: []const u8) GameCode {
         const last_write_time = getLastWriteTime(io, libname);
@@ -86,9 +201,9 @@ pub const GameCode = struct {
             return .{};
         };
 
-        const init = lib.lookup(v10.FN_init, "init");
-        const update_and_render = lib.lookup(v10.FN_updateAndRender, "updateAndRender");
-        const get_audio_frames = lib.lookup(v10.FN_getAudioFrames, "getAudioFrames");
+        const init = lib.lookup(FN_init, "init");
+        const update_and_render = lib.lookup(FN_updateAndRender, "updateAndRender");
+        const get_audio_frames = lib.lookup(FN_getAudioFrames, "getAudioFrames");
 
         const valid =
             init != null and

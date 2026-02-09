@@ -4,8 +4,7 @@ const mem = @import("mem");
 const options = @import("options");
 const builtin = @import("builtin");
 
-const v10 = @import("v10.zig");
-const v10s = @import("v10_shared.zig");
+const platform = @import("v10_platform.zig");
 
 const x86_64 = @import("x86_64.zig");
 
@@ -22,6 +21,15 @@ const udev = linux.libudev;
 const libdecor = linux.libdecor;
 const errno = linux.errno;
 
+const GameCode = platform.GameCode;
+const Memory = platform.Memory;
+const OffscreenBuffer = platform.OffscreenBuffer;
+const Input = platform.Input;
+const ControllerInput = platform.ControllerInput;
+const ButtonState = platform.ButtonState;
+const ThreadContext = platform.ThreadContext;
+const AudioBuffer = platform.AudioBuffer;
+
 const InputEvent = input.InputEvent;
 const Key = input.Key;
 const Abs = input.Abs;
@@ -36,7 +44,7 @@ const back_buffer_width: i32 = 960;
 const back_buffer_height: i32 = 540;
 const bytes_per_pixel = 4;
 
-var global_back_buffer: OffscreenBuffer = .{};
+var global_back_buffer: LinuxOffscreenBuffer = .{};
 var running: bool = false;
 var pause: bool = false;
 var wld: WlData = .{};
@@ -91,7 +99,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
 
-    var shared_state: v10s.SharedState = .{};
+    var shared_state: platform.SharedState = .{};
 
     const exe_dir_path_len = try std.process.executableDirPath(io, &shared_state.exe_dir_path_buf);
     shared_state.exe_dir_path = shared_state.exe_dir_path_buf[0..exe_dir_path_len];
@@ -448,7 +456,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const transient_storage_size = mem.GiB * 1;
     const total_size = permanent_storage_size + transient_storage_size;
 
-    var game_memory = v10.Memory{
+    var game_memory = Memory{
         .initialized = false,
         .debug = if (options.internal_build) .{
             .readEntireFile = &DEBUG.readEntireFile,
@@ -507,9 +515,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    var thread_context: v10.ThreadContext = .{ .io = io };
+    var thread_context: ThreadContext = .{ .io = io };
 
-    var game_code = v10s.GameCode.load(io, game_lib_name);
+    var game_code = GameCode.load(io, game_lib_name);
     if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
     _ = pa.stream_cork(pa_stream, 0, null, null);
@@ -520,17 +528,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var last_cycle_count = x86_64.rdtsc();
 
     while (running) {
-        const new_lib_write_time = v10s.getLastWriteTime(io, game_lib_name);
+        const new_lib_write_time = platform.getLastWriteTime(io, game_lib_name);
         if (new_lib_write_time > game_code.last_write_time) {
             game_code.unload();
-            game_code = v10s.GameCode.load(io, game_lib_name);
+            game_code = GameCode.load(io, game_lib_name);
         }
 
         wld.new_input.dt = target_seconds_per_frame;
 
         const keyboard_controller = &wld.new_input.controllers[0];
         const old_keyboard_controller = &wld.old_input.controllers[0];
-        keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
+        keyboard_controller.* = std.mem.zeroes(ControllerInput);
         for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
             new_button.ended_down = old_button.ended_down;
         }
@@ -539,7 +547,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (options.internal_build) {
             const mouse = &wld.new_input.debug_mouse;
             const old_mouse = &wld.old_input.debug_mouse;
-            mouse.* = std.mem.zeroes(v10.DebugMouseInput);
+            mouse.* = std.mem.zeroes(platform.DebugMouseInput);
             mouse.x = old_mouse.x;
             mouse.y = old_mouse.y;
             mouse.z = old_mouse.z;
@@ -682,7 +690,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 }
             }
 
-            var game_offscreen_buffer = v10.OffscreenBuffer{
+            var game_offscreen_buffer = OffscreenBuffer{
                 .memory = global_back_buffer.memory,
                 .width = back_buffer_width,
                 .height = back_buffer_height,
@@ -750,7 +758,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     // });
 
                     if (begin_write_rc == 0 and buffer_ptr != null) {
-                        var game_sound_output_buffer: v10.AudioBuffer = .{
+                        var game_sound_output_buffer: AudioBuffer = .{
                             .frames = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(buffer_ptr)))[0..actual_frame_count],
                             .frames_per_second = @intCast(audio_output.frames_per_second),
                         };
@@ -824,7 +832,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 }
 
-const OffscreenBuffer = struct {
+const LinuxOffscreenBuffer = struct {
     memory: []align(std.heap.page_size_min) u8 = &.{},
     width: i32 = 0,
     height: i32 = 0,
@@ -886,11 +894,11 @@ const WlData = struct {
 
     monitor_refresh_hz: c_int = 0,
 
-    game_input: [2]v10.Input = .{v10.Input{}} ** 2,
-    new_input: *v10.Input = undefined,
-    old_input: *v10.Input = undefined,
+    game_input: [2]platform.Input = .{Input{}} ** 2,
+    new_input: *Input = undefined,
+    old_input: *Input = undefined,
 
-    shared_state: *v10s.SharedState = undefined,
+    shared_state: *platform.SharedState = undefined,
 
     io: std.Io = undefined,
 };
@@ -1165,12 +1173,12 @@ const Joystick = struct {
     }
 };
 
-fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const v10.ButtonState, btn: Joystick.Button, new_state: *v10.ButtonState) void {
+fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const ButtonState, btn: Joystick.Button, new_state: *ButtonState) void {
     new_state.ended_down = buttons.isSet(@intFromEnum(btn));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 0 else 1;
 }
 
-fn processKeyEvent(new_state: *v10.ButtonState, is_down: bool) void {
+fn processKeyEvent(new_state: *ButtonState, is_down: bool) void {
     new_state.ended_down = is_down;
     new_state.half_transition_count += 1;
 }
@@ -1322,9 +1330,9 @@ fn aquireFreeBuffer() ?*WlBuffer {
 }
 
 pub const DEBUG = struct {
-    pub fn readEntireFile(thread_context: *v10.ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) v10.DEBUG.ReadFileResult {
+    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) platform.DEBUG.ReadFileResult {
         assert(std.mem.span(path).len == path_len);
-        var result = v10.DEBUG.ReadFileResult{};
+        var result = platform.DEBUG.ReadFileResult{};
 
         const open_rc = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
         if (@as(isize, @intCast(open_rc)) >= 0) {
@@ -1362,7 +1370,7 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn writeEntireFile(thread_context: *v10.ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool {
         _ = thread_context;
         assert(std.mem.span(path).len == path_len);
         var result = false;
@@ -1387,7 +1395,7 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn freeFileMemory(thread_context: *v10.ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void {
+    pub fn freeFileMemory(thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void {
         _ = thread_context;
 
         if (memory) |m| {
@@ -1396,7 +1404,7 @@ pub const DEBUG = struct {
         }
     }
 
-    pub fn drawVertical(buffer: *OffscreenBuffer, x: i32, top: i32, bottom: i32, color: u32) callconv(.c) void {
+    pub fn drawVertical(buffer: *LinuxOffscreenBuffer, x: i32, top: i32, bottom: i32, color: u32) callconv(.c) void {
         var cursor: [*]u8 = buffer.memory.ptr + @as(usize, @intCast((x * bytes_per_pixel) + (top * buffer.pitch)));
 
         for (@intCast(top)..@intCast(bottom + 1)) |_| {
@@ -1856,8 +1864,8 @@ const AudioOutput = struct {
 
     last_underflow_index: i64 = -1,
 
-    const Sample = v10.AudioBuffer.Sample;
-    const Frame = v10.AudioBuffer.Frame;
+    const Sample = AudioBuffer.Sample;
+    const Frame = AudioBuffer.Frame;
 };
 
 // TODO: signal invalid pa_* variables on failure
@@ -1964,7 +1972,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
 }
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
-fn displayBufferInWindow(buffer: OffscreenBuffer) bool {
+fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
 
     // TODO:Don't remember why this is commented out... maybe causes issues on gnome, and waiting for a free buffer signals draw anyway?
     // if (wld.should_draw) {
@@ -2028,7 +2036,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     wld.should_draw = false;
 }
 
-pub fn beginRecordingInput(shared_state: *v10s.SharedState, io: std.Io, input_recording_index: usize) void {
+pub fn beginRecordingInput(shared_state: *platform.SharedState, io: std.Io, input_recording_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -2043,14 +2051,14 @@ pub fn beginRecordingInput(shared_state: *v10s.SharedState, io: std.Io, input_re
     } else log.warn("Invalid recording buffer: {}", .{input_recording_index});
 }
 
-pub fn endRecordingInput(shared_state: *v10s.SharedState, io: std.Io) void {
+pub fn endRecordingInput(shared_state: *platform.SharedState, io: std.Io) void {
     if (shared_state.input_recording_index != 0) {
         shared_state.recording_handle.close(io);
         shared_state.input_recording_index = 0;
     }
 }
 
-pub fn beginInputPlayback(shared_state: *v10s.SharedState, io: std.Io, input_playing_index: usize) void {
+pub fn beginInputPlayback(shared_state: *platform.SharedState, io: std.Io, input_playing_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_playing_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -2065,18 +2073,18 @@ pub fn beginInputPlayback(shared_state: *v10s.SharedState, io: std.Io, input_pla
     } else log.warn("Invalid replay buffer: {}", .{input_playing_index});
 }
 
-pub fn endInputPlayback(shared_state: *v10s.SharedState, io: std.Io) void {
+pub fn endInputPlayback(shared_state: *platform.SharedState, io: std.Io) void {
     if (shared_state.input_playing_index != 0) {
         shared_state.playback_handle.close(io);
         shared_state.input_playing_index = 0;
     }
 }
 
-pub fn recordInput(shared_state: *v10s.SharedState, io: std.Io, new_input: *v10.Input) void {
+pub fn recordInput(shared_state: *platform.SharedState, io: std.Io, new_input: *Input) void {
     shared_state.recording_handle.writeStreamingAll(io, @ptrCast(new_input)) catch @panic("Input recording write failed");
 }
 
-pub fn playbackInput(shared_state: *v10s.SharedState, io: std.Io, new_input: *v10.Input) void {
+pub fn playbackInput(shared_state: *platform.SharedState, io: std.Io, new_input: *Input) void {
     const bytes_read = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(new_input))}) catch |e| switch (e) {
         error.EndOfStream => 0,
         else => @panic("Input playback read failed"),

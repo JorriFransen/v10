@@ -8,14 +8,22 @@ const dsound = @import("win32/direct_sound.zig");
 const x86_64 = @import("x86_64.zig");
 const builtin = @import("builtin");
 
-const v10 = @import("v10.zig");
-const v10s = @import("v10_shared.zig");
+const platform = @import("v10_platform.zig");
 
 const assert = std.debug.assert;
 
+const GameCode = platform.GameCode;
+const Memory = platform.Memory;
+const OffscreenBuffer = platform.OffscreenBuffer;
+const Input = platform.Input;
+const ControllerInput = platform.ControllerInput;
+const ButtonState = platform.ButtonState;
+const ThreadContext = platform.ThreadContext;
+const AudioBuffer = platform.AudioBuffer;
+
 var global_running = false;
 var global_pause = false;
-var global_back_buffer: OffscreenBuffer = undefined;
+var global_back_buffer: Win32OffscreenBuffer = undefined;
 var global_perf_count_frequency: u64 = undefined;
 
 inline fn getWallClock() win32.LARGE_INTEGER {
@@ -29,7 +37,7 @@ inline fn getSecondsElapsed(start: win32.LARGE_INTEGER, end: win32.LARGE_INTEGER
     return diff / @as(f32, @floatFromInt(global_perf_count_frequency));
 }
 
-pub const OffscreenBuffer = struct {
+pub const Win32OffscreenBuffer = struct {
     memory: []u8,
     width: i32,
     height: i32,
@@ -52,8 +60,8 @@ pub const AudioOutput = struct {
     running_frame_index: u32,
     safety_frame_bytes: u32,
 
-    const Sample = v10.AudioBuffer.Sample;
-    const Frame = v10.AudioBuffer.Frame;
+    const Sample = AudioBuffer.Sample;
+    const Frame = AudioBuffer.Frame;
 };
 
 fn clearAudioBuffer(audio_output: *AudioOutput) void {
@@ -87,7 +95,7 @@ fn clearAudioBuffer(audio_output: *AudioOutput) void {
     };
 }
 
-fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *v10.AudioBuffer) void {
+fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write: u32, source_buffer: *AudioBuffer) void {
     var region1_ptr: *anyopaque = undefined;
     var region1_bytes: u32 = undefined;
     var region2_ptr: *anyopaque = undefined;
@@ -182,7 +190,7 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn processPendingMessages(shared_state: *v10s.SharedState, keyboard_controller: *v10.ControllerInput) void {
+fn processPendingMessages(shared_state: *platform.SharedState, keyboard_controller: *ControllerInput) void {
     var msg = win32.MSG{};
 
     const buttons = &keyboard_controller.buttons.named;
@@ -260,14 +268,14 @@ fn processPendingMessages(shared_state: *v10s.SharedState, keyboard_controller: 
     }
 }
 
-fn processKeyboardMessage(new_state: *v10.ButtonState, ended_down: bool) void {
+fn processKeyboardMessage(new_state: *ButtonState, ended_down: bool) void {
     if (new_state.ended_down != ended_down) {
         new_state.ended_down = ended_down;
         new_state.half_transition_count += 1;
     }
 }
 
-fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const v10.ButtonState, comptime button: GamepadButton, new_state: *v10.ButtonState) void {
+fn processXInputDigitalButton(xinput_button_state: xinput.GamepadButtonBits, old_state: *const ButtonState, comptime button: GamepadButton, new_state: *ButtonState) void {
     new_state.ended_down = @field(xinput_button_state, @tagName(button));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 1 else 0;
 }
@@ -355,7 +363,7 @@ pub fn windowsEntry(
     io: std.Io,
     instance: win32.HINSTANCE,
 ) !c_int {
-    var shared_state: v10s.SharedState = .{};
+    var shared_state: platform.SharedState = .{};
 
     _ = win32.GetModuleFileNameA(null, @ptrCast(&shared_state.exe_dir_path_buf), shared_state.exe_dir_path_buf.len);
     const exe_name: [*:0]u8 = @ptrCast(&shared_state.exe_dir_path_buf);
@@ -431,7 +439,7 @@ pub fn windowsEntry(
             const dib_allocated = resizeDibSection(&global_back_buffer, back_buffer_width, back_buffer_height);
 
             const audio_fps = 48000;
-            const audio_buffer_byte_size = audio_fps * @sizeOf(v10.AudioBuffer.Frame);
+            const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
 
             var audio_output: AudioOutput = .{
                 .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size),
@@ -475,7 +483,7 @@ pub fn windowsEntry(
             log.debug("perm:  {*}", .{perm});
             log.debug("trans: {*}", .{trans});
 
-            var game_memory: v10.Memory = .{
+            var game_memory: Memory = .{
                 .initialized = false,
                 .permanent = @as([*]u8, @ptrCast(perm))[0..permanent_storage_size],
                 .transient = @as([*]u8, @ptrCast(trans))[0..transient_storage_size],
@@ -510,7 +518,7 @@ pub fn windowsEntry(
             if (dib_allocated and audio_frames != null and perm != null and trans != null) {
                 xinput.load();
 
-                var input = [_]v10.Input{.{}} ** 2;
+                var input = [_]Input{.{}} ** 2;
                 var new_input = &input[0];
                 var old_input = &input[1];
 
@@ -524,28 +532,28 @@ pub fn windowsEntry(
                 var audio_latency_seconds: f32 = 0;
                 var audio_valid = false;
 
-                var thread_context: v10.ThreadContext = .{ .io = io };
+                var thread_context: ThreadContext = .{ .io = io };
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-                var game_code = v10s.GameCode.load(io, temp_dll_name);
+                var game_code = GameCode.load(io, temp_dll_name);
                 if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
                 var last_cycle_count = x86_64.rdtsc();
 
                 while (global_running) {
-                    const new_dll_write_time = v10s.getLastWriteTime(io, source_dll_name);
+                    const new_dll_write_time = platform.getLastWriteTime(io, source_dll_name);
                     if (new_dll_write_time > game_code.last_write_time) {
                         game_code.unload();
 
                         _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-                        game_code = v10s.GameCode.load(io, temp_dll_name);
+                        game_code = GameCode.load(io, temp_dll_name);
                     }
 
                     new_input.dt = target_seconds_per_frame;
 
                     const keyboard_controller = &new_input.controllers[0];
                     const old_keyboard_controller = &old_input.controllers[0];
-                    keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
+                    keyboard_controller.* = std.mem.zeroes(ControllerInput);
                     for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
                         new_button.ended_down = old_button.ended_down;
                     }
@@ -556,7 +564,7 @@ pub fn windowsEntry(
                     if (options.internal_build) {
                         const mouse = &new_input.debug_mouse;
                         const old_mouse = &old_input.debug_mouse;
-                        mouse.* = std.mem.zeroes(v10.DebugMouseInput);
+                        mouse.* = std.mem.zeroes(platform.DebugMouseInput);
                         for (&mouse.buttons.array, old_mouse.buttons.array) |*new_button, old_button| {
                             new_button.ended_down = old_button.ended_down;
                         }
@@ -677,7 +685,7 @@ pub fn windowsEntry(
                             _ = xinput.XInputSetState(@intCast(x_controller_index), &vibration);
                         }
 
-                        var game_offscreen_buffer: v10.OffscreenBuffer = .{
+                        var game_offscreen_buffer: OffscreenBuffer = .{
                             .memory = global_back_buffer.memory,
                             .width = global_back_buffer.width,
                             .height = global_back_buffer.height,
@@ -739,7 +747,7 @@ pub fn windowsEntry(
 
                             const frames_to_write: u32 = bytes_to_write / @sizeOf(AudioOutput.Frame);
 
-                            var game_sound_output_buffer: v10.AudioBuffer = .{
+                            var game_sound_output_buffer: AudioBuffer = .{
                                 .frames = audio_output.buffer[0..frames_to_write],
                                 .frames_per_second = audio_fps,
                             };
@@ -761,7 +769,7 @@ pub fn windowsEntry(
                                     unwrapped_write_cursor += audio_output.buffer_byte_size;
                                 }
                                 audio_latency_bytes = unwrapped_write_cursor - play_cursor;
-                                audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(v10.AudioBuffer.Frame)) /
+                                audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(AudioBuffer.Frame)) /
                                     @as(f32, @floatFromInt(audio_output.frames_per_second));
 
                                 // log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
@@ -933,7 +941,7 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
     return result;
 }
 
-fn resizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) bool {
+fn resizeDibSection(buffer: *Win32OffscreenBuffer, width: c_int, height: c_int) bool {
     if (buffer.memory.len > 0) {
         _ = win32.VirtualFree(buffer.memory.ptr, 0, win32.MEM_RELEASE);
     }
@@ -963,7 +971,7 @@ fn resizeDibSection(buffer: *OffscreenBuffer, width: c_int, height: c_int) bool 
     return memory != null;
 }
 
-fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: *OffscreenBuffer) void {
+fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, buffer: *Win32OffscreenBuffer) void {
 
     // // When stretching, and the windows is smaller than the buffer, this avoids artifacts
     // // TODO: Only set this after resize?
@@ -984,7 +992,7 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     win32.StretchDIBits(dc, offset_x, offset_y, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
 }
 
-pub fn beginRecordingInput(shared_state: *v10s.SharedState, input_recording_index: usize) void {
+pub fn beginRecordingInput(shared_state: *platform.SharedState, input_recording_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -1000,12 +1008,12 @@ pub fn beginRecordingInput(shared_state: *v10s.SharedState, input_recording_inde
     }
 }
 
-pub fn endRecordingInput(shared_state: *v10s.SharedState) void {
+pub fn endRecordingInput(shared_state: *platform.SharedState) void {
     _ = win32.CloseHandle(shared_state.recording_handle.handle);
     shared_state.input_recording_index = 0;
 }
 
-pub fn beginInputPlayback(shared_state: *v10s.SharedState, input_playing_index: usize) void {
+pub fn beginInputPlayback(shared_state: *platform.SharedState, input_playing_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_playing_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -1021,34 +1029,34 @@ pub fn beginInputPlayback(shared_state: *v10s.SharedState, input_playing_index: 
     }
 }
 
-pub fn endInputPlayback(shared_state: *v10s.SharedState) void {
+pub fn endInputPlayback(shared_state: *platform.SharedState) void {
     _ = win32.CloseHandle(shared_state.playback_handle.handle);
     shared_state.input_playing_index = 0;
 }
 
-pub fn recordInput(shared_state: *v10s.SharedState, input: *v10.Input) void {
+pub fn recordInput(shared_state: *platform.SharedState, input: *Input) void {
     var written: win32.DWORD = undefined;
-    _ = win32.WriteFile(shared_state.recording_handle.handle, input, @sizeOf(v10.Input), &written, null);
-    assert(written == @sizeOf(v10.Input));
+    _ = win32.WriteFile(shared_state.recording_handle.handle, input, @sizeOf(Input), &written, null);
+    assert(written == @sizeOf(Input));
 }
 
-pub fn playbackInput(shared_state: *v10s.SharedState, input: *v10.Input) void {
+pub fn playbackInput(shared_state: *platform.SharedState, input: *Input) void {
     var read: win32.DWORD = 0;
-    if (win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(v10.Input), &read, null) != win32.FALSE) {
+    if (win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null) != win32.FALSE) {
         if (read == 0) {
             const playing_index = shared_state.input_playing_index;
             endInputPlayback(shared_state);
             beginInputPlayback(shared_state, playing_index);
-            _ = win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(v10.Input), &read, null);
-            assert(read == @sizeOf(v10.Input));
+            _ = win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null);
+            assert(read == @sizeOf(Input));
         }
     }
 }
 
 pub const DEBUG = struct {
-    pub fn readEntireFile(thread_context: *v10.ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) v10.DEBUG.ReadFileResult {
+    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) platform.DEBUG.ReadFileResult {
         assert(std.mem.span(path).len == path_len);
-        var result = v10.DEBUG.ReadFileResult{};
+        var result = platform.DEBUG.ReadFileResult{};
 
         const handle = win32.CreateFileA(path, win32.GENERIC_READ, win32.FILE_SHARE_READ, null, win32.OPEN_EXISTING, 0, null);
 
@@ -1080,7 +1088,7 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn writeEntireFile(thread_context: *v10.ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool {
         _ = thread_context;
         assert(std.mem.span(path).len == path_len);
 
@@ -1107,7 +1115,7 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn freeFileMemory(thread_context: *v10.ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void {
+    pub fn freeFileMemory(thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void {
         _ = thread_context;
         if (memory) |m| {
             assert(size > 0);
@@ -1115,7 +1123,7 @@ pub const DEBUG = struct {
         }
     }
 
-    pub fn drawVertical(buffer: *OffscreenBuffer, x: i32, c_top: i32, c_bottom: i32, color: u32) callconv(.c) void {
+    pub fn drawVertical(buffer: *Win32OffscreenBuffer, x: i32, c_top: i32, c_bottom: i32, color: u32) callconv(.c) void {
         const top = if (c_top <= 0) 0 else c_top;
         const bottom = if (c_bottom > buffer.height) buffer.height else c_bottom;
 
@@ -1130,7 +1138,7 @@ pub const DEBUG = struct {
         }
     }
 
-    pub fn drawAudioBufferMarker(buffer: *OffscreenBuffer, audio_output: *AudioOutput, c: f32, pad_x: i32, top: i32, bottom: i32, value: win32.DWORD, color: u32) callconv(.c) void {
+    pub fn drawAudioBufferMarker(buffer: *Win32OffscreenBuffer, audio_output: *AudioOutput, c: f32, pad_x: i32, top: i32, bottom: i32, value: win32.DWORD, color: u32) callconv(.c) void {
         _ = audio_output;
         const real_x: f32 = c * @as(f32, @floatFromInt(value));
         const x = pad_x + @as(i32, @intFromFloat(real_x));
