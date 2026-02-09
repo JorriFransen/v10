@@ -528,6 +528,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             game_code = v10s.GameCode.load(io, game_lib_name);
         }
 
+        wld.new_input.dt = target_seconds_per_frame;
+
         const keyboard_controller = &wld.new_input.controllers[0];
         const old_keyboard_controller = &wld.old_input.controllers[0];
         keyboard_controller.* = std.mem.zeroes(v10.ControllerInput);
@@ -1625,12 +1627,16 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
             if (key == .P) {
                 pause = !pause;
             } else if (key == .L) {
-                if (wld.shared_state.input_recording_index == 0) {
-                    endInputPlayback(wld.shared_state, wld.io);
+                if (wld.shared_state.input_recording_index == 0 and
+                    wld.shared_state.input_playing_index == 0)
+                {
                     beginRecordingInput(wld.shared_state, wld.io, 1);
-                } else {
+                } else if (wld.shared_state.input_recording_index == 1) {
                     endRecordingInput(wld.shared_state, wld.io);
                     beginInputPlayback(wld.shared_state, wld.io, 1);
+                } else {
+                    endInputPlayback(wld.shared_state, wld.io);
+                    // TODO: Reset input, keys may be stuck in down state
                 }
             }
         }

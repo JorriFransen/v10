@@ -127,7 +127,10 @@ pub const DEBUG = if (options.internal_build) struct {
     writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool = undefined,
 } else struct {};
 
-pub const GameState = struct {};
+pub const GameState = struct {
+    player_x: f32,
+    player_y: f32,
+};
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
     _ = thread_context;
@@ -139,30 +142,81 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
-    var result = true;
-
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
     if (!game_memory.initialized) {
-        game_state.* = .{};
+        game_state.* = .{
+            .player_x = 100,
+            .player_y = 100,
+        };
         game_memory.initialized = true;
     }
+
+    var keep_running = true;
 
     for (input.controllers) |controller| if (controller.is_connected) {
         const buttons = &controller.buttons.named;
 
+        var d_player_x: f32 = 0;
+        var d_player_y: f32 = 0;
+
+        if (controller.is_analog) {
+            d_player_x = controller.stick_average_x;
+            d_player_y = controller.stick_average_y;
+        } else {
+            if (buttons.move_left.ended_down) d_player_x -= 1;
+            if (buttons.move_right.ended_down) d_player_x += 1;
+            if (buttons.move_up.ended_down) d_player_y -= 1;
+            if (buttons.move_down.ended_down) d_player_y += 1;
+        }
+
+        const player_speed = 64;
+
+        game_state.player_x += d_player_x * input.dt * player_speed;
+        game_state.player_y += d_player_y * input.dt * player_speed;
+
         if (buttons.start.ended_down) {
-            result = false;
+            keep_running = false;
         }
     };
 
-    @memset(offscreen_buffer.memory, 128);
-    drawRectangle(offscreen_buffer, 100, 100, 110, 110, 0xFFFFFFFF);
+    const tile_map: [9][17]u32 = .{
+        .{ 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1 },
+        .{ 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1 },
+        .{ 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1 },
+        .{ 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 },
+        .{ 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+        .{ 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1 },
+        .{ 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 },
+        .{ 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1 },
+        .{ 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1 },
+    };
 
-    const mpx: f32 = @floatFromInt(input.debug_mouse.x);
-    const mpy: f32 = @floatFromInt(input.debug_mouse.y);
-    drawRectangle(offscreen_buffer, mpx - 50, mpy - 50, mpx + 50, mpy + 50, 0xffff0000);
+    @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory))), 0xff00ff);
+    // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
-    return result;
+    const tile_width = 60;
+    const tile_height = tile_width;
+    const tilemap_x_offset = -30;
+    const tilemap_y_offset = 0;
+
+    for (&tile_map, 0..) |row, iy| {
+        const y = tilemap_y_offset + @as(f32, @floatFromInt(iy)) * tile_height;
+        for (row, 0..) |tile, ix| {
+            const x = tilemap_x_offset + @as(f32, @floatFromInt(ix)) * tile_width;
+            const grayscale: f32 = if (tile == 1) 1 else 0.5;
+            drawRectangle(offscreen_buffer, x, y, x + tile_width, y + tile_height, grayscale, grayscale, grayscale);
+        }
+    }
+
+    const player_width = tile_width * 0.75;
+    const player_height = tile_height;
+    const player_left: f32 = game_state.player_x - (player_width * 0.5);
+    const player_top: f32 = game_state.player_y - player_height;
+    const player_right = player_left + player_width;
+    const player_bottom = player_top + player_height;
+    drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
+
+    return keep_running;
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
@@ -191,7 +245,14 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
     }
 }
 
-fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f32, max_y: f32, color: u32) void {
+pub inline fn rgbToU32(r: f32, g: f32, b: f32) u32 {
+    return 0 |
+        @as(u24, @intFromFloat(r * 255)) << 16 |
+        @as(u16, @intFromFloat(g * 255)) << 8 |
+        @as(u8, @intFromFloat(b * 255));
+}
+
+fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f32, max_y: f32, r: f32, g: f32, b: f32) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
@@ -206,6 +267,8 @@ fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f32, m
     const maxy: usize = @intCast(@min(@max(maxy_, 0), buffer.height));
 
     assert(bpp == @sizeOf(u32));
+
+    const color = rgbToU32(r, g, b);
 
     var row: [*]u8 = buffer.memory.ptr + (minx * bpp) + (miny * pitch);
     var y: usize = @intCast(miny);

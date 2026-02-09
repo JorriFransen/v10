@@ -229,16 +229,18 @@ fn processPendingMessages(shared_state: *v10s.SharedState, keyboard_controller: 
                         processKeyboardMessage(&buttons.back, is_down);
                     }
 
-                    if (options.internal_build) {
-                        if (vk_code == win32.VK_P and is_down) {
+                    if (options.internal_build and is_down) {
+                        if (vk_code == win32.VK_P) {
                             global_pause = !global_pause;
-                        } else if (vk_code == win32.VK_L and is_down) {
-                            if (shared_state.input_recording_index == 0) {
-                                endInputPlayback(shared_state);
+                        } else if (vk_code == win32.VK_L) {
+                            if (shared_state.input_recording_index == 0 and shared_state.input_playing_index == 0) {
                                 beginRecordingInput(shared_state, 1);
-                            } else {
+                            } else if (shared_state.input_recording_index == 1) {
                                 endRecordingInput(shared_state);
                                 beginInputPlayback(shared_state, 1);
+                            } else {
+                                endInputPlayback(shared_state);
+                                // TODO: Reset input, keys may be stuck in down state
                             }
                         }
                     }
