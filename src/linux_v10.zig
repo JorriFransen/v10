@@ -260,7 +260,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const r = wld.pending_resize.?;
             try resize(r.width, r.height);
             const buffer = aquireFreeBuffer().?;
-            displayBufferInWindow(buffer);
+            displayWaylandBufferInWindow(buffer);
         }
 
         xdg_decor_toplevel = .{
@@ -315,7 +315,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 try resize(r.width, r.height);
             }
             const buffer = aquireFreeBuffer().?;
-            displayBufferInWindow(buffer);
+            displayWaylandBufferInWindow(buffer);
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         } else {
@@ -344,8 +344,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.toplevel.set_title("v10");
 
     udev.load();
-
-    // log.debug("wl_output.refresh: {}", .{wld});
 
     // At this point this should be set by the callback (handleWlOutputMode), if not set a default value
     if (wld.monitor_refresh_hz == 0) {
@@ -798,51 +796,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
 
-            var wayland_blit = false;
-
-            // TODO:Don't remember why this is commented out... maybe causes issues on gnome, and waiting for a free buffer signals draw anyway?
-            // if (wld.should_draw) {
-
-            if (aquireFreeBuffer()) |wl_buffer| {
-
-                // Copy global_back_buffer into wayland buffer
-                const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
-                const wl_buffer_pitch: usize = @intCast(wl_buffer.width * bytes_per_pixel);
-                const wl_buffer_mem: []u8 = wl_buffer_ptr[0 .. wl_buffer_pitch * @as(usize, @intCast(wl_buffer.height))];
-
-                if (options.internal_build) {
-                    @memset(wl_buffer_mem, 0);
-                }
-
-                const line_length: usize = @intCast(@min(global_back_buffer.width, wl_buffer.width) * bytes_per_pixel);
-                const row_count: usize = @intCast(@min(global_back_buffer.height, wl_buffer.height));
-
-                // NOTE: This could be a single memcopy if:
-                //  - We reallocate the global_back_buffer in the same way as the wayland buffers (same size).
-                //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
-                //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
-                //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
-                //
-                //  I might actually prefer that, but for now this matches hh on win32.
-                for (0..row_count) |y| {
-                    const dest_offset = y * wl_buffer_pitch;
-                    const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
-
-                    const source_offset = y * @as(usize, @intCast(global_back_buffer.pitch));
-                    const source_line = global_back_buffer.memory[source_offset .. source_offset + line_length];
-
-                    @memcpy(dest_line, source_line);
-                }
-
-                displayBufferInWindow(wl_buffer);
-                wayland_blit = true;
-            } else {
-                _ = wl.display_roundtrip(display);
-                unreachable; // might want to loop util a buffer is aquired
-                // continue;
-            }
-
-            // }
+            const wayland_blit = displayBufferInWindow(global_back_buffer);
 
             _ = wl.display_flush(display);
 
@@ -865,7 +819,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             //     work_seconds_elapsed * std.time.ms_per_s,
             //     wayland_blit,
             // });
-            _ = .{ ms_per_frame, fps, mcpf };
+            _ = .{ ms_per_frame, fps, mcpf, wayland_blit };
         }
     }
 }
@@ -2009,9 +1963,63 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
     log.debug("Pulse stream ready", .{});
 }
 
-fn displayBufferInWindow(buffer: *WlBuffer) void {
+/// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
+fn displayBufferInWindow(buffer: OffscreenBuffer) bool {
+
+    // TODO:Don't remember why this is commented out... maybe causes issues on gnome, and waiting for a free buffer signals draw anyway?
+    // if (wld.should_draw) {
+
+    if (aquireFreeBuffer()) |wl_buffer| {
+        const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
+        const wl_buffer_pitch: usize = @intCast(wl_buffer.width * bytes_per_pixel);
+        const wl_buffer_mem: []u8 = wl_buffer_ptr[0 .. wl_buffer_pitch * @as(usize, @intCast(wl_buffer.height))];
+
+        if (options.internal_build) {
+            @memset(@as([]u32, @ptrCast(@alignCast(wl_buffer_mem))), 0);
+        }
+
+        const x_offset = 10;
+        const y_offset = 10;
+
+        const line_length: usize = @intCast(@min(buffer.width, wl_buffer.width - x_offset) * bytes_per_pixel);
+        const row_count: usize = @intCast(@min(buffer.height, wl_buffer.height - y_offset));
+
+        // NOTE: This could be a single memcopy if:
+        //  - We reallocate the offscreen_buffer in the same way as the wayland buffers (same size).
+        //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
+        //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
+        //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
+        //
+        //  I might actually prefer that, but for now this matches hh on win32.
+        for (y_offset..y_offset + row_count, 0..row_count) |dst_y, src_y| {
+            const dest_offset = (dst_y * wl_buffer_pitch) + (x_offset * bytes_per_pixel);
+            const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
+
+            const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
+            const source_line = buffer.memory[source_offset .. source_offset + line_length];
+
+            @memcpy(dest_line, source_line);
+        }
+
+        displayWaylandBufferInWindow(wl_buffer);
+        return true;
+    } else {
+        _ = wl.display_roundtrip(wld.display);
+        unreachable; // might want to loop util a buffer is aquired
+        // continue;
+        // return false;
+    }
+    // }
+}
+
+fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.attach(buffer.handle, 0, 0);
-    wld.surface.damage(0, 0, @min(global_back_buffer.width, buffer.width), @min(global_back_buffer.height, buffer.height));
+
+    if (options.internal_build) {
+        wld.surface.damage(0, 0, buffer.width, buffer.height);
+    } else {
+        wld.surface.damage(0, 0, @min(global_back_buffer.width, buffer.width), @min(global_back_buffer.height, buffer.height));
+    }
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.?.add_listener(&wl_callback_listener, &wld);

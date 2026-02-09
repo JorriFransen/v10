@@ -973,9 +973,15 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     //     _ = win32.SetStretchBltMode(dc, 0);
     // }
 
-    _ = .{ window_width, window_height };
+    const offset_x = 10;
+    const offset_y = 10;
 
-    win32.StretchDIBits(dc, 0, 0, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+    _ = win32.PatBlt(dc, 0, 0, window_width, offset_y, win32.BLACKNESS);
+    _ = win32.PatBlt(dc, 0, offset_y + buffer.height, window_width, window_height - (offset_y + buffer.height), win32.BLACKNESS);
+    _ = win32.PatBlt(dc, 0, 0, offset_x, window_height, win32.BLACKNESS);
+    _ = win32.PatBlt(dc, offset_x + buffer.width, 0, window_width - (offset_x + buffer.width), window_height, win32.BLACKNESS);
+
+    win32.StretchDIBits(dc, offset_x, offset_y, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
 }
 
 pub fn beginRecordingInput(shared_state: *v10s.SharedState, input_recording_index: usize) void {
