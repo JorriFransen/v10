@@ -15,8 +15,8 @@ const AudioBuffer = platform.AudioBuffer;
 const os = @import("builtin").os.tag;
 
 pub const GameState = struct {
-    player_tile_map_x: usize,
-    player_tile_map_y: usize,
+    player_tile_map_x: u27,
+    player_tile_map_y: u27,
 
     player_x: f32,
     player_y: f32,
@@ -161,10 +161,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         if (is_valid_tile) {
             const new_pos = world.getCanonicalPosition(new_player_pos);
 
-            game_state.player_tile_map_x = new_pos.tile_map_x;
-            game_state.player_tile_map_y = new_pos.tile_map_y;
-            game_state.player_x = new_pos.tile_relative_x + (@as(f32, @floatFromInt(new_pos.tile_x * world.tile_size_in_pixels)));
-            game_state.player_y = new_pos.tile_relative_y + (@as(f32, @floatFromInt(new_pos.tile_y * world.tile_size_in_pixels)));
+            game_state.player_tile_map_x = new_pos.tile_x.map;
+            game_state.player_tile_map_y = new_pos.tile_y.map;
+            game_state.player_x = new_pos.tile_relative_x + (@as(f32, @floatFromInt(new_pos.tile_x.tile * world.tile_size_in_pixels)));
+            game_state.player_y = new_pos.tile_relative_y + (@as(f32, @floatFromInt(new_pos.tile_y.tile * world.tile_size_in_pixels)));
         }
     };
 
@@ -175,7 +175,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const y = world.tile_map_y_offset + @as(f32, @floatFromInt(iy * world.tile_size_in_pixels));
         for (0..world.tile_count_x) |ix| {
             const x = world.tile_map_x_offset + @as(f32, @floatFromInt(ix * world.tile_size_in_pixels));
-            const tile = tile_map.getTileUnchecked(&world, ix, iy);
+            const tile = tile_map.getTileUnchecked(&world, @intCast(ix), @intCast(iy));
             const grayscale: f32 = if (tile == 1) 1 else 0.5;
             drawRectangle(
                 offscreen_buffer,
@@ -225,36 +225,43 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
     }
 }
 
-pub const CanonicalPosition = struct {
-    tile_map_x: usize,
-    tile_map_y: usize,
+pub const PackedTilePosition = packed struct(u32) {
+    tile: u5,
+    map: u27,
+};
 
-    tile_x: usize,
-    tile_y: usize,
+pub const CanonicalPosition = struct {
+    tile_x: PackedTilePosition,
+    tile_y: PackedTilePosition,
 
     tile_relative_x: f32,
     tile_relative_y: f32,
 };
 
 pub const RawPosition = struct {
-    tile_map_x: usize,
-    tile_map_y: usize,
+    tile_map_x: u27,
+    tile_map_y: u27,
 
     map_relative_x: f32,
     map_relative_y: f32,
 
-    pub inline fn init(tile_map_x: usize, tile_map_y: usize, map_relative_x: f32, map_relative_y: f32) RawPosition {
-        return .{ .tile_map_x = tile_map_x, .tile_map_y = tile_map_y, .map_relative_x = map_relative_x, .map_relative_y = map_relative_y };
+    pub inline fn init(tile_map_x: u27, tile_map_y: u27, map_relative_x: f32, map_relative_y: f32) RawPosition {
+        return .{
+            .tile_map_x = tile_map_x,
+            .tile_map_y = tile_map_y,
+            .map_relative_x = map_relative_x,
+            .map_relative_y = map_relative_y,
+        };
     }
 };
 
 pub const TileMap = struct {
     tiles: []const u32,
 
-    pub inline fn getTileUnchecked(this: *const TileMap, world: *const World, x: usize, y: usize) u32 {
+    pub inline fn getTileUnchecked(this: *const TileMap, world: *const World, x: u5, y: u5) u32 {
         assert(x < world.tile_count_x);
         assert(y < world.tile_count_y);
-        return this.tiles[x + (y * world.tile_count_x)];
+        return this.tiles[x + (y * @as(usize, world.tile_count_x))];
     }
 };
 
@@ -262,13 +269,13 @@ pub const World = struct {
     tile_size_in_meters: f32,
     tile_size_in_pixels: usize,
 
-    tile_map_count_x: usize,
-    tile_map_count_y: usize,
+    tile_map_count_x: u27,
+    tile_map_count_y: u27,
 
     /// per tile map
-    tile_count_x: usize,
+    tile_count_x: u5,
     /// per tile map
-    tile_count_y: usize,
+    tile_count_y: u5,
 
     /// drawing offset
     tile_map_x_offset: f32,
@@ -277,9 +284,9 @@ pub const World = struct {
 
     tile_maps: []TileMap,
 
-    pub inline fn getTileMap(this: *const World, x: usize, y: usize) ?*TileMap {
+    pub inline fn getTileMap(this: *const World, x: u27, y: u27) ?*TileMap {
         if (x < this.tile_map_count_x and y < this.tile_map_count_y) {
-            return &this.tile_maps[x + (y * this.tile_map_count_y)];
+            return &this.tile_maps[x + (y * @as(usize, this.tile_map_count_y))];
         }
 
         return null;
@@ -287,18 +294,16 @@ pub const World = struct {
 
     pub fn isEmptyPoint(world: *const World, raw_pos: RawPosition) bool {
         const pos = world.getCanonicalPosition(raw_pos);
-        const tile_map_opt = world.getTileMap(pos.tile_map_x, pos.tile_map_y);
-        return world.isEmptyTile(tile_map_opt, pos.tile_x, pos.tile_y);
+        const tile_map_opt = world.getTileMap(pos.tile_x.map, pos.tile_y.map);
+        return world.isEmptyTile(tile_map_opt, pos.tile_x.tile, pos.tile_y.tile);
     }
 
-    pub fn isEmptyTile(world: *const World, tile_map_opt: ?*const TileMap, tile_x: usize, tile_y: usize) bool {
+    pub fn isEmptyTile(world: *const World, tile_map_opt: ?*const TileMap, tile_x: u5, tile_y: u5) bool {
         var empty = false;
 
         if (tile_map_opt) |tile_map| {
             if (tile_x < world.tile_count_x and tile_y < world.tile_count_y) {
-                const tx: usize = @intCast(tile_x);
-                const ty: usize = @intCast(tile_y);
-                const tile = tile_map.getTileUnchecked(world, tx, ty);
+                const tile = tile_map.getTileUnchecked(world, tile_x, tile_y);
                 empty = tile == 0;
             }
         }
@@ -308,10 +313,8 @@ pub const World = struct {
 
     pub inline fn getCanonicalPosition(world: *const World, raw: RawPosition) CanonicalPosition {
         var result: CanonicalPosition = .{
-            .tile_map_x = raw.tile_map_x,
-            .tile_map_y = raw.tile_map_y,
-            .tile_x = undefined,
-            .tile_y = undefined,
+            .tile_x = .{ .tile = undefined, .map = @intCast(raw.tile_map_x) },
+            .tile_y = .{ .tile = undefined, .map = @intCast(raw.tile_map_y) },
             .tile_relative_x = undefined,
             .tile_relative_y = undefined,
         };
@@ -327,22 +330,22 @@ pub const World = struct {
 
         if (test_tile_x < 0) {
             test_tile_x += @intCast(world.tile_count_x);
-            result.tile_map_x -= 1;
+            result.tile_x.map -= 1;
         } else if (test_tile_x >= world.tile_count_x) {
             test_tile_x -= @intCast(world.tile_count_x);
-            result.tile_map_x += 1;
+            result.tile_x.map += 1;
         }
 
         if (test_tile_y < 0) {
             test_tile_y += @intCast(world.tile_count_y);
-            result.tile_map_y -= 1;
+            result.tile_y.map -= 1;
         } else if (test_tile_y >= world.tile_count_y) {
             test_tile_y -= @intCast(world.tile_count_y);
-            result.tile_map_y += 1;
+            result.tile_y.map += 1;
         }
 
-        result.tile_x = @intCast(test_tile_x);
-        result.tile_y = @intCast(test_tile_y);
+        result.tile_x.tile = @intCast(test_tile_x);
+        result.tile_y.tile = @intCast(test_tile_y);
 
         return result;
     }
