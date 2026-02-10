@@ -148,9 +148,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         const new_player_pos: RawPosition = .init(game_state.player_tile_map_x, game_state.player_tile_map_y, new_player_x, new_player_y);
         var bottom_left_pos = new_player_pos;
-        bottom_left_pos.x = bottom_left_x;
+        bottom_left_pos.map_relative_x = bottom_left_x;
         var bottom_right_pos = new_player_pos;
-        bottom_right_pos.x = bottom_right_x;
+        bottom_right_pos.map_relative_x = bottom_right_x;
 
         const is_valid_tile =
             world.isEmptyPoint(new_player_pos) and
@@ -162,8 +162,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
             game_state.player_tile_map_x = new_pos.tile_map_x;
             game_state.player_tile_map_y = new_pos.tile_map_y;
-            game_state.player_x = new_pos.x + (@as(f32, @floatFromInt(new_pos.tile_x)) * world.tile_width);
-            game_state.player_y = new_pos.y + (@as(f32, @floatFromInt(new_pos.tile_y)) * world.tile_height);
+            game_state.player_x = new_pos.tile_relative_x + (@as(f32, @floatFromInt(new_pos.tile_x)) * world.tile_width);
+            game_state.player_y = new_pos.tile_relative_y + (@as(f32, @floatFromInt(new_pos.tile_y)) * world.tile_height);
         }
     };
 
@@ -222,23 +222,19 @@ pub const CanonicalPosition = struct {
     tile_x: usize,
     tile_y: usize,
 
-    /// tile relative
-    x: f32,
-    /// tile relative
-    y: f32,
+    tile_relative_x: f32,
+    tile_relative_y: f32,
 };
 
 pub const RawPosition = struct {
     tile_map_x: usize,
     tile_map_y: usize,
 
-    /// tile-map relative
-    x: f32,
-    /// tile-map relative
-    y: f32,
+    map_relative_x: f32,
+    map_relative_y: f32,
 
-    pub inline fn init(tile_map_x: usize, tile_map_y: usize, x: f32, y: f32) RawPosition {
-        return .{ .tile_map_x = tile_map_x, .tile_map_y = tile_map_y, .x = x, .y = y };
+    pub inline fn init(tile_map_x: usize, tile_map_y: usize, map_relative_x: f32, map_relative_y: f32) RawPosition {
+        return .{ .tile_map_x = tile_map_x, .tile_map_y = tile_map_y, .map_relative_x = map_relative_x, .map_relative_y = map_relative_y };
     }
 };
 
@@ -304,18 +300,18 @@ pub const World = struct {
             .tile_map_y = raw.tile_map_y,
             .tile_x = undefined,
             .tile_y = undefined,
-            .x = undefined,
-            .y = undefined,
+            .tile_relative_x = undefined,
+            .tile_relative_y = undefined,
         };
 
-        const x = raw.x - world.x_offset;
-        const y = raw.y - world.y_offset;
+        const x = raw.map_relative_x - world.x_offset;
+        const y = raw.map_relative_y - world.y_offset;
 
         var test_tile_x: isize = @intFromFloat(@floor(x / world.tile_width));
         var test_tile_y: isize = @intFromFloat(@floor(y / world.tile_height));
 
-        result.x = raw.x - (@as(f32, @floatFromInt(test_tile_x)) * world.tile_width);
-        result.y = raw.y - (@as(f32, @floatFromInt(test_tile_y)) * world.tile_height);
+        result.tile_relative_x = raw.map_relative_x - (@as(f32, @floatFromInt(test_tile_x)) * world.tile_width);
+        result.tile_relative_y = raw.map_relative_y - (@as(f32, @floatFromInt(test_tile_y)) * world.tile_height);
 
         if (test_tile_x < 0) {
             test_tile_x += @intCast(world.tile_count_x);
