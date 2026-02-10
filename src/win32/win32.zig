@@ -25,9 +25,9 @@ pub const HCURSOR = zig_win32.HCURSOR;
 pub const HBRUSH = zig_win32.HBRUSH;
 pub const HWND = zig_win32.HWND;
 pub const HMENU = zig_win32.HMENU;
-pub const WPARAM = zig_win32.WPARAM;
+pub const WPARAM = usize;
 pub const LPARAM = zig_win32.LPARAM;
-pub const LRESULT = zig_win32.LRESULT;
+pub const LRESULT = zig_win32.LONG_PTR;
 pub const ATOM = zig_win32.ATOM;
 pub const BOOL = zig_win32.BOOL;
 pub const WORD = zig_win32.WORD;
@@ -45,9 +45,6 @@ pub const PVOID = zig_win32.PVOID;
 pub const SIZE_T = zig_win32.SIZE_T;
 pub const LPVOID = zig_win32.LPVOID;
 pub const LPCVOID = zig_win32.LPCVOID;
-pub const POINT = zig_win32.POINT;
-pub const RECT = zig_win32.RECT;
-pub const LPRECT = *RECT;
 pub const FARPROC = *anyopaque;
 
 pub const TRUE = 1;
@@ -755,6 +752,18 @@ pub const BLTALIGNMENT = 119;
 pub const SHADEBLENDCAPS = 120;
 pub const COLORMGMTCAPS = 121;
 
+pub const RECT = extern struct {
+    left: LONG,
+    top: LONG,
+    right: LONG,
+    bottom: LONG,
+};
+
+pub const POINT = extern struct {
+    x: LONG,
+    y: LONG,
+};
+
 pub const GUID = extern struct {
     data1: u32 = 0,
     data2: u16 = 0,
@@ -1018,7 +1027,7 @@ pub extern "user32" fn PostQuitMessage(exit_code: c_int) callconv(.winapi) void;
 
 pub extern "user32" fn BeginPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) HDC;
 pub extern "user32" fn EndPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) BOOL;
-pub extern "user32" fn GetClientRect(hwnd: HWND, rect: LPRECT) callconv(.winapi) BOOL;
+pub extern "user32" fn GetClientRect(hwnd: HWND, rect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetCursorPos(point: *POINT) callconv(.winapi) BOOL;
 pub extern "user32" fn ScreenToClient(hwnd: HWND, point: *POINT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetKeyState(key: c_int) callconv(.winapi) KeyState;
