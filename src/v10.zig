@@ -14,11 +14,11 @@ const AudioBuffer = platform.AudioBuffer;
 const os = @import("builtin").os.tag;
 
 pub const GameState = struct {
+    player_tile_map_x: usize,
+    player_tile_map_y: usize,
+
     player_x: f32,
     player_y: f32,
-
-    tile_map_x: usize,
-    tile_map_y: usize,
 };
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
@@ -32,11 +32,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
     var keep_running = true;
+    _ = &keep_running;
 
     const tile_size = 60;
-    const tile_map_count_x = 17;
-    const tile_map_count_y = 9;
-    const tile_map_tiles_0_0: [tile_map_count_y * tile_map_count_x]u32 = .{
+    const tile_count_x = 17;
+    const tile_count_y = 9;
+    const tile_map_tiles_0_0: [tile_count_y * tile_count_x]u32 = .{
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1,
         1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1,
@@ -47,18 +48,18 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1,
         1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
     };
-    const tile_map_tiles_0_1: [tile_map_count_y * tile_map_count_x]u32 = .{
+    const tile_map_tiles_0_1: [tile_count_y * tile_count_x]u32 = .{
         1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     };
-    const tile_map_tiles_1_0: [tile_map_count_y * tile_map_count_x]u32 = .{
+    const tile_map_tiles_1_0: [tile_count_y * tile_count_x]u32 = .{
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1,
         1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1,
@@ -69,12 +70,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1,
         1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
     };
-    const tile_map_tiles_1_1: [tile_map_count_y * tile_map_count_x]u32 = .{
+    const tile_map_tiles_1_1: [tile_count_y * tile_count_x]u32 = .{
         1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
@@ -82,52 +83,45 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     };
 
     var tile_maps: [2][2]TileMap = undefined;
-    tile_maps[0][0] = .{
-        .count_x = tile_map_count_x,
-        .count_y = tile_map_count_y,
-        .tile_width = tile_size,
-        .tile_height = tile_size,
-        .x_offset = -(tile_size / 2),
-        .y_offset = 0,
-        .tiles = &tile_map_tiles_0_0,
-    };
-
-    tile_maps[0][1] = tile_maps[0][0];
+    tile_maps[0][0].tiles = &tile_map_tiles_0_0;
     tile_maps[0][1].tiles = &tile_map_tiles_1_0;
-
-    tile_maps[1][0] = tile_maps[0][0];
     tile_maps[1][0].tiles = &tile_map_tiles_0_1;
-
-    tile_maps[1][1] = tile_maps[0][0];
     tile_maps[1][1].tiles = &tile_map_tiles_1_1;
-
-    var tile_map: *TileMap = &tile_maps[0][0];
-    const world: World = .{
-        .count_x = tile_maps.len,
-        .count_y = tile_maps[0].len,
-        .tile_maps = @ptrCast(&tile_maps),
-    };
-
-    const player_width = tile_map.tile_width * 0.75;
-    const player_height = tile_map.tile_height;
 
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
     if (!game_memory.initialized) {
         game_state.* = .{
+            .player_tile_map_x = 0,
+            .player_tile_map_y = 0,
+
             .player_x = 150,
             .player_y = 150,
-
-            .tile_map_x = 0,
-            .tile_map_y = 0,
         };
         game_memory.initialized = true;
     }
 
+    const world: World = .{
+        .tile_map_count_x = tile_maps.len,
+        .tile_map_count_y = tile_maps[0].len,
+        .tile_count_x = tile_count_x,
+        .tile_count_y = tile_count_y,
+        .tile_width = tile_size,
+        .tile_height = tile_size,
+        .x_offset = -(tile_size / 2),
+        .y_offset = 0,
+        .tile_maps = @ptrCast(&tile_maps),
+    };
+
+    var tile_map: *TileMap = world.getTileMap(game_state.player_tile_map_x, game_state.player_tile_map_y).?;
+
+    const player_width = world.tile_width * 0.75;
+    const player_height = world.tile_height;
+
     for (input.controllers) |controller| if (controller.is_connected) {
         const buttons = &controller.buttons.named;
-        if (buttons.start.ended_down) {
-            keep_running = false;
-        }
+        // if (buttons.start.ended_down) {
+        //     keep_running = false;
+        // }
 
         var d_player_x: f32 = 0;
         var d_player_y: f32 = 0;
@@ -152,26 +146,37 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const bottom_left_x = new_player_x - (player_width / 2.0);
         const bottom_right_x = new_player_x + (player_width / 2.0);
 
+        const new_player_pos: RawPosition = .init(game_state.player_tile_map_x, game_state.player_tile_map_y, new_player_x, new_player_y);
+        var bottom_left_pos = new_player_pos;
+        bottom_left_pos.x = bottom_left_x;
+        var bottom_right_pos = new_player_pos;
+        bottom_right_pos.x = bottom_right_x;
+
         const is_valid_tile =
-            world.isEmptyPoint(game_state.tile_map_x, game_state.tile_map_y, bottom_left_x, new_player_y) and
-            world.isEmptyPoint(game_state.tile_map_x, game_state.tile_map_y, bottom_right_x, new_player_y);
+            world.isEmptyPoint(new_player_pos) and
+            world.isEmptyPoint(bottom_left_pos) and
+            world.isEmptyPoint(bottom_right_pos);
 
         if (is_valid_tile) {
-            game_state.player_x = new_player_x;
-            game_state.player_y = new_player_y;
+            const new_pos = world.getCanonicalPosition(new_player_pos);
+
+            game_state.player_tile_map_x = new_pos.tile_map_x;
+            game_state.player_tile_map_y = new_pos.tile_map_y;
+            game_state.player_x = new_pos.x + (@as(f32, @floatFromInt(new_pos.tile_x)) * world.tile_width);
+            game_state.player_y = new_pos.y + (@as(f32, @floatFromInt(new_pos.tile_y)) * world.tile_height);
         }
     };
 
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
-    for (0..tile_map.count_y) |iy| {
-        const y = tile_map.y_offset + @as(f32, @floatFromInt(iy)) * tile_map.tile_height;
-        for (0..tile_map.count_x) |ix| {
-            const x = tile_map.x_offset + @as(f32, @floatFromInt(ix)) * tile_map.tile_width;
-            const tile = tile_map.getTileUnchecked(ix, iy);
+    for (0..world.tile_count_y) |iy| {
+        const y = world.y_offset + @as(f32, @floatFromInt(iy)) * world.tile_height;
+        for (0..world.tile_count_x) |ix| {
+            const x = world.x_offset + @as(f32, @floatFromInt(ix)) * world.tile_width;
+            const tile = tile_map.getTileUnchecked(&world, ix, iy);
             const grayscale: f32 = if (tile == 1) 1 else 0.5;
-            drawRectangle(offscreen_buffer, x, y, x + tile_map.tile_width, y + tile_map.tile_height, grayscale, grayscale, grayscale);
+            drawRectangle(offscreen_buffer, x, y, x + world.tile_width, y + world.tile_height, grayscale, grayscale, grayscale);
         }
     }
 
@@ -210,9 +215,51 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
     }
 }
 
+pub const CanonicalPosition = struct {
+    tile_map_x: usize,
+    tile_map_y: usize,
+
+    tile_x: usize,
+    tile_y: usize,
+
+    /// tile relative
+    x: f32,
+    /// tile relative
+    y: f32,
+};
+
+pub const RawPosition = struct {
+    tile_map_x: usize,
+    tile_map_y: usize,
+
+    /// tile-map relative
+    x: f32,
+    /// tile-map relative
+    y: f32,
+
+    pub inline fn init(tile_map_x: usize, tile_map_y: usize, x: f32, y: f32) RawPosition {
+        return .{ .tile_map_x = tile_map_x, .tile_map_y = tile_map_y, .x = x, .y = y };
+    }
+};
+
 pub const TileMap = struct {
-    count_x: usize,
-    count_y: usize,
+    tiles: []const u32,
+
+    pub inline fn getTileUnchecked(this: *const TileMap, world: *const World, x: usize, y: usize) u32 {
+        assert(x < world.tile_count_x);
+        assert(y < world.tile_count_y);
+        return this.tiles[x + (y * world.tile_count_x)];
+    }
+};
+
+pub const World = struct {
+    tile_map_count_x: usize,
+    tile_map_count_y: usize,
+
+    /// per tile map
+    tile_count_x: usize,
+    /// per tile map
+    tile_count_y: usize,
 
     tile_width: f32,
     tile_height: f32,
@@ -220,62 +267,76 @@ pub const TileMap = struct {
     x_offset: f32,
     y_offset: f32,
 
-    tiles: []const u32,
+    tile_maps: []TileMap,
 
-    pub inline fn getTileUnchecked(this: *const TileMap, x: usize, y: usize) u32 {
-        return this.tiles[x + (y * this.count_x)];
-    }
-
-    pub fn isEmptyPoint(this: *const TileMap, px: f32, py: f32) bool {
-        var empty = false;
-
-        const player_tile_x: isize = @intFromFloat(@trunc((px - this.x_offset) / this.tile_width));
-        const player_tile_y: isize = @intFromFloat(@trunc((py - this.y_offset) / this.tile_height));
-
-        if (player_tile_x >= 0 and player_tile_x < this.count_x and
-            player_tile_y >= 0 and player_tile_y < this.count_y)
-        {
-            const tx: usize = @intCast(player_tile_x);
-            const ty: usize = @intCast(player_tile_y);
-            const tile = this.getTileUnchecked(tx, ty);
-            empty = tile == 0;
-        }
-
-        return empty;
-    }
-};
-
-pub const World = struct {
-    count_x: usize,
-    count_y: usize,
-    tile_maps: []const TileMap,
-
-    pub inline fn getTileMap(this: *const World, x: usize, y: usize) ?*const TileMap {
-        if (x < this.count_x and y < this.count_y) {
-            return &this.tile_maps[x + (y * this.count_y)];
+    pub inline fn getTileMap(this: *const World, x: usize, y: usize) ?*TileMap {
+        if (x < this.tile_map_count_x and y < this.tile_map_count_y) {
+            return &this.tile_maps[x + (y * this.tile_map_count_y)];
         }
 
         return null;
     }
 
-    pub fn isEmptyPoint(this: *const World, tile_map_x: usize, tile_map_y: usize, px: f32, py: f32) bool {
+    pub fn isEmptyPoint(world: *const World, raw_pos: RawPosition) bool {
+        const pos = world.getCanonicalPosition(raw_pos);
+        const tile_map_opt = world.getTileMap(pos.tile_map_x, pos.tile_map_y);
+        return world.isEmptyTile(tile_map_opt, pos.tile_x, pos.tile_y);
+    }
+
+    pub fn isEmptyTile(world: *const World, tile_map_opt: ?*const TileMap, tile_x: usize, tile_y: usize) bool {
         var empty = false;
 
-        if (this.getTileMap(tile_map_x, tile_map_y)) |tile_map| {
-            const player_tile_x: usize = @intFromFloat(@trunc((px - tile_map.x_offset) / tile_map.tile_width));
-            const player_tile_y: usize = @intFromFloat(@trunc((py - tile_map.y_offset) / tile_map.tile_height));
-
-            if (player_tile_x >= 0 and player_tile_x < tile_map.count_x and
-                player_tile_y >= 0 and player_tile_y < tile_map.count_y)
-            {
-                const tx: usize = @intCast(player_tile_x);
-                const ty: usize = @intCast(player_tile_y);
-                const tile = tile_map.getTileUnchecked(tx, ty);
+        if (tile_map_opt) |tile_map| {
+            if (tile_x < world.tile_count_x and tile_y < world.tile_count_y) {
+                const tx: usize = @intCast(tile_x);
+                const ty: usize = @intCast(tile_y);
+                const tile = tile_map.getTileUnchecked(world, tx, ty);
                 empty = tile == 0;
             }
         }
 
         return empty;
+    }
+
+    pub inline fn getCanonicalPosition(world: *const World, raw: RawPosition) CanonicalPosition {
+        var result: CanonicalPosition = .{
+            .tile_map_x = raw.tile_map_x,
+            .tile_map_y = raw.tile_map_y,
+            .tile_x = undefined,
+            .tile_y = undefined,
+            .x = undefined,
+            .y = undefined,
+        };
+
+        const x = raw.x - world.x_offset;
+        const y = raw.y - world.y_offset;
+
+        var test_tile_x: isize = @intFromFloat(@floor(x / world.tile_width));
+        var test_tile_y: isize = @intFromFloat(@floor(y / world.tile_height));
+
+        result.x = raw.x - (@as(f32, @floatFromInt(test_tile_x)) * world.tile_width);
+        result.y = raw.y - (@as(f32, @floatFromInt(test_tile_y)) * world.tile_height);
+
+        if (test_tile_x < 0) {
+            test_tile_x += @intCast(world.tile_count_x);
+            result.tile_map_x -= 1;
+        } else if (test_tile_x >= world.tile_count_x) {
+            test_tile_x -= @intCast(world.tile_count_x);
+            result.tile_map_x += 1;
+        }
+
+        if (test_tile_y < 0) {
+            test_tile_y += @intCast(world.tile_count_y);
+            result.tile_map_y -= 1;
+        } else if (test_tile_y >= world.tile_count_y) {
+            test_tile_y -= @intCast(world.tile_count_y);
+            result.tile_map_y += 1;
+        }
+
+        result.tile_x = @intCast(test_tile_x);
+        result.tile_y = @intCast(test_tile_y);
+
+        return result;
     }
 };
 
