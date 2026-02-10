@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.v10);
 const options = @import("options");
 const platform = @import("v10_platform.zig");
+const intrinsics = @import("intrinsics.zig");
 
 const assert = std.debug.assert;
 
@@ -34,7 +35,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     var keep_running = true;
     _ = &keep_running;
 
-    const tile_size = 60;
+    const tile_size_in_pixels = 60;
     const tile_count_x = 17;
     const tile_count_y = 9;
     const tile_map_tiles_0_0: [tile_count_y * tile_count_x]u32 = .{
@@ -101,21 +102,21 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     const world: World = .{
+        .tile_size_in_meters = 1.4,
+        .tile_size_in_pixels = tile_size_in_pixels,
         .tile_map_count_x = tile_maps.len,
         .tile_map_count_y = tile_maps[0].len,
         .tile_count_x = tile_count_x,
         .tile_count_y = tile_count_y,
-        .tile_width = tile_size,
-        .tile_height = tile_size,
-        .x_offset = -(tile_size / 2),
-        .y_offset = 0,
+        .tile_map_x_offset = -(tile_size_in_pixels / 2),
+        .tile_map_y_offset = 0,
         .tile_maps = @ptrCast(&tile_maps),
     };
 
     var tile_map: *TileMap = world.getTileMap(game_state.player_tile_map_x, game_state.player_tile_map_y).?;
 
-    const player_width = world.tile_width * 0.75;
-    const player_height = world.tile_height;
+    const player_width: f32 = @as(f32, @floatFromInt(world.tile_size_in_pixels)) * 0.75;
+    const player_height: f32 = @floatFromInt(world.tile_size_in_pixels);
 
     for (input.controllers) |controller| if (controller.is_connected) {
         const buttons = &controller.buttons.named;
@@ -162,8 +163,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
             game_state.player_tile_map_x = new_pos.tile_map_x;
             game_state.player_tile_map_y = new_pos.tile_map_y;
-            game_state.player_x = new_pos.tile_relative_x + (@as(f32, @floatFromInt(new_pos.tile_x)) * world.tile_width);
-            game_state.player_y = new_pos.tile_relative_y + (@as(f32, @floatFromInt(new_pos.tile_y)) * world.tile_height);
+            game_state.player_x = new_pos.tile_relative_x + (@as(f32, @floatFromInt(new_pos.tile_x * world.tile_size_in_pixels)));
+            game_state.player_y = new_pos.tile_relative_y + (@as(f32, @floatFromInt(new_pos.tile_y * world.tile_size_in_pixels)));
         }
     };
 
@@ -171,12 +172,21 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
     for (0..world.tile_count_y) |iy| {
-        const y = world.y_offset + @as(f32, @floatFromInt(iy)) * world.tile_height;
+        const y = world.tile_map_y_offset + @as(f32, @floatFromInt(iy * world.tile_size_in_pixels));
         for (0..world.tile_count_x) |ix| {
-            const x = world.x_offset + @as(f32, @floatFromInt(ix)) * world.tile_width;
+            const x = world.tile_map_x_offset + @as(f32, @floatFromInt(ix * world.tile_size_in_pixels));
             const tile = tile_map.getTileUnchecked(&world, ix, iy);
             const grayscale: f32 = if (tile == 1) 1 else 0.5;
-            drawRectangle(offscreen_buffer, x, y, x + world.tile_width, y + world.tile_height, grayscale, grayscale, grayscale);
+            drawRectangle(
+                offscreen_buffer,
+                x,
+                y,
+                x + @as(f32, @floatFromInt(world.tile_size_in_pixels)),
+                y + @as(f32, @floatFromInt(world.tile_size_in_pixels)),
+                grayscale,
+                grayscale,
+                grayscale,
+            );
         }
     }
 
@@ -204,7 +214,7 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
     assert(buffer.frames.len >= 0);
 
     for (buffer.frames) |*frame| {
-        // const sine_value: f32 = @sin(game_state.t_sine);
+        // const sine_value: f32 = intrinsics.sin(game_state.t_sine);
         // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
         const sample_value: i16 = 0;
 
@@ -249,6 +259,9 @@ pub const TileMap = struct {
 };
 
 pub const World = struct {
+    tile_size_in_meters: f32,
+    tile_size_in_pixels: usize,
+
     tile_map_count_x: usize,
     tile_map_count_y: usize,
 
@@ -257,11 +270,10 @@ pub const World = struct {
     /// per tile map
     tile_count_y: usize,
 
-    tile_width: f32,
-    tile_height: f32,
-
-    x_offset: f32,
-    y_offset: f32,
+    /// drawing offset
+    tile_map_x_offset: f32,
+    /// drawing offset
+    tile_map_y_offset: f32,
 
     tile_maps: []TileMap,
 
@@ -304,14 +316,14 @@ pub const World = struct {
             .tile_relative_y = undefined,
         };
 
-        const x = raw.map_relative_x - world.x_offset;
-        const y = raw.map_relative_y - world.y_offset;
+        const x = raw.map_relative_x - world.tile_map_x_offset;
+        const y = raw.map_relative_y - world.tile_map_y_offset;
 
-        var test_tile_x: isize = @intFromFloat(@floor(x / world.tile_width));
-        var test_tile_y: isize = @intFromFloat(@floor(y / world.tile_height));
+        var test_tile_x = intrinsics.floorFloatToInt(isize, x / @as(f32, @floatFromInt(world.tile_size_in_pixels)));
+        var test_tile_y = intrinsics.floorFloatToInt(isize, y / @as(f32, @floatFromInt(world.tile_size_in_pixels)));
 
-        result.tile_relative_x = raw.map_relative_x - (@as(f32, @floatFromInt(test_tile_x)) * world.tile_width);
-        result.tile_relative_y = raw.map_relative_y - (@as(f32, @floatFromInt(test_tile_y)) * world.tile_height);
+        result.tile_relative_x = raw.map_relative_x - @as(f32, @floatFromInt(test_tile_x * @as(isize, @intCast(world.tile_size_in_pixels))));
+        result.tile_relative_y = raw.map_relative_y - @as(f32, @floatFromInt(test_tile_y * @as(isize, @intCast(world.tile_size_in_pixels))));
 
         if (test_tile_x < 0) {
             test_tile_x += @intCast(world.tile_count_x);
@@ -350,10 +362,10 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
     const buffer_width_f: f32 = @floatFromInt(buffer.width);
     const buffer_height_f: f32 = @floatFromInt(buffer.height);
 
-    const minx: usize = @intFromFloat(@min(@max(@floor(min_x), 0), buffer_width_f));
-    const miny: usize = @intFromFloat(@min(@max(@floor(min_y), 0), buffer_height_f));
-    const maxx: usize = @intFromFloat(@min(@max(@floor(max_x), 0), buffer_width_f));
-    const maxy: usize = @intFromFloat(@min(@max(@floor(max_y), 0), buffer_height_f));
+    const minx = intrinsics.floorFloatToUInt(usize, @min(@max(min_x, 0), buffer_width_f));
+    const miny = intrinsics.floorFloatToUInt(usize, @min(@max(min_y, 0), buffer_height_f));
+    const maxx = intrinsics.floorFloatToUInt(usize, @min(@max(max_x, 0), buffer_width_f));
+    const maxy = intrinsics.floorFloatToUInt(usize, @min(@max(max_y, 0), buffer_height_f));
 
     assert(bpp == @sizeOf(u32));
 

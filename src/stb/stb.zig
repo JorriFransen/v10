@@ -422,34 +422,42 @@ pub export fn stbiZigFree(ptr: ?*anyopaque) callconv(.c) void {
 }
 
 pub export fn stbttZigIFloor(x: f64) callconv(.c) c_int {
+    // TODO: Use intrinsics.zig
     return @intFromFloat(@floor(x));
 }
 
 pub export fn stbttZigICeil(x: f64) callconv(.c) c_int {
+    // TODO: Use intrinsics.zig
     return @intFromFloat(@ceil(x));
 }
 
 pub export fn stbttZigSqrt(x: f64) callconv(.c) f64 {
+    // TODO: Use intrinsics.zig
     return @sqrt(x);
 }
 
 pub export fn stbttZigPow(x: f64, y: f64) callconv(.c) f64 {
+    // TODO: Use intrinsics.zig
     return std.math.pow(f64, x, y);
 }
 
 pub export fn stbttZigFmod(x: f64, y: f64) callconv(.c) f64 {
+    // TODO: Use intrinsics.zig
     return @mod(x, y);
 }
 
 pub export fn stbttZigCos(x: f64) callconv(.c) f64 {
+    // TODO: Use intrinsics.zig
     return @cos(x);
 }
 
 pub export fn stbttZigACos(x: f64) callconv(.c) f64 {
+    // TODO: Use intrinsics.zig
     return std.math.acos(x);
 }
 
 pub export fn stbttZigFabs(x: f64) callconv(.c) f64 {
+    // TODO: Use intrinsics.zig
     return @abs(x);
 }
 
