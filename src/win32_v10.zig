@@ -981,6 +981,7 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     //     _ = win32.SetStretchBltMode(dc, 0);
     // }
 
+    // TODO: Offset mouse position by this
     const offset_x = 10;
     const offset_y = 10;
 
