@@ -15,7 +15,7 @@ const AudioBuffer = platform.AudioBuffer;
 const os = @import("builtin").os.tag;
 
 pub const GameState = struct {
-    player_pos: CanonicalPosition,
+    player_pos: WorldPosition,
 };
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
@@ -108,8 +108,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         .tile_map_count_y = tile_maps[0].len,
         .tile_count_x = tile_count_x,
         .tile_count_y = tile_count_y,
-        .tile_map_x_offset = -(@as(f32, @floatFromInt(tile_size_in_pixels)) / 2),
-        .tile_map_y_offset = 0,
+        .x_offset = -(@as(f32, @floatFromInt(tile_size_in_pixels)) / 2),
+        .y_offset = @floatFromInt(offscreen_buffer.height),
         .tile_maps = @ptrCast(&tile_maps),
     };
 
@@ -133,8 +133,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         } else {
             if (buttons.move_left.ended_down) d_player_x -= 1;
             if (buttons.move_right.ended_down) d_player_x += 1;
-            if (buttons.move_up.ended_down) d_player_y -= 1;
-            if (buttons.move_down.ended_down) d_player_y += 1;
+            if (buttons.move_up.ended_down) d_player_y += 1;
+            if (buttons.move_down.ended_down) d_player_y -= 1;
         }
 
         const player_speed = 2; // * 2;
@@ -172,22 +172,26 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
-    for (0..world.tile_count_y) |iy| {
-        const y = world.tile_map_y_offset + @as(f32, @floatFromInt(iy * world.tile_size_in_pixels));
-        for (0..world.tile_count_x) |ix| {
-            const x = world.tile_map_x_offset + @as(f32, @floatFromInt(ix * world.tile_size_in_pixels));
-            const tile = tile_map.getTileUnchecked(&world, @intCast(ix), @intCast(iy));
+    for (0..world.tile_count_y) |row| {
+        for (0..world.tile_count_x) |column| {
+            const tile = tile_map.getTileUnchecked(&world, @intCast(column), @intCast(row));
             var grayscale: f32 = if (tile == 1) 1 else 0.5;
 
-            if (game_state.player_pos.tile_x.tile == ix and game_state.player_pos.tile_y.tile == iy) {
+            if (game_state.player_pos.tile_x.tile == column and game_state.player_pos.tile_y.tile == row) {
                 grayscale = 0;
             }
+
+            const min_x: f32 = world.x_offset + @as(f32, @floatFromInt(column * world.tile_size_in_pixels));
+            const min_y: f32 = world.y_offset - @as(f32, @floatFromInt(row * world.tile_size_in_pixels));
+            const max_x: f32 = min_x + @as(f32, @floatFromInt(world.tile_size_in_pixels));
+            const max_y: f32 = min_y - @as(f32, @floatFromInt(world.tile_size_in_pixels));
+
             drawRectangle(
                 offscreen_buffer,
-                x,
-                y,
-                x + @as(f32, @floatFromInt(world.tile_size_in_pixels)),
-                y + @as(f32, @floatFromInt(world.tile_size_in_pixels)),
+                min_x,
+                max_y,
+                max_x,
+                min_y,
                 grayscale,
                 grayscale,
                 grayscale,
@@ -201,8 +205,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const player_width_pixels = player_width * world.meters_to_pixels;
         const player_height_pixels = player_height * world.meters_to_pixels;
 
-        const player_left: f32 = world.tile_map_x_offset + (world.meters_to_pixels * ppos.tile_relative_x) + (@as(f32, ppos.tile_x.tile) * tile_size_in_pixels) - (player_width_pixels / 2);
-        const player_top: f32 = world.tile_map_y_offset + (world.meters_to_pixels * ppos.tile_relative_y) + (@as(f32, ppos.tile_y.tile) * tile_size_in_pixels) - (player_height_pixels);
+        const player_left: f32 = world.x_offset + (@as(f32, ppos.tile_x.tile) * tile_size_in_pixels) + (world.meters_to_pixels * ppos.tile_relative_x) - (player_width_pixels / 2);
+        const player_top: f32 = world.y_offset - (@as(f32, ppos.tile_y.tile) * tile_size_in_pixels) - (world.meters_to_pixels * ppos.tile_relative_y) - (player_height_pixels);
         const player_right = player_left + (player_width_pixels);
         const player_bottom = player_top + (player_height_pixels);
         drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
@@ -242,7 +246,7 @@ pub const PackedTileCoord = packed struct(u32) {
     map: u27,
 };
 
-pub const CanonicalPosition = struct {
+pub const WorldPosition = struct {
     tile_x: PackedTileCoord,
     tile_y: PackedTileCoord,
 
@@ -251,7 +255,7 @@ pub const CanonicalPosition = struct {
     /// In meters, from the top left
     tile_relative_y: f32,
 
-    pub fn recanonicalize(this: *CanonicalPosition, world: *const World) void {
+    pub fn recanonicalize(this: *WorldPosition, world: *const World) void {
         world.recanonicalizeCoord(world.tile_count_x, &this.tile_x, &this.tile_relative_x);
         world.recanonicalizeCoord(world.tile_count_y, &this.tile_y, &this.tile_relative_y);
     }
@@ -298,9 +302,9 @@ pub const World = struct {
     tile_count_y: u5,
 
     /// drawing offset
-    tile_map_x_offset: f32,
+    x_offset: f32,
     /// drawing offset
-    tile_map_y_offset: f32,
+    y_offset: f32,
 
     tile_maps: []TileMap,
 
@@ -312,7 +316,7 @@ pub const World = struct {
         return null;
     }
 
-    pub fn isEmptyPoint(world: *const World, pos: CanonicalPosition) bool {
+    pub fn isEmptyPoint(world: *const World, pos: WorldPosition) bool {
         const tile_map_opt = world.getTileMap(pos.tile_x.map, pos.tile_y.map);
         return world.isEmptyTile(tile_map_opt, pos.tile_x.tile, pos.tile_y.tile);
     }
@@ -350,7 +354,7 @@ pub const World = struct {
         tile_coord.tile = @intCast(new_tile);
     }
 
-    pub inline fn recanonicalize(world: *const World, pos: CanonicalPosition) CanonicalPosition {
+    pub inline fn recanonicalize(world: *const World, pos: WorldPosition) WorldPosition {
         var result = pos;
         result.recanonicalize(world);
         return result;
