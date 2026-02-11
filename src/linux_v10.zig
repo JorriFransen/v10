@@ -1992,6 +1992,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
             @memset(@as([]u32, @ptrCast(@alignCast(wl_buffer_mem))), 0);
         }
 
+        // TODO: Offset mouse position by this
         const x_offset = 10;
         const y_offset = 10;
 

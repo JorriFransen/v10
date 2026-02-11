@@ -15,11 +15,7 @@ const AudioBuffer = platform.AudioBuffer;
 const os = @import("builtin").os.tag;
 
 pub const GameState = struct {
-    player_tile_map_x: u27,
-    player_tile_map_y: u27,
-
-    player_x: f32,
-    player_y: f32,
+    player_pos: CanonicalPosition,
 };
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
@@ -92,11 +88,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
     if (!game_memory.initialized) {
         game_state.* = .{
-            .player_tile_map_x = 0,
-            .player_tile_map_y = 0,
-
-            .player_x = 150,
-            .player_y = 150,
+            .player_pos = .{
+                .tile_x = .{ .tile = 3, .map = 0 },
+                .tile_y = .{ .tile = 2, .map = 0 },
+                .tile_relative_x = tile_size_in_pixels / 2,
+                .tile_relative_y = tile_size_in_pixels / 2,
+            },
         };
         game_memory.initialized = true;
     }
@@ -113,7 +110,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         .tile_maps = @ptrCast(&tile_maps),
     };
 
-    var tile_map: *TileMap = world.getTileMap(game_state.player_tile_map_x, game_state.player_tile_map_y).?;
+    var tile_map: *TileMap = world.getTileMap(game_state.player_pos.tile_x.map, game_state.player_pos.tile_y.map).?;
 
     const player_width: f32 = @as(f32, @floatFromInt(world.tile_size_in_pixels)) * 0.75;
     const player_height: f32 = @floatFromInt(world.tile_size_in_pixels);
@@ -137,21 +134,26 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             if (buttons.move_down.ended_down) d_player_y += 1;
         }
 
-        const player_speed = 64;
+        const player_speed = 64 * 2;
         d_player_x *= player_speed;
         d_player_y *= player_speed;
 
-        const new_player_x = game_state.player_x + d_player_x * input.dt;
-        const new_player_y = game_state.player_y + d_player_y * input.dt;
+        const new_player_x = game_state.player_pos.tile_relative_x + d_player_x * input.dt;
+        const new_player_y = game_state.player_pos.tile_relative_y + d_player_y * input.dt;
 
-        const bottom_left_x = new_player_x - (player_width / 2.0);
-        const bottom_right_x = new_player_x + (player_width / 2.0);
+        var new_player_pos = game_state.player_pos;
+        new_player_pos.tile_relative_x = new_player_x;
+        new_player_pos.tile_relative_y = new_player_y;
+        new_player_pos.recanonicalize(&world);
 
-        const new_player_pos: RawPosition = .init(game_state.player_tile_map_x, game_state.player_tile_map_y, new_player_x, new_player_y);
         var bottom_left_pos = new_player_pos;
-        bottom_left_pos.map_relative_x = bottom_left_x;
+        bottom_left_pos.tile_relative_x -= (player_width / 2);
+        bottom_left_pos.recanonicalize(&world);
+
         var bottom_right_pos = new_player_pos;
-        bottom_right_pos.map_relative_x = bottom_right_x;
+
+        bottom_right_pos.tile_relative_x += (player_width / 2);
+        bottom_right_pos.recanonicalize(&world);
 
         const is_valid_tile =
             world.isEmptyPoint(new_player_pos) and
@@ -159,12 +161,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             world.isEmptyPoint(bottom_right_pos);
 
         if (is_valid_tile) {
-            const new_pos = world.getCanonicalPosition(new_player_pos);
-
-            game_state.player_tile_map_x = new_pos.tile_x.map;
-            game_state.player_tile_map_y = new_pos.tile_y.map;
-            game_state.player_x = new_pos.tile_relative_x + (@as(f32, @floatFromInt(new_pos.tile_x.tile * world.tile_size_in_pixels)));
-            game_state.player_y = new_pos.tile_relative_y + (@as(f32, @floatFromInt(new_pos.tile_y.tile * world.tile_size_in_pixels)));
+            game_state.player_pos = new_player_pos;
         }
     };
 
@@ -190,8 +187,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     }
 
-    const player_left: f32 = game_state.player_x - (player_width * 0.5);
-    const player_top: f32 = game_state.player_y - player_height;
+    const ppos = game_state.player_pos;
+
+    const player_left: f32 = world.tile_map_x_offset + ppos.tile_relative_x + (@as(f32, ppos.tile_x.tile) * tile_size_in_pixels) - (player_width / 2);
+    const player_top: f32 = world.tile_map_y_offset + ppos.tile_relative_y + (@as(f32, ppos.tile_y.tile) * tile_size_in_pixels) - player_height;
     const player_right = player_left + player_width;
     const player_bottom = player_top + player_height;
     drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
@@ -225,17 +224,22 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
     }
 }
 
-pub const PackedTilePosition = packed struct(u32) {
+pub const PackedTileCoord = packed struct(u32) {
     tile: u5,
     map: u27,
 };
 
 pub const CanonicalPosition = struct {
-    tile_x: PackedTilePosition,
-    tile_y: PackedTilePosition,
+    tile_x: PackedTileCoord,
+    tile_y: PackedTileCoord,
 
     tile_relative_x: f32,
     tile_relative_y: f32,
+
+    pub inline fn recanonicalize(this: *CanonicalPosition, world: *const World) void {
+        world.recanonicalizeCoord(world.tile_count_x, &this.tile_x, &this.tile_relative_x);
+        world.recanonicalizeCoord(world.tile_count_y, &this.tile_y, &this.tile_relative_y);
+    }
 };
 
 pub const RawPosition = struct {
@@ -292,8 +296,7 @@ pub const World = struct {
         return null;
     }
 
-    pub fn isEmptyPoint(world: *const World, raw_pos: RawPosition) bool {
-        const pos = world.getCanonicalPosition(raw_pos);
+    pub fn isEmptyPoint(world: *const World, pos: CanonicalPosition) bool {
         const tile_map_opt = world.getTileMap(pos.tile_x.map, pos.tile_y.map);
         return world.isEmptyTile(tile_map_opt, pos.tile_x.tile, pos.tile_y.tile);
     }
@@ -311,42 +314,29 @@ pub const World = struct {
         return empty;
     }
 
-    pub inline fn getCanonicalPosition(world: *const World, raw: RawPosition) CanonicalPosition {
-        var result: CanonicalPosition = .{
-            .tile_x = .{ .tile = undefined, .map = @intCast(raw.tile_map_x) },
-            .tile_y = .{ .tile = undefined, .map = @intCast(raw.tile_map_y) },
-            .tile_relative_x = undefined,
-            .tile_relative_y = undefined,
-        };
+    pub inline fn recanonicalizeCoord(world: *const World, tile_count: u5, tile_coord: *PackedTileCoord, tile_rel: *f32) void {
+        const tile_offset = intrinsics.floorFloatToInt(isize, tile_rel.* / @as(f32, @floatFromInt(world.tile_size_in_pixels)));
+        tile_rel.* -= @floatFromInt(tile_offset * @as(isize, @intCast(world.tile_size_in_pixels)));
 
-        const x = raw.map_relative_x - world.tile_map_x_offset;
-        const y = raw.map_relative_y - world.tile_map_y_offset;
+        assert(tile_rel.* >= 0);
+        assert(tile_rel.* < @as(f32, @floatFromInt(world.tile_size_in_pixels)));
 
-        var test_tile_x = intrinsics.floorFloatToInt(isize, x / @as(f32, @floatFromInt(world.tile_size_in_pixels)));
-        var test_tile_y = intrinsics.floorFloatToInt(isize, y / @as(f32, @floatFromInt(world.tile_size_in_pixels)));
+        var new_tile: isize = tile_coord.tile + tile_offset;
 
-        result.tile_relative_x = raw.map_relative_x - @as(f32, @floatFromInt(test_tile_x * @as(isize, @intCast(world.tile_size_in_pixels))));
-        result.tile_relative_y = raw.map_relative_y - @as(f32, @floatFromInt(test_tile_y * @as(isize, @intCast(world.tile_size_in_pixels))));
-
-        if (test_tile_x < 0) {
-            test_tile_x += @intCast(world.tile_count_x);
-            result.tile_x.map -= 1;
-        } else if (test_tile_x >= world.tile_count_x) {
-            test_tile_x -= @intCast(world.tile_count_x);
-            result.tile_x.map += 1;
+        if (new_tile < 0) {
+            new_tile += tile_count;
+            tile_coord.map -= 1;
+        } else if (new_tile >= tile_count) {
+            new_tile -= tile_count;
+            tile_coord.map += 1;
         }
 
-        if (test_tile_y < 0) {
-            test_tile_y += @intCast(world.tile_count_y);
-            result.tile_y.map -= 1;
-        } else if (test_tile_y >= world.tile_count_y) {
-            test_tile_y -= @intCast(world.tile_count_y);
-            result.tile_y.map += 1;
-        }
+        tile_coord.tile = @intCast(new_tile);
+    }
 
-        result.tile_x.tile = @intCast(test_tile_x);
-        result.tile_y.tile = @intCast(test_tile_y);
-
+    pub inline fn recanonicalize(world: *const World, pos: CanonicalPosition) CanonicalPosition {
+        var result = pos;
+        result.recanonicalize(world);
         return result;
     }
 };
