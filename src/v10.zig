@@ -31,7 +31,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     var keep_running = true;
     _ = &keep_running;
 
-    const tile_size_in_pixels = 60;
+    const tile_size_in_pixels: usize = 60;
+    const tile_size_in_meters: f32 = 1.4;
+
     const tile_count_x = 17;
     const tile_count_y = 9;
     const tile_map_tiles_0_0: [tile_count_y * tile_count_x]u32 = .{
@@ -90,30 +92,31 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         game_state.* = .{
             .player_pos = .{
                 .tile_x = .{ .tile = 3, .map = 0 },
-                .tile_y = .{ .tile = 2, .map = 0 },
-                .tile_relative_x = tile_size_in_pixels / 2,
-                .tile_relative_y = tile_size_in_pixels / 2,
+                .tile_y = .{ .tile = 1, .map = 0 },
+                .tile_relative_x = tile_size_in_meters / 2.0,
+                .tile_relative_y = tile_size_in_meters / 2.0,
             },
         };
         game_memory.initialized = true;
     }
 
     const world: World = .{
-        .tile_size_in_meters = 1.4,
+        .tile_size_in_meters = tile_size_in_meters,
         .tile_size_in_pixels = tile_size_in_pixels,
+        .meters_to_pixels = tile_size_in_pixels / tile_size_in_meters,
         .tile_map_count_x = tile_maps.len,
         .tile_map_count_y = tile_maps[0].len,
         .tile_count_x = tile_count_x,
         .tile_count_y = tile_count_y,
-        .tile_map_x_offset = -(tile_size_in_pixels / 2),
+        .tile_map_x_offset = -(@as(f32, @floatFromInt(tile_size_in_pixels)) / 2),
         .tile_map_y_offset = 0,
         .tile_maps = @ptrCast(&tile_maps),
     };
 
     var tile_map: *TileMap = world.getTileMap(game_state.player_pos.tile_x.map, game_state.player_pos.tile_y.map).?;
 
-    const player_width: f32 = @as(f32, @floatFromInt(world.tile_size_in_pixels)) * 0.75;
-    const player_height: f32 = @floatFromInt(world.tile_size_in_pixels);
+    const player_height: f32 = 1.4;
+    const player_width: f32 = player_height * 0.75;
 
     for (input.controllers) |controller| if (controller.is_connected) {
         const buttons = &controller.buttons.named;
@@ -134,7 +137,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             if (buttons.move_down.ended_down) d_player_y += 1;
         }
 
-        const player_speed = 64 * 2;
+        const player_speed = 2; // * 2;
+
         d_player_x *= player_speed;
         d_player_y *= player_speed;
 
@@ -173,7 +177,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         for (0..world.tile_count_x) |ix| {
             const x = world.tile_map_x_offset + @as(f32, @floatFromInt(ix * world.tile_size_in_pixels));
             const tile = tile_map.getTileUnchecked(&world, @intCast(ix), @intCast(iy));
-            const grayscale: f32 = if (tile == 1) 1 else 0.5;
+            var grayscale: f32 = if (tile == 1) 1 else 0.5;
+
+            if (game_state.player_pos.tile_x.tile == ix and game_state.player_pos.tile_y.tile == iy) {
+                grayscale = 0;
+            }
             drawRectangle(
                 offscreen_buffer,
                 x,
@@ -189,11 +197,16 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     const ppos = game_state.player_pos;
 
-    const player_left: f32 = world.tile_map_x_offset + ppos.tile_relative_x + (@as(f32, ppos.tile_x.tile) * tile_size_in_pixels) - (player_width / 2);
-    const player_top: f32 = world.tile_map_y_offset + ppos.tile_relative_y + (@as(f32, ppos.tile_y.tile) * tile_size_in_pixels) - player_height;
-    const player_right = player_left + player_width;
-    const player_bottom = player_top + player_height;
-    drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
+    {
+        const player_width_pixels = player_width * world.meters_to_pixels;
+        const player_height_pixels = player_height * world.meters_to_pixels;
+
+        const player_left: f32 = world.tile_map_x_offset + (world.meters_to_pixels * ppos.tile_relative_x) + (@as(f32, ppos.tile_x.tile) * tile_size_in_pixels) - (player_width_pixels / 2);
+        const player_top: f32 = world.tile_map_y_offset + (world.meters_to_pixels * ppos.tile_relative_y) + (@as(f32, ppos.tile_y.tile) * tile_size_in_pixels) - (player_height_pixels);
+        const player_right = player_left + (player_width_pixels);
+        const player_bottom = player_top + (player_height_pixels);
+        drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
+    }
 
     return keep_running;
 }
@@ -233,10 +246,12 @@ pub const CanonicalPosition = struct {
     tile_x: PackedTileCoord,
     tile_y: PackedTileCoord,
 
+    /// In meters, from the top left
     tile_relative_x: f32,
+    /// In meters, from the top left
     tile_relative_y: f32,
 
-    pub inline fn recanonicalize(this: *CanonicalPosition, world: *const World) void {
+    pub fn recanonicalize(this: *CanonicalPosition, world: *const World) void {
         world.recanonicalizeCoord(world.tile_count_x, &this.tile_x, &this.tile_relative_x);
         world.recanonicalizeCoord(world.tile_count_y, &this.tile_y, &this.tile_relative_y);
     }
@@ -272,6 +287,7 @@ pub const TileMap = struct {
 pub const World = struct {
     tile_size_in_meters: f32,
     tile_size_in_pixels: usize,
+    meters_to_pixels: f32,
 
     tile_map_count_x: u27,
     tile_map_count_y: u27,
@@ -314,12 +330,12 @@ pub const World = struct {
         return empty;
     }
 
-    pub inline fn recanonicalizeCoord(world: *const World, tile_count: u5, tile_coord: *PackedTileCoord, tile_rel: *f32) void {
-        const tile_offset = intrinsics.floorFloatToInt(isize, tile_rel.* / @as(f32, @floatFromInt(world.tile_size_in_pixels)));
-        tile_rel.* -= @floatFromInt(tile_offset * @as(isize, @intCast(world.tile_size_in_pixels)));
+    pub fn recanonicalizeCoord(world: *const World, tile_count: u5, tile_coord: *PackedTileCoord, tile_rel: *f32) void {
+        const tile_offset = intrinsics.floorFloatToInt(isize, tile_rel.* / world.tile_size_in_meters);
+        tile_rel.* -= @as(f32, @floatFromInt(tile_offset)) * world.tile_size_in_meters;
 
         assert(tile_rel.* >= 0);
-        assert(tile_rel.* < @as(f32, @floatFromInt(world.tile_size_in_pixels)));
+        assert(tile_rel.* < world.tile_size_in_meters);
 
         var new_tile: isize = tile_coord.tile + tile_offset;
 
