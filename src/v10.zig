@@ -128,8 +128,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         var d_player_y: f32 = 0;
 
         if (controller.is_analog) {
-            // d_player_x += controller.stick_average_x;
-            // d_player_y -= controller.stick_average_y;
+            d_player_x += controller.stick_average_x;
+            d_player_y -= controller.stick_average_y;
         } else {
             if (buttons.move_left.ended_down) d_player_x -= 1;
             if (buttons.move_right.ended_down) d_player_x += 1;

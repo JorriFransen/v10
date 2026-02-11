@@ -35,6 +35,7 @@ const Key = input.Key;
 const Abs = input.Abs;
 
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
+// TODO: Query initial state of controller
 
 const assert = std.debug.assert;
 
@@ -1087,6 +1088,9 @@ const Joystick = struct {
                     Key.BTN_SELECT => .select,
                     Key.BTN_START => .start,
                     Key.BTN_MODE => .mode,
+
+                    // Handled as axis
+                    Key.BTN_DPAD_UP, Key.BTN_DPAD_LEFT, Key.BTN_DPAD_RIGHT, Key.BTN_DPAD_DOWN => null,
                 };
 
                 if (btn_opt) |btn| {
@@ -1098,7 +1102,9 @@ const Joystick = struct {
 
     fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         switch (event.type) {
-            .SYN => {},
+            .SYN => {
+                // TODO: Buffer events and handle this
+            },
             .ABS => {
                 if (absEventCodeToAxisIndex(this.kind, event.code)) |axis_idx| {
                     const meta = this.axis_meta[axis_idx];

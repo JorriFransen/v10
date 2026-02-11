@@ -1,10 +1,6 @@
 const std = @import("std");
 const linux = @import("linux.zig");
 
-// TODO: Zigs version returns usize, this doesn't work with -1...
-//       If we return isize this doesn't work with -1...
-//       I think syscall always uses size_t/usize?,
-//        check this, make a sycall wrapper that handles -1 correctly.
 pub extern "c" fn ioctl(fd: linux.fd_t, op: c_int, ...) callconv(.c) c_int;
 
 pub const bits = switch (@import("builtin").cpu.arch) {
