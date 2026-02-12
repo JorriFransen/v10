@@ -36,7 +36,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     const chunk_dim = 256;
     const temp_tiles: [18][34]u32 = .{
-        .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+        .{ 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
         .{ 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1 },
         .{ 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1 },
         .{ 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 },
@@ -78,9 +78,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         game_memory.initialized = true;
     }
 
-    const draw_offset_x: f32 = -(@as(f32, @floatFromInt(tile_size_in_pixels)) / 2);
-    const draw_offset_y: f32 = @floatFromInt(offscreen_buffer.height);
-
     const world: World = .{
         .tile_size_in_meters = tile_size_in_meters,
         .tile_size_in_pixels = tile_size_in_pixels,
@@ -113,7 +110,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             if (buttons.move_down.ended_down) d_player_y -= 1;
         }
 
-        const player_speed = 2; // * 2;
+        const player_speed = 2 * 2;
 
         d_player_x *= player_speed;
         d_player_y *= player_speed;
@@ -150,17 +147,25 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     const player_pos = game_state.player_pos;
 
-    for (0..9) |row| {
-        for (0..17) |column| {
-            const tile = world.getTile(@intCast(column), @intCast(row));
+    const center_x: f32 = @floatFromInt(@divTrunc(offscreen_buffer.width, 2));
+    const center_y: f32 = @floatFromInt(@divTrunc(offscreen_buffer.height, 2));
+
+    var rel_row: i32 = -10;
+    while (rel_row < 10) : (rel_row += 1) {
+        var rel_column: i32 = -20;
+        while (rel_column < 20) : (rel_column += 1) {
+            const row: u32 = player_pos.abs_tile_y +% @as(u32, @bitCast(rel_row));
+            const column: u32 = player_pos.abs_tile_x +% @as(u32, @bitCast(rel_column));
+
+            const tile = world.getTile(column, row);
             var grayscale: f32 = if (tile == 1) 1 else 0.5;
 
             if (player_pos.abs_tile_x == column and player_pos.abs_tile_y == row) {
                 grayscale = 0;
             }
 
-            const min_x: f32 = draw_offset_x + @as(f32, @floatFromInt(column * world.tile_size_in_pixels));
-            const min_y: f32 = draw_offset_y - @as(f32, @floatFromInt(row * world.tile_size_in_pixels));
+            const min_x: f32 = center_x + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(world.tile_size_in_pixels))));
+            const min_y: f32 = center_y - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(world.tile_size_in_pixels))));
             const max_x: f32 = min_x + @as(f32, @floatFromInt(world.tile_size_in_pixels));
             const max_y: f32 = min_y - @as(f32, @floatFromInt(world.tile_size_in_pixels));
 
@@ -178,21 +183,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     {
-        const player_chunk_pos = getChunkPositionFor(game_state.player_pos.abs_tile_x, game_state.player_pos.abs_tile_y);
         const player_width_pixels = player_width * world.meters_to_pixels;
         const player_height_pixels = player_height * world.meters_to_pixels;
 
-        const player_left: f32 =
-            (draw_offset_x +
-                (@as(f32, @floatFromInt(player_chunk_pos.rel_tile_x)) * tile_size_in_pixels) +
-                (world.meters_to_pixels * player_pos.tile_relative_x)) -
-            (player_width_pixels / 2);
-
-        const player_top: f32 =
-            draw_offset_y -
-            (@as(f32, @floatFromInt(player_chunk_pos.rel_tile_y)) * tile_size_in_pixels) -
-            (world.meters_to_pixels * player_pos.tile_relative_y) -
-            (player_height_pixels);
+        const player_left: f32 = center_x + (world.meters_to_pixels * player_pos.tile_relative_x) - (player_width_pixels / 2);
+        const player_top: f32 = center_y - (world.meters_to_pixels * player_pos.tile_relative_y) - (player_height_pixels);
 
         const player_right = player_left + (player_width_pixels);
         const player_bottom = player_top + (player_height_pixels);

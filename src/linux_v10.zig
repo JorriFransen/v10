@@ -196,8 +196,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
 
-    wld.window_width = @divTrunc(wld.max_width, 2);
-    wld.window_height = @divTrunc(wld.max_height, 2);
+    wld.window_width = @as(f32, @floatFromInt(back_buffer_width)) * 1.5;
+    wld.window_height = @as(f32, @floatFromInt(back_buffer_height)) * 1.5;
 
     try resize_shm();
 
