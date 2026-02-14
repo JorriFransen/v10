@@ -29,5 +29,5 @@ pub const poll = posix.poll;
 pub const read = posix.read;
 pub const write = linux.write;
 pub const open = linux.open;
-pub const close = posix.close;
+pub const close = linux.close;
 pub const statx = linux.statx;
