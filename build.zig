@@ -16,6 +16,8 @@ pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
+    const native_target = b.resolveTargetQuery(.{});
+
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse false;
     if (target.result.os.tag == .windows) use_llvm = true;
 
@@ -56,6 +58,9 @@ pub fn build(b: *Build) !void {
     engine.run.step.dependOn(&game.install.step);
 }
 
+// TODO: These need to be the module options except for the target/optimize
+//        options, to support passing different targets/optimize options to
+//        different helper functions like buildTools.
 const Modules = struct {
     options: *Build.Module,
     memory: *Build.Module,
