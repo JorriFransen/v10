@@ -164,8 +164,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 grayscale = 0;
             }
 
-            const min_x: f32 = center_x + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(world.tile_size_in_pixels))));
-            const min_y: f32 = center_y - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(world.tile_size_in_pixels))));
+            const min_x: f32 = center_x - (world.meters_to_pixels * player_pos.tile_relative_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(world.tile_size_in_pixels))));
+            const min_y: f32 = center_y + (world.meters_to_pixels * player_pos.tile_relative_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(world.tile_size_in_pixels))));
             const max_x: f32 = min_x + @as(f32, @floatFromInt(world.tile_size_in_pixels));
             const max_y: f32 = min_y - @as(f32, @floatFromInt(world.tile_size_in_pixels));
 
@@ -186,8 +186,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const player_width_pixels = player_width * world.meters_to_pixels;
         const player_height_pixels = player_height * world.meters_to_pixels;
 
-        const player_left: f32 = center_x + (world.meters_to_pixels * player_pos.tile_relative_x) - (player_width_pixels / 2);
-        const player_top: f32 = center_y - (world.meters_to_pixels * player_pos.tile_relative_y) - (player_height_pixels);
+        // const player_left: f32 = center_x + (world.meters_to_pixels * player_pos.tile_relative_x) - (player_width_pixels / 2);
+        // const player_top: f32 = center_y - (world.meters_to_pixels * player_pos.tile_relative_y) - (player_height_pixels);
+
+        const player_left: f32 = center_x - (player_width_pixels / 2);
+        const player_top: f32 = center_y - (player_height_pixels);
 
         const player_right = player_left + (player_width_pixels);
         const player_bottom = player_top + (player_height_pixels);
