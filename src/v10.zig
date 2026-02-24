@@ -71,8 +71,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             .player_pos = .{
                 .abs_tile_x = 3,
                 .abs_tile_y = 1,
-                .tile_relative_x = tile_size_in_meters / 2.0,
-                .tile_relative_y = tile_size_in_meters / 2.0,
+                .tile_relative_x = 0,
+                .tile_relative_y = 0,
             },
         };
         game_memory.initialized = true;
@@ -99,10 +99,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         var d_player_x: f32 = 0;
         var d_player_y: f32 = 0;
+        var player_speed: f32 = 2;
 
         if (controller.is_analog) {
             d_player_x += controller.stick_average_x;
-            d_player_y -= controller.stick_average_y;
+            d_player_y += controller.stick_average_y;
         } else {
             if (buttons.move_left.ended_down) d_player_x -= 1;
             if (buttons.move_right.ended_down) d_player_x += 1;
@@ -110,7 +111,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             if (buttons.move_down.ended_down) d_player_y -= 1;
         }
 
-        const player_speed = 2 * 2;
+        if (buttons.action_up.ended_down) {
+            player_speed *= 2;
+        }
 
         d_player_x *= player_speed;
         d_player_y *= player_speed;
@@ -147,8 +150,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     const player_pos = game_state.player_pos;
 
-    const center_x: f32 = @floatFromInt(@divTrunc(offscreen_buffer.width, 2));
-    const center_y: f32 = @floatFromInt(@divTrunc(offscreen_buffer.height, 2));
+    const screen_center_x: f32 = @floatFromInt(@divTrunc(offscreen_buffer.width, 2));
+    const screen_center_y: f32 = @floatFromInt(@divTrunc(offscreen_buffer.height, 2));
 
     var rel_row: i32 = -10;
     while (rel_row < 10) : (rel_row += 1) {
@@ -164,17 +167,21 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 grayscale = 0;
             }
 
-            const min_x: f32 = center_x - (world.meters_to_pixels * player_pos.tile_relative_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(world.tile_size_in_pixels))));
-            const min_y: f32 = center_y + (world.meters_to_pixels * player_pos.tile_relative_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(world.tile_size_in_pixels))));
-            const max_x: f32 = min_x + @as(f32, @floatFromInt(world.tile_size_in_pixels));
-            const max_y: f32 = min_y - @as(f32, @floatFromInt(world.tile_size_in_pixels));
+            const tile_size: f32 = @floatFromInt(world.tile_size_in_pixels);
+
+            const center_x: f32 = screen_center_x - (world.meters_to_pixels * player_pos.tile_relative_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(world.tile_size_in_pixels))));
+            const center_y: f32 = screen_center_y + (world.meters_to_pixels * player_pos.tile_relative_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(world.tile_size_in_pixels))));
+            const min_x: f32 = center_x - (0.5 * tile_size);
+            const min_y: f32 = center_y - (0.5 * tile_size);
+            const max_x: f32 = center_x + (0.5 * tile_size);
+            const max_y: f32 = center_y + (0.5 * tile_size);
 
             drawRectangle(
                 offscreen_buffer,
                 min_x,
-                max_y,
-                max_x,
                 min_y,
+                max_x,
+                max_y,
                 grayscale,
                 grayscale,
                 grayscale,
@@ -189,8 +196,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         // const player_left: f32 = center_x + (world.meters_to_pixels * player_pos.tile_relative_x) - (player_width_pixels / 2);
         // const player_top: f32 = center_y - (world.meters_to_pixels * player_pos.tile_relative_y) - (player_height_pixels);
 
-        const player_left: f32 = center_x - (player_width_pixels / 2);
-        const player_top: f32 = center_y - (player_height_pixels);
+        const player_left: f32 = screen_center_x - (player_width_pixels / 2);
+        const player_top: f32 = screen_center_y - (player_height_pixels);
 
         const player_right = player_left + (player_width_pixels);
         const player_bottom = player_top + (player_height_pixels);
@@ -327,12 +334,13 @@ pub const World = struct {
     }
 
     pub fn recanonicalizeCoord(world: *const World, tile: *u32, tile_rel: *f32) void {
-        const tile_offset: i32 = intrinsics.floorFloatToInt(i32, tile_rel.* / world.tile_size_in_meters);
+        // const tile_offset: i32 = intrinsics.floorFloatToInt(i32, tile_rel.* / world.tile_size_in_meters);
+        const tile_offset: i32 = intrinsics.roundFloatToInt(i32, tile_rel.* / world.tile_size_in_meters);
         tile.* +%= @as(u32, @bitCast(tile_offset));
         tile_rel.* -= @as(f32, @floatFromInt(tile_offset)) * world.tile_size_in_meters;
 
-        assert(tile_rel.* >= 0);
-        assert(tile_rel.* < world.tile_size_in_meters);
+        assert(tile_rel.* >= -(0.5 * world.tile_size_in_meters));
+        assert(tile_rel.* <= (0.5 * world.tile_size_in_meters));
     }
 
     pub fn recanonicalize(world: *const World, pos: WorldPosition) WorldPosition {
