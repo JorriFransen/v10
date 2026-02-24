@@ -6,7 +6,7 @@ const builtin = @import("builtin");
 
 const platform = @import("v10_platform.zig");
 
-const x86_64 = @import("x86_64.zig");
+const x86_64 = @import("arch/x86_64.zig");
 
 const wayland = @import("wayland");
 const wl = wayland.wl;

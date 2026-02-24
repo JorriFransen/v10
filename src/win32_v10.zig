@@ -5,7 +5,7 @@ const mem = @import("mem");
 const win32 = @import("win32/win32.zig");
 const xinput = @import("win32/xinput.zig");
 const dsound = @import("win32/direct_sound.zig");
-const x86_64 = @import("x86_64.zig");
+const x86_64 = @import("arch/x86_64.zig");
 const builtin = @import("builtin");
 
 const platform = @import("v10_platform.zig");
