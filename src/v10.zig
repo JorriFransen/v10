@@ -26,7 +26,7 @@ pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callcon
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool {
     _ = thread_context;
 
-    assert(@sizeOf(GameState) <= game_memory.permanent.len);
+    assert(@sizeOf(GameState) <= game_memory.permanent_len);
 
     var keep_running = true;
     _ = &keep_running;
@@ -65,7 +65,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     var chunks: [1][1]TileChunk = undefined;
     chunks[0][0].tiles = @as([]u32, @ptrCast(&chunk_0_0));
 
-    const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+    const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
     if (!game_memory.initialized) {
         game_state.* = .{
             .player_pos = .{
@@ -142,7 +142,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     };
 
-    @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory))), 0xff00ff);
+    @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
     const player_pos = game_state.player_pos;
@@ -199,7 +199,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
     _ = thread_context;
-    const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent.ptr));
+    const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
     outputSound(game_state, sound_buffer, 400);
 }
 
@@ -209,9 +209,9 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
     // const tone_volume = 3000;
     // const wave_period = @divTrunc(buffer.frames_per_second, tone_hz);
 
-    assert(buffer.frames.len >= 0);
+    assert(buffer.frames_len >= 0);
 
-    for (buffer.frames) |*frame| {
+    for (buffer.frames[0..buffer.frames_len]) |*frame| {
         // const sine_value: f32 = intrinsics.sin(game_state.t_sine);
         // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
         const sample_value: i16 = 0;
@@ -332,7 +332,7 @@ pub const World = struct {
         assert(tile_rel.* < world.tile_size_in_meters);
     }
 
-    pub inline fn recanonicalize(world: *const World, pos: WorldPosition) WorldPosition {
+    pub fn recanonicalize(world: *const World, pos: WorldPosition) WorldPosition {
         var result = pos;
         result.recanonicalize(world);
         return result;
@@ -362,7 +362,7 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
 
     const color = rgbToU32(r, g, b);
 
-    var row: [*]u8 = buffer.memory.ptr + (minx * bpp) + (miny * pitch);
+    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
     var y: usize = @intCast(miny);
     while (y < maxy) : (y += 1) {
         var pixel: [*]u32 = @ptrCast(@alignCast(row));

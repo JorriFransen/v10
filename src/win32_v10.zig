@@ -476,7 +476,11 @@ pub fn windowsEntry(
                 win32.MEM_RESERVE | win32.MEM_COMMIT,
                 win32.PAGE_READWRITE,
             ));
-            const trans: ?[*]u8 = @as([*]u8, @ptrCast(perm)) + permanent_storage_size;
+
+            const trans: ?[*]u8 = if (perm) |p|
+                @as([*]u8, @ptrCast(p)) + permanent_storage_size
+            else
+                null;
 
             shared_state.game_memory_block = perm.?[0..total_size];
 
@@ -485,8 +489,10 @@ pub fn windowsEntry(
 
             var game_memory: Memory = .{
                 .initialized = false,
-                .permanent = @as([*]u8, @ptrCast(perm))[0..permanent_storage_size],
-                .transient = @as([*]u8, @ptrCast(trans))[0..transient_storage_size],
+                .permanent = perm.?,
+                .permanent_len = permanent_storage_size,
+                .transient = trans.?,
+                .transient_len = transient_storage_size,
 
                 .debug = if (options.internal_build) .{
                     .readEntireFile = &DEBUG.readEntireFile,
@@ -532,7 +538,7 @@ pub fn windowsEntry(
                 var audio_latency_seconds: f32 = 0;
                 var audio_valid = false;
 
-                var thread_context: ThreadContext = .{ .io = io };
+                var thread_context: ThreadContext = .{ .io = &io };
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
                 var game_code = GameCode.load(io, temp_dll_name);
@@ -686,7 +692,8 @@ pub fn windowsEntry(
                         }
 
                         var game_offscreen_buffer: OffscreenBuffer = .{
-                            .memory = global_back_buffer.memory,
+                            .memory = global_back_buffer.memory.ptr,
+                            .memory_len = global_back_buffer.memory.len,
                             .width = global_back_buffer.width,
                             .height = global_back_buffer.height,
                             .pitch = global_back_buffer.pitch,
@@ -748,7 +755,8 @@ pub fn windowsEntry(
                             const frames_to_write: u32 = bytes_to_write / @sizeOf(AudioOutput.Frame);
 
                             var game_sound_output_buffer: AudioBuffer = .{
-                                .frames = audio_output.buffer[0..frames_to_write],
+                                .frames = audio_output.buffer.ptr,
+                                .frames_len = frames_to_write,
                                 .frames_per_second = audio_fps,
                             };
 

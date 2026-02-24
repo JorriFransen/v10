@@ -7,30 +7,32 @@ const DynLib = @import("dynlib.zig");
 
 const assert = std.debug.assert;
 
-pub const ThreadContext = struct {
-    io: std.Io,
+pub const ThreadContext = extern struct {
+    io: *const std.Io,
 };
 
 pub const FN_init = *const fn (thread_context: *ThreadContext, memory: *Memory) callconv(.c) void;
 pub const FN_updateAndRender = *const fn (thread_context: *ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool;
 pub const FN_getAudioFrames = *const fn (thread_context: *ThreadContext, memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void;
 
-pub const OffscreenBuffer = struct {
-    memory: []u8,
+pub const OffscreenBuffer = extern struct {
+    memory: [*]u8,
+    memory_len: usize,
     width: i32,
     height: i32,
     pitch: i32,
     bytes_per_pixel: i32,
 };
 
-pub const AudioBuffer = struct {
+pub const AudioBuffer = extern struct {
     pub const Sample = i16;
     pub const Frame = struct {
         left: Sample = 0,
         right: Sample = 0,
     };
 
-    frames: []Frame,
+    frames: [*]Frame,
+    frames_len: usize,
     frames_per_second: i32,
 };
 
@@ -39,7 +41,7 @@ pub const ButtonState = extern struct {
     ended_down: bool = false,
 };
 
-pub const ControllerInput = struct {
+pub const ControllerInput = extern struct {
     is_connected: bool = false,
     is_analog: bool = false,
 
@@ -73,7 +75,7 @@ pub const ControllerInput = struct {
     },
 };
 
-pub const DebugMouseInput = if (options.internal_build) struct {
+pub const DebugMouseInput = if (options.internal_build) extern struct {
     buttons: extern union {
         array: [5]ButtonState,
         named: extern struct {
@@ -96,22 +98,24 @@ pub const DebugMouseInput = if (options.internal_build) struct {
     z: i32 = 0,
 } else void;
 
-pub const Input = struct {
+pub const Input = extern struct {
     debug_mouse: DebugMouseInput = .{},
 
     dt: f32 = 0,
     controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
 };
 
-pub const Memory = struct {
+pub const Memory = extern struct {
     initialized: bool = false,
-    permanent: []u8 = &.{},
-    transient: []u8 = &.{},
+    permanent: [*]u8 = &.{},
+    permanent_len: usize,
+    transient: [*]u8 = &.{},
+    transient_len: usize,
 
     debug: DEBUG,
 };
 
-pub const DEBUG = if (options.internal_build) struct {
+pub const DEBUG = if (options.internal_build) extern struct {
     pub const ReadFileResult = extern struct {
         size: usize = 0,
         content: *anyopaque = undefined,
@@ -120,7 +124,7 @@ pub const DEBUG = if (options.internal_build) struct {
     readEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) ReadFileResult = undefined,
     freeFileMemory: *const fn (thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void = undefined,
     writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool = undefined,
-} else struct {};
+} else extern struct {};
 
 pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8 {
     return std.fmt.bufPrintSentinel(buffer, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{ base, sub }, 0) catch |e| switch (e) {

@@ -459,6 +459,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var game_memory = Memory{
         .initialized = false,
+        .permanent_len = permanent_storage_size,
+        .transient_len = transient_storage_size,
         .debug = if (options.internal_build) .{
             .readEntireFile = &DEBUG.readEntireFile,
             .freeFileMemory = &DEBUG.freeFileMemory,
@@ -479,9 +481,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
             return error.MProtectFailed;
         }
 
-        game_memory.permanent = all_memory[0..permanent_storage_size];
-        game_memory.transient = all_memory[permanent_storage_size..];
-        assert(game_memory.transient.len == transient_storage_size);
+        game_memory.permanent = all_memory.ptr;
+        game_memory.transient = all_memory[permanent_storage_size..].ptr;
+        assert(game_memory.transient_len == transient_storage_size);
 
         wld.shared_state.game_memory_block = all_memory;
     } else |_| {
@@ -489,8 +491,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.MMapFailed;
     }
 
-    log.debug("perm: {*}", .{game_memory.permanent.ptr});
-    log.debug("trans: {*}", .{game_memory.transient.ptr});
+    log.debug("perm: {*}", .{game_memory.permanent});
+    log.debug("trans: {*}", .{game_memory.transient});
 
     if (options.internal_build) {
         for (&shared_state.replay_buffers, 0..) |*replay_buffer, i| {
@@ -516,7 +518,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    var thread_context: ThreadContext = .{ .io = io };
+    var thread_context: ThreadContext = .{
+        .io = &io,
+    };
 
     var game_code = GameCode.load(io, game_lib_name);
     if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
@@ -692,7 +696,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
 
             var game_offscreen_buffer = OffscreenBuffer{
-                .memory = global_back_buffer.memory,
+                .memory = global_back_buffer.memory.ptr,
+                .memory_len = global_back_buffer.memory.len,
                 .width = back_buffer_width,
                 .height = back_buffer_height,
                 .pitch = global_back_buffer.pitch,
@@ -760,7 +765,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                     if (begin_write_rc == 0 and buffer_ptr != null) {
                         var game_sound_output_buffer: AudioBuffer = .{
-                            .frames = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(buffer_ptr)))[0..actual_frame_count],
+                            .frames = @ptrCast(@alignCast(buffer_ptr)),
+                            .frames_len = actual_frame_count,
                             .frames_per_second = @intCast(audio_output.frames_per_second),
                         };
 
@@ -768,7 +774,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                         _ = pa.stream_write(
                             pa_stream,
-                            game_sound_output_buffer.frames.ptr,
+                            game_sound_output_buffer.frames,
                             buffer_size,
                             null,
                             0,
