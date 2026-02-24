@@ -4,14 +4,16 @@ const intrinsics = @import("intrinsics.zig");
 const assert = std.debug.assert;
 
 const TileMap = @This();
-const Tile = u32;
+pub const Tile = u32;
 
 tile_size_in_meters: f32,
 tile_size_in_pixels: usize,
-chunk_dim: u32,
 chunk_count_x: u32,
 chunk_count_y: u32,
 chunks: []Chunk,
+
+const packed_tile_pos_bits = @bitSizeOf(@FieldType(PackedTilePosition, "tile"));
+pub const chunk_dim = 1 << packed_tile_pos_bits;
 
 pub const Position = struct {
     // Packed chunk.tile : 24.8
@@ -44,13 +46,20 @@ pub const PackedTilePosition = packed struct(u32) {
 };
 
 pub const Chunk = struct {
-    tiles: []const Tile,
+    tiles: []Tile,
 
-    pub fn getTileUnchecked(this: *const Chunk, map: *const TileMap, x: u32, y: u32) Tile {
-        assert(x < map.chunk_dim);
-        assert(y < map.chunk_dim);
+    pub fn getTileUnchecked(this: *const Chunk, x: u32, y: u32) Tile {
+        assert(x < chunk_dim);
+        assert(y < chunk_dim);
 
-        return this.tiles[x + (y * map.chunk_dim)];
+        return this.tiles[x + (y * chunk_dim)];
+    }
+
+    pub fn setTileUnchecked(this: *const Chunk, x: u32, y: u32, new_tile: Tile) void {
+        assert(x < chunk_dim);
+        assert(y < chunk_dim);
+
+        this.tiles[x + (y * chunk_dim)] = new_tile;
     }
 };
 
@@ -80,7 +89,16 @@ pub inline fn getChunk(this: *const TileMap, pos: TileChunkPosition) ?*Chunk {
 pub fn getTile(map: *const TileMap, abs_tile_x: u32, abs_tile_y: u32) Tile {
     const pos = getChunkPositionFor(abs_tile_x, abs_tile_y);
     const chunk_opt = map.getChunk(pos);
-    return map.getChunkTile(chunk_opt, pos.rel_tile_x, pos.rel_tile_y);
+    return getChunkTile(chunk_opt, pos.rel_tile_x, pos.rel_tile_y);
+}
+
+pub fn setTile(map: *const TileMap, abs_tile_x: u32, abs_tile_y: u32, new_tile: Tile) void {
+    const pos = getChunkPositionFor(abs_tile_x, abs_tile_y);
+    const chunk_opt = map.getChunk(pos);
+
+    assert(chunk_opt != null);
+
+    setChunkTile(chunk_opt, pos.rel_tile_x, pos.rel_tile_y, new_tile);
 }
 
 pub fn isTileEmpty(map: *const TileMap, can_pos: Position) bool {
@@ -92,13 +110,19 @@ pub fn isTileEmpty(map: *const TileMap, can_pos: Position) bool {
     return empty;
 }
 
-pub fn getChunkTile(map: *const TileMap, chunk_opt: ?*const Chunk, x: u32, y: u32) Tile {
+pub fn getChunkTile(chunk_opt: ?*const Chunk, x: u32, y: u32) Tile {
     var result: Tile = std.mem.zeroes(Tile);
     if (chunk_opt) |chunk| {
-        result = chunk.getTileUnchecked(map, x, y);
+        result = chunk.getTileUnchecked(x, y);
     }
 
     return result;
+}
+
+pub fn setChunkTile(chunk_opt: ?*const Chunk, x: u32, y: u32, new_tile: Tile) void {
+    if (chunk_opt) |chunk| {
+        chunk.setTileUnchecked(x, y, new_tile);
+    }
 }
 
 pub fn recanonicalizeCoord(map: *const TileMap, tile: *u32, tile_rel: *f32) void {

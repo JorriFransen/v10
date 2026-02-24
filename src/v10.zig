@@ -16,8 +16,35 @@ const AudioBuffer = platform.AudioBuffer;
 
 const os = @import("builtin").os.tag;
 
+pub const MemoryArena = struct {
+    memory: []u8,
+    used: usize = 0,
+
+    fn init(mem: []u8) MemoryArena {
+        return .{
+            .memory = mem,
+            .used = 0,
+        };
+    }
+
+    fn pushMemory(this: *MemoryArena, comptime T: type) *T {
+        assert(this.memory.len - this.used >= @sizeOf(T));
+
+        const result: *T = @ptrCast(@alignCast(this.memory.ptr + this.used));
+        this.used += @sizeOf(T);
+        return result;
+    }
+};
+
+pub const World = struct {
+    meters_to_pixels: f32,
+    tilemap: *TileMap,
+};
+
 pub const GameState = struct {
-    player_pos: TileMap.Position,
+    world_arena: MemoryArena = undefined,
+    world: *World = undefined,
+    player_pos: TileMap.Position = undefined,
 };
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
@@ -33,66 +60,67 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     var keep_running = true;
     _ = &keep_running;
 
-    const tile_size_in_pixels: usize = 60;
-    const tile_size_in_meters: f32 = 1.4;
-
-    const chunk_dim = 256;
-    const temp_tiles: [18][34]u32 = .{
-        .{ 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-        .{ 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1 },
-        .{ 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 },
-        .{ 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1 },
-        .{ 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1 },
-        .{ 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
-        .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-    };
-
-    var chunk_0_0 = std.mem.zeroes([chunk_dim][chunk_dim]u32);
-    for (temp_tiles, 0..) |row, y| {
-        const dest: []u32 = chunk_0_0[y][0..row.len];
-        @memcpy(dest, row[0..]);
-    }
-
-    var chunks: [1][1]TileMap.Chunk = undefined;
-    chunks[0][0].tiles = @as([]u32, @ptrCast(&chunk_0_0));
-
+    assert(@sizeOf(GameState) <= game_memory.transient_len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
+
     if (!game_memory.initialized) {
-        game_state.* = .{
-            .player_pos = .{
-                .abs_tile_x = 3,
-                .abs_tile_y = 1,
-                .tile_relative_x = 0,
-                .tile_relative_y = 0,
-            },
+        game_state.* = .{};
+
+        game_state.player_pos = .{
+            .abs_tile_x = 3,
+            .abs_tile_y = 1,
+            .tile_relative_x = 0,
+            .tile_relative_y = 0,
         };
+
+        const game_state_size = @sizeOf(GameState);
+        const world_arena_size = game_memory.permanent_len - game_state_size;
+
+        game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
+        game_state.world = game_state.world_arena.pushMemory(World);
+        const world: *World = game_state.world;
+        world.tilemap = game_state.world_arena.pushMemory(TileMap);
+        const tilemap: *TileMap = world.tilemap;
+
+        const chunk_count_x = 4;
+        const chunk_count_y = 4;
+        const chunk_count = chunk_count_x * chunk_count_y;
+        const chunks = game_state.world_arena.pushMemory([chunk_count]TileMap.Chunk);
+        for (chunks) |*chunk| chunk.tiles = game_state.world_arena.pushMemory([TileMap.chunk_dim * TileMap.chunk_dim]TileMap.Tile);
+
+        tilemap.* = .{
+            .tile_size_in_meters = 1.4,
+            .tile_size_in_pixels = 60,
+            .chunk_count_x = chunk_count_x,
+            .chunk_count_y = chunk_count_y,
+            .chunks = chunks,
+        };
+
+        world.meters_to_pixels = @as(f32, @floatFromInt(tilemap.tile_size_in_pixels)) / tilemap.tile_size_in_meters;
+
+        const screen_tile_width = 17;
+        const screen_tile_height = 9;
+        for (0..32) |screen_y| {
+            for (0..32) |screen_x| {
+                for (0..screen_tile_height) |tile_y| {
+                    for (0..screen_tile_width) |tile_x| {
+                        const abs_tile_x: u32 = @intCast((screen_x * screen_tile_width) + tile_x);
+                        const abs_tile_y: u32 = @intCast((screen_y * screen_tile_height) + tile_y);
+
+                        tilemap.setTile(
+                            abs_tile_x,
+                            abs_tile_y,
+                            @intFromBool(tile_x == tile_y and (tile_y % 2 != 0)),
+                        );
+                    }
+                }
+            }
+        }
         game_memory.initialized = true;
     }
 
-    var tilemap: TileMap = .{
-        .tile_size_in_meters = tile_size_in_meters,
-        .tile_size_in_pixels = tile_size_in_pixels,
-        .chunk_count_x = chunks.len,
-        .chunk_count_y = chunks[0].len,
-        .chunk_dim = chunk_dim,
-        .chunks = @ptrCast(&chunks),
-    };
-
-    const world: World = .{
-        .meters_to_pixels = tile_size_in_pixels / tile_size_in_meters,
-        .tilemap = &tilemap,
-    };
+    const world: *World = game_state.world;
+    const tilemap: *TileMap = world.tilemap;
 
     const player_height: f32 = 1.4;
     const player_width: f32 = player_height * 0.75;
@@ -130,16 +158,16 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         var new_player_pos = game_state.player_pos;
         new_player_pos.tile_relative_x = new_player_x;
         new_player_pos.tile_relative_y = new_player_y;
-        new_player_pos.recanonicalize(&tilemap);
+        new_player_pos.recanonicalize(tilemap);
 
         var bottom_left_pos = new_player_pos;
         bottom_left_pos.tile_relative_x -= (player_width / 2);
-        bottom_left_pos.recanonicalize(&tilemap);
+        bottom_left_pos.recanonicalize(tilemap);
 
         var bottom_right_pos = new_player_pos;
 
         bottom_right_pos.tile_relative_x += (player_width / 2);
-        bottom_right_pos.recanonicalize(&tilemap);
+        bottom_right_pos.recanonicalize(tilemap);
 
         const is_valid_tile =
             tilemap.isTileEmpty(new_player_pos) and
@@ -235,11 +263,6 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
         // if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
     }
 }
-
-pub const World = struct {
-    meters_to_pixels: f32,
-    tilemap: *TileMap,
-};
 
 pub inline fn rgbToU32(r: f32, g: f32, b: f32) u32 {
     return 0 |
