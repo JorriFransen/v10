@@ -6,6 +6,8 @@ const intrinsics = @import("intrinsics.zig");
 
 const assert = std.debug.assert;
 
+const Random = @import("v10_random.zig");
+const MemoryArena = @import("v10_arena.zig");
 const TileMap = @import("v10_tilemap.zig");
 
 const ThreadContext = platform.ThreadContext;
@@ -16,28 +18,7 @@ const AudioBuffer = platform.AudioBuffer;
 
 const os = @import("builtin").os.tag;
 
-pub const MemoryArena = struct {
-    memory: []u8,
-    used: usize = 0,
-
-    fn init(mem: []u8) MemoryArena {
-        return .{
-            .memory = mem,
-            .used = 0,
-        };
-    }
-
-    fn pushMemory(this: *MemoryArena, comptime T: type) *T {
-        assert(this.memory.len - this.used >= @sizeOf(T));
-
-        const result: *T = @ptrCast(@alignCast(this.memory.ptr + this.used));
-        this.used += @sizeOf(T);
-        return result;
-    }
-};
-
 pub const World = struct {
-    meters_to_pixels: f32,
     tilemap: *TileMap,
 };
 
@@ -69,6 +50,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         game_state.player_pos = .{
             .abs_tile_x = 3,
             .abs_tile_y = 1,
+            .chunk_z = 0,
             .tile_relative_x = 0,
             .tile_relative_y = 0,
         };
@@ -82,45 +64,119 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         world.tilemap = game_state.world_arena.pushMemory(TileMap);
         const tilemap: *TileMap = world.tilemap;
 
-        const chunk_count_x = 4;
-        const chunk_count_y = 4;
-        const chunk_count = chunk_count_x * chunk_count_y;
+        const chunk_count_x = 128;
+        const chunk_count_y = 128;
+        const chunk_count_z = 2;
+        const chunk_count = chunk_count_x * chunk_count_y * chunk_count_z;
         const chunks = game_state.world_arena.pushMemory([chunk_count]TileMap.Chunk);
-        for (chunks) |*chunk| chunk.tiles = game_state.world_arena.pushMemory([TileMap.chunk_dim * TileMap.chunk_dim]TileMap.Tile);
+        for (chunks) |*chunk| chunk.tiles = &.{};
 
         tilemap.* = .{
             .tile_size_in_meters = 1.4,
-            .tile_size_in_pixels = 60,
             .chunk_count_x = chunk_count_x,
             .chunk_count_y = chunk_count_y,
+            .chunk_count_z = chunk_count_z,
             .chunks = chunks,
         };
 
-        world.meters_to_pixels = @as(f32, @floatFromInt(tilemap.tile_size_in_pixels)) / tilemap.tile_size_in_meters;
-
+        var next_random_number_index: usize = 0;
         const screen_tile_width = 17;
         const screen_tile_height = 9;
-        for (0..32) |screen_y| {
-            for (0..32) |screen_x| {
-                for (0..screen_tile_height) |tile_y| {
-                    for (0..screen_tile_width) |tile_x| {
-                        const abs_tile_x: u32 = @intCast((screen_x * screen_tile_width) + tile_x);
-                        const abs_tile_y: u32 = @intCast((screen_y * screen_tile_height) + tile_y);
+        var screen_x: u32 = 0;
+        var screen_y: u32 = 0;
+        var chunk_z: u32 = 0;
 
-                        tilemap.setTile(
-                            abs_tile_x,
-                            abs_tile_y,
-                            @intFromBool(tile_x == tile_y and (tile_y % 2 != 0)),
-                        );
+        var door_left = false;
+        var door_right = false;
+        var door_top = false;
+        var door_bottom = false;
+        var door_up = false;
+        var door_down = false;
+
+        for (0..100) |_| {
+            const random_number = Random.random_number_table[next_random_number_index];
+            next_random_number_index += 1;
+
+            const random_choice = if (door_up or door_down)
+                random_number % 2
+            else
+                random_number % 3;
+
+            if (random_choice == 2) {
+                if (chunk_z == 0) {
+                    door_up = true;
+                } else {
+                    door_down = true;
+                }
+            } else if (random_choice == 1) {
+                door_right = true;
+            } else {
+                door_top = true;
+            }
+
+            for (0..screen_tile_height) |tile_y| {
+                for (0..screen_tile_width) |tile_x| {
+                    const abs_tile_x: u32 = @intCast((screen_x * screen_tile_width) + tile_x);
+                    const abs_tile_y: u32 = @intCast((screen_y * screen_tile_height) + tile_y);
+
+                    var tile_value: u32 = 1;
+
+                    if ((tile_x == 0) and (!door_left or (tile_y != (screen_tile_height / 2)))) {
+                        tile_value = 2;
+                    } else if ((tile_x == screen_tile_width - 1) and (!door_right or (tile_y != (screen_tile_height / 2)))) {
+                        tile_value = 2;
+                    } else if ((tile_y == 0) and (!door_bottom or (tile_x != (screen_tile_width / 2)))) {
+                        tile_value = 2;
+                    } else if ((tile_y == screen_tile_height - 1) and (!door_top or (tile_x != (screen_tile_width / 2)))) {
+                        tile_value = 2;
                     }
+
+                    if (tile_x == 10 and tile_y == 6) {
+                        if (door_up) {
+                            tile_value = 3;
+                        } else if (door_down) {
+                            tile_value = 4;
+                        }
+                    }
+
+                    tilemap.setTile(&game_state.world_arena, abs_tile_x, abs_tile_y, chunk_z, tile_value);
                 }
             }
+
+            if (random_choice == 2) {
+                if (chunk_z == 0) {
+                    chunk_z = 1;
+                } else {
+                    chunk_z = 0;
+                }
+            } else if (random_choice == 1) {
+                screen_x += 1;
+            } else {
+                screen_y += 1;
+            }
+
+            door_left = door_right;
+            door_bottom = door_top;
+
+            if (door_up) {
+                door_down = true;
+                door_up = false;
+            } else if (door_down) {
+                door_down = false;
+                door_up = true;
+            }
+
+            door_right = false;
+            door_top = false;
         }
         game_memory.initialized = true;
     }
 
     const world: *World = game_state.world;
     const tilemap: *TileMap = world.tilemap;
+
+    const tile_size_in_pixels = 60;
+    const meters_to_pixels = tile_size_in_pixels / tilemap.tile_size_in_meters;
 
     const player_height: f32 = 1.4;
     const player_width: f32 = player_height * 0.75;
@@ -146,7 +202,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
 
         if (buttons.action_up.ended_down) {
-            player_speed *= 2;
+            player_speed *= 5;
         }
 
         d_player_x *= player_speed;
@@ -194,38 +250,42 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             const row: u32 = player_pos.abs_tile_y +% @as(u32, @bitCast(rel_row));
             const column: u32 = player_pos.abs_tile_x +% @as(u32, @bitCast(rel_column));
 
-            const tile = tilemap.getTile(column, row);
-            var grayscale: f32 = if (tile == 1) 1 else 0.5;
+            const tile = tilemap.getTile(column, row, player_pos.chunk_z);
+            if (tile > 0) {
+                var grayscale: f32 = if (tile == 1) 0.5 else 1;
 
-            if (player_pos.abs_tile_x == column and player_pos.abs_tile_y == row) {
-                grayscale = 0;
+                if (player_pos.abs_tile_x == column and player_pos.abs_tile_y == row) {
+                    grayscale = 0;
+                } else if (tile > 2) {
+                    grayscale = 0.25;
+                }
+
+                const tile_size: f32 = @floatFromInt(tile_size_in_pixels);
+
+                const center_x: f32 = screen_center_x - (meters_to_pixels * player_pos.tile_relative_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels))));
+                const center_y: f32 = screen_center_y + (meters_to_pixels * player_pos.tile_relative_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels))));
+                const min_x: f32 = center_x - (0.5 * tile_size);
+                const min_y: f32 = center_y - (0.5 * tile_size);
+                const max_x: f32 = center_x + (0.5 * tile_size);
+                const max_y: f32 = center_y + (0.5 * tile_size);
+
+                drawRectangle(
+                    offscreen_buffer,
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                    grayscale,
+                    grayscale,
+                    grayscale,
+                );
             }
-
-            const tile_size: f32 = @floatFromInt(tilemap.tile_size_in_pixels);
-
-            const center_x: f32 = screen_center_x - (world.meters_to_pixels * player_pos.tile_relative_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tilemap.tile_size_in_pixels))));
-            const center_y: f32 = screen_center_y + (world.meters_to_pixels * player_pos.tile_relative_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tilemap.tile_size_in_pixels))));
-            const min_x: f32 = center_x - (0.5 * tile_size);
-            const min_y: f32 = center_y - (0.5 * tile_size);
-            const max_x: f32 = center_x + (0.5 * tile_size);
-            const max_y: f32 = center_y + (0.5 * tile_size);
-
-            drawRectangle(
-                offscreen_buffer,
-                min_x,
-                min_y,
-                max_x,
-                max_y,
-                grayscale,
-                grayscale,
-                grayscale,
-            );
         }
     }
 
     {
-        const player_width_pixels = player_width * world.meters_to_pixels;
-        const player_height_pixels = player_height * world.meters_to_pixels;
+        const player_width_pixels = player_width * meters_to_pixels;
+        const player_height_pixels = player_height * meters_to_pixels;
 
         const player_left: f32 = screen_center_x - (player_width_pixels / 2);
         const player_top: f32 = screen_center_y - (player_height_pixels);
