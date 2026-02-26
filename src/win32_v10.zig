@@ -1097,7 +1097,7 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *anyopaque, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *const anyopaque, size: usize) callconv(.c) bool {
         _ = thread_context;
         assert(std.mem.span(path).len == path_len);
 
