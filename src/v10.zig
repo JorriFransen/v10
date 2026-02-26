@@ -51,8 +51,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             .abs_tile_x = 3,
             .abs_tile_y = 1,
             .chunk_z = 0,
-            .tile_relative_x = 0,
-            .tile_relative_y = 0,
+            .offset_x = 0,
+            .offset_y = 0,
         };
 
         const game_state_size = @sizeOf(GameState);
@@ -102,11 +102,15 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             else
                 random_number % 3;
 
+            var created_ladder = false;
+
             if (random_choice == 2) {
                 if (chunk_z == 0) {
                     door_up = true;
+                    created_ladder = true;
                 } else {
                     door_down = true;
+                    created_ladder = true;
                 }
             } else if (random_choice == 1) {
                 door_right = true;
@@ -158,12 +162,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             door_left = door_right;
             door_bottom = door_top;
 
-            if (door_up) {
-                door_down = true;
-                door_up = false;
-            } else if (door_down) {
+            if (created_ladder) {
+                door_down = !door_down;
+                door_up = !door_up;
+            } else {
                 door_down = false;
-                door_up = true;
+                door_up = false;
             }
 
             door_right = false;
@@ -208,29 +212,35 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         d_player_x *= player_speed;
         d_player_y *= player_speed;
 
-        const new_player_x = game_state.player_pos.tile_relative_x + d_player_x * input.dt;
-        const new_player_y = game_state.player_pos.tile_relative_y + d_player_y * input.dt;
+        const new_player_x = game_state.player_pos.offset_x + d_player_x * input.dt;
+        const new_player_y = game_state.player_pos.offset_y + d_player_y * input.dt;
 
         var new_player_pos = game_state.player_pos;
-        new_player_pos.tile_relative_x = new_player_x;
-        new_player_pos.tile_relative_y = new_player_y;
+        new_player_pos.offset_x = new_player_x;
+        new_player_pos.offset_y = new_player_y;
         new_player_pos.recanonicalize(tilemap);
 
         var bottom_left_pos = new_player_pos;
-        bottom_left_pos.tile_relative_x -= (player_width / 2);
+        bottom_left_pos.offset_x -= (player_width / 2);
         bottom_left_pos.recanonicalize(tilemap);
 
         var bottom_right_pos = new_player_pos;
 
-        bottom_right_pos.tile_relative_x += (player_width / 2);
+        bottom_right_pos.offset_x += (player_width / 2);
         bottom_right_pos.recanonicalize(tilemap);
 
-        const is_valid_tile =
-            tilemap.isTileEmpty(new_player_pos) and
+        if (tilemap.isTileEmpty(new_player_pos) and
             tilemap.isTileEmpty(bottom_left_pos) and
-            tilemap.isTileEmpty(bottom_right_pos);
-
-        if (is_valid_tile) {
+            tilemap.isTileEmpty(bottom_right_pos))
+        {
+            if (!TileMap.inSameTile(game_state.player_pos, new_player_pos)) {
+                const tile = tilemap.getTile(new_player_pos);
+                if (tile == 3) {
+                    new_player_pos.chunk_z += 1;
+                } else if (tile == 4) {
+                    new_player_pos.chunk_z -= 1;
+                }
+            }
             game_state.player_pos = new_player_pos;
         }
     };
@@ -250,7 +260,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             const row: u32 = player_pos.abs_tile_y +% @as(u32, @bitCast(rel_row));
             const column: u32 = player_pos.abs_tile_x +% @as(u32, @bitCast(rel_column));
 
-            const tile = tilemap.getTile(column, row, player_pos.chunk_z);
+            const tile = tilemap.getTileXYZ(column, row, player_pos.chunk_z);
             if (tile > 0) {
                 var grayscale: f32 = if (tile == 1) 0.5 else 1;
 
@@ -262,8 +272,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
                 const tile_size: f32 = @floatFromInt(tile_size_in_pixels);
 
-                const center_x: f32 = screen_center_x - (meters_to_pixels * player_pos.tile_relative_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels))));
-                const center_y: f32 = screen_center_y + (meters_to_pixels * player_pos.tile_relative_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels))));
+                const center_x: f32 = screen_center_x - (meters_to_pixels * player_pos.offset_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels))));
+                const center_y: f32 = screen_center_y + (meters_to_pixels * player_pos.offset_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels))));
                 const min_x: f32 = center_x - (0.5 * tile_size);
                 const min_y: f32 = center_y - (0.5 * tile_size);
                 const max_x: f32 = center_x + (0.5 * tile_size);

@@ -25,14 +25,14 @@ pub const Position = struct {
 
     chunk_z: u32,
 
-    /// In meters, from the bottom left
-    tile_relative_x: f32,
-    /// In meters, from the bottom left
-    tile_relative_y: f32,
+    /// In meters, from the tile center
+    offset_x: f32,
+    /// In meters, from the tile center
+    offset_y: f32,
 
     pub fn recanonicalize(this: *Position, map: *const TileMap) void {
-        map.recanonicalizeCoord(&this.abs_tile_x, &this.tile_relative_x);
-        map.recanonicalizeCoord(&this.abs_tile_y, &this.tile_relative_y);
+        map.recanonicalizeCoord(&this.abs_tile_x, &this.offset_x);
+        map.recanonicalizeCoord(&this.abs_tile_y, &this.offset_y);
     }
 };
 
@@ -97,7 +97,11 @@ pub inline fn getChunk(this: *const TileMap, pos: TileChunkPosition) ?*Chunk {
     return null;
 }
 
-pub fn getTile(map: *const TileMap, abs_tile_x: u32, abs_tile_y: u32, chunk_z: u32) Tile {
+pub fn getTile(map: *const TileMap, pos: Position) Tile {
+    return map.getTileXYZ(pos.abs_tile_x, pos.abs_tile_y, pos.chunk_z);
+}
+
+pub fn getTileXYZ(map: *const TileMap, abs_tile_x: u32, abs_tile_y: u32, chunk_z: u32) Tile {
     const pos = getChunkPositionFor(abs_tile_x, abs_tile_y, chunk_z);
     const chunk_opt = map.getChunk(pos);
     return getChunkTile(chunk_opt, pos.rel_tile_x, pos.rel_tile_y);
@@ -123,8 +127,8 @@ pub fn setTile(map: *const TileMap, arena: *MemoryArena, abs_tile_x: u32, abs_ti
 pub fn isTileEmpty(map: *const TileMap, can_pos: Position) bool {
     var empty = false;
 
-    const tile_value = map.getTile(can_pos.abs_tile_x, can_pos.abs_tile_y, can_pos.chunk_z);
-    empty = tile_value == 1;
+    const tile_value = map.getTileXYZ(can_pos.abs_tile_x, can_pos.abs_tile_y, can_pos.chunk_z);
+    empty = tile_value == 1 or tile_value == 3 or tile_value == 4;
 
     return empty;
 }
@@ -160,4 +164,8 @@ pub fn recanonicalizePosition(map: *const TileMap, pos: Position) Position {
     var result = pos;
     result.recanonicalize(map);
     return result;
+}
+
+pub fn inSameTile(p1: Position, p2: Position) bool {
+    return p1.abs_tile_x == p2.abs_tile_x and p1.abs_tile_y == p2.abs_tile_y and p1.chunk_z == p2.chunk_z;
 }
