@@ -26,6 +26,8 @@ pub const GameState = struct {
     world_arena: MemoryArena = undefined,
     world: *World = undefined,
     player_pos: TileMap.Position = undefined,
+
+    pixels: []align(1) u32 = undefined,
 };
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
@@ -34,8 +36,6 @@ pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callcon
 }
 
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool {
-    _ = thread_context;
-
     assert(@sizeOf(GameState) <= game_memory.permanent_len);
 
     var keep_running = true;
@@ -46,6 +46,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     if (!game_memory.initialized) {
         game_state.* = .{};
+
+        // const asset_prefix = "/home/jorri/dev/hh_data/";
+        const asset_prefix = "../data/";
+
+        game_state.pixels = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
 
         game_state.player_pos = .{
             .abs_tile_x = 3,
@@ -305,6 +310,17 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
     }
 
+    var source: [*]align(1) u32 = game_state.pixels.ptr;
+    var dest: [*]u32 = @ptrCast(@alignCast(offscreen_buffer.memory));
+    for (0..@intCast(offscreen_buffer.height)) |_| {
+        for (0..@intCast(offscreen_buffer.width)) |_| {
+            dest[0] = source[0];
+
+            source += 1;
+            dest += 1;
+        }
+    }
+
     return keep_running;
 }
 
@@ -370,3 +386,29 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
         row += pitch;
     }
 }
+
+pub const DEBUG = if (options.internal_build) struct {
+    pub const BitmapHeader = packed struct { file_type: u16, file_size: u32, reserved_1: u16, reserved_2: u16, bitmap_offset: u32, size: u32, width: i32, height: i32, planes: u16, bits_per_pixel: u16 };
+
+    pub fn loadBMP(pd: *const platform.DEBUG, thread_context: *ThreadContext, filename: [:0]const u8) []align(1) u32 {
+        var result: []align(1) u32 = &.{};
+
+        const read_result = pd.readEntireFile(thread_context, filename, filename.len);
+        if (read_result.size != 0) {
+            const content = read_result.slice();
+
+            assert(content.len >= @sizeOf(BitmapHeader));
+            const header: *BitmapHeader = @ptrCast(@alignCast(content));
+            const magic: [2]u8 = @bitCast(header.file_type);
+            log.debug("Bmp magic: {s}", .{magic});
+            log.debug("Bmp header: {}", .{header});
+
+            const pixel_count: u32 = @intCast(header.width * header.height);
+
+            assert(header.bits_per_pixel == 32); // TODO: account for scan line alignment
+            result = @ptrCast(@alignCast(content[header.bitmap_offset .. header.bitmap_offset + pixel_count]));
+        }
+
+        return result;
+    }
+} else void;

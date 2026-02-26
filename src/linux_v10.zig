@@ -1347,12 +1347,14 @@ pub const DEBUG = struct {
         var result = platform.DEBUG.ReadFileResult{};
 
         const open_rc = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
-        if (@as(isize, @intCast(open_rc)) >= 0) {
+        if (@as(isize, @bitCast(open_rc)) >= 0) {
             const handle: linux.fd_t = @intCast(open_rc);
 
-            var stat: linux.Statx = undefined;
-            if (linux.statx(handle, path, 0, .{}, &stat) == 0) {
-                const file_size: usize = @intCast(stat.size);
+            var stat: linux.Stat = undefined;
+
+            // TODO: Use statx here! statx needs absolute paths or a dir fd...
+            if (linux.stat(path, &stat) == 0) {
+                const file_size: usize = @intCast(stat.st_size);
 
                 if (linux.mmap(null, file_size, .{}, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0)) |mapped| {
                     if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) == 0) {

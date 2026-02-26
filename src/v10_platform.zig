@@ -119,6 +119,10 @@ pub const DEBUG = if (options.internal_build) extern struct {
     pub const ReadFileResult = extern struct {
         size: usize = 0,
         content: *anyopaque = undefined,
+
+        pub inline fn slice(this: ReadFileResult) []u8 {
+            return @as([*]u8, @ptrCast(this.content))[0..this.size];
+        }
     };
 
     readEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) ReadFileResult = undefined,
