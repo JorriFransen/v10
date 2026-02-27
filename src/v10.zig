@@ -310,16 +310,16 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
     }
 
-    var source: [*]align(1) u32 = game_state.pixels.ptr;
-    var dest: [*]u32 = @ptrCast(@alignCast(offscreen_buffer.memory));
-    for (0..@intCast(offscreen_buffer.height)) |_| {
-        for (0..@intCast(offscreen_buffer.width)) |_| {
-            dest[0] = source[0];
-
-            source += 1;
-            dest += 1;
-        }
-    }
+    // var source: [*]align(1) u32 = game_state.pixels.ptr;
+    // var dest: [*]u32 = @ptrCast(@alignCast(offscreen_buffer.memory));
+    // for (0..@intCast(offscreen_buffer.height)) |_| {
+    //     for (0..@intCast(offscreen_buffer.width)) |_| {
+    //         dest[0] = source[0];
+    //
+    //         source += 1;
+    //         dest += 1;
+    //     }
+    // }
 
     return keep_running;
 }
