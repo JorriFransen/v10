@@ -219,6 +219,7 @@ pub const GameCode = struct {
             get_audio_frames != null;
 
         if (valid) {
+            log.debug("Loaded game code", .{});
             return .{
                 .valid = true,
                 .dll = lib,
