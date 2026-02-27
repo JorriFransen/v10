@@ -50,7 +50,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         // const asset_prefix = "/home/jorri/dev/hh_data/";
         const asset_prefix = "../data/";
 
-        game_state.pixels = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
+        game_state.pixels = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test.bmp");
 
         game_state.player_pos = .{
             .abs_tile_x = 3,
@@ -310,16 +310,30 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
     }
 
-    // var source: [*]align(1) u32 = game_state.pixels.ptr;
-    // var dest: [*]u32 = @ptrCast(@alignCast(offscreen_buffer.memory));
-    // for (0..@intCast(offscreen_buffer.height)) |_| {
-    //     for (0..@intCast(offscreen_buffer.width)) |_| {
-    //         dest[0] = source[0];
-    //
-    //         source += 1;
-    //         dest += 1;
-    //     }
-    // }
+    {
+        const pixel_width = 60;
+        const pixel_height = 40;
+        const blit_width: usize = @intCast(@min(pixel_width, offscreen_buffer.width));
+        const blit_height: usize = @intCast(@min(pixel_height, offscreen_buffer.height));
+
+        var source_row: [*]align(1) u32 = game_state.pixels.ptr + (pixel_width * (pixel_height - 1));
+        var dest_row: [*]u8 = @ptrCast(@alignCast(offscreen_buffer.memory));
+
+        for (0..blit_height) |_| {
+            var source: [*]align(1) u32 = source_row;
+            var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
+
+            for (0..blit_width) |_| {
+                dest[0] = source[0];
+
+                source += 1;
+                dest += 1;
+            }
+
+            dest_row += @intCast(offscreen_buffer.pitch);
+            source_row -= pixel_width;
+        }
+    }
 
     return keep_running;
 }
@@ -388,7 +402,28 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
 }
 
 pub const DEBUG = if (options.internal_build) struct {
-    pub const BitmapHeader = packed struct { file_type: u16, file_size: u32, reserved_1: u16, reserved_2: u16, bitmap_offset: u32, size: u32, width: i32, height: i32, planes: u16, bits_per_pixel: u16 };
+    pub const BitmapHeader = packed struct {
+        file_type: u16,
+        file_size: u32,
+        reserved_1: u16,
+        reserved_2: u16,
+        bitmap_offset: u32,
+        header_size: u32,
+        width: i32,
+        height: i32,
+        planes: u16,
+        bits_per_pixel: u16,
+        compression: u32,
+        image_size: u32,
+        x_pixels_per_meter: u32,
+        y_pixels_per_meter: u32,
+        color_count: u32,
+        important_color_count: u32,
+        red_mask: u32,
+        green_mask: u32,
+        blue_mask: u32,
+        alpha_mask: u32,
+    };
 
     pub fn loadBMP(pd: *const platform.DEBUG, thread_context: *ThreadContext, filename: [:0]const u8) []align(1) u32 {
         var result: []align(1) u32 = &.{};
@@ -399,6 +434,8 @@ pub const DEBUG = if (options.internal_build) struct {
 
             assert(content.len >= @sizeOf(BitmapHeader));
             const header: *BitmapHeader = @ptrCast(@alignCast(content));
+            assert(header.header_size >= 40); // Earlier types are not binary compatible
+
             const magic: [2]u8 = @bitCast(header.file_type);
             log.debug("Bmp magic: {s}", .{magic});
             log.debug("Bmp header: {}", .{header});
@@ -406,7 +443,22 @@ pub const DEBUG = if (options.internal_build) struct {
             const pixel_count: u32 = @intCast(header.width * header.height);
 
             assert(header.bits_per_pixel == 32); // TODO: account for scan line alignment
-            result = @ptrCast(@alignCast(content[header.bitmap_offset .. header.bitmap_offset + pixel_count]));
+            result = @as([*]align(1) u32, @ptrCast(content.ptr + header.bitmap_offset))[0..pixel_count];
+            assert(result.len == pixel_count);
+
+            if (!(header.alpha_mask == 0xff000000 and header.red_mask == 0x00ff0000 and header.green_mask == 0x0000ff00 and header.blue_mask == 0x000000ff)) {
+
+                // ARGB expected
+
+                // RGBA
+                if (header.alpha_mask == 0x000000ff and header.red_mask == 0xff000000 and header.green_mask == 0x00ff0000 and header.blue_mask == 0x0000ff00) {
+                    for (result) |*pixel| {
+                        pixel.* = (pixel.* >> 8) | (pixel.* << 24);
+                    }
+                } else {
+                    log.warn("Unsupported bmp format ({s})", .{filename});
+                }
+            }
         }
 
         return result;
