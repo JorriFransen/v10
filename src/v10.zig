@@ -27,7 +27,16 @@ pub const GameState = struct {
     world: *World = undefined,
     player_pos: TileMap.Position = undefined,
 
-    pixels: []align(1) u32 = undefined,
+    backdrop: LoadedBitmap = .{},
+    hero_head: LoadedBitmap = .{},
+    // hero_cape: LoadedBitmap = .{},
+    // hero_torso: LoadedBitmap = .{},
+};
+
+pub const LoadedBitmap = struct {
+    width: u32 = 0,
+    height: u32 = 0,
+    pixels: []align(1) u32 = &.{},
 };
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
@@ -50,7 +59,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         // const asset_prefix = "/home/jorri/dev/hh_data/";
         const asset_prefix = "../data/";
 
-        game_state.pixels = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test.bmp");
+        game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
+        game_state.hero_head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_head.bmp");
+        // game_state.hero_cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_cape.bmp");
+        // game_state.hero_torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_torso.bmp");
 
         game_state.player_pos = .{
             .abs_tile_x = 3,
@@ -253,6 +265,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
+    drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0);
+
     const player_pos = game_state.player_pos;
 
     const screen_center_x: f32 = @floatFromInt(@divTrunc(offscreen_buffer.width, 2));
@@ -266,7 +280,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             const column: u32 = player_pos.abs_tile_x +% @as(u32, @bitCast(rel_column));
 
             const tile = tilemap.getTileXYZ(column, row, player_pos.chunk_z);
-            if (tile > 0) {
+            if (tile > 1) {
                 var grayscale: f32 = if (tile == 1) 0.5 else 1;
 
                 if (player_pos.abs_tile_x == column and player_pos.abs_tile_y == row) {
@@ -308,31 +322,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const player_right = player_left + (player_width_pixels);
         const player_bottom = player_top + (player_height_pixels);
         drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
-    }
-
-    {
-        const pixel_width = 60;
-        const pixel_height = 40;
-        const blit_width: usize = @intCast(@min(pixel_width, offscreen_buffer.width));
-        const blit_height: usize = @intCast(@min(pixel_height, offscreen_buffer.height));
-
-        var source_row: [*]align(1) u32 = game_state.pixels.ptr + (pixel_width * (pixel_height - 1));
-        var dest_row: [*]u8 = @ptrCast(@alignCast(offscreen_buffer.memory));
-
-        for (0..blit_height) |_| {
-            var source: [*]align(1) u32 = source_row;
-            var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
-
-            for (0..blit_width) |_| {
-                dest[0] = source[0];
-
-                source += 1;
-                dest += 1;
-            }
-
-            dest_row += @intCast(offscreen_buffer.pitch);
-            source_row -= pixel_width;
-        }
+        drawBitmap(offscreen_buffer, game_state.hero_head, player_left, player_top);
     }
 
     return keep_running;
@@ -378,10 +368,10 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
     const buffer_width_f: f32 = @floatFromInt(buffer.width);
     const buffer_height_f: f32 = @floatFromInt(buffer.height);
 
-    const minx = intrinsics.floorFloatToUInt(usize, @min(@max(min_x, 0), buffer_width_f));
-    const miny = intrinsics.floorFloatToUInt(usize, @min(@max(min_y, 0), buffer_height_f));
-    const maxx = intrinsics.floorFloatToUInt(usize, @min(@max(max_x, 0), buffer_width_f));
-    const maxy = intrinsics.floorFloatToUInt(usize, @min(@max(max_y, 0), buffer_height_f));
+    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(min_x, 0), buffer_width_f));
+    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(min_y, 0), buffer_height_f));
+    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(max_x, 0), buffer_width_f));
+    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(max_y, 0), buffer_height_f));
 
     assert(bpp == @sizeOf(u32));
 
@@ -398,6 +388,41 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
         }
 
         row += pitch;
+    }
+}
+
+pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, x: f32, y: f32) void {
+    const pitch: usize = @intCast(buffer.pitch);
+    const bpp: usize = @intCast(buffer.bytes_per_pixel);
+
+    const buffer_width_f: f32 = @floatFromInt(buffer.width);
+    const buffer_height_f: f32 = @floatFromInt(buffer.height);
+    const bitmap_width_f: f32 = @floatFromInt(bitmap.width);
+    const bitmap_height_f: f32 = @floatFromInt(bitmap.height);
+
+    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(x, 0), buffer_width_f));
+    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(y, 0), buffer_height_f));
+    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(x + bitmap_width_f, 0), buffer_width_f));
+    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(y + bitmap_height_f, 0), buffer_height_f));
+
+    var source_row: [*]align(1) u32 = bitmap.pixels.ptr + (bitmap.width * (bitmap.height - 1));
+    var dest_row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
+
+    var iy: usize = @intCast(miny);
+    while (iy < maxy) : (iy += 1) {
+        var source: [*]align(1) u32 = source_row;
+        var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
+
+        var ix: usize = @intCast(minx);
+        while (ix < maxx) : (ix += 1) {
+            dest[0] = source[0];
+
+            source += 1;
+            dest += 1;
+        }
+
+        dest_row += @intCast(buffer.pitch);
+        source_row -= bitmap.width;
     }
 }
 
@@ -425,8 +450,8 @@ pub const DEBUG = if (options.internal_build) struct {
         alpha_mask: u32,
     };
 
-    pub fn loadBMP(pd: *const platform.DEBUG, thread_context: *ThreadContext, filename: [:0]const u8) []align(1) u32 {
-        var result: []align(1) u32 = &.{};
+    pub fn loadBMP(pd: *const platform.DEBUG, thread_context: *ThreadContext, filename: [:0]const u8) LoadedBitmap {
+        var result: LoadedBitmap = .{};
 
         const read_result = pd.readEntireFile(thread_context, filename, filename.len);
         if (read_result.size != 0) {
@@ -437,14 +462,15 @@ pub const DEBUG = if (options.internal_build) struct {
             assert(header.header_size >= 40); // Earlier types are not binary compatible
 
             const magic: [2]u8 = @bitCast(header.file_type);
-            log.debug("Bmp magic: {s}", .{magic});
-            log.debug("Bmp header: {}", .{header});
+            assert(std.mem.eql(u8, magic[0..], "BM"));
 
             const pixel_count: u32 = @intCast(header.width * header.height);
 
             assert(header.bits_per_pixel == 32); // TODO: account for scan line alignment
-            result = @as([*]align(1) u32, @ptrCast(content.ptr + header.bitmap_offset))[0..pixel_count];
-            assert(result.len == pixel_count);
+            result.pixels = @as([*]align(1) u32, @ptrCast(content.ptr + header.bitmap_offset))[0..pixel_count];
+            assert(result.pixels.len == pixel_count);
+            result.width = @intCast(header.width);
+            result.height = @intCast(header.height);
 
             if (!(header.alpha_mask == 0xff000000 and header.red_mask == 0x00ff0000 and header.green_mask == 0x0000ff00 and header.blue_mask == 0x000000ff)) {
 
@@ -452,7 +478,7 @@ pub const DEBUG = if (options.internal_build) struct {
 
                 // RGBA
                 if (header.alpha_mask == 0x000000ff and header.red_mask == 0xff000000 and header.green_mask == 0x00ff0000 and header.blue_mask == 0x0000ff00) {
-                    for (result) |*pixel| {
+                    for (result.pixels) |*pixel| {
                         pixel.* = (pixel.* >> 8) | (pixel.* << 24);
                     }
                 } else {
@@ -460,6 +486,8 @@ pub const DEBUG = if (options.internal_build) struct {
                 }
             }
         }
+
+        log.debug("Loaded bmp: {s} ({},{})", .{ filename, result.width, result.height });
 
         return result;
     }

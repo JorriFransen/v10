@@ -1465,8 +1465,6 @@ fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) ca
 fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, serial: u32) callconv(.c) void {
     _ = data;
     _ = surface;
-    log.debug("xdg_surface_configure", .{});
-    // surface.?.ack_configure(serial);
     wld.pending_configure_serial = serial;
 }
 
@@ -1474,8 +1472,6 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel,
     _ = data;
     _ = toplevel;
     _ = states;
-
-    log.debug("configure: {},{}", .{ width, height });
 
     wld.pending_resize = .{ .width = width, .height = height };
 }
