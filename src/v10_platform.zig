@@ -3,7 +3,7 @@ const log = std.log.scoped(.v10_shared);
 const options = @import("options");
 const v10 = @import("v10.zig");
 const builtin = @import("builtin");
-const DynLib = @import("dynlib.zig");
+const DynLib = @import("dynlib");
 
 const assert = std.debug.assert;
 
@@ -246,7 +246,7 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
 
     switch (builtin.os.tag) {
         .windows => {
-            const win32 = @import("win32/win32.zig");
+            const win32 = @import("win32");
             var data: win32.FILE_ATTRIBUTE_DATA = undefined;
             if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data) == win32.TRUE) {
                 result = @as(u64, @bitCast(data.last_write_time));

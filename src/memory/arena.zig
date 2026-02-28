@@ -3,7 +3,7 @@ const log = std.log.scoped(.arena);
 const builtin = @import("builtin");
 const mem = @import("memory.zig");
 const posix = std.posix;
-const windows = std.os.windows;
+const win32 = @import("win32");
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
@@ -105,23 +105,19 @@ pub const Arena = struct {
             },
 
             .windows => {
-                const reserved_ptr = windows.VirtualAlloc(
+                const reserved_ptr = win32.VirtualAlloc(
                     null,
                     options.reserved_capacity,
-                    windows.MEM_RESERVE,
-                    windows.PAGE_NOACCESS,
-                ) catch |err| switch (err) {
-                    error.Unexpected => return error.Unexpected,
-                };
+                    win32.MEM_RESERVE,
+                    win32.PAGE_NOACCESS,
+                ) orelse return error.Unexpected;
 
-                const commit_ptr = windows.VirtualAlloc(
+                const commit_ptr = win32.VirtualAlloc(
                     reserved_ptr,
                     options.initial_commit,
-                    windows.MEM_COMMIT,
-                    windows.PAGE_READWRITE,
-                ) catch |err| switch (err) {
-                    error.Unexpected => return error.CommitFailed,
-                };
+                    win32.MEM_COMMIT,
+                    win32.PAGE_READWRITE,
+                ) orelse return error.CommitFailed;
 
                 const ptr: [*]u8 = @ptrCast(commit_ptr);
 
@@ -142,7 +138,7 @@ pub const Arena = struct {
             switch (builtin.os.tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
                 .linux => posix.munmap(@alignCast(this.data)),
-                .windows => windows.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, windows.MEM_RELEASE),
+                .windows => win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
             }
         }
 
@@ -190,14 +186,12 @@ pub const Arena = struct {
             },
 
             .windows => {
-                _ = windows.VirtualAlloc(
+                _ = win32.VirtualAlloc(
                     new_slice.ptr,
                     new_slice.len,
-                    windows.MEM_COMMIT,
-                    windows.PAGE_READWRITE,
-                ) catch |err| switch (err) {
-                    error.Unexpected => return error.Unexpected,
-                };
+                    win32.MEM_COMMIT,
+                    win32.PAGE_READWRITE,
+                ) orelse return error.Unexpected;
             },
         }
 

@@ -2,9 +2,9 @@ const std = @import("std");
 const log = std.log.scoped(.win32_v10);
 const options = @import("options");
 const mem = @import("mem");
-const win32 = @import("win32/win32.zig");
-const xinput = @import("win32/xinput.zig");
-const dsound = @import("win32/direct_sound.zig");
+const win32 = @import("win32");
+const xinput = win32.xinput;
+const dsound = win32.direct_sound;
 const x86_64 = @import("arch/x86_64.zig");
 const builtin = @import("builtin");
 

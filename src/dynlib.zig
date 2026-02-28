@@ -5,7 +5,7 @@ const DynLib = @This();
 
 const Inner = switch (builtin.os.tag) {
     .windows => struct {
-        const win32 = @import("win32/win32.zig");
+        const win32 = @import("win32");
 
         const Error = error{ FileNotFound, BadFormat, AccessDenied, DLLInitFailed, ModNotFound } ||
             std.Io.UnexpectedError ||
