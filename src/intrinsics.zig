@@ -80,3 +80,26 @@ pub inline fn atan2(y: anytype, x: @TypeOf(y)) @TypeOf(y) {
 
     return std.math.atan2(x, y);
 }
+
+pub fn BitScanResult(comptime T: type) type {
+    const int_info = @typeInfo(T);
+    if (int_info != .int) @compileError("Expected integer type");
+    const IndexType = @Int(.unsigned, std.math.log2(@bitSizeOf(T)) + 1);
+    return struct {
+        found: bool = false,
+        index: IndexType = 0,
+    };
+}
+
+pub inline fn findLSBSet(x: anytype) BitScanResult(@TypeOf(x)) {
+    const T = @TypeOf(x);
+    comptime {
+        const int_info = @typeInfo(T);
+        if (int_info != .int) @compileError("Expected integer type");
+    }
+
+    return if (x != 0)
+        .{ .found = true, .index = @ctz(x) }
+    else
+        .{ .found = false };
+}
