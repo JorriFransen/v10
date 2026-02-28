@@ -354,12 +354,29 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) v
     }
 }
 
-pub inline fn rgbToU32(r: f32, g: f32, b: f32) u32 {
-    return 0 |
-        @as(u24, @intFromFloat(r * 255)) << 16 |
-        @as(u16, @intFromFloat(g * 255)) << 8 |
-        @as(u8, @intFromFloat(b * 255));
-}
+pub const ColorU8ARGB = packed struct(u32) {
+    b: u8,
+    g: u8,
+    r: u8,
+    a: u8,
+
+    pub inline fn asU32(this: ColorU8ARGB) u32 {
+        return @bitCast(this);
+    }
+
+    pub inline fn fromU32(int: u32) ColorU8ARGB {
+        return @bitCast(int);
+    }
+
+    pub inline fn fromF32RGB(rf: f32, gf: f32, bf: f32) ColorU8ARGB {
+        return .{
+            .r = @intFromFloat(rf * 255),
+            .g = @intFromFloat(gf * 255),
+            .b = @intFromFloat(bf * 255),
+            .a = 255,
+        };
+    }
+};
 
 pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f32, max_y: f32, r: f32, g: f32, b: f32) void {
     const pitch: usize = @intCast(buffer.pitch);
@@ -375,7 +392,7 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
 
     assert(bpp == @sizeOf(u32));
 
-    const color = rgbToU32(r, g, b);
+    const color = ColorU8ARGB.fromF32RGB(r, g, b);
 
     var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
     var y: usize = @intCast(miny);
@@ -383,7 +400,7 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
         var x: usize = @intCast(minx);
         while (x < maxx) : (x += 1) {
-            pixel[0] = color;
+            pixel[0] = color.asU32();
             pixel += 1;
         }
 
@@ -391,7 +408,7 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
     }
 }
 
-pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, x: f32, y: f32) void {
+pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, left: f32, top: f32) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
@@ -400,22 +417,43 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, x: f32, y: f32
     const bitmap_width_f: f32 = @floatFromInt(bitmap.width);
     const bitmap_height_f: f32 = @floatFromInt(bitmap.height);
 
-    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(x, 0), buffer_width_f));
-    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(y, 0), buffer_height_f));
-    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(x + bitmap_width_f, 0), buffer_width_f));
-    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(y + bitmap_height_f, 0), buffer_height_f));
+    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(left, 0), buffer_width_f));
+    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(top, 0), buffer_height_f));
+    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(left + bitmap_width_f, 0), buffer_width_f));
+    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(top + bitmap_height_f, 0), buffer_height_f));
 
     var source_row: [*]align(1) u32 = bitmap.pixels.ptr + (bitmap.width * (bitmap.height - 1));
     var dest_row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
 
-    var iy: usize = @intCast(miny);
-    while (iy < maxy) : (iy += 1) {
+    var y: usize = @intCast(miny);
+    while (y < maxy) : (y += 1) {
         var source: [*]align(1) u32 = source_row;
         var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
 
-        var ix: usize = @intCast(minx);
-        while (ix < maxx) : (ix += 1) {
-            dest[0] = source[0];
+        var x: usize = @intCast(minx);
+        while (x < maxx) : (x += 1) {
+            const sc = ColorU8ARGB.fromU32(source[0]);
+            const dc = ColorU8ARGB.fromU32(dest[0]);
+
+            const a: f32 = @as(f32, @floatFromInt(sc.a)) / 255;
+            const sr: f32 = sc.r;
+            const sg: f32 = sc.g;
+            const sb: f32 = sc.b;
+
+            const dr: f32 = dc.r;
+            const dg: f32 = dc.g;
+            const db: f32 = dc.b;
+
+            const r: f32 = (1 - a) * dr + a * sr;
+            const g: f32 = (1 - a) * dg + a * sg;
+            const b: f32 = (1 - a) * db + a * sb;
+
+            dest[0] = (ColorU8ARGB{
+                .r = @intFromFloat(r + 0.5),
+                .g = @intFromFloat(g + 0.5),
+                .b = @intFromFloat(b + 0.5),
+                .a = 255,
+            }).asU32();
 
             source += 1;
             dest += 1;
@@ -460,6 +498,7 @@ pub const DEBUG = if (options.internal_build) struct {
             assert(content.len >= @sizeOf(BitmapHeader));
             const header: *BitmapHeader = @ptrCast(@alignCast(content));
             assert(header.header_size >= 40); // Earlier types are not binary compatible
+            assert(header.compression == 3);
 
             const magic: [2]u8 = @bitCast(header.file_type);
             assert(std.mem.eql(u8, magic[0..], "BM"));
@@ -472,18 +511,28 @@ pub const DEBUG = if (options.internal_build) struct {
             result.width = @intCast(header.width);
             result.height = @intCast(header.height);
 
-            if (!(header.alpha_mask == 0xff000000 and header.red_mask == 0x00ff0000 and header.green_mask == 0x0000ff00 and header.blue_mask == 0x000000ff)) {
+            assert(header.alpha_mask == ~(header.red_mask | header.green_mask | header.blue_mask));
+            assert(@popCount(header.red_mask) == 8);
+            assert(@popCount(header.green_mask) == 8);
+            assert(@popCount(header.blue_mask) == 8);
+            assert(@popCount(header.alpha_mask) == 8);
 
-                // ARGB expected
+            const red_shift = intrinsics.findLSBSet(header.red_mask);
+            const green_shift = intrinsics.findLSBSet(header.green_mask);
+            const blue_shift = intrinsics.findLSBSet(header.blue_mask);
+            const alpha_shift = intrinsics.findLSBSet(header.alpha_mask);
 
-                // RGBA
-                if (header.alpha_mask == 0x000000ff and header.red_mask == 0xff000000 and header.green_mask == 0x00ff0000 and header.blue_mask == 0x0000ff00) {
-                    for (result.pixels) |*pixel| {
-                        pixel.* = (pixel.* >> 8) | (pixel.* << 24);
-                    }
-                } else {
-                    log.warn("Unsupported bmp format ({s})", .{filename});
-                }
+            // Don't need to check *_shift.found, assertions on popcount already guard this
+
+            for (result.pixels) |*pixel| {
+                const c = pixel.*;
+
+                pixel.* = (ColorU8ARGB{
+                    .a = @intCast((c >> @intCast(alpha_shift.index)) & 0xff),
+                    .r = @intCast((c >> @intCast(red_shift.index)) & 0xff),
+                    .g = @intCast((c >> @intCast(green_shift.index)) & 0xff),
+                    .b = @intCast((c >> @intCast(blue_shift.index)) & 0xff),
+                }).asU32();
             }
         }
 
