@@ -71,9 +71,10 @@ pub fn build(b: *Build) !void {
     const game = try buildGameLib(b, optimize, target, &modules);
     engine.run.step.dependOn(&game.install.step);
 
-    const assets = try buildAssets(b, &tools);
-    engine.run.step.dependOn(assets);
-    game.install.step.dependOn(assets);
+    if (try buildAssets(b, &tools)) |assets| {
+        engine.run.step.dependOn(assets);
+        game.install.step.dependOn(assets);
+    }
 }
 
 // TODO: These need to be the module options except for the target/optimize
@@ -210,7 +211,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
 // TODO: Maybe merge this with 'Modules'?
 const Tools = struct {
     wayland_module: *Build.Module,
-    aseprite_script_runner: *Step.Compile,
+    aseprite_script_runner: ?*Step.Compile,
 };
 
 fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, modules: *const Modules) !Tools {
@@ -248,19 +249,22 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
         .root_source_file = wayland_source,
     });
 
-    const aseprite_script_runner_exe = b.addExecutable(.{
-        .name = "aseprite-script-runner",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/aseprite/script_runner.zig"),
-            .target = native_target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "mem", .module = modules.memory },
-                .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
-            },
-        }),
-        .use_llvm = use_llvm,
-    });
+    const aseprite_script_runner_exe = if (b.findProgram(&.{"aseprite"}, &.{})) |_|
+        b.addExecutable(.{
+            .name = "aseprite-script-runner",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/aseprite/script_runner.zig"),
+                .target = native_target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "mem", .module = modules.memory },
+                    .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
+                },
+            }),
+            .use_llvm = use_llvm,
+        })
+    else |_|
+        null;
 
     return .{
         .wayland_module = wayland_module,
@@ -268,17 +272,21 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
     };
 }
 
-pub fn buildAssets(b: *Build, tools: *const Tools) !*Step {
+pub fn buildAssets(b: *Build, tools: *const Tools) !?*Step {
     // TODO: Check for asprite availability
 
-    const assets = createAspriteExportRunner(b, tools, "assets", true);
+    var assets: ?*Step = null;
 
-    _ = createAspriteExportRunner(b, tools, "force-assets", false);
+    if (tools.aseprite_script_runner) |script_runner| {
+        assets = createAspriteExportRunner(b, script_runner, "assets", true);
+
+        _ = createAspriteExportRunner(b, script_runner, "force-assets", false);
+    }
 
     return assets;
 }
 
-pub fn createAspriteExportRunner(b: *Build, tools: *const Tools, name: []const u8, donefile: bool) *Step {
+pub fn createAspriteExportRunner(b: *Build, script_runner: *Step.Compile, name: []const u8, donefile: bool) *Step {
     const asprite_extract_files: []const []const u8 = &.{
         "data/test_background.aseprite",
     };
@@ -288,7 +296,7 @@ pub fn createAspriteExportRunner(b: *Build, tools: *const Tools, name: []const u
 
     const assets = b.step(name, "Generate assets from raw art files");
 
-    const run_extract = b.addRunArtifact(tools.aseprite_script_runner);
+    const run_extract = b.addRunArtifact(script_runner);
     run_extract.setName("aseprite extract.lua");
     run_extract.addPrefixedFileArg("-s", b.path("tools/aseprite/scripts/extract.lua"));
     for (asprite_extract_files) |input_file| {
@@ -297,7 +305,7 @@ pub fn createAspriteExportRunner(b: *Build, tools: *const Tools, name: []const u
     if (donefile) _ = run_extract.addPrefixedOutputFileArg("-d", "done");
     assets.dependOn(&run_extract.step);
 
-    const run_extract_layers_recursive = b.addRunArtifact(tools.aseprite_script_runner);
+    const run_extract_layers_recursive = b.addRunArtifact(script_runner);
     run_extract_layers_recursive.setName("asprite extract_layers_recursive.lua");
     run_extract_layers_recursive.addPrefixedFileArg("-s", b.path("tools/aseprite/scripts/extract_layers_recursive.lua"));
     for (asprite_extract_layers_recursive_files) |input_file| {
