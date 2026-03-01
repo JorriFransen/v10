@@ -25,18 +25,27 @@ pub const World = struct {
 pub const GameState = struct {
     world_arena: MemoryArena = undefined,
     world: *World = undefined,
+
+    camera_pos: TileMap.Position = undefined,
     player_pos: TileMap.Position = undefined,
 
     backdrop: LoadedBitmap = .{},
-    hero_head: LoadedBitmap = .{},
-    // hero_cape: LoadedBitmap = .{},
-    // hero_torso: LoadedBitmap = .{},
+    hero_facing_direction: u32 = 0,
+    hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
 };
 
 pub const LoadedBitmap = struct {
     width: u32 = 0,
     height: u32 = 0,
     pixels: []align(1) u32 = &.{},
+};
+
+pub const HeroBitmaps = struct {
+    align_x: f32,
+    align_y: f32,
+    head: LoadedBitmap = .{},
+    cape: LoadedBitmap = .{},
+    torso: LoadedBitmap = .{},
 };
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
@@ -60,16 +69,42 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const asset_prefix = "../data/";
 
         game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
-        game_state.hero_head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_head.bmp");
-        // game_state.hero_cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_cape.bmp");
-        // game_state.hero_torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_torso.bmp");
 
-        game_state.player_pos = .{
-            .abs_tile_x = 3,
-            .abs_tile_y = 1,
+        game_state.hero_bitmaps[0].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_right_head.bmp");
+        game_state.hero_bitmaps[0].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_right_cape.bmp");
+        game_state.hero_bitmaps[0].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_right_torso.bmp");
+        game_state.hero_bitmaps[0].align_x = 72;
+        game_state.hero_bitmaps[0].align_y = 182;
+
+        game_state.hero_bitmaps[1].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_back_head.bmp");
+        game_state.hero_bitmaps[1].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_back_cape.bmp");
+        game_state.hero_bitmaps[1].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_back_torso.bmp");
+        game_state.hero_bitmaps[1].align_x = 72;
+        game_state.hero_bitmaps[1].align_y = 182;
+
+        game_state.hero_bitmaps[2].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_left_head.bmp");
+        game_state.hero_bitmaps[2].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_left_cape.bmp");
+        game_state.hero_bitmaps[2].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_left_torso.bmp");
+        game_state.hero_bitmaps[2].align_x = 72;
+        game_state.hero_bitmaps[2].align_y = 182;
+
+        game_state.hero_bitmaps[3].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_head.bmp");
+        game_state.hero_bitmaps[3].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_cape.bmp");
+        game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_torso.bmp");
+        game_state.hero_bitmaps[3].align_x = 72;
+        game_state.hero_bitmaps[3].align_y = 182;
+
+        game_state.camera_pos = .{
+            .abs_tile_x = 17 / 2,
+            .abs_tile_y = 9 / 2,
             .chunk_z = 0,
-            .offset_x = 0,
-            .offset_y = 0,
+        };
+        game_state.player_pos = .{
+            .abs_tile_x = 1,
+            .abs_tile_y = 3,
+            .chunk_z = 0,
+            .offset_x = 5,
+            .offset_y = 5,
         };
 
         const game_state_size = @sizeOf(GameState);
@@ -210,16 +245,28 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         var d_player_x: f32 = 0;
         var d_player_y: f32 = 0;
-        var player_speed: f32 = 2;
+        var player_speed: f32 = 5;
 
         if (controller.is_analog) {
             d_player_x += controller.stick_average_x;
             d_player_y += controller.stick_average_y;
         } else {
-            if (buttons.move_left.ended_down) d_player_x -= 1;
-            if (buttons.move_right.ended_down) d_player_x += 1;
-            if (buttons.move_up.ended_down) d_player_y += 1;
-            if (buttons.move_down.ended_down) d_player_y -= 1;
+            if (buttons.move_left.ended_down) {
+                d_player_x -= 1;
+                game_state.hero_facing_direction = 2;
+            }
+            if (buttons.move_right.ended_down) {
+                d_player_x += 1;
+                game_state.hero_facing_direction = 0;
+            }
+            if (buttons.move_up.ended_down) {
+                d_player_y += 1;
+                game_state.hero_facing_direction = 1;
+            }
+            if (buttons.move_down.ended_down) {
+                d_player_y -= 1;
+                game_state.hero_facing_direction = 3;
+            }
         }
 
         if (buttons.action_up.ended_down) {
@@ -260,14 +307,30 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             }
             game_state.player_pos = new_player_pos;
         }
+
+        game_state.camera_pos.chunk_z = game_state.player_pos.chunk_z;
+
+        const diff = tilemap.subPosition(&game_state.player_pos, &game_state.camera_pos);
+
+        if (diff.x > (17 / 2) * tilemap.tile_size_in_meters) {
+            game_state.camera_pos.abs_tile_x +%= 17;
+        } else if (diff.x < -(17 / 2) * tilemap.tile_size_in_meters) {
+            game_state.camera_pos.abs_tile_x -%= 17;
+        }
+
+        if (diff.y > (9 / 2) * tilemap.tile_size_in_meters) {
+            game_state.camera_pos.abs_tile_y +%= 9;
+        } else if (diff.y < -(9 / 2) * tilemap.tile_size_in_meters) {
+            game_state.camera_pos.abs_tile_y -%= 9;
+        }
     };
 
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
-    drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0);
+    drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0, 0, 0);
 
-    const player_pos = game_state.player_pos;
+    const camera_pos = &game_state.camera_pos;
 
     const screen_center_x: f32 = @floatFromInt(@divTrunc(offscreen_buffer.width, 2));
     const screen_center_y: f32 = @floatFromInt(@divTrunc(offscreen_buffer.height, 2));
@@ -276,14 +339,14 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     while (rel_row < 10) : (rel_row += 1) {
         var rel_column: i32 = -20;
         while (rel_column < 20) : (rel_column += 1) {
-            const row: u32 = player_pos.abs_tile_y +% @as(u32, @bitCast(rel_row));
-            const column: u32 = player_pos.abs_tile_x +% @as(u32, @bitCast(rel_column));
+            const row: u32 = camera_pos.abs_tile_y +% @as(u32, @bitCast(rel_row));
+            const column: u32 = camera_pos.abs_tile_x +% @as(u32, @bitCast(rel_column));
 
-            const tile = tilemap.getTileXYZ(column, row, player_pos.chunk_z);
+            const tile = tilemap.getTileXYZ(column, row, camera_pos.chunk_z);
             if (tile > 1) {
                 var grayscale: f32 = if (tile == 1) 0.5 else 1;
 
-                if (player_pos.abs_tile_x == column and player_pos.abs_tile_y == row) {
+                if (camera_pos.abs_tile_x == column and camera_pos.abs_tile_y == row) {
                     grayscale = 0;
                 } else if (tile > 2) {
                     grayscale = 0.25;
@@ -291,8 +354,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
                 const tile_size: f32 = @floatFromInt(tile_size_in_pixels);
 
-                const center_x: f32 = screen_center_x - (meters_to_pixels * player_pos.offset_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels))));
-                const center_y: f32 = screen_center_y + (meters_to_pixels * player_pos.offset_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels))));
+                const center_x: f32 = screen_center_x - (meters_to_pixels * camera_pos.offset_x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels))));
+                const center_y: f32 = screen_center_y + (meters_to_pixels * camera_pos.offset_y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels))));
                 const min_x: f32 = center_x - (0.5 * tile_size);
                 const min_y: f32 = center_y - (0.5 * tile_size);
                 const max_x: f32 = center_x + (0.5 * tile_size);
@@ -313,16 +376,25 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     {
+        const player_pos = &game_state.player_pos;
+
         const player_width_pixels = player_width * meters_to_pixels;
         const player_height_pixels = player_height * meters_to_pixels;
 
-        const player_left: f32 = screen_center_x - (player_width_pixels / 2);
-        const player_top: f32 = screen_center_y - (player_height_pixels);
+        const diff = tilemap.subPosition(player_pos, camera_pos);
+        const player_ground_point_x: f32 = screen_center_x + (meters_to_pixels * diff.x);
+        const player_ground_point_y: f32 = screen_center_y - (meters_to_pixels * diff.y);
+        const player_left: f32 = player_ground_point_x - (player_width_pixels / 2);
+        const player_top: f32 = player_ground_point_y - (player_height_pixels);
 
         const player_right = player_left + (player_width_pixels);
         const player_bottom = player_top + (player_height_pixels);
         drawRectangle(offscreen_buffer, player_left, player_top, player_right, player_bottom, 1, 1, 0);
-        drawBitmap(offscreen_buffer, game_state.hero_head, player_left, player_top);
+
+        const hero_bitmap = &game_state.hero_bitmaps[game_state.hero_facing_direction];
+        drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point_x, player_ground_point_y, hero_bitmap.align_x, hero_bitmap.align_y);
+        drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point_x, player_ground_point_y, hero_bitmap.align_x, hero_bitmap.align_y);
+        drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point_x, player_ground_point_y, hero_bitmap.align_x, hero_bitmap.align_y);
     }
 
     return keep_running;
@@ -408,7 +480,10 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min_x: f32, min_y: f32, max_x: f3
     }
 }
 
-pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, left: f32, top: f32) void {
+pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, real_x_: f32, real_y_: f32, align_x: f32, align_y: f32) void {
+    const real_x = real_x_ - align_x;
+    const real_y = real_y_ - align_y;
+
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
@@ -417,12 +492,19 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, left: f32, top
     const bitmap_width_f: f32 = @floatFromInt(bitmap.width);
     const bitmap_height_f: f32 = @floatFromInt(bitmap.height);
 
-    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(left, 0), buffer_width_f));
-    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(top, 0), buffer_height_f));
-    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(left + bitmap_width_f, 0), buffer_width_f));
-    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(top + bitmap_height_f, 0), buffer_height_f));
+    const source_offset_x: usize = @intFromFloat(-@min(real_x, 0));
+    const source_offset_y: usize = @intFromFloat(-@min(real_y, 0));
 
-    var source_row: [*]align(1) u32 = bitmap.pixels.ptr + (bitmap.width * (bitmap.height - 1));
+    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(real_x, 0), buffer_width_f));
+    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(real_y, 0), buffer_height_f));
+    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(real_x + bitmap_width_f, 0), buffer_width_f));
+    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(real_y + bitmap_height_f, 0), buffer_height_f));
+
+    // TEMPORARY
+    if (bitmap.pixels.len == 0) return;
+    // TEMPORARY
+
+    var source_row: [*]align(1) u32 = bitmap.pixels.ptr + (bitmap.width * (bitmap.height - 1)) + source_offset_x - (bitmap.width * source_offset_y);
     var dest_row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
 
     var y: usize = @intCast(miny);

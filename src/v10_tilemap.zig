@@ -26,9 +26,15 @@ pub const Position = struct {
     chunk_z: u32,
 
     /// In meters, from the tile center
-    offset_x: f32,
+    offset_x: f32 = 0,
     /// In meters, from the tile center
-    offset_y: f32,
+    offset_y: f32 = 0,
+
+    pub const Delta = struct {
+        x: f32,
+        y: f32,
+        z: f32,
+    };
 
     pub fn recanonicalize(this: *Position, map: *const TileMap) void {
         map.recanonicalizeCoord(&this.abs_tile_x, &this.offset_x);
@@ -67,6 +73,20 @@ pub const Chunk = struct {
         this.tiles[(y * chunk_dim) + (x)] = new_tile;
     }
 };
+
+pub fn subPosition(map: *const TileMap, a: *const Position, b: *const Position) Position.Delta {
+    var result: Position.Delta = undefined;
+
+    const d_tile_x = @as(f32, @floatFromInt(a.abs_tile_x)) - @as(f32, @floatFromInt(b.abs_tile_x));
+    const d_tile_y = @as(f32, @floatFromInt(a.abs_tile_y)) - @as(f32, @floatFromInt(b.abs_tile_y));
+    const d_tile_z = @as(f32, @floatFromInt(a.chunk_z)) - @as(f32, @floatFromInt(b.chunk_z));
+
+    result.x = (map.tile_size_in_meters * d_tile_x) + (a.offset_x - b.offset_x);
+    result.y = (map.tile_size_in_meters * d_tile_y) + (a.offset_y - b.offset_y);
+    result.z = (map.tile_size_in_meters * d_tile_z);
+
+    return result;
+}
 
 pub fn getChunkPositionFor(abs_tile_x: u32, abs_tile_y: u32, chunk_z: u32) TileChunkPosition {
     const packed_x: PackedTilePosition = @bitCast(abs_tile_x);
