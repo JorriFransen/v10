@@ -961,6 +961,12 @@ pub const GET_FILEEX_INFO_LEVELS = enum(c_int) {
     max,
 };
 
+pub const PROCESS_DPI_AWARENESS = enum(c_int) {
+    DPI_UNAWARE = 0,
+    SYSTEM_DPI_AWARE = 1,
+    PER_MONITOR_DPI_AWARE = 2,
+};
+
 pub const KeyState = packed struct(SHORT) {
     toggled: bool,
     reserved: u14,
@@ -1044,3 +1050,5 @@ pub extern "gdi32" fn DeleteObject(obj: HGDIOBJ) callconv(.winapi) BOOL;
 pub extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(.winapi) HDC;
 pub extern "gdi32" fn GetDC(window: ?HWND) callconv(.winapi) HDC;
 pub extern "gdi32" fn ReleaseDC(window: ?HWND, hdc: HDC) callconv(.winapi) c_int;
+
+pub extern "shcore" fn SetProcessDpiAwareness(value: PROCESS_DPI_AWARENESS) callconv(.winapi) HRESULT;

@@ -425,6 +425,9 @@ pub fn windowsEntry(
         if (window_opt) |window| {
             global_running = true;
 
+            // TODO: Manifest?
+            _ = win32.SetProcessDpiAwareness(.PER_MONITOR_DPI_AWARE);
+
             var monitor_refresh_hz: c_int = 60;
             const dc = win32.GetDC(window);
             const win32_refresh_hz = win32.GetDeviceCaps(dc, win32.VREFRESH);
@@ -435,6 +438,11 @@ pub fn windowsEntry(
                 log.warn("Could not detect monitor refresh rate, fallback to: {}", .{monitor_refresh_hz});
             }
             _ = win32.ReleaseDC(window, dc);
+
+            if (options.internal_build and monitor_refresh_hz > 60) {
+                log.warn("Capping update hz to 60 (/ 2)", .{});
+                monitor_refresh_hz = 60;
+            }
 
             const game_update_hz: f32 = @as(f32, @floatFromInt(monitor_refresh_hz)) / 2;
             const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
@@ -553,6 +561,8 @@ pub fn windowsEntry(
                     const new_dll_write_time = platform.getLastWriteTime(io, source_dll_name);
                     if (new_dll_write_time > game_code.last_write_time) {
                         var __dummy__: win32.FILE_ATTRIBUTE_DATA = undefined;
+
+                        // This isn't required with the zig build system, but it's easy to support
                         if (win32.GetFileAttributesExA(gamecode_lock_file_name, .standard, &__dummy__) == 0) {
                             game_code.unload();
 
