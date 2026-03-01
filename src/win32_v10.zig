@@ -373,12 +373,15 @@ pub fn windowsEntry(
 
     var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var gamecode_lock_file_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
 
     const source_dll_name = try shared_state.buildExePathFilename(&source_dll_name_buf, "v10_game.dll");
     const temp_dll_name = try shared_state.buildExePathFilename(&temp_dll_name_buf, "v10_temp.dll");
+    const gamecode_lock_file_name = try shared_state.buildExePathFilename(&gamecode_lock_file_name_buf, "lock.tmp");
 
     log.debug("source dll: '{s}'", .{source_dll_name});
     log.debug("temp dll: '{s}'", .{temp_dll_name});
+    log.debug("gamecode load lock: '{s}'", .{gamecode_lock_file_name});
 
     var qpf_result: win32.LARGE_INTEGER = undefined;
     _ = win32.QueryPerformanceFrequency(&qpf_result);
@@ -549,10 +552,13 @@ pub fn windowsEntry(
                 while (global_running) {
                     const new_dll_write_time = platform.getLastWriteTime(io, source_dll_name);
                     if (new_dll_write_time > game_code.last_write_time) {
-                        game_code.unload();
+                        var __dummy__: win32.FILE_ATTRIBUTE_DATA = undefined;
+                        if (win32.GetFileAttributesExA(gamecode_lock_file_name, .standard, &__dummy__) == 0) {
+                            game_code.unload();
 
-                        _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
-                        game_code = GameCode.load(io, temp_dll_name);
+                            _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
+                            game_code = GameCode.load(io, temp_dll_name);
+                        }
                     }
 
                     new_input.dt = target_seconds_per_frame;

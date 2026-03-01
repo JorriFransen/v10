@@ -77,9 +77,6 @@ pub fn build(b: *Build) !void {
     }
 }
 
-// TODO: These need to be the module options except for the target/optimize
-//        options, to support passing different targets/optimize options to
-//        different helper functions like buildTools.
 const Modules = struct {
     options: *Build.Module,
     win32: *Build.Module,
