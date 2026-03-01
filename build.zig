@@ -13,6 +13,7 @@ const src_path = "src";
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
+    const native_target = b.resolveTargetQuery(.{});
 
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse false;
     if (target.result.os.tag == .windows) use_llvm = true;
@@ -29,13 +30,11 @@ pub fn build(b: *Build) !void {
     options.addOption([]const u8, "src_dir_path", src_dir_path);
 
     const dynlib_module = b.createModule(.{
-        .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/dynlib.zig"),
     });
 
     const win32_module = b.createModule(.{
-        .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/win32/win32.zig"),
         .imports = &.{
@@ -45,7 +44,6 @@ pub fn build(b: *Build) !void {
     dynlib_module.addImport("win32", win32_module);
 
     const mem_module = b.createModule(.{
-        .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/memory/memory.zig"),
         .imports = &.{
@@ -59,7 +57,6 @@ pub fn build(b: *Build) !void {
         .memory = mem_module,
         .dynlib = dynlib_module,
         .xml = b.createModule(.{
-            .target = target,
             .optimize = optimize,
             .root_source_file = b.path(src_path ++ "/xml.zig"),
             .imports = &.{
@@ -68,7 +65,7 @@ pub fn build(b: *Build) !void {
         }),
     };
 
-    const tools = try buildTools(b, optimize, target, &modules);
+    const tools = try buildTools(b, optimize, native_target, &modules);
 
     const engine = try buildEngine(b, optimize, target, &modules, &tools);
     const game = try buildGameLib(b, optimize, target, &modules);
@@ -180,8 +177,8 @@ const Game = struct {
 
 fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !Game {
     const game_root_module = b.addModule("main", .{
-        .optimize = optimize,
         .target = target,
+        .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/v10.zig"),
         .imports = &.{
             .{ .module = modules.options, .name = "options" },
@@ -216,14 +213,14 @@ const Tools = struct {
     aseprite_script_runner: *Step.Compile,
 };
 
-fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !Tools {
+fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, modules: *const Modules) !Tools {
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
 
     const wayland_gen_exe = b.addExecutable(.{
         .name = "wayland-gen",
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/wayland-gen/src/main.zig"),
-            .target = target,
+            .target = native_target,
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "xml", .module = modules.xml },
@@ -248,7 +245,6 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules
     const wayland_source = run_wayland_gen_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
     const wayland_module = b.createModule(.{
         .optimize = optimize,
-        .target = target,
         .root_source_file = wayland_source,
     });
 
@@ -256,7 +252,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules
         .name = "aseprite-script-runner",
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/aseprite/script_runner.zig"),
-            .target = target,
+            .target = native_target,
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "mem", .module = modules.memory },

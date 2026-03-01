@@ -15,6 +15,8 @@ pub fn main(init: std.process.Init) !u8 {
     var options = try OptionParser.parse(init.minimal.args, init.gpa, tmp.allocator());
     defer OptionParser.freeOptions(&options, init.gpa);
 
+    var result: u8 = 0;
+
     for (options.input.items) |input_file| {
         const args: []const []const u8 = &.{
             "aseprite",
@@ -34,6 +36,7 @@ pub fn main(init: std.process.Init) !u8 {
                 std.log.warn("asprite execution failed ({s})", .{options.script});
                 std.log.warn("stdout: {s}", .{run_res.stdout});
                 std.log.warn("stderr: {s}", .{run_res.stderr});
+                result = 1;
             }
 
             init.gpa.free(run_res.stdout);
@@ -42,11 +45,12 @@ pub fn main(init: std.process.Init) !u8 {
             else => {
                 std.log.err("asprite invocation failed, args:", .{});
                 for (args, 0..) |arg, i| std.log.err("        arg[{}]: {s}", .{ i, arg });
+                result = 1;
             },
         }
     }
 
-    if (options.done.len > 0) {
+    if (options.done.len > 0 and result == 0) {
         const done_file = try std.Io.Dir.createFileAbsolute(init.io, options.done, .{ .truncate = true });
         defer done_file.close(init.io);
 
@@ -55,5 +59,5 @@ pub fn main(init: std.process.Init) !u8 {
         try done_file.writePositionalAll(init.io, std.mem.asBytes(&timestamp), 0);
     }
 
-    return 0;
+    return result;
 }
