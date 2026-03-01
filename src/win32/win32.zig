@@ -1,3 +1,6 @@
+pub const xinput = @import("xinput.zig");
+pub const direct_sound = @import("direct_sound.zig");
+
 const std = @import("std");
 const zig_win32 = std.os.windows;
 
