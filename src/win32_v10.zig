@@ -25,6 +25,8 @@ var global_running = false;
 var global_pause = false;
 var global_back_buffer: Win32OffscreenBuffer = undefined;
 var global_perf_count_frequency: u64 = undefined;
+var global_DEBUG_show_cursor = options.internal_build;
+var global_window_position: win32.WINDOWPLACEMENT = .{};
 
 inline fn getWallClock() win32.LARGE_INTEGER {
     var result: win32.LARGE_INTEGER = .{ .quad_part = 0 };
@@ -251,11 +253,13 @@ fn processPendingMessages(shared_state: *platform.SharedState, keyboard_controll
                                 // TODO: Reset input, keys may be stuck in down state
                             }
                         }
-                    }
 
-                    const alt_key_was_down = (msg.lParam & (1 << 29)) != 0;
-                    if ((vk_code == win32.VK_F4) and alt_key_was_down) {
-                        global_running = false;
+                        const alt_key_was_down = (msg.lParam & (1 << 29)) != 0;
+                        if ((vk_code == win32.VK_F4) and alt_key_was_down) {
+                            global_running = false;
+                        } else if (vk_code == win32.VK_RETURN and alt_key_was_down) {
+                            toggleFullscreen(msg.hwnd.?);
+                        }
                     }
                 }
             },
@@ -395,9 +399,10 @@ pub fn windowsEntry(
 
     const window_class = win32.WNDCLASSA{
         .style = win32.CS_HREDRAW | win32.CS_VREDRAW,
-        .lpfnWndProc = windowProcA,
+        .lpfnWndProc = mainWindowCallback,
         .hInstance = instance,
         .lpszClassName = "v10_window_class",
+        .hCursor = win32.LoadCursorA(null, win32.IDC_ARROW),
     };
 
     if (win32.RegisterClassA(&window_class) != 0) {
@@ -505,7 +510,7 @@ pub fn windowsEntry(
                 .transient = trans.?,
                 .transient_len = transient_storage_size,
 
-                .debug = if (options.internal_build) .{
+                .debug = if (options.debug) .{
                     .readEntireFile = &DEBUG.readEntireFile,
                     .freeFileMemory = &DEBUG.freeFileMemory,
                     .writeEntireFile = &DEBUG.writeEntireFile,
@@ -583,7 +588,7 @@ pub fn windowsEntry(
 
                     processPendingMessages(&shared_state, keyboard_controller);
 
-                    if (options.internal_build) {
+                    if (options.debug) {
                         const mouse = &new_input.debug_mouse;
                         const old_mouse = &old_input.debug_mouse;
                         mouse.* = std.mem.zeroes(platform.DebugMouseInput);
@@ -593,7 +598,7 @@ pub fn windowsEntry(
                     }
 
                     if (!global_pause) {
-                        if (options.internal_build) {
+                        if (options.debug) {
                             var cursor_pos: win32.POINT = undefined;
                             var cursor_pos_valid = true;
 
@@ -883,12 +888,10 @@ pub fn windowsEntry(
     return 0;
 }
 
-pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lparam: win32.LPARAM) callconv(.winapi) win32.LRESULT {
+pub fn mainWindowCallback(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lparam: win32.LPARAM) callconv(.winapi) win32.LRESULT {
     var result: win32.LRESULT = 0;
 
     switch (message) {
-        win32.WM_SIZE => {},
-
         win32.WM_CLOSE, win32.WM_DESTROY => {
             global_running = false;
         },
@@ -900,51 +903,22 @@ pub fn windowProcA(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lp
             // }
         },
 
+        win32.WM_SETCURSOR => {
+            if (global_DEBUG_show_cursor or !(win32.LOWORD(lparam) == win32.HTCLIENT)) {
+                // Set the wanted cursor in window class
+                result = win32.DefWindowProcA(window, message, wparam, lparam);
+            } else {
+                _ = win32.SetCursor(null);
+                result = win32.TRUE;
+            }
+        },
+
         win32.WM_SYSKEYDOWN,
         win32.WM_SYSKEYUP,
         win32.WM_KEYDOWN,
         win32.WM_KEYUP,
         => {
-            assert(false); // Assume keys are dispatched/handled in the main loop
-            const vk_code = wparam;
-            const was_down = (lparam & (1 << 30)) != 0;
-            const is_down = (lparam & (1 << 31)) == 0;
-
-            if (is_down != was_down) {
-                if (vk_code == win32.VK_W) {
-                    //
-                } else if (vk_code == win32.VK_A) {
-                    //
-                } else if (vk_code == win32.VK_S) {
-                    //
-                } else if (vk_code == win32.VK_D) {
-                    //
-                } else if (vk_code == win32.VK_Q) {
-                    //
-                } else if (vk_code == win32.VK_E) {
-                    //
-                } else if (vk_code == win32.VK_UP) {
-                    //
-                } else if (vk_code == win32.VK_LEFT) {
-                    //
-                } else if (vk_code == win32.VK_DOWN) {
-                    //
-                } else if (vk_code == win32.VK_RIGHT) {
-                    //
-                } else if (vk_code == win32.VK_ESCAPE) {
-                    global_running = false;
-                } else if (vk_code == win32.VK_SPACE) {
-                    log.debug("space: {s} {s}", .{
-                        if (is_down) "is_down" else "",
-                        if (was_down) "was_down" else "",
-                    });
-                }
-
-                const alt_key_was_down = (lparam & (1 << 29)) != 0;
-                if ((vk_code == win32.VK_F4) and alt_key_was_down) {
-                    global_running = false;
-                }
-            }
+            @panic("Unexpected WM_KEY* message"); // Assume keys are dispatched/handled in the main loop
         },
 
         win32.WM_PAINT => {
@@ -1005,16 +979,24 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     //     _ = win32.SetStretchBltMode(dc, 0);
     // }
 
-    // TODO: Offset mouse position by this
-    const offset_x = 10;
-    const offset_y = 10;
+    if (window_width >= buffer.width * 2 and window_height >= buffer.height * 2) {
+        _ = win32.PatBlt(dc, 2 * buffer.width, 0, window_width - (2 * buffer.width), window_height, win32.BLACKNESS);
+        _ = win32.PatBlt(dc, 0, 2 * buffer.height, window_width - (2 * buffer.width), window_height - (2 * buffer.height), win32.BLACKNESS);
 
-    _ = win32.PatBlt(dc, 0, 0, window_width, offset_y, win32.BLACKNESS);
-    _ = win32.PatBlt(dc, 0, offset_y + buffer.height, window_width, window_height - (offset_y + buffer.height), win32.BLACKNESS);
-    _ = win32.PatBlt(dc, 0, 0, offset_x, window_height, win32.BLACKNESS);
-    _ = win32.PatBlt(dc, offset_x + buffer.width, 0, window_width - (offset_x + buffer.width), window_height, win32.BLACKNESS);
+        win32.StretchDIBits(dc, 0, 0, 2 * buffer.width, 2 * buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+    } else {
 
-    win32.StretchDIBits(dc, offset_x, offset_y, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+        // TODO: Offset mouse position by this
+        const offset_x = 10;
+        const offset_y = 10;
+
+        _ = win32.PatBlt(dc, 0, 0, window_width, offset_y, win32.BLACKNESS);
+        _ = win32.PatBlt(dc, 0, offset_y + buffer.height, window_width, window_height - (offset_y + buffer.height), win32.BLACKNESS);
+        _ = win32.PatBlt(dc, 0, 0, offset_x, window_height, win32.BLACKNESS);
+        _ = win32.PatBlt(dc, offset_x + buffer.width, 0, window_width - (offset_x + buffer.width), window_height, win32.BLACKNESS);
+
+        win32.StretchDIBits(dc, offset_x, offset_y, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+    }
 }
 
 pub fn beginRecordingInput(shared_state: *platform.SharedState, input_recording_index: usize) void {
@@ -1075,6 +1057,23 @@ pub fn playbackInput(shared_state: *platform.SharedState, input: *Input) void {
             _ = win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null);
             assert(read == @sizeOf(Input));
         }
+    }
+}
+
+pub fn toggleFullscreen(window: win32.HWND) void {
+    const style = win32.GetWindowLongA(window, win32.GWL_STYLE);
+    if (style & win32.WS_OVERLAPPEDWINDOW == win32.WS_OVERLAPPEDWINDOW) {
+        var mi: win32.MONITORINFO = .{};
+        if (win32.GetWindowPlacement(window, &global_window_position) != win32.FALSE and
+            win32.GetMonitorInfoA(win32.MonitorFromWindow(window, win32.MONITOR_DEFAULTTOPRIMARY), &mi) != win32.FALSE)
+        {
+            _ = win32.SetWindowLongA(window, win32.GWL_STYLE, style & @as(win32.LONG, @bitCast(~win32.WS_OVERLAPPEDWINDOW)));
+            _ = win32.SetWindowPos(window, win32.HWND_TOP, mi.monitor.left, mi.monitor.top, mi.monitor.right - mi.monitor.left, mi.monitor.bottom - mi.monitor.top, win32.SWP_NOOWNERZORDER | win32.SWP_FRAMECHANGED);
+        }
+    } else {
+        _ = win32.SetWindowLongA(window, win32.GWL_STYLE, style | win32.WS_OVERLAPPEDWINDOW);
+        _ = win32.SetWindowPlacement(window, &global_window_position);
+        _ = win32.SetWindowPos(window, null, 0, 0, 0, 0, win32.SWP_NOMOVE | win32.SWP_NOSIZE | win32.SWP_NOZORDER | win32.SWP_NOOWNERZORDER | win32.SWP_FRAMECHANGED);
     }
 }
 

@@ -65,7 +65,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     if (!game_memory.initialized) {
         game_state.* = .{};
 
-        // const asset_prefix = "/home/jorri/dev/hh_data/";
+        const game_state_size = @sizeOf(GameState);
+        const world_arena_size = game_memory.permanent_len - game_state_size;
+
+        game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
+
+        // const asset_prefix = "../../hh_assets";
         const asset_prefix = "../data/";
 
         game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
@@ -107,10 +112,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             .offset_y = 5,
         };
 
-        const game_state_size = @sizeOf(GameState);
-        const world_arena_size = game_memory.permanent_len - game_state_size;
-
-        game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
         game_state.world = game_state.world_arena.pushMemory(World);
         const world: *World = game_state.world;
         world.tilemap = game_state.world_arena.pushMemory(TileMap);
@@ -546,7 +547,7 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, real_x_: f32, 
     }
 }
 
-pub const DEBUG = if (options.internal_build) struct {
+pub const DEBUG = if (options.debug) struct {
     pub const BitmapHeader = packed struct {
         file_type: u16,
         file_size: u32,
@@ -606,15 +607,17 @@ pub const DEBUG = if (options.internal_build) struct {
 
             // Don't need to check *_shift.found, assertions on popcount already guard this
 
-            for (result.pixels) |*pixel| {
-                const c = pixel.*;
+            if (!(header.alpha_mask == 0xff000000 and header.red_mask == 0x00ff0000 and header.green_mask == 0x0000ff00 and header.blue_mask == 0x000000ff)) {
+                for (result.pixels) |*pixel| {
+                    const c = pixel.*;
 
-                pixel.* = (ColorU8ARGB{
-                    .a = @intCast((c >> @intCast(alpha_shift.index)) & 0xff),
-                    .r = @intCast((c >> @intCast(red_shift.index)) & 0xff),
-                    .g = @intCast((c >> @intCast(green_shift.index)) & 0xff),
-                    .b = @intCast((c >> @intCast(blue_shift.index)) & 0xff),
-                }).asU32();
+                    pixel.* = (ColorU8ARGB{
+                        .a = @intCast((c >> @intCast(alpha_shift.index)) & 0xff),
+                        .r = @intCast((c >> @intCast(red_shift.index)) & 0xff),
+                        .g = @intCast((c >> @intCast(green_shift.index)) & 0xff),
+                        .b = @intCast((c >> @intCast(blue_shift.index)) & 0xff),
+                    }).asU32();
+                }
             }
         }
 

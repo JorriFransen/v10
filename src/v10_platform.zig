@@ -75,7 +75,7 @@ pub const ControllerInput = extern struct {
     },
 };
 
-pub const DebugMouseInput = if (options.internal_build) extern struct {
+pub const DebugMouseInput = if (options.debug) extern struct {
     buttons: extern union {
         array: [5]ButtonState,
         named: extern struct {
@@ -99,7 +99,7 @@ pub const DebugMouseInput = if (options.internal_build) extern struct {
 } else void;
 
 pub const Input = extern struct {
-    debug_mouse: DebugMouseInput = .{},
+    debug_mouse: DebugMouseInput = undefined,
 
     dt: f32 = 0,
     controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
@@ -115,7 +115,7 @@ pub const Memory = extern struct {
     debug: DEBUG,
 };
 
-pub const DEBUG = if (options.internal_build) extern struct {
+pub const DEBUG = if (options.debug) extern struct {
     pub const ReadFileResult = extern struct {
         size: usize = 0,
         content: *anyopaque = undefined,
