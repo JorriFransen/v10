@@ -547,7 +547,7 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, real_x_: f32, 
     }
 }
 
-pub const DEBUG = if (options.debug) struct {
+pub const DEBUG = struct {
     pub const BitmapHeader = packed struct {
         file_type: u16,
         file_size: u32,
@@ -625,4 +625,4 @@ pub const DEBUG = if (options.debug) struct {
 
         return result;
     }
-} else void;
+};

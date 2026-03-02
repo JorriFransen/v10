@@ -316,8 +316,14 @@ fn genSignature(this: *Generator, args: []const Arg) Allocator.Error!void {
         .uint => try this.append("u"),
         .fixed => try this.append("f"),
         .string => try this.append("s"),
-        .object => try this.append("o"),
-        .new_id => try this.append("n"),
+        .object => {
+            if (arg.allow_null) try this.append("?");
+            try this.append("o");
+        },
+        .new_id => {
+            if (arg.allow_null) try this.append("?");
+            try this.append("n");
+        },
         .array => try this.append("a"),
         .fd => try this.append("h"),
     };

@@ -216,13 +216,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
     wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
 
-    if (options.internal_build) {
-        wld.mouse = wld.seat.get_pointer() orelse {
-            log.debug("wl_set_get_pointer failed", .{});
-            return error.UnexpectedWayland;
-        };
-        wld.mouse.add_listener(&wl_mouse_listener, &wld);
-    }
+    wld.pointer = wld.seat.get_pointer() orelse {
+        log.debug("wl_set_get_pointer failed", .{});
+        return error.UnexpectedWayland;
+    };
+    wld.pointer.add_listener(&wl_mouse_listener, &wld);
 
     if (wli.xrgb8888 == false) {
         log.err("xrgb8888 format not avaliable", .{});
@@ -450,11 +448,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .initialized = false,
         .permanent_len = permanent_storage_size,
         .transient_len = transient_storage_size,
-        .debug = if (options.internal_build) .{
+        .debug = .{
             .readEntireFile = &DEBUG.readEntireFile,
             .freeFileMemory = &DEBUG.freeFileMemory,
             .writeEntireFile = &DEBUG.writeEntireFile,
-        } else .{},
+        },
     };
 
     if (linux.mmap(
@@ -517,7 +515,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     _ = pa.stream_cork(pa_stream, 0, null, null);
 
     var last_counter = getWallClock(io);
-    var flip_wall_clock = getWallClock(io);
 
     var last_cycle_count = x86_64.rdtsc();
 
@@ -780,7 +777,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
             var seconds_elapsed_for_frame = work_seconds_elapsed;
-            if (seconds_elapsed_for_frame < target_seconds_per_frame) {
+            if (seconds_elapsed_for_frame <= target_seconds_per_frame) {
                 while (seconds_elapsed_for_frame < target_seconds_per_frame) {
                     const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
 
@@ -803,8 +800,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const wayland_blit = displayBufferInWindow(global_back_buffer);
 
             _ = wl.display_flush(display);
-
-            flip_wall_clock = getWallClock(io);
 
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
@@ -861,7 +856,7 @@ const WlData = struct {
     surface: *wl.Surface = undefined,
     wm_base: *xdg_shell.WmBase = undefined,
     keyboard: *wl.Keyboard = undefined,
-    mouse: *wl.Pointer = undefined,
+    pointer: *wl.Pointer = undefined,
 
     toplevel: WlToplevel = undefined,
 
@@ -1580,16 +1575,29 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
                     endInputPlayback(wld.shared_state, wld.io);
                     // TODO: Reset input, keys may be stuck in down state
                 }
+            } else if (key == .ENTER) {
+                toggleFullscreen();
             }
         }
     }
 }
 
-fn handleWlMouseEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
+fn toggleFullscreen() void {
+    log.debug("Fullscreen toggle", .{});
+}
+
+fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
     _ = .{ data, pointer, serial, surface };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
     wld.new_input.debug_mouse.y = surface_y.toInt();
+
+    // Hide cursor, if custom cursors are required use libwayland-cursor or cursor-shape protocol
+    if (options.internal_build) {
+        //
+    } else {
+        wld.pointer.set_cursor(serial, null, 0, 0);
+    }
 }
 
 fn handleWlMouseMotion(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
@@ -2140,7 +2148,7 @@ const wl_keyboard_listener = wl.Keyboard.Listener{
 };
 
 const wl_mouse_listener = wl.Pointer.Listener{
-    .enter = handleWlMouseEnter,
+    .enter = handleWlPointerEnter,
     .leave = @ptrCast(&nop),
     .motion = handleWlMouseMotion,
     .button = handleWlMouseButton,
