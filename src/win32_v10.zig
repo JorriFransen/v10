@@ -981,7 +981,7 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
 
     if (window_width >= buffer.width * 2 and window_height >= buffer.height * 2) {
         _ = win32.PatBlt(dc, 2 * buffer.width, 0, window_width - (2 * buffer.width), window_height, win32.BLACKNESS);
-        _ = win32.PatBlt(dc, 0, 2 * buffer.height, window_width - (2 * buffer.width), window_height - (2 * buffer.height), win32.BLACKNESS);
+        _ = win32.PatBlt(dc, 0, 2 * buffer.height, 2 * buffer.width, window_height - (2 * buffer.height), win32.BLACKNESS);
 
         win32.StretchDIBits(dc, 0, 0, 2 * buffer.width, 2 * buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
     } else {
