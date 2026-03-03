@@ -876,6 +876,9 @@ const WlData = struct {
     /// Window height
     window_height: i32 = 0,
 
+    back_buffer_x_offset: i32 = 10,
+    back_buffer_y_offset: i32 = 10,
+
     /// Max width of (non fullscreen) surface
     bound_width: i32 = 0,
     /// Max height of (non fullscreen) surface
@@ -937,7 +940,7 @@ const WlToplevel = union(enum) {
         switch (this.*) {
             .no_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
             .xdg_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
-            .libdecor => unreachable,
+            .libdecor => |ld| libdecor.frame_set_fullscreen(ld.frame, output),
         }
     }
 
@@ -945,7 +948,7 @@ const WlToplevel = union(enum) {
         switch (this.*) {
             .no_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
             .xdg_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
-            .libdecor => unreachable,
+            .libdecor => |ld| libdecor.frame_unset_fullscreen(ld.frame),
         }
     }
 
@@ -1762,8 +1765,8 @@ fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configurati
     var width: c_int = undefined;
     var height: c_int = undefined;
     if (!libdecor.configuration_get_content_size(config, frame, &width, &height)) {
-        width = back_buffer_width;
-        height = back_buffer_height;
+        width = back_buffer_width + wld.back_buffer_x_offset;
+        height = back_buffer_height + wld.back_buffer_y_offset;
     }
 
     const state = libdecor.state_new(width, height) orelse @panic("libdecor_state_new failed");
@@ -2100,8 +2103,8 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         }
 
         // TODO: Offset mouse position by this
-        const x_offset = 10;
-        const y_offset = 10;
+        const x_offset = wld.back_buffer_x_offset;
+        const y_offset = wld.back_buffer_y_offset;
 
         const line_length: usize = @intCast(@min(buffer.width, wl_buffer.width - x_offset) * bytes_per_pixel);
         const row_count: usize = @intCast(@min(buffer.height, wl_buffer.height - y_offset));
@@ -2113,8 +2116,10 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
         //
         //  I might actually prefer that, but for now this matches hh on win32.
-        for (y_offset..y_offset + row_count, 0..row_count) |dst_y, src_y| {
-            const dest_offset = (dst_y * wl_buffer_pitch) + (x_offset * bytes_per_pixel);
+        const y_off: usize = @intCast(y_offset);
+        const x_off: usize = @intCast(x_offset);
+        for (y_off..y_off + row_count, 0..row_count) |dst_y, src_y| {
+            const dest_offset = (dst_y * wl_buffer_pitch) + (x_off * bytes_per_pixel);
             const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
 
             const source_offset = src_y * @as(usize, @intCast(buffer.pitch));

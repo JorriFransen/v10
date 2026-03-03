@@ -132,7 +132,7 @@ pub var frame_commit: *const fn (frame: *Frame, state: *State, configuration: *C
 pub var frame_set_minimized: *const fn (frame: *Frame) callconv(.c) void = undefined;
 pub var frame_set_maximized: *const fn (frame: *Frame) callconv(.c) void = undefined;
 pub var frame_unset_maximized: *const fn (frame: *Frame) callconv(.c) void = undefined;
-pub var frame_set_fullscreen: *const fn (frame: *Frame, output: *wl.Output) callconv(.c) void = undefined;
+pub var frame_set_fullscreen: *const fn (frame: *Frame, output: ?*wl.Output) callconv(.c) void = undefined;
 pub var frame_unset_fullscreen: *const fn (frame: *Frame) callconv(.c) void = undefined;
 pub var frame_is_floating: *const fn (frame: *Frame) callconv(.c) bool = undefined;
 pub var frame_close: *const fn (frame: *Frame) callconv(.c) void = undefined;
