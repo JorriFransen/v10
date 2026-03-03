@@ -75,7 +75,7 @@ pub const ControllerInput = extern struct {
     },
 };
 
-pub const DebugMouseInput = if (options.internal_build) extern struct {
+pub const DebugMouseInput = extern struct {
     buttons: extern union {
         array: [5]ButtonState,
         named: extern struct {
@@ -96,10 +96,10 @@ pub const DebugMouseInput = if (options.internal_build) extern struct {
     x: i32 = 0,
     y: i32 = 0,
     z: i32 = 0,
-} else void;
+};
 
 pub const Input = extern struct {
-    debug_mouse: DebugMouseInput = .{},
+    debug_mouse: DebugMouseInput = undefined,
 
     dt: f32 = 0,
     controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
@@ -115,7 +115,7 @@ pub const Memory = extern struct {
     debug: DEBUG,
 };
 
-pub const DEBUG = if (options.internal_build) extern struct {
+pub const DEBUG = extern struct {
     pub const ReadFileResult = extern struct {
         size: usize = 0,
         content: *anyopaque = undefined,
@@ -128,7 +128,7 @@ pub const DEBUG = if (options.internal_build) extern struct {
     readEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) ReadFileResult = undefined,
     freeFileMemory: *const fn (thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void = undefined,
     writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *const anyopaque, size: usize) callconv(.c) bool = undefined,
-} else extern struct {};
+};
 
 pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8 {
     return std.fmt.bufPrintSentinel(buffer, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{ base, sub }, 0) catch |e| switch (e) {

@@ -181,12 +181,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.err("xdg_wm_base not available", .{});
         return error.UnexpectedWayland;
     }
-    if (wli.wl_output) |output| {
-        output.add_listener(&wl_output_listener, wli.wld);
-    } else {
-        log.err("wl_output not available", .{});
-        return error.UnexpectedWayland;
-    }
+
+    for (&wld.outputs) |*output_opt| if (output_opt.*) |output| {
+        output.handle.add_listener(&wl_output_listener, output_opt);
+    };
 
     // for format events, seat, outputs
     wld.shm.add_listener(&wl_shm_listener, &wli);
@@ -208,20 +206,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (wli.seat_capabilities.pointer == false) {
         log.debug("mouse not available", .{});
         return error.UnexpectedWayland;
-    }
-
-    wld.keyboard = wld.seat.get_keyboard() orelse {
-        log.debug("wl_seat_get_keyboard failed", .{});
-        return error.UnexpectedWayland;
-    };
-    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
-
-    if (options.internal_build) {
-        wld.mouse = wld.seat.get_pointer() orelse {
-            log.debug("wl_set_get_pointer failed", .{});
-            return error.UnexpectedWayland;
-        };
-        wld.mouse.add_listener(&wl_mouse_listener, &wld);
     }
 
     if (wli.xrgb8888 == false) {
@@ -267,13 +251,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
             toplevel_decoration.add_listener(&xdg_decoration_listener, &xdg_decoration_mode);
 
-            while (xdg_decoration_mode == null or wld.pending_configure_serial == 0) {
-                _ = wl.display_dispatch(wld.display);
-                _ = wl.display_flush(wld.display);
-            }
+            _ = wl.display_roundtrip(wld.display);
 
             if (xdg_decoration_mode == .server_side) {
-                xdg_surface.ack_configure(wld.pending_configure_serial);
+                xdg_surface.ack_configure(wld.pending_configure_serial.?);
+                wld.pending_configure_serial = null;
                 if (wld.pending_resize) |r| {
                     try resize(r.width, r.height);
                 }
@@ -290,7 +272,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        wld.pending_configure_serial = 0;
+        wld.pending_configure_serial = null;
         log.debug("xdg_decoration not supported, falling back to libdecor", .{});
 
         var libdecor_available = true;
@@ -316,10 +298,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
             libdecor.frame_set_app_id(frame, app_id);
             libdecor.frame_set_title(frame, app_id);
 
-            wld.pending_configure_serial = 0;
+            wld.pending_configure_serial = null;
             wld.surface.commit();
 
-            while (wld.pending_configure_serial == 0) {
+            while (wld.pending_configure_serial == null) {
                 _ = libdecor.dispatch(context, 0);
             }
 
@@ -328,7 +310,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             log.debug("libdecor not supported, falling back to no decorations", .{});
 
             if (wli.xdg_decoration_manager == null) {
-                while (wld.pending_configure_serial == 0) {
+                while (wld.pending_configure_serial == null) {
                     _ = wl.display_dispatch(wld.display);
                     _ = wl.display_flush(wld.display);
                 }
@@ -341,18 +323,101 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const buffer = aquireFreeBuffer().?;
     displayWaylandBufferInWindow(buffer);
 
-    udev.load();
+    // Wait for surface enter to set current monitor
+    wld.surface.commit();
+    _ = wl.display_roundtrip(wld.display);
 
-    // At this point this should be set by the callback (handleWlOutputMode), if not set a default value
-    if (wld.monitor_refresh_hz == 0) {
-        wld.monitor_refresh_hz = 60;
-        log.warn("Could not detect monitor refresh rate, fallback to: {}", .{wld.monitor_refresh_hz});
-    } else {
-        log.debug("Detected monitory refresh rate: {}", .{wld.monitor_refresh_hz});
+    var monitor_hz: f32 = 60;
+
+    for (wld.outputs, 0..) |output_opt, i| if (output_opt) |output| {
+        log.debug("outputs[{}]: {}", .{ i, output });
+        if (output.active) monitor_hz = @min(monitor_hz, @as(f32, @floatFromInt(output.refresh_mhz)) / 1000);
+    };
+
+    log.debug("monitor hz: {}", .{monitor_hz});
+
+    const game_update_hz: f32 = monitor_hz / 2;
+    log.debug("game update hz: {}", .{game_update_hz});
+    const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
+
+    wld.keyboard = wld.seat.get_keyboard() orelse {
+        log.debug("wl_seat_get_keyboard failed", .{});
+        return error.UnexpectedWayland;
+    };
+    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
+
+    wld.pointer = wld.seat.get_pointer() orelse {
+        log.debug("wl_set_get_pointer failed", .{});
+        return error.UnexpectedWayland;
+    };
+    wld.pointer.add_listener(&wl_mouse_listener, &wld);
+
+    const base_address: ?[*]align(std.heap.page_size_min) u8, const fixed = if (options.internal_build)
+        .{ @ptrFromInt(mem.TiB * 2), true }
+    else
+        .{ null, false };
+
+    const permanent_storage_size = mem.MiB * 64;
+    const transient_storage_size = mem.GiB * 1;
+    const total_size = permanent_storage_size + transient_storage_size;
+
+    var game_memory = Memory{
+        .initialized = false,
+        .permanent_len = permanent_storage_size,
+        .transient_len = transient_storage_size,
+        .debug = .{
+            .readEntireFile = &DEBUG.readEntireFile,
+            .freeFileMemory = &DEBUG.freeFileMemory,
+            .writeEntireFile = &DEBUG.writeEntireFile,
+        },
+    };
+
+    if (linux.mmap(
+        base_address,
+        total_size,
+        .{},
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = fixed },
+        -1,
+        0,
+    )) |all_memory| {
+        if (linux.mprotect(all_memory.ptr, all_memory.len, .{ .READ = true, .WRITE = true }) == -1) {
+            log.err("mprotect call for game memory storage failed", .{});
+            return error.MProtectFailed;
+        }
+
+        game_memory.permanent = all_memory.ptr;
+        game_memory.transient = all_memory[permanent_storage_size..].ptr;
+        assert(game_memory.transient_len == transient_storage_size);
+
+        wld.shared_state.game_memory_block = all_memory;
+    } else |_| {
+        log.err("mmap call for game memory failed", .{});
+        return error.MMapFailed;
     }
 
-    const game_update_hz: f32 = @as(f32, @floatFromInt(wld.monitor_refresh_hz)) / 2;
-    const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
+    log.debug("perm: {*}", .{game_memory.permanent});
+    log.debug("trans: {*}", .{game_memory.transient});
+
+    if (options.internal_build) {
+        for (&shared_state.replay_buffers, 0..) |*replay_buffer, i| {
+            const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
+
+            const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
+            const open_rc = linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true }, permissions);
+            if (@as(isize, @bitCast(open_rc)) >= 0) {
+                const file_handle: linux.fd_t = @intCast(open_rc);
+
+                if (linux.mmap(null, total_size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, @intCast(file_handle), 0)) |buf| {
+                    _ = linux.ftruncate(file_handle, total_size);
+                    replay_buffer.memory = buf;
+                } else |_| {
+                    log.warn("mmap for input recording file failed", .{});
+                }
+            } else {
+                log.warn("open for input recording file failed", .{});
+            }
+        }
+    }
 
     var audio_output: AudioOutput = .{};
     audio_output.frames_per_second = 48000;
@@ -386,6 +451,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
+    udev.load();
     var udev_monitor: *udev.Monitor = undefined;
 
     const udev_ctx_opt = udev.new();
@@ -437,73 +503,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
-    const base_address: ?[*]align(std.heap.page_size_min) u8, const fixed = if (options.internal_build)
-        .{ @ptrFromInt(mem.TiB * 2), true }
-    else
-        .{ null, false };
-
-    const permanent_storage_size = mem.MiB * 64;
-    const transient_storage_size = mem.GiB * 1;
-    const total_size = permanent_storage_size + transient_storage_size;
-
-    var game_memory = Memory{
-        .initialized = false,
-        .permanent_len = permanent_storage_size,
-        .transient_len = transient_storage_size,
-        .debug = if (options.internal_build) .{
-            .readEntireFile = &DEBUG.readEntireFile,
-            .freeFileMemory = &DEBUG.freeFileMemory,
-            .writeEntireFile = &DEBUG.writeEntireFile,
-        } else .{},
-    };
-
-    if (linux.mmap(
-        base_address,
-        total_size,
-        .{},
-        .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = fixed },
-        -1,
-        0,
-    )) |all_memory| {
-        if (linux.mprotect(all_memory.ptr, all_memory.len, .{ .READ = true, .WRITE = true }) == -1) {
-            log.err("mprotect call for game memory storage failed", .{});
-            return error.MProtectFailed;
-        }
-
-        game_memory.permanent = all_memory.ptr;
-        game_memory.transient = all_memory[permanent_storage_size..].ptr;
-        assert(game_memory.transient_len == transient_storage_size);
-
-        wld.shared_state.game_memory_block = all_memory;
-    } else |_| {
-        log.err("mmap call for game memory failed", .{});
-        return error.MMapFailed;
-    }
-
-    log.debug("perm: {*}", .{game_memory.permanent});
-    log.debug("trans: {*}", .{game_memory.transient});
-
-    if (options.internal_build) {
-        for (&shared_state.replay_buffers, 0..) |*replay_buffer, i| {
-            const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
-
-            const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
-            const open_rc = linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true }, permissions);
-            if (@as(isize, @bitCast(open_rc)) >= 0) {
-                const file_handle: linux.fd_t = @intCast(open_rc);
-
-                if (linux.mmap(null, total_size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, @intCast(file_handle), 0)) |buf| {
-                    _ = linux.ftruncate(file_handle, total_size);
-                    replay_buffer.memory = buf;
-                } else |_| {
-                    log.warn("mmap for input recording file failed", .{});
-                }
-            } else {
-                log.warn("open for input recording file failed", .{});
-            }
-        }
-    }
-
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
@@ -517,10 +516,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     _ = pa.stream_cork(pa_stream, 0, null, null);
 
     var last_counter = getWallClock(io);
-    var flip_wall_clock = getWallClock(io);
 
     var last_cycle_count = x86_64.rdtsc();
 
+    log.debug("starting main loop", .{});
     while (running) {
         const new_lib_write_time = platform.getLastWriteTime(io, game_lib_name);
         if (new_lib_write_time > game_code.last_write_time) {
@@ -599,6 +598,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
 
         if (wld.pending_resize) |r| {
+            if (wld.pending_configure_serial) |serial| {
+                wld.toplevel.ack_configure(serial);
+            }
             try resize(r.width, r.height);
         }
 
@@ -780,7 +782,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
             var seconds_elapsed_for_frame = work_seconds_elapsed;
-            if (seconds_elapsed_for_frame < target_seconds_per_frame) {
+            if (seconds_elapsed_for_frame <= target_seconds_per_frame) {
                 while (seconds_elapsed_for_frame < target_seconds_per_frame) {
                     const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
 
@@ -803,8 +805,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const wayland_blit = displayBufferInWindow(global_back_buffer);
 
             _ = wl.display_flush(display);
-
-            flip_wall_clock = getWallClock(io);
 
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
@@ -848,8 +848,20 @@ const WlInitData = struct {
     seat_capabilities: wl.Seat.Capability = .{},
 };
 
+// TODO: Use xkb!
+const KeyMods = packed struct(u32) {
+    shift: bool = false,
+    __reveved1: u1 = 0,
+    control: bool = false,
+    alt: bool = false,
+    num: bool = false,
+    __reserved2: u27 = 0,
+};
+
 const WlData = struct {
     should_draw: bool = false,
+
+    outputs: [8]?WlOutput = std.mem.zeroes([8]?WlOutput),
 
     pool: ?*wl.ShmPool = null,
     buffers: [3]WlBuffer = undefined,
@@ -861,7 +873,7 @@ const WlData = struct {
     surface: *wl.Surface = undefined,
     wm_base: *xdg_shell.WmBase = undefined,
     keyboard: *wl.Keyboard = undefined,
-    mouse: *wl.Pointer = undefined,
+    pointer: *wl.Pointer = undefined,
 
     toplevel: WlToplevel = undefined,
 
@@ -886,11 +898,14 @@ const WlData = struct {
     should_resize_shm: bool = false,
     shm_data: []align(std.heap.page_size_min) u8 = &.{},
 
-    pending_configure_serial: u32 = 0,
+    fullscreen: bool = false,
+
+    pending_configure_serial: ?u32 = null,
     pending_resize: ?WlPendingResize = null,
 
-    monitor_refresh_hz: c_int = 0,
-
+    key_mods_pressed: KeyMods = .{},
+    key_mods_latched: KeyMods = .{},
+    key_mods_locked: KeyMods = .{},
     game_input: [2]platform.Input = .{Input{}} ** 2,
     new_input: *Input = undefined,
     old_input: *Input = undefined,
@@ -898,6 +913,12 @@ const WlData = struct {
     shared_state: *platform.SharedState = undefined,
 
     io: std.Io = undefined,
+};
+
+const WlOutput = struct {
+    handle: *wl.Output,
+    refresh_mhz: i32 = 0,
+    active: bool = false,
 };
 
 const WlBuffer = struct {
@@ -924,6 +945,30 @@ const WlToplevel = union(enum) {
         decor: *libdecor.Context,
         frame: *libdecor.Frame,
     },
+
+    pub fn set_fullscreen(this: *WlToplevel, output: ?*wl.Output) void {
+        switch (this.*) {
+            .no_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
+            .xdg_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
+            .libdecor => |ld| libdecor.frame_set_fullscreen(ld.frame, output),
+        }
+    }
+
+    pub fn unset_fullscreen(this: *WlToplevel) void {
+        switch (this.*) {
+            .no_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
+            .xdg_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
+            .libdecor => |ld| libdecor.frame_unset_fullscreen(ld.frame),
+        }
+    }
+
+    pub fn ack_configure(this: *WlToplevel, serial: u32) void {
+        switch (this.*) {
+            .no_decoration => |t| t.xdg_surface.ack_configure(serial),
+            .xdg_decoration => |t| t.xdg_surface.ack_configure(serial),
+            .libdecor => unreachable,
+        }
+    }
 };
 
 const WlPendingResize = struct {
@@ -1278,6 +1323,7 @@ fn resize_shm() ShmError!void {
 }
 
 fn resize(width: i32, height: i32) !void {
+    log.debug("resize: {},{}", .{ width, height });
     // Back buffer
     wld.width = back_buffer_width;
     wld.height = back_buffer_height;
@@ -1429,16 +1475,36 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
         .{ "wl_compositor", wl.Compositor },
         .{ "xdg_wm_base", xdg_shell.WmBase },
         .{ "xdg_decoration_manager", xdg_decoration.DecorationManagerV1 },
-        .{ "wl_output", wl.Output },
     };
 
+    var found = false;
     inline for (mappings) |map| {
         const target_field_name: []const u8 = map[0];
         const Interface: type = map[1];
 
         if (std.mem.eql(u8, std.mem.span(interface_name), std.mem.span(Interface.interface.name))) {
             @field(wli, target_field_name) = registry.bind(name, Interface, @min(version, Interface.interface.version));
+            found = true;
             break;
+        }
+    }
+
+    if (!found) {
+        if (std.mem.eql(u8, "wl_output", std.mem.span(interface_name))) {
+            var free_slot_found = false;
+            for (&wld.outputs) |*output| {
+                if (output.* == null) {
+                    output.* = .{
+                        .handle = registry.bind(name, wl.Output, @min(version, wl.Output.interface.version)).?,
+                    };
+                    free_slot_found = true;
+                    break;
+                }
+            }
+
+            if (!free_slot_found) {
+                log.warn("Monitor capacity reached (8)! Ignoring monitor.", .{});
+            }
         }
     }
 }
@@ -1447,7 +1513,56 @@ fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) c
     _ = data;
     _ = registry;
 
+    // TODO: Handle monitor hotplug?
     log.debug("Remove global: {}", .{name});
+}
+
+fn handleWlSurfaceEnter(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) callconv(.c) void {
+    _ = .{ data, surface, current_output_object_opt };
+
+    if (current_output_object_opt) |current_output_object| {
+        const current_output: *wl.Output = @ptrCast(current_output_object);
+        log.debug("Surface enter: {}", .{current_output});
+
+        var found = false;
+        for (&wld.outputs) |*output_opt| {
+            if (output_opt.*) |*existing_output| {
+                if (existing_output.handle == current_output) {
+                    existing_output.active = true;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (!found) {
+            log.warn("Failed to find matching output: {*}", .{current_output_object_opt});
+        }
+    }
+}
+
+fn handleWlSurfaceLeave(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) callconv(.c) void {
+    _ = .{ data, surface, current_output_object_opt };
+
+    if (current_output_object_opt) |current_output_object| {
+        const current_output: *wl.Output = @ptrCast(current_output_object);
+        log.debug("Surface leave: {}", .{current_output});
+
+        var found = false;
+        for (&wld.outputs) |*output_opt| {
+            if (output_opt.*) |*existing_output| {
+                if (existing_output.handle == current_output) {
+                    existing_output.active = false;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (!found) {
+            log.warn("Failed to find matching output: {*}", .{current_output_object_opt});
+        }
+    }
 }
 
 fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) callconv(.c) void {
@@ -1465,6 +1580,8 @@ fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) ca
 fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, serial: u32) callconv(.c) void {
     _ = data;
     _ = surface;
+
+    log.debug("xdg surface configure: {}", .{serial});
     wld.pending_configure_serial = serial;
 }
 
@@ -1472,6 +1589,8 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel,
     _ = data;
     _ = toplevel;
     _ = states;
+
+    log.debug("xdg toplevel configure: {},{}", .{ width, height });
 
     wld.pending_resize = .{ .width = width, .height = height };
 }
@@ -1565,6 +1684,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
         } else if (key == .SPACE) {
             processKeyEvent(&buttons.back, is_down);
         }
+
         if (options.internal_build and is_down) {
             if (key == .P) {
                 pause = !pause;
@@ -1580,16 +1700,46 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
                     endInputPlayback(wld.shared_state, wld.io);
                     // TODO: Reset input, keys may be stuck in down state
                 }
+            } else if ((key == .ENTER and wld.key_mods_pressed.alt) or
+                key == .F11)
+            {
+                toggleFullscreen();
             }
         }
     }
 }
 
-fn handleWlMouseEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
-    _ = .{ data, pointer, serial, surface };
+fn handleWlKeyModifiers(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) callconv(.c) void {
+    _ = .{ data, keyboard, serial, mods_depressed, mods_latched, mods_locked, group };
+
+    wld.key_mods_pressed = @bitCast(mods_depressed);
+    wld.key_mods_latched = @bitCast(mods_latched);
+    wld.key_mods_locked = @bitCast(mods_locked);
+}
+
+fn toggleFullscreen() void {
+    if (wld.fullscreen) {
+        wld.toplevel.unset_fullscreen();
+        wld.fullscreen = false;
+    } else {
+        // TODO: Preferred fullscreen monitor
+        wld.toplevel.set_fullscreen(null);
+        wld.fullscreen = true;
+    }
+}
+
+fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
+    _ = .{ data, pointer, serial, surface, surface_x, surface_y };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
     wld.new_input.debug_mouse.y = surface_y.toInt();
+
+    // Hide cursor, if custom cursors are required use libwayland-cursor or cursor-shape protocol
+    if (options.internal_build) {
+        //
+    } else {
+        wld.pointer.set_cursor(serial, null, 0, 0);
+    }
 }
 
 fn handleWlMouseMotion(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
@@ -1672,11 +1822,17 @@ fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_de
     const mode_ptr: *?xdg_decoration.ToplevelDecorationV1.Mode = @ptrCast(@alignCast(data));
     mode_ptr.* = mode;
 }
+fn handleWlOutputGeometry(data: ?*anyopaque, output: ?*wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: [*:0]const u8, model: [*:0]const u8, transform: wl.Output.Transform) callconv(.c) void {
+    _ = .{ data, output };
+    log.debug("handleWlOutputGeometry: {},{},{},{},{},{s},{s},{}", .{ x, y, physical_width, physical_height, subpixel, make, model, transform });
+}
 
 fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) callconv(.c) void {
-    _ = data;
-    _ = output;
-    _ = flags;
+    const output_data: *WlOutput = @ptrCast(@alignCast(data));
+    assert(output_data.handle == output.?);
+    output_data.refresh_mhz = refresh;
+
+    log.debug("handleWlOutputMode: {},{},{},{}", .{ flags, width, height, refresh });
 
     const new_pixel_count = width * height;
     const max_pixel_count = wld.max_width * wld.max_height;
@@ -1685,8 +1841,6 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
         wld.max_height = height;
         wld.should_resize_shm = true;
     }
-
-    wld.monitor_refresh_hz = @divTrunc(refresh, 1000);
 }
 
 fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
@@ -1969,37 +2123,68 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
             @memset(@as([]u32, @ptrCast(@alignCast(wl_buffer_mem))), 0);
         }
 
-        // TODO: Offset mouse position by this
-        const x_offset = 10;
-        const y_offset = 10;
+        if (wl_buffer.width >= buffer.width * 2 and wl_buffer.height >= buffer.height * 2) {
+            const dest_line_length: usize = @intCast(@min(buffer.width * 2, wl_buffer.width) * bytes_per_pixel);
+            const source_line_length: usize = @intCast(@min(buffer.width, @divTrunc(wl_buffer.width, 2)) * bytes_per_pixel);
 
-        const line_length: usize = @intCast(@min(buffer.width, wl_buffer.width - x_offset) * bytes_per_pixel);
-        const row_count: usize = @intCast(@min(buffer.height, wl_buffer.height - y_offset));
+            const source_row_count: usize = @intCast(@min(buffer.height, @divTrunc(wl_buffer.height, 2)));
 
-        // NOTE: This could be a single memcopy if:
-        //  - We reallocate the offscreen_buffer in the same way as the wayland buffers (same size).
-        //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
-        //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
-        //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
-        //
-        //  I might actually prefer that, but for now this matches hh on win32.
-        for (y_offset..y_offset + row_count, 0..row_count) |dst_y, src_y| {
-            const dest_offset = (dst_y * wl_buffer_pitch) + (x_offset * bytes_per_pixel);
-            const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
+            for (0..source_row_count) |src_y| {
+                const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
+                const source_line: []u32 = @ptrCast(@alignCast(buffer.memory[source_offset .. source_offset + source_line_length]));
 
-            const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
-            const source_line = buffer.memory[source_offset .. source_offset + line_length];
+                const dst_y = src_y * 2;
+                const dest_offset1 = dst_y * wl_buffer_pitch;
+                const dest_line1: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset1 .. dest_offset1 + dest_line_length]));
+                const dest_offset2 = dest_offset1 + wl_buffer_pitch;
+                const dest_line2: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset2 .. dest_offset2 + dest_line_length]));
 
-            @memcpy(dest_line, source_line);
+                for (0..source_line.len) |src_x| {
+                    const dst_x = src_x * 2;
+
+                    dest_line1[dst_x] = source_line[src_x];
+                    dest_line1[dst_x + 1] = source_line[src_x];
+                    dest_line2[dst_x] = source_line[src_x];
+                    dest_line2[dst_x + 1] = source_line[src_x];
+                }
+            }
+        } else {
+
+            // TODO: Offset mouse position by this
+            const x_offset = 10;
+            const y_offset = 10;
+
+            const line_length: usize = @intCast(@min(buffer.width, wl_buffer.width - x_offset) * bytes_per_pixel);
+            const row_count: usize = @intCast(@min(buffer.height, wl_buffer.height - y_offset));
+
+            // NOTE: This could be a single memcopy if:
+            //  - We reallocate the offscreen_buffer in the same way as the wayland buffers (same size).
+            //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
+            //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
+            //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
+            //
+            //  I might actually prefer that, but for now this matches hh on win32.
+            const y_off: usize = @intCast(y_offset);
+            const x_off: usize = @intCast(x_offset);
+            for (y_off..y_off + row_count, 0..row_count) |dst_y, src_y| {
+                const dest_offset = (dst_y * wl_buffer_pitch) + (x_off * bytes_per_pixel);
+                const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
+
+                const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
+                const source_line = buffer.memory[source_offset .. source_offset + line_length];
+
+                @memcpy(dest_line, source_line);
+            }
         }
 
         displayWaylandBufferInWindow(wl_buffer);
         return true;
     } else {
         _ = wl.display_roundtrip(wld.display);
-        unreachable; // might want to loop util a buffer is aquired
+        log.warn("Failed to aquire wayland buffer!", .{});
+        // unreachable; // might want to loop util a buffer is aquired
         // continue;
-        // return false;
+        return false;
     }
     // }
 }
@@ -2096,8 +2281,8 @@ const wl_shm_listener = wl.Shm.Listener{
 };
 
 const wl_surface_listener = wl.Surface.Listener{
-    .enter = @ptrCast(&nop),
-    .leave = @ptrCast(&nop),
+    .enter = handleWlSurfaceEnter,
+    .leave = handleWlSurfaceLeave,
     .preferred_buffer_scale = @ptrCast(&nop),
     .preferred_buffer_transform = @ptrCast(&nop),
 };
@@ -2134,13 +2319,13 @@ const wl_keyboard_listener = wl.Keyboard.Listener{
     .key = handleWlKey,
     .enter = @ptrCast(&nop),
     .leave = @ptrCast(&nop),
-    .modifiers = @ptrCast(&nop),
+    .modifiers = handleWlKeyModifiers,
     .repeat_info = @ptrCast(&nop),
     .keymap = @ptrCast(&nop),
 };
 
 const wl_mouse_listener = wl.Pointer.Listener{
-    .enter = handleWlMouseEnter,
+    .enter = handleWlPointerEnter,
     .leave = @ptrCast(&nop),
     .motion = handleWlMouseMotion,
     .button = handleWlMouseButton,
@@ -2165,7 +2350,7 @@ const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{
 };
 
 const wl_output_listener = wl.Output.Listener{
-    .geometry = @ptrCast(&nop),
+    .geometry = handleWlOutputGeometry,
     .mode = handleWlOutputMode,
     .done = @ptrCast(&nop),
     .scale = @ptrCast(&nop),

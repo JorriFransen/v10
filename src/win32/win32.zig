@@ -27,6 +27,7 @@ pub const HICON = zig_win32.HICON;
 pub const HCURSOR = zig_win32.HCURSOR;
 pub const HBRUSH = zig_win32.HBRUSH;
 pub const HWND = zig_win32.HWND;
+pub const HMONITOR = HANDLE;
 pub const HMENU = zig_win32.HMENU;
 pub const WPARAM = usize;
 pub const LPARAM = zig_win32.LPARAM;
@@ -755,16 +756,93 @@ pub const BLTALIGNMENT = 119;
 pub const SHADEBLENDCAPS = 120;
 pub const COLORMGMTCAPS = 121;
 
+pub const IDC_ARROW = MAKEINTRESOURCEA(32512);
+pub const IDC_IBEAM = MAKEINTRESOURCEA(32513);
+pub const IDC_WAIT = MAKEINTRESOURCEA(32514);
+pub const IDC_CROSS = MAKEINTRESOURCEA(32515);
+pub const IDC_UPARROW = MAKEINTRESOURCEA(32516);
+pub const IDC_SIZENWSE = MAKEINTRESOURCEA(32642);
+pub const IDC_SIZENESW = MAKEINTRESOURCEA(32643);
+pub const IDC_SIZEWE = MAKEINTRESOURCEA(32644);
+pub const IDC_SIZENS = MAKEINTRESOURCEA(32645);
+pub const IDC_SIZEALL = MAKEINTRESOURCEA(32646);
+pub const IDC_NO = MAKEINTRESOURCEA(32648);
+pub const IDC_HAND = MAKEINTRESOURCEA(32649);
+pub const IDC_APPSTARTING = MAKEINTRESOURCEA(32650);
+pub const IDC_HELP = MAKEINTRESOURCEA(32651);
+pub const IDC_PIN = MAKEINTRESOURCEA(32671);
+pub const IDC_PERSON = MAKEINTRESOURCEA(32672);
+
+pub const HTBORDER = 18;
+pub const HTBOTTOM = 15;
+pub const HTBOTTOMLEFT = 16;
+pub const HTBOTTOMRIGHT = 17;
+pub const HTCAPTION = 2;
+pub const HTCLIENT = 1;
+pub const HTCLOSE = 20;
+pub const HTERROR = -2;
+pub const HTGROWBOX = 4;
+pub const HTHELP = 21;
+pub const HTHSCROLL = 6;
+pub const HTLEFT = 10;
+pub const HTMENU = 5;
+pub const HTMAXBUTTON = 9;
+pub const HTMINBUTTON = 8;
+pub const HTNOWHERE = 0;
+pub const HTREDUCE = 8;
+pub const HTRIGHT = 11;
+pub const HTSIZE = 4;
+pub const HTSYSMENU = 3;
+pub const HTTOP = 12;
+pub const HTTOPLEFT = 13;
+pub const HTTOPRIGHT = 14;
+pub const HTTRANSPARENT = -1;
+pub const HTVSCROLL = 7;
+pub const HTZOOM = 9;
+
+pub const GWL_EXSTYLE = -20;
+pub const GWL_HINSTANCE = -6;
+pub const GWL_HWNDPARENT = -8;
+pub const GWL_ID = -12;
+pub const GWL_STYLE = -16;
+pub const GWL_USERDATA = -21;
+pub const GWL_WNDPROC = -4;
+
+pub const MONITOR_DEFAULTTONULL = 0x00000000;
+pub const MONITOR_DEFAULTTOPRIMARY = 0x00000001;
+pub const MONITOR_DEFAULTTONEAREST = 0x00000002;
+
+pub const HWND_BOTTOM: ?HWND = @ptrFromInt(1);
+pub const HWND_NOTOPMOST: ?HWND = @ptrFromInt(-2);
+pub const HWND_TOP: ?HWND = @ptrFromInt(0);
+pub const HWND_TOPMOST: ?HWND = @ptrFromInt(-1);
+
+pub const SWP_ASYNCWINDOWPOS = 0x4000;
+pub const SWP_DEFERERASE = 0x2000;
+pub const SWP_DRAWFRAME = 0x0020;
+pub const SWP_FRAMECHANGED = 0x0020;
+pub const SWP_HIDEWINDOW = 0x0080;
+pub const SWP_NOACTIVATE = 0x0010;
+pub const SWP_NOCOPYBITS = 0x0100;
+pub const SWP_NOMOVE = 0x0002;
+pub const SWP_NOOWNERZORDER = 0x0200;
+pub const SWP_NOREDRAW = 0x0008;
+pub const SWP_NOREPOSITION = 0x0200;
+pub const SWP_NOSENDCHANGING = 0x0400;
+pub const SWP_NOSIZE = 0x0001;
+pub const SWP_NOZORDER = 0x0004;
+pub const SWP_SHOWWINDOW = 0x0040;
+
 pub const RECT = extern struct {
-    left: LONG,
-    top: LONG,
-    right: LONG,
-    bottom: LONG,
+    left: LONG = 0,
+    top: LONG = 0,
+    right: LONG = 0,
+    bottom: LONG = 0,
 };
 
 pub const POINT = extern struct {
-    x: LONG,
-    y: LONG,
+    x: LONG = 0,
+    y: LONG = 0,
 };
 
 pub const GUID = extern struct {
@@ -956,6 +1034,29 @@ pub const FILE_ATTRIBUTE_DATA = extern struct {
     file_size_low: DWORD,
 };
 
+pub const KeyState = packed struct(SHORT) {
+    toggled: bool,
+    reserved: u14,
+    down: bool,
+};
+
+pub const WINDOWPLACEMENT = extern struct {
+    length: UINT = @sizeOf(@This()),
+    flags: UINT = 0,
+    chow_cmd: UINT = 0,
+    min_position: POINT = .{},
+    max_position: POINT = .{},
+    normal_position: RECT = .{},
+    device: RECT = .{},
+};
+
+pub const MONITORINFO = extern struct {
+    size: DWORD = @sizeOf(@This()),
+    monitor: RECT = .{},
+    work: RECT = .{},
+    flags: DWORD = 0,
+};
+
 pub const GET_FILEEX_INFO_LEVELS = enum(c_int) {
     standard,
     max,
@@ -967,14 +1068,42 @@ pub const PROCESS_DPI_AWARENESS = enum(c_int) {
     PER_MONITOR_DPI_AWARE = 2,
 };
 
-pub const KeyState = packed struct(SHORT) {
-    toggled: bool,
-    reserved: u14,
-    down: bool,
-};
-
 pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
     return .{ .red = r, .green = g, .blue = b };
+}
+
+pub inline fn MAKEINTRESOURCEA(i: anytype) LPCSTR {
+    comptime {
+        const T = @TypeOf(i);
+        const info = @typeInfo(T);
+        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
+        if (@sizeOf(T) > @sizeOf(LPCSTR)) @compileError("Integer type too big");
+    }
+
+    return @ptrFromInt(i);
+}
+
+pub inline fn LOWORD(l: anytype) WORD {
+    const T = @TypeOf(l);
+    comptime {
+        const info = @typeInfo(T);
+        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
+    }
+
+    const UT = @Int(.unsigned, @bitSizeOf(T));
+    const i: DWORD = @truncate(@as(UT, @bitCast(l)));
+    return @truncate(i & 0xffff);
+}
+
+pub inline fn HIWORD(l: anytype) WORD {
+    const T = @TypeOf(l);
+    comptime {
+        const info = @typeInfo(T);
+        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
+    }
+    const UT = @Int(.unsigned, @bitSizeOf(T));
+    const i: DWORD = @truncate(@as(UT, @bitCast(l)));
+    return @truncate((i & 0xffff0000) >> 16);
 }
 
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
@@ -990,10 +1119,10 @@ pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, s
 pub extern "kernel32" fn GetFileAttributesExA(file_name: LPCSTR, info_level_id: GET_FILEEX_INFO_LEVELS, file_info: LPVOID) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, size: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn ReadFile(handle: HANDLE, buffer: LPVOID, bytes_to_read: DWORD, bytes_read: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
-pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, bytes_written: *DWORD, overlapped: ?*OVERLAPPED) callconv(.c) BOOL;
+pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, bytes_written: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
-pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LPCSTR, fail_if_exists: BOOL) callconv(.c) BOOL;
+pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LPCSTR, fail_if_exists: BOOL) callconv(.winapi) BOOL;
 pub extern "kernel32" fn FindFirstFileA(file_name: LPCSTR, find_file_data: *WIN32_FIND_DATA) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn FindClose(find_file: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetModuleFileNameA(module: ?HMODULE, file_name: LPSTR, size: DWORD) callconv(.winapi) DWORD;
@@ -1021,8 +1150,8 @@ pub extern "user32" fn RegisterClassW(class: *const WNDCLASSW) callconv(.winapi)
 
 pub extern "user32" fn AdjustWindowRectEx(rect: *RECT, style: DWORD, menu: BOOL, ex_style: DWORD) callconv(.winapi) BOOL;
 pub extern "user32" fn CreateWindowExA(ex_style: DWORD, class_name: ?LPCSTR, window_name: ?LPCSTR, style: DWORD, x: c_int, y: c_int, width: c_int, height: c_int, parent_window: ?HWND, menu: ?HMENU, instance: ?HINSTANCE, param: ?LPVOID) callconv(.winapi) ?HWND;
-pub extern "user32" fn DestroyWindow(hwnd: HWND) callconv(.c) BOOL;
-pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, crKey: COLORREF, bAlpha: BYTE, dwFlags: DWORD) callconv(.c) BOOL;
+pub extern "user32" fn DestroyWindow(hwnd: HWND) callconv(.winapi) BOOL;
+pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, crKey: COLORREF, bAlpha: BYTE, dwFlags: DWORD) callconv(.winapi) BOOL;
 
 pub extern "user32" fn GetMessageA(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
 pub extern "user32" fn GetMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
@@ -1038,8 +1167,18 @@ pub extern "user32" fn BeginPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.win
 pub extern "user32" fn EndPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetClientRect(hwnd: HWND, rect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetCursorPos(point: *POINT) callconv(.winapi) BOOL;
+pub extern "user32" fn LoadCursorA(instance: ?HINSTANCE, cursor_name: LPCSTR) callconv(.winapi) HCURSOR;
+pub extern "user32" fn SetCursor(cursor: ?HCURSOR) callconv(.winapi) HCURSOR;
 pub extern "user32" fn ScreenToClient(hwnd: HWND, point: *POINT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetKeyState(key: c_int) callconv(.winapi) KeyState;
+
+pub extern "user32" fn SetWindowLongA(hwnd: HWND, index: c_int, new_long: LONG) callconv(.winapi) LONG;
+pub extern "user32" fn GetWindowLongA(hwnd: HWND, index: c_int) callconv(.winapi) LONG;
+pub extern "user32" fn GetWindowPlacement(hwnd: HWND, placement: *WINDOWPLACEMENT) callconv(.winapi) BOOL;
+pub extern "user32" fn SetWindowPlacement(hwnd: HWND, placement: *const WINDOWPLACEMENT) callconv(.winapi) BOOL;
+pub extern "user32" fn SetWindowPos(hwnd: HWND, insert_after: ?HWND, x: c_int, y: c_int, cx: c_int, cy: c_int, flags: UINT) callconv(.winapi) BOOL;
+pub extern "user32" fn MonitorFromWindow(hwnd: HWND, flags: DWORD) callconv(.winapi) HMONITOR;
+pub extern "user32" fn GetMonitorInfoA(monitor: HMONITOR, info: *MONITORINFO) callconv(.winapi) BOOL;
 
 pub extern "gdi32" fn GetDeviceCaps(hdc: HDC, index: c_int) callconv(.winapi) c_int;
 pub extern "gdi32" fn PatBlt(hdc: ?HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: DWORD) callconv(.winapi) BOOL;
