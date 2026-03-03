@@ -252,10 +252,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
             toplevel_decoration.add_listener(&xdg_decoration_listener, &xdg_decoration_mode);
 
             _ = wl.display_roundtrip(wld.display);
+            xdg_surface.ack_configure(wld.pending_configure_serial.?);
+            wld.pending_configure_serial = null;
 
             if (xdg_decoration_mode == .server_side) {
-                xdg_surface.ack_configure(wld.pending_configure_serial.?);
-                wld.pending_configure_serial = null;
                 if (wld.pending_resize) |r| {
                     try resize(r.width, r.height);
                 }
@@ -272,7 +272,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        wld.pending_configure_serial = null;
         log.debug("xdg_decoration not supported, falling back to libdecor", .{});
 
         var libdecor_available = true;
@@ -298,23 +297,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
             libdecor.frame_set_app_id(frame, app_id);
             libdecor.frame_set_title(frame, app_id);
 
-            wld.pending_configure_serial = null;
             wld.surface.commit();
 
-            while (wld.pending_configure_serial == null) {
-                _ = libdecor.dispatch(context, 0);
-            }
+            _ = wl.display_roundtrip(wld.display);
+            wld.pending_configure_serial = null;
 
             break :blk .{ .libdecor = .{ .decor = @ptrCast(context), .frame = @ptrCast(frame) } };
         } else {
             log.debug("libdecor not supported, falling back to no decorations", .{});
 
-            if (wli.xdg_decoration_manager == null) {
-                while (wld.pending_configure_serial == null) {
-                    _ = wl.display_dispatch(wld.display);
-                    _ = wl.display_flush(wld.display);
-                }
-            }
+            _ = wl.display_roundtrip(wld.display);
+            wld.pending_configure_serial = null;
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
         }
