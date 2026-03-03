@@ -257,7 +257,9 @@ fn processPendingMessages(shared_state: *platform.SharedState, keyboard_controll
                         const alt_key_was_down = (msg.lParam & (1 << 29)) != 0;
                         if ((vk_code == win32.VK_F4) and alt_key_was_down) {
                             global_running = false;
-                        } else if (vk_code == win32.VK_RETURN and alt_key_was_down) {
+                        } else if ((vk_code == win32.VK_RETURN and alt_key_was_down) or
+                            vk_code == win32.VK_F11)
+                        {
                             toggleFullscreen(msg.hwnd.?);
                         }
                     }

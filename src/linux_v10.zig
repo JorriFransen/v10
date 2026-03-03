@@ -848,6 +848,16 @@ const WlInitData = struct {
     seat_capabilities: wl.Seat.Capability = .{},
 };
 
+// TODO: Use xkb!
+const KeyMods = packed struct(u32) {
+    shift: bool = false,
+    __reveved1: u1 = 0,
+    control: bool = false,
+    alt: bool = false,
+    num: bool = false,
+    __reserved2: u27 = 0,
+};
+
 const WlData = struct {
     should_draw: bool = false,
 
@@ -896,6 +906,9 @@ const WlData = struct {
     pending_configure_serial: ?u32 = null,
     pending_resize: ?WlPendingResize = null,
 
+    key_mods_pressed: KeyMods = .{},
+    key_mods_latched: KeyMods = .{},
+    key_mods_locked: KeyMods = .{},
     game_input: [2]platform.Input = .{Input{}} ** 2,
     new_input: *Input = undefined,
     old_input: *Input = undefined,
@@ -1674,6 +1687,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
         } else if (key == .SPACE) {
             processKeyEvent(&buttons.back, is_down);
         }
+
         if (options.internal_build and is_down) {
             if (key == .P) {
                 pause = !pause;
@@ -1689,11 +1703,21 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
                     endInputPlayback(wld.shared_state, wld.io);
                     // TODO: Reset input, keys may be stuck in down state
                 }
-            } else if (key == .ENTER) {
+            } else if ((key == .ENTER and wld.key_mods_pressed.alt) or
+                key == .F11)
+            {
                 toggleFullscreen();
             }
         }
     }
+}
+
+fn handleWlKeyModifiers(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) callconv(.c) void {
+    _ = .{ data, keyboard, serial, mods_depressed, mods_latched, mods_locked, group };
+
+    wld.key_mods_pressed = @bitCast(mods_depressed);
+    wld.key_mods_latched = @bitCast(mods_latched);
+    wld.key_mods_locked = @bitCast(mods_locked);
 }
 
 fn toggleFullscreen() void {
@@ -2270,7 +2294,7 @@ const wl_keyboard_listener = wl.Keyboard.Listener{
     .key = handleWlKey,
     .enter = @ptrCast(&nop),
     .leave = @ptrCast(&nop),
-    .modifiers = @ptrCast(&nop),
+    .modifiers = handleWlKeyModifiers,
     .repeat_info = @ptrCast(&nop),
     .keymap = @ptrCast(&nop),
 };
