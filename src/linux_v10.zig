@@ -181,12 +181,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.err("xdg_wm_base not available", .{});
         return error.UnexpectedWayland;
     }
-    if (wli.wl_output) |output| {
-        output.add_listener(&wl_output_listener, wli.wld);
-    } else {
-        log.err("wl_output not available", .{});
-        return error.UnexpectedWayland;
-    }
+
+    for (&wld.outputs) |*output_opt| if (output_opt.*) |output| {
+        output.handle.add_listener(&wl_output_listener, output_opt);
+    };
 
     // for format events, seat, outputs
     wld.shm.add_listener(&wl_shm_listener, &wli);
@@ -209,18 +207,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.debug("mouse not available", .{});
         return error.UnexpectedWayland;
     }
-
-    wld.keyboard = wld.seat.get_keyboard() orelse {
-        log.debug("wl_seat_get_keyboard failed", .{});
-        return error.UnexpectedWayland;
-    };
-    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
-
-    wld.pointer = wld.seat.get_pointer() orelse {
-        log.debug("wl_set_get_pointer failed", .{});
-        return error.UnexpectedWayland;
-    };
-    wld.pointer.add_listener(&wl_mouse_listener, &wld);
 
     if (wli.xrgb8888 == false) {
         log.err("xrgb8888 format not avaliable", .{});
@@ -265,13 +251,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
             toplevel_decoration.add_listener(&xdg_decoration_listener, &xdg_decoration_mode);
 
-            while (xdg_decoration_mode == null or wld.pending_configure_serial == 0) {
-                _ = wl.display_dispatch(wld.display);
-                _ = wl.display_flush(wld.display);
-            }
+            _ = wl.display_roundtrip(wld.display);
 
             if (xdg_decoration_mode == .server_side) {
-                xdg_surface.ack_configure(wld.pending_configure_serial);
+                xdg_surface.ack_configure(wld.pending_configure_serial.?);
+                wld.pending_configure_serial = null;
                 if (wld.pending_resize) |r| {
                     try resize(r.width, r.height);
                 }
@@ -288,7 +272,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        wld.pending_configure_serial = 0;
+        wld.pending_configure_serial = null;
         log.debug("xdg_decoration not supported, falling back to libdecor", .{});
 
         var libdecor_available = true;
@@ -314,10 +298,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
             libdecor.frame_set_app_id(frame, app_id);
             libdecor.frame_set_title(frame, app_id);
 
-            wld.pending_configure_serial = 0;
+            wld.pending_configure_serial = null;
             wld.surface.commit();
 
-            while (wld.pending_configure_serial == 0) {
+            while (wld.pending_configure_serial == null) {
                 _ = libdecor.dispatch(context, 0);
             }
 
@@ -326,7 +310,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             log.debug("libdecor not supported, falling back to no decorations", .{});
 
             if (wli.xdg_decoration_manager == null) {
-                while (wld.pending_configure_serial == 0) {
+                while (wld.pending_configure_serial == null) {
                     _ = wl.display_dispatch(wld.display);
                     _ = wl.display_flush(wld.display);
                 }
@@ -339,101 +323,34 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const buffer = aquireFreeBuffer().?;
     displayWaylandBufferInWindow(buffer);
 
-    udev.load();
+    // Wait for surface enter to set current monitor
+    wld.surface.commit();
+    _ = wl.display_roundtrip(wld.display);
 
-    // At this point this should be set by the callback (handleWlOutputMode), if not set a default value
-    if (wld.monitor_refresh_hz == 0) {
-        wld.monitor_refresh_hz = 60;
-        log.warn("Could not detect monitor refresh rate, fallback to: {}", .{wld.monitor_refresh_hz});
-    } else {
-        log.debug("Detected monitory refresh rate: {}", .{wld.monitor_refresh_hz});
-    }
+    var monitor_hz: f32 = 60;
 
-    const game_update_hz: f32 = @as(f32, @floatFromInt(wld.monitor_refresh_hz)) / 2;
+    for (wld.outputs, 0..) |output_opt, i| if (output_opt) |output| {
+        log.debug("outputs[{}]: {}", .{ i, output });
+        if (output.active) monitor_hz = @min(monitor_hz, @as(f32, @floatFromInt(output.refresh_mhz)) / 1000);
+    };
+
+    log.debug("monitor hz: {}", .{monitor_hz});
+
+    const game_update_hz: f32 = monitor_hz / 2;
+    log.debug("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
-    var audio_output: AudioOutput = .{};
-    audio_output.frames_per_second = 48000;
-    audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
-    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 3);
-    audio_output.drift_justification_offset = @max(32, audio_output.frames_per_second / @as(u32, @intFromFloat(game_update_hz * 32)));
+    wld.keyboard = wld.seat.get_keyboard() orelse {
+        log.debug("wl_seat_get_keyboard failed", .{});
+        return error.UnexpectedWayland;
+    };
+    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
 
-    try initPulse(&audio_output);
-
-    {
-        const prefill_frame_count = audio_output.safety_frames;
-        var buffer_ptr: ?*anyopaque = null;
-        var buffer_size: usize = prefill_frame_count * @sizeOf(AudioOutput.Frame);
-        const begin_write_rc = pa.stream_begin_write(pa_stream, &buffer_ptr, &buffer_size);
-
-        const actual_frame_count = buffer_size / @sizeOf(AudioOutput.Frame);
-
-        if (begin_write_rc == 0 and buffer_ptr != null) {
-            const frames = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(buffer_ptr)))[0..actual_frame_count];
-
-            @memset(frames, .{});
-
-            _ = pa.stream_write(
-                pa_stream,
-                frames.ptr,
-                buffer_size,
-                null,
-                0,
-                .relative,
-            );
-        }
-    }
-
-    var udev_monitor: *udev.Monitor = undefined;
-
-    const udev_ctx_opt = udev.new();
-    if (udev_ctx_opt) |udev_ctx| {
-        const udev_enumerator = udev.enumerate_new(udev_ctx) orelse {
-            log.err("udev_enumerate_new failed", .{});
-            return error.Unexpected;
-        };
-        _ = udev.enumerate_add_match_subsystem(udev_enumerator, "input");
-        _ = udev.enumerate_scan_devices(udev_enumerator);
-
-        var udev_list_entry = udev.enumerate_get_list_entry(udev_enumerator);
-        while (udev_list_entry) |e| {
-            const syspath = udev.list_entry_get_name(e);
-            const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
-            defer _ = udev.device_unref(device);
-
-            if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
-                try addJoystick(io, device, devnode_path);
-            }
-
-            udev_list_entry = udev.list_entry_get_next(e);
-        }
-
-        _ = udev.enumerate_unref(udev_enumerator);
-
-        if (udev.monitor_new_from_netlink(udev_ctx, "udev")) |m| {
-            udev_monitor = m;
-        } else {
-            log.err("udev_monitor_new_from_netlink failed", .{});
-            return error.Unexpected;
-        }
-
-        const udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
-        if (udev_monitor_fd < 0) {
-            log.err("udev_monitor_get_Fd failed", .{});
-            return error.Unexpected;
-        }
-        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = linux.POLL.IN, .revents = undefined };
-
-        if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
-            log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
-            return error.Unexpected;
-        }
-
-        if (udev.monitor_enable_receiving(udev_monitor) < 0) {
-            log.err("udev_monitor_enable_receiving failed", .{});
-            return error.Unexpected;
-        }
-    }
+    wld.pointer = wld.seat.get_pointer() orelse {
+        log.debug("wl_set_get_pointer failed", .{});
+        return error.UnexpectedWayland;
+    };
+    wld.pointer.add_listener(&wl_mouse_listener, &wld);
 
     const base_address: ?[*]align(std.heap.page_size_min) u8, const fixed = if (options.internal_build)
         .{ @ptrFromInt(mem.TiB * 2), true }
@@ -502,6 +419,90 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
+    var audio_output: AudioOutput = .{};
+    audio_output.frames_per_second = 48000;
+    audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
+    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 3);
+    audio_output.drift_justification_offset = @max(32, audio_output.frames_per_second / @as(u32, @intFromFloat(game_update_hz * 32)));
+
+    try initPulse(&audio_output);
+
+    {
+        const prefill_frame_count = audio_output.safety_frames;
+        var buffer_ptr: ?*anyopaque = null;
+        var buffer_size: usize = prefill_frame_count * @sizeOf(AudioOutput.Frame);
+        const begin_write_rc = pa.stream_begin_write(pa_stream, &buffer_ptr, &buffer_size);
+
+        const actual_frame_count = buffer_size / @sizeOf(AudioOutput.Frame);
+
+        if (begin_write_rc == 0 and buffer_ptr != null) {
+            const frames = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(buffer_ptr)))[0..actual_frame_count];
+
+            @memset(frames, .{});
+
+            _ = pa.stream_write(
+                pa_stream,
+                frames.ptr,
+                buffer_size,
+                null,
+                0,
+                .relative,
+            );
+        }
+    }
+
+    udev.load();
+    var udev_monitor: *udev.Monitor = undefined;
+
+    const udev_ctx_opt = udev.new();
+    if (udev_ctx_opt) |udev_ctx| {
+        const udev_enumerator = udev.enumerate_new(udev_ctx) orelse {
+            log.err("udev_enumerate_new failed", .{});
+            return error.Unexpected;
+        };
+        _ = udev.enumerate_add_match_subsystem(udev_enumerator, "input");
+        _ = udev.enumerate_scan_devices(udev_enumerator);
+
+        var udev_list_entry = udev.enumerate_get_list_entry(udev_enumerator);
+        while (udev_list_entry) |e| {
+            const syspath = udev.list_entry_get_name(e);
+            const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
+            defer _ = udev.device_unref(device);
+
+            if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
+                try addJoystick(io, device, devnode_path);
+            }
+
+            udev_list_entry = udev.list_entry_get_next(e);
+        }
+
+        _ = udev.enumerate_unref(udev_enumerator);
+
+        if (udev.monitor_new_from_netlink(udev_ctx, "udev")) |m| {
+            udev_monitor = m;
+        } else {
+            log.err("udev_monitor_new_from_netlink failed", .{});
+            return error.Unexpected;
+        }
+
+        const udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
+        if (udev_monitor_fd < 0) {
+            log.err("udev_monitor_get_Fd failed", .{});
+            return error.Unexpected;
+        }
+        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = linux.POLL.IN, .revents = undefined };
+
+        if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
+            log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
+            return error.Unexpected;
+        }
+
+        if (udev.monitor_enable_receiving(udev_monitor) < 0) {
+            log.err("udev_monitor_enable_receiving failed", .{});
+            return error.Unexpected;
+        }
+    }
+
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
@@ -518,6 +519,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var last_cycle_count = x86_64.rdtsc();
 
+    log.debug("starting main loop", .{});
     while (running) {
         const new_lib_write_time = platform.getLastWriteTime(io, game_lib_name);
         if (new_lib_write_time > game_code.last_write_time) {
@@ -596,6 +598,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
 
         if (wld.pending_resize) |r| {
+            if (wld.pending_configure_serial) |serial| {
+                wld.toplevel.ack_configure(serial);
+            }
             try resize(r.width, r.height);
         }
 
@@ -846,6 +851,8 @@ const WlInitData = struct {
 const WlData = struct {
     should_draw: bool = false,
 
+    outputs: [8]?WlOutput = std.mem.zeroes([8]?WlOutput),
+
     pool: ?*wl.ShmPool = null,
     buffers: [3]WlBuffer = undefined,
 
@@ -881,10 +888,10 @@ const WlData = struct {
     should_resize_shm: bool = false,
     shm_data: []align(std.heap.page_size_min) u8 = &.{},
 
-    pending_configure_serial: u32 = 0,
-    pending_resize: ?WlPendingResize = null,
+    fullscreen: bool = false,
 
-    monitor_refresh_hz: c_int = 0,
+    pending_configure_serial: ?u32 = null,
+    pending_resize: ?WlPendingResize = null,
 
     game_input: [2]platform.Input = .{Input{}} ** 2,
     new_input: *Input = undefined,
@@ -893,6 +900,12 @@ const WlData = struct {
     shared_state: *platform.SharedState = undefined,
 
     io: std.Io = undefined,
+};
+
+const WlOutput = struct {
+    handle: *wl.Output,
+    refresh_mhz: i32 = 0,
+    active: bool = false,
 };
 
 const WlBuffer = struct {
@@ -919,6 +932,30 @@ const WlToplevel = union(enum) {
         decor: *libdecor.Context,
         frame: *libdecor.Frame,
     },
+
+    pub fn set_fullscreen(this: *WlToplevel, output: ?*wl.Output) void {
+        switch (this.*) {
+            .no_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
+            .xdg_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
+            .libdecor => unreachable,
+        }
+    }
+
+    pub fn unset_fullscreen(this: *WlToplevel) void {
+        switch (this.*) {
+            .no_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
+            .xdg_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
+            .libdecor => unreachable,
+        }
+    }
+
+    pub fn ack_configure(this: *WlToplevel, serial: u32) void {
+        switch (this.*) {
+            .no_decoration => |t| t.xdg_surface.ack_configure(serial),
+            .xdg_decoration => |t| t.xdg_surface.ack_configure(serial),
+            .libdecor => unreachable,
+        }
+    }
 };
 
 const WlPendingResize = struct {
@@ -1273,6 +1310,7 @@ fn resize_shm() ShmError!void {
 }
 
 fn resize(width: i32, height: i32) !void {
+    log.debug("resize: {},{}", .{ width, height });
     // Back buffer
     wld.width = back_buffer_width;
     wld.height = back_buffer_height;
@@ -1424,16 +1462,36 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
         .{ "wl_compositor", wl.Compositor },
         .{ "xdg_wm_base", xdg_shell.WmBase },
         .{ "xdg_decoration_manager", xdg_decoration.DecorationManagerV1 },
-        .{ "wl_output", wl.Output },
     };
 
+    var found = false;
     inline for (mappings) |map| {
         const target_field_name: []const u8 = map[0];
         const Interface: type = map[1];
 
         if (std.mem.eql(u8, std.mem.span(interface_name), std.mem.span(Interface.interface.name))) {
             @field(wli, target_field_name) = registry.bind(name, Interface, @min(version, Interface.interface.version));
+            found = true;
             break;
+        }
+    }
+
+    if (!found) {
+        if (std.mem.eql(u8, "wl_output", std.mem.span(interface_name))) {
+            var free_slot_found = false;
+            for (&wld.outputs) |*output| {
+                if (output.* == null) {
+                    output.* = .{
+                        .handle = registry.bind(name, wl.Output, @min(version, wl.Output.interface.version)).?,
+                    };
+                    free_slot_found = true;
+                    break;
+                }
+            }
+
+            if (!free_slot_found) {
+                log.warn("Monitor capacity reached (8)! Ignoring monitor.", .{});
+            }
         }
     }
 }
@@ -1442,7 +1500,56 @@ fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) c
     _ = data;
     _ = registry;
 
+    // TODO: Handle monitor hotplug?
     log.debug("Remove global: {}", .{name});
+}
+
+fn handleWlSurfaceEnter(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) callconv(.c) void {
+    _ = .{ data, surface, current_output_object_opt };
+
+    if (current_output_object_opt) |current_output_object| {
+        const current_output: *wl.Output = @ptrCast(current_output_object);
+        log.debug("Surface enter: {}", .{current_output});
+
+        var found = false;
+        for (&wld.outputs) |*output_opt| {
+            if (output_opt.*) |*existing_output| {
+                if (existing_output.handle == current_output) {
+                    existing_output.active = true;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (!found) {
+            log.warn("Failed to find matching output: {*}", .{current_output_object_opt});
+        }
+    }
+}
+
+fn handleWlSurfaceLeave(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) callconv(.c) void {
+    _ = .{ data, surface, current_output_object_opt };
+
+    if (current_output_object_opt) |current_output_object| {
+        const current_output: *wl.Output = @ptrCast(current_output_object);
+        log.debug("Surface leave: {}", .{current_output});
+
+        var found = false;
+        for (&wld.outputs) |*output_opt| {
+            if (output_opt.*) |*existing_output| {
+                if (existing_output.handle == current_output) {
+                    existing_output.active = false;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (!found) {
+            log.warn("Failed to find matching output: {*}", .{current_output_object_opt});
+        }
+    }
 }
 
 fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) callconv(.c) void {
@@ -1460,6 +1567,8 @@ fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) ca
 fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, serial: u32) callconv(.c) void {
     _ = data;
     _ = surface;
+
+    log.debug("xdg surface configure: {}", .{serial});
     wld.pending_configure_serial = serial;
 }
 
@@ -1467,6 +1576,8 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel,
     _ = data;
     _ = toplevel;
     _ = states;
+
+    log.debug("xdg toplevel configure: {},{}", .{ width, height });
 
     wld.pending_resize = .{ .width = width, .height = height };
 }
@@ -1583,11 +1694,18 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
 }
 
 fn toggleFullscreen() void {
-    log.debug("Fullscreen toggle", .{});
+    if (wld.fullscreen) {
+        wld.toplevel.unset_fullscreen();
+        wld.fullscreen = false;
+    } else {
+        // TODO: Preferred fullscreen monitor
+        wld.toplevel.set_fullscreen(null);
+        wld.fullscreen = true;
+    }
 }
 
 fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
-    _ = .{ data, pointer, serial, surface };
+    _ = .{ data, pointer, serial, surface, surface_x, surface_y };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
     wld.new_input.debug_mouse.y = surface_y.toInt();
@@ -1680,11 +1798,17 @@ fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_de
     const mode_ptr: *?xdg_decoration.ToplevelDecorationV1.Mode = @ptrCast(@alignCast(data));
     mode_ptr.* = mode;
 }
+fn handleWlOutputGeometry(data: ?*anyopaque, output: ?*wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: [*:0]const u8, model: [*:0]const u8, transform: wl.Output.Transform) callconv(.c) void {
+    _ = .{ data, output };
+    log.debug("handleWlOutputGeometry: {},{},{},{},{},{s},{s},{}", .{ x, y, physical_width, physical_height, subpixel, make, model, transform });
+}
 
 fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) callconv(.c) void {
-    _ = data;
-    _ = output;
-    _ = flags;
+    const output_data: *WlOutput = @ptrCast(@alignCast(data));
+    assert(output_data.handle == output.?);
+    output_data.refresh_mhz = refresh;
+
+    log.debug("handleWlOutputMode: {},{},{},{}", .{ flags, width, height, refresh });
 
     const new_pixel_count = width * height;
     const max_pixel_count = wld.max_width * wld.max_height;
@@ -1693,8 +1817,6 @@ fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.M
         wld.max_height = height;
         wld.should_resize_shm = true;
     }
-
-    wld.monitor_refresh_hz = @divTrunc(refresh, 1000);
 }
 
 fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
@@ -2005,9 +2127,10 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         return true;
     } else {
         _ = wl.display_roundtrip(wld.display);
-        unreachable; // might want to loop util a buffer is aquired
+        log.warn("Failed to aquire wayland buffer!", .{});
+        // unreachable; // might want to loop util a buffer is aquired
         // continue;
-        // return false;
+        return false;
     }
     // }
 }
@@ -2104,8 +2227,8 @@ const wl_shm_listener = wl.Shm.Listener{
 };
 
 const wl_surface_listener = wl.Surface.Listener{
-    .enter = @ptrCast(&nop),
-    .leave = @ptrCast(&nop),
+    .enter = handleWlSurfaceEnter,
+    .leave = handleWlSurfaceLeave,
     .preferred_buffer_scale = @ptrCast(&nop),
     .preferred_buffer_transform = @ptrCast(&nop),
 };
@@ -2173,7 +2296,7 @@ const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{
 };
 
 const wl_output_listener = wl.Output.Listener{
-    .geometry = @ptrCast(&nop),
+    .geometry = handleWlOutputGeometry,
     .mode = handleWlOutputMode,
     .done = @ptrCast(&nop),
     .scale = @ptrCast(&nop),
