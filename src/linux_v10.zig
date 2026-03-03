@@ -886,9 +886,6 @@ const WlData = struct {
     /// Window height
     window_height: i32 = 0,
 
-    back_buffer_x_offset: i32 = 10,
-    back_buffer_y_offset: i32 = 10,
-
     /// Max width of (non fullscreen) surface
     bound_width: i32 = 0,
     /// Max height of (non fullscreen) surface
@@ -1789,8 +1786,8 @@ fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configurati
     var width: c_int = undefined;
     var height: c_int = undefined;
     if (!libdecor.configuration_get_content_size(config, frame, &width, &height)) {
-        width = back_buffer_width + wld.back_buffer_x_offset;
-        height = back_buffer_height + wld.back_buffer_y_offset;
+        width = back_buffer_width;
+        height = back_buffer_height;
     }
 
     const state = libdecor.state_new(width, height) orelse @panic("libdecor_state_new failed");
@@ -2126,30 +2123,58 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
             @memset(@as([]u32, @ptrCast(@alignCast(wl_buffer_mem))), 0);
         }
 
-        // TODO: Offset mouse position by this
-        const x_offset = wld.back_buffer_x_offset;
-        const y_offset = wld.back_buffer_y_offset;
+        if (wl_buffer.width >= buffer.width * 2 and wl_buffer.height >= buffer.height * 2) {
+            const dest_line_length: usize = @intCast(@min(buffer.width * 2, wl_buffer.width) * bytes_per_pixel);
+            const source_line_length: usize = @intCast(@min(buffer.width, @divTrunc(wl_buffer.width, 2)) * bytes_per_pixel);
 
-        const line_length: usize = @intCast(@min(buffer.width, wl_buffer.width - x_offset) * bytes_per_pixel);
-        const row_count: usize = @intCast(@min(buffer.height, wl_buffer.height - y_offset));
+            const source_row_count: usize = @intCast(@min(buffer.height, @divTrunc(wl_buffer.height, 2)));
 
-        // NOTE: This could be a single memcopy if:
-        //  - We reallocate the offscreen_buffer in the same way as the wayland buffers (same size).
-        //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
-        //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
-        //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
-        //
-        //  I might actually prefer that, but for now this matches hh on win32.
-        const y_off: usize = @intCast(y_offset);
-        const x_off: usize = @intCast(x_offset);
-        for (y_off..y_off + row_count, 0..row_count) |dst_y, src_y| {
-            const dest_offset = (dst_y * wl_buffer_pitch) + (x_off * bytes_per_pixel);
-            const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
+            for (0..source_row_count) |src_y| {
+                const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
+                const source_line: []u32 = @ptrCast(@alignCast(buffer.memory[source_offset .. source_offset + source_line_length]));
 
-            const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
-            const source_line = buffer.memory[source_offset .. source_offset + line_length];
+                const dst_y = src_y * 2;
+                const dest_offset1 = dst_y * wl_buffer_pitch;
+                const dest_line1: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset1 .. dest_offset1 + dest_line_length]));
+                const dest_offset2 = dest_offset1 + wl_buffer_pitch;
+                const dest_line2: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset2 .. dest_offset2 + dest_line_length]));
 
-            @memcpy(dest_line, source_line);
+                for (0..source_line.len) |src_x| {
+                    const dst_x = src_x * 2;
+
+                    dest_line1[dst_x] = source_line[src_x];
+                    dest_line1[dst_x + 1] = source_line[src_x];
+                    dest_line2[dst_x] = source_line[src_x];
+                    dest_line2[dst_x + 1] = source_line[src_x];
+                }
+            }
+        } else {
+
+            // TODO: Offset mouse position by this
+            const x_offset = 10;
+            const y_offset = 10;
+
+            const line_length: usize = @intCast(@min(buffer.width, wl_buffer.width - x_offset) * bytes_per_pixel);
+            const row_count: usize = @intCast(@min(buffer.height, wl_buffer.height - y_offset));
+
+            // NOTE: This could be a single memcopy if:
+            //  - We reallocate the offscreen_buffer in the same way as the wayland buffers (same size).
+            //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
+            //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
+            //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
+            //
+            //  I might actually prefer that, but for now this matches hh on win32.
+            const y_off: usize = @intCast(y_offset);
+            const x_off: usize = @intCast(x_offset);
+            for (y_off..y_off + row_count, 0..row_count) |dst_y, src_y| {
+                const dest_offset = (dst_y * wl_buffer_pitch) + (x_off * bytes_per_pixel);
+                const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
+
+                const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
+                const source_line = buffer.memory[source_offset .. source_offset + line_length];
+
+                @memcpy(dest_line, source_line);
+            }
         }
 
         displayWaylandBufferInWindow(wl_buffer);
