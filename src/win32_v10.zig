@@ -512,11 +512,11 @@ pub fn windowsEntry(
                 .transient = trans.?,
                 .transient_len = transient_storage_size,
 
-                .debug = if (options.debug) .{
+                .debug = .{
                     .readEntireFile = &DEBUG.readEntireFile,
                     .freeFileMemory = &DEBUG.freeFileMemory,
                     .writeEntireFile = &DEBUG.writeEntireFile,
-                } else .{},
+                },
             };
 
             if (options.internal_build) {

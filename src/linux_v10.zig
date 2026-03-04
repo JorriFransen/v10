@@ -892,6 +892,7 @@ const WlData = struct {
     shm_data: []align(std.heap.page_size_min) u8 = &.{},
 
     fullscreen: bool = false,
+    double_scale: bool = false,
 
     pending_configure_serial: ?u32 = null,
     pending_resize: ?WlPendingResize = null,
@@ -1328,6 +1329,7 @@ fn resize(width: i32, height: i32) !void {
         wld.window_height = height;
     }
 
+    wld.double_scale = width >= global_back_buffer.width * 2 and height >= global_back_buffer.height * 2;
     wld.should_draw = true;
     wld.pending_resize = null;
 }
@@ -2116,7 +2118,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
             @memset(@as([]u32, @ptrCast(@alignCast(wl_buffer_mem))), 0);
         }
 
-        if (wl_buffer.width >= buffer.width * 2 and wl_buffer.height >= buffer.height * 2) {
+        if (wld.double_scale) {
             const dest_line_length: usize = @intCast(@min(buffer.width * 2, wl_buffer.width) * bytes_per_pixel);
             const source_line_length: usize = @intCast(@min(buffer.width, @divTrunc(wl_buffer.width, 2)) * bytes_per_pixel);
 
@@ -2188,8 +2190,14 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     if (options.internal_build) {
         wld.surface.damage(0, 0, buffer.width, buffer.height);
     } else {
-        wld.surface.damage(0, 0, @min(global_back_buffer.width, buffer.width), @min(global_back_buffer.height, buffer.height));
+        const width, const height = if (wld.double_scale)
+            .{ global_back_buffer.width * 2, global_back_buffer.height * 2 }
+        else
+            .{ global_back_buffer.width, global_back_buffer.height };
+
+        wld.surface.damage(0, 0, @min(buffer.width, width), @min(buffer.height, height));
     }
+
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.?.add_listener(&wl_callback_listener, &wld);
