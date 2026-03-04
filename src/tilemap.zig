@@ -3,6 +3,10 @@ const intrinsics = @import("intrinsics.zig");
 
 const assert = std.debug.assert;
 
+const math = @import("math.zig");
+const V2 = math.V2;
+const v2 = V2.init;
+
 const MemoryArena = @import("arena.zig");
 
 const TileMap = @This();
@@ -26,19 +30,16 @@ pub const Position = struct {
     chunk_z: u32,
 
     /// In meters, from the tile center
-    offset_x: f32 = 0,
-    /// In meters, from the tile center
-    offset_y: f32 = 0,
+    offset: V2 = .{},
 
     pub const Delta = struct {
-        x: f32,
-        y: f32,
+        xy: V2,
         z: f32,
     };
 
     pub fn recanonicalize(this: *Position, map: *const TileMap) void {
-        map.recanonicalizeCoord(&this.abs_tile_x, &this.offset_x);
-        map.recanonicalizeCoord(&this.abs_tile_y, &this.offset_y);
+        map.recanonicalizeCoord(&this.abs_tile_x, &this.offset.x);
+        map.recanonicalizeCoord(&this.abs_tile_y, &this.offset.y);
     }
 };
 
@@ -74,15 +75,17 @@ pub const Chunk = struct {
     }
 };
 
-pub fn subPosition(map: *const TileMap, a: *const Position, b: *const Position) Position.Delta {
+pub fn subtract(map: *const TileMap, a: *const Position, b: *const Position) Position.Delta {
     var result: Position.Delta = undefined;
 
-    const d_tile_x = @as(f32, @floatFromInt(a.abs_tile_x)) - @as(f32, @floatFromInt(b.abs_tile_x));
-    const d_tile_y = @as(f32, @floatFromInt(a.abs_tile_y)) - @as(f32, @floatFromInt(b.abs_tile_y));
+    const d_tile_xy = v2(
+        @as(f32, @floatFromInt(a.abs_tile_x)) - @as(f32, @floatFromInt(b.abs_tile_x)),
+        @as(f32, @floatFromInt(a.abs_tile_y)) - @as(f32, @floatFromInt(b.abs_tile_y)),
+    );
     const d_tile_z = @as(f32, @floatFromInt(a.chunk_z)) - @as(f32, @floatFromInt(b.chunk_z));
 
-    result.x = (map.tile_size_in_meters * d_tile_x) + (a.offset_x - b.offset_x);
-    result.y = (map.tile_size_in_meters * d_tile_y) + (a.offset_y - b.offset_y);
+    result.xy = d_tile_xy.mul(map.tile_size_in_meters).add(a.offset.sub(b.offset));
+
     result.z = (map.tile_size_in_meters * d_tile_z);
 
     return result;
