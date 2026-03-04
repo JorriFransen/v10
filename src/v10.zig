@@ -32,6 +32,7 @@ pub const GameState = struct {
 
     camera_pos: TileMap.Position = undefined,
     player_pos: TileMap.Position = undefined,
+    player_velocity: V2 = .{},
 
     backdrop: LoadedBitmap = .{},
     hero_facing_direction: u32 = 0,
@@ -86,17 +87,17 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         game_state.hero_bitmaps[1].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_back_head.bmp");
         game_state.hero_bitmaps[1].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_back_cape.bmp");
         game_state.hero_bitmaps[1].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_back_torso.bmp");
-        game_state.hero_bitmaps[0].alignment = v2(72, 182);
+        game_state.hero_bitmaps[1].alignment = v2(72, 182);
 
         game_state.hero_bitmaps[2].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_left_head.bmp");
         game_state.hero_bitmaps[2].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_left_cape.bmp");
         game_state.hero_bitmaps[2].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_left_torso.bmp");
-        game_state.hero_bitmaps[0].alignment = v2(72, 182);
+        game_state.hero_bitmaps[2].alignment = v2(72, 182);
 
         game_state.hero_bitmaps[3].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_head.bmp");
         game_state.hero_bitmaps[3].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_cape.bmp");
         game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_front_torso.bmp");
-        game_state.hero_bitmaps[0].alignment = v2(72, 182);
+        game_state.hero_bitmaps[3].alignment = v2(72, 182);
 
         game_state.camera_pos = .{
             .abs_tile_x = 17 / 2,
@@ -109,6 +110,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             .chunk_z = 0,
             .offset = .init(5, 5),
         };
+        game_state.player_velocity = v2(0, 0);
 
         game_state.world = game_state.world_arena.pushMemory(World);
         const world: *World = game_state.world;
@@ -242,45 +244,46 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         //     keep_running = false;
         // }
 
-        var d_player: V2 = .{};
-        var player_speed: f32 = 2;
+        var player_acceleration: V2 = .{};
 
         if (controller.is_analog) {
-            d_player.x += controller.stick_average_x;
-            d_player.y += controller.stick_average_y;
+            player_acceleration.x += controller.stick_average_x;
+            player_acceleration.y += controller.stick_average_y;
         } else {
             if (buttons.move_left.ended_down) {
-                d_player.x -= 1;
+                player_acceleration.x -= 1;
                 game_state.hero_facing_direction = 2;
             }
             if (buttons.move_right.ended_down) {
-                d_player.x += 1;
+                player_acceleration.x += 1;
                 game_state.hero_facing_direction = 0;
             }
             if (buttons.move_up.ended_down) {
-                d_player.y += 1;
+                player_acceleration.y += 1;
                 game_state.hero_facing_direction = 1;
             }
             if (buttons.move_down.ended_down) {
-                d_player.y -= 1;
+                player_acceleration.y -= 1;
                 game_state.hero_facing_direction = 3;
             }
         }
 
+        if (player_acceleration.x != 0 and player_acceleration.y != 0) {
+            player_acceleration = player_acceleration.mul(0.707106);
+        }
+
+        var player_speed: f32 = 10; // ms/s^2
         if (buttons.action_up.ended_down) {
-            player_speed *= 5;
+            player_speed = 50; // ms/s^2
         }
 
-        d_player = d_player.mul(player_speed);
+        player_acceleration = player_acceleration.mul(player_speed);
 
-        if (d_player.x != 0 and d_player.y != 0) {
-            d_player = d_player.mul(0.707106);
-        }
-
-        const new_player_offset = game_state.player_pos.offset.add(d_player.mul(input.dt));
+        player_acceleration = player_acceleration.add(game_state.player_velocity.mul(-1.5));
 
         var new_player_pos = game_state.player_pos;
-        new_player_pos.offset = new_player_offset;
+        new_player_pos.offset = V2.add(V2.add(player_acceleration.mul(0.5 * math.square(input.dt)), game_state.player_velocity.mul(input.dt)), new_player_pos.offset);
+        game_state.player_velocity = game_state.player_velocity.add(player_acceleration.mul(input.dt));
         new_player_pos.recanonicalize(tilemap);
 
         var bottom_left_pos = new_player_pos;

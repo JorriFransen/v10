@@ -61,3 +61,7 @@ pub const V2 = extern struct {
         try writer.print("[{}, {}]", .{ this.x, this.y });
     }
 };
+
+pub inline fn square(x: anytype) @TypeOf(x) {
+    return x * x;
+}
