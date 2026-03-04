@@ -6,9 +6,9 @@ const intrinsics = @import("intrinsics.zig");
 
 const assert = std.debug.assert;
 
-const Random = @import("v10_random.zig");
-const MemoryArena = @import("v10_arena.zig");
-const TileMap = @import("v10_tilemap.zig");
+const Random = @import("random.zig");
+const MemoryArena = @import("arena.zig");
+const TileMap = @import("tilemap.zig");
 
 const ThreadContext = platform.ThreadContext;
 const Memory = platform.Memory;
@@ -70,8 +70,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
 
-        // const asset_prefix = "../../hh_assets";
-        const asset_prefix = "../data/";
+        const asset_prefix = "../../hh_assets";
+        // const asset_prefix = "../data/";
 
         game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
 
@@ -246,7 +246,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         var d_player_x: f32 = 0;
         var d_player_y: f32 = 0;
-        var player_speed: f32 = 5;
+        var player_speed: f32 = 1;
 
         if (controller.is_analog) {
             d_player_x += controller.stick_average_x;
@@ -272,6 +272,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         if (buttons.action_up.ended_down) {
             player_speed *= 5;
+        }
+
+        if (d_player_x != 0 and d_player_y != 0) {
+            d_player_x *= 0.5 * std.math.sqrt(1);
+            d_player_y *= 0.5 * std.math.sqrt(1);
         }
 
         d_player_x *= player_speed;

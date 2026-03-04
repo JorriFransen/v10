@@ -3,7 +3,7 @@ const intrinsics = @import("intrinsics.zig");
 
 const assert = std.debug.assert;
 
-const MemoryArena = @import("v10_arena.zig");
+const MemoryArena = @import("arena.zig");
 
 const TileMap = @This();
 pub const Tile = u32;
