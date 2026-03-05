@@ -250,26 +250,26 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             player_acceleration.x += controller.stick_average_x;
             player_acceleration.y += controller.stick_average_y;
         } else {
-            if (buttons.move_left.ended_down) {
-                player_acceleration.x -= 1;
-                game_state.hero_facing_direction = 2;
-            }
-            if (buttons.move_right.ended_down) {
-                player_acceleration.x += 1;
-                game_state.hero_facing_direction = 0;
-            }
             if (buttons.move_up.ended_down) {
-                player_acceleration.y += 1;
+                player_acceleration.y = 1;
                 game_state.hero_facing_direction = 1;
             }
             if (buttons.move_down.ended_down) {
-                player_acceleration.y -= 1;
+                player_acceleration.y = -1;
                 game_state.hero_facing_direction = 3;
+            }
+            if (buttons.move_left.ended_down) {
+                player_acceleration.x = -1;
+                game_state.hero_facing_direction = 2;
+            }
+            if (buttons.move_right.ended_down) {
+                player_acceleration.x = 1;
+                game_state.hero_facing_direction = 0;
             }
         }
 
         if (player_acceleration.x != 0 and player_acceleration.y != 0) {
-            player_acceleration = player_acceleration.mul(0.707106);
+            player_acceleration = player_acceleration.mul(0.707106781187);
         }
 
         var player_speed: f32 = 10; // ms/s^2
@@ -282,7 +282,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         player_acceleration = player_acceleration.add(game_state.player_velocity.mul(-1.5));
 
         var new_player_pos = game_state.player_pos;
-        new_player_pos.offset = V2.add(V2.add(player_acceleration.mul(0.5 * math.square(input.dt)), game_state.player_velocity.mul(input.dt)), new_player_pos.offset);
+        new_player_pos.offset = player_acceleration.mul(0.5 * math.square(input.dt))
+            .add(game_state.player_velocity.mul(input.dt))
+            .add(new_player_pos.offset);
+
         game_state.player_velocity = game_state.player_velocity.add(player_acceleration.mul(input.dt));
         new_player_pos.recanonicalize(tilemap);
 
@@ -295,10 +298,35 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         bottom_right_pos.offset.x += (player_width / 2);
         bottom_right_pos.recanonicalize(tilemap);
 
-        if (tilemap.isTileEmpty(new_player_pos) and
-            tilemap.isTileEmpty(bottom_left_pos) and
-            tilemap.isTileEmpty(bottom_right_pos))
-        {
+        var collision_position_opt: ?TileMap.Position = null;
+        if (!tilemap.isTileEmpty(new_player_pos)) {
+            collision_position_opt = new_player_pos;
+        }
+        if (!tilemap.isTileEmpty(bottom_left_pos)) {
+            collision_position_opt = bottom_left_pos;
+        }
+        if (!tilemap.isTileEmpty(bottom_right_pos)) {
+            collision_position_opt = bottom_right_pos;
+        }
+
+        if (collision_position_opt) |col_p| {
+            var wall_normal: V2 = .{};
+
+            if (col_p.abs_tile_x < game_state.player_pos.abs_tile_x)
+                wall_normal = v2(1, 0);
+            if (col_p.abs_tile_x > game_state.player_pos.abs_tile_x)
+                wall_normal = v2(-1, 0);
+            if (col_p.abs_tile_y < game_state.player_pos.abs_tile_y)
+                wall_normal = v2(0, 1);
+            if (col_p.abs_tile_y > game_state.player_pos.abs_tile_y)
+                wall_normal = v2(0, -1);
+
+            // game_state.player_velocity = game_state.player_velocity.sub(wall_normal.mul(1 * game_state.player_velocity.inner(wall_normal)));
+            game_state.player_velocity = V2.sub(
+                game_state.player_velocity,
+                wall_normal.mul(1 * game_state.player_velocity.inner(wall_normal)),
+            );
+        } else {
             if (!TileMap.inSameTile(game_state.player_pos, new_player_pos)) {
                 const tile = tilemap.getTile(new_player_pos);
                 if (tile == 3) {
@@ -309,7 +337,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             }
             game_state.player_pos = new_player_pos;
         }
-
         game_state.camera_pos.chunk_z = game_state.player_pos.chunk_z;
 
         const diff = tilemap.subtract(&game_state.player_pos, &game_state.camera_pos);
