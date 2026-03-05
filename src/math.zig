@@ -17,14 +17,6 @@ pub const V2 = extern struct {
         return @bitCast(@as(V, @splat(s)));
     }
 
-    pub inline fn e(this: V2) [2]f32 {
-        return @bitCast(this);
-    }
-
-    pub inline fn ep(this: *V2) *[2]f32 {
-        return @ptrCast(this);
-    }
-
     pub inline fn v(this: V2) V {
         return @bitCast(this);
     }
@@ -35,6 +27,12 @@ pub const V2 = extern struct {
 
     pub inline fn add(a: V2, b: V2) V2 {
         return @bitCast(a.v() + b.v());
+    }
+
+    pub inline fn addAll(vecs: []const V2) V2 {
+        var result: V = std.mem.zeroes(V);
+        for (vecs) |vec| result += vec.v();
+        return @bitCast(result);
     }
 
     pub inline fn addv(a: V2, b: V) V2 {
@@ -57,11 +55,24 @@ pub const V2 = extern struct {
         return @bitCast(this.v() * @as(V, @splat(s)));
     }
 
+    pub inline fn inner(a: V2, b: V2) f32 {
+        const result = a.x * b.x + a.y * b.y;
+        return result;
+    }
+
+    pub inline fn magnitude(this: V2) f32 {
+        return sqrt(this.x * this.x + this.y * this.y);
+    }
+
     pub fn format(this: V2, writer: anytype) !void {
         try writer.print("[{}, {}]", .{ this.x, this.y });
     }
 };
 
-pub inline fn square(x: anytype) @TypeOf(x) {
+pub inline fn square(x: f32) f32 {
     return x * x;
+}
+
+pub inline fn sqrt(x: f32) f32 {
+    return @sqrt(x);
 }
