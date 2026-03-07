@@ -1,22 +1,22 @@
 const linux = @import("linux.zig");
 const ioctl = linux.ioctl;
 
-pub inline fn EVIOCGNAME(len: isize) isize {
+pub inline fn EVIOCGNAME(len: u32) u32 {
     return ioctl.IOC(ioctl.bits.read, 'E', 0x06, len);
 }
-pub inline fn EVIOCGPHYS(len: isize) isize {
+pub inline fn EVIOCGPHYS(len: u32) u32 {
     return ioctl.IOC(ioctl.bits.read, 'E', 0x07, len);
 }
-pub inline fn EVIOCGUNIQ(len: isize) isize {
+pub inline fn EVIOCGUNIQ(len: u32) u32 {
     return ioctl.IOC(ioctl.bits.read, 'E', 0x08, len);
 }
-pub inline fn EVIOCGPROP(len: isize) isize {
+pub inline fn EVIOCGPROP(len: u32) u32 {
     return ioctl.IOC(ioctl.bits.read, 'E', 0x09, len);
 }
-pub inline fn EVIOCGBIT(ev: EventType, len: isize) isize {
+pub inline fn EVIOCGBIT(ev: EventType, len: u32) u32 {
     return ioctl.IOC(ioctl.bits.read, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
 }
-pub inline fn EVIOCGABS(abs: Abs) isize {
+pub inline fn EVIOCGABS(abs: Abs) u32 {
     return ioctl.IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
 }
 pub const EVIOCSFF = ioctl.IOW('E', 0x80, FfEffect);

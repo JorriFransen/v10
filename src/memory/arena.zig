@@ -2,8 +2,8 @@ const std = @import("std");
 const log = std.log.scoped(.arena);
 const builtin = @import("builtin");
 const mem = @import("memory.zig");
-const posix = std.posix;
 const win32 = @import("win32");
+const linux = @import("linux");
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
@@ -76,7 +76,7 @@ pub const Arena = struct {
             else => @compileError("missing implementation for platform for 'Arena.init_virtual'"),
 
             .linux => {
-                const data: []align(page_size_min) u8 = posix.mmap(
+                const data: []align(page_size_min) u8 = linux.mmap(
                     null,
                     options.reserved_capacity,
                     // std.c.PROT.NONE,
@@ -85,14 +85,14 @@ pub const Arena = struct {
                     -1,
                     0,
                 ) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
+                    error.NoMemory => return error.OutOfMemory,
                     else => return error.Unexpected,
                 };
 
                 const committed = data[0..options.initial_commit];
-                if (std.os.linux.mprotect(committed.ptr, committed.len, .{ .READ = true, .WRITE = true }) != 0) {
+                linux.mprotect(committed.ptr, committed.len, .{ .READ = true, .WRITE = true }) catch {
                     return error.CommitFailed;
-                }
+                };
 
                 return .{
                     .data = committed,
@@ -137,7 +137,7 @@ pub const Arena = struct {
         if (this.data.len != 0 and this.flags.rvas) {
             switch (builtin.os.tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
-                .linux => posix.munmap(@alignCast(this.data)),
+                .linux => linux.munmap(@alignCast(this.data)),
                 .windows => win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
             }
         }

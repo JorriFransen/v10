@@ -3,22 +3,24 @@ const log = std.log.scoped(.linux_v10);
 const mem = @import("mem");
 const options = @import("options");
 const builtin = @import("builtin");
+const DynLib = @import("dynlib");
 
 const platform = @import("v10_platform.zig");
 
-const x86_64 = @import("arch/x86_64.zig");
+const arch = @import("arch").arch;
 
 const wayland = @import("wayland");
 const wl = wayland.wl;
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
-const linux = @import("linux/linux.zig");
+const libdecor = @import("libdecor.zig");
+
+const linux = @import("linux");
 const input = linux.input;
 const pa = linux.pulse;
 const ioctl = linux.ioctl;
 const udev = linux.libudev;
-const libdecor = linux.libdecor;
 const errno = linux.errno;
 
 const GameCode = platform.GameCode;
@@ -109,7 +111,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
     // TODO: Move this into the generator
-    var lwl = try std.DynLib.open("libwayland-client.so");
+    var lwl = try DynLib.open("libwayland-client.so");
     defer lwl.close();
 
     try wl.load(&lwl);
@@ -142,10 +144,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         0,
     )) |mapped| {
         global_back_buffer.memory = mapped;
-        if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) != 0) {
+        linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) catch {
             log.err("mprotect call failed during back buffer resize", .{});
             return error.MProtectFailed;
-        }
+        };
     } else |_| {
         log.err("mmap call failed during back buffer resize", .{});
         return error.MmapFailed;
@@ -373,10 +375,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         -1,
         0,
     )) |all_memory| {
-        if (linux.mprotect(all_memory.ptr, all_memory.len, .{ .READ = true, .WRITE = true }) == -1) {
+        linux.mprotect(all_memory.ptr, all_memory.len, .{ .READ = true, .WRITE = true }) catch {
             log.err("mprotect call for game memory storage failed", .{});
             return error.MProtectFailed;
-        }
+        };
 
         game_memory.permanent = all_memory.ptr;
         game_memory.transient = all_memory[permanent_storage_size..].ptr;
@@ -396,17 +398,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
 
             const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
-            const open_rc = linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true }, permissions);
-            if (@as(isize, @bitCast(open_rc)) >= 0) {
-                const file_handle: linux.fd_t = @intCast(open_rc);
-
-                if (linux.mmap(null, total_size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, @intCast(file_handle), 0)) |buf| {
-                    _ = linux.ftruncate(file_handle, total_size);
-                    replay_buffer.memory = buf;
+            if (linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true }, permissions)) |fd| {
+                if (linux.mmap(null, total_size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0)) |buf| {
+                    if (linux.ftruncate(fd, total_size)) {
+                        replay_buffer.memory = buf;
+                    } else |e| {
+                        log.warn("ftruncate for input recording file failed, error: {}", .{e});
+                    }
                 } else |_| {
                     log.warn("mmap for input recording file failed", .{});
                 }
-            } else {
+            } else |_| {
                 log.warn("open for input recording file failed", .{});
             }
         }
@@ -510,7 +512,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var last_counter = getWallClock(io);
 
-    var last_cycle_count = x86_64.rdtsc();
+    var last_cycle_count = arch.rdtsc();
 
     log.debug("starting main loop", .{});
     while (running) {
@@ -575,8 +577,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .joystick_3,
                     => if (in) {
                         var events: [16]InputEvent = undefined;
-                        if (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |read_len| {
-                            const num_events = read_len / @sizeOf(InputEvent);
+                        if (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
+                            const num_events = bytes_read.len / @sizeOf(InputEvent);
                             for (events[0..num_events]) |*event| {
                                 const jid = slot_index - PollFdSlot.first_joystick;
                                 const joystick = &joysticks[jid];
@@ -803,7 +805,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             wld.new_input = wld.old_input;
             wld.old_input = tmp;
 
-            const end_cycle_count = x86_64.rdtsc();
+            const end_cycle_count = arch.rdtsc();
             const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
             last_cycle_count = end_cycle_count;
 
@@ -1217,6 +1219,7 @@ inline fn getSecondsElapsed(start: std.Io.Timestamp, end: std.Io.Timestamp) f32 
 
 const ShmError = error{
     ShmOpenFailed,
+    ShmCloseFailed,
     ShmUnlinkFailed,
     FtruncateFailed,
     MmapFailed,
@@ -1228,7 +1231,9 @@ fn resize_shm() ShmError!void {
     const S = linux.S;
 
     if (wld.shm_data.len != 0) {
-        linux.munmap(wld.shm_data);
+        linux.munmap(wld.shm_data) catch {
+            log.warn("shm unmap failed", .{});
+        };
     }
 
     var name_buf: [16]u8 = undefined;
@@ -1238,21 +1243,24 @@ fn resize_shm() ShmError!void {
     for (name_buf[1 .. name_buf.len - 1]) |*char| {
         char.* = prng.intRangeAtMost(u8, 'a', 'z');
     }
-    const name: [*:0]u8 = @ptrCast(&name_buf);
+    const name = std.mem.span(@as([*:0]u8, @ptrCast(&name_buf)));
+    log.debug("shm name: {s}", .{name});
 
+    // TODO: Use mem_fd!
     const open_flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
     const mode: linux.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
-    const fd = std.c.shm_open(name, @bitCast(open_flags), mode);
-    if (fd < 0) {
-        log.err("shm_open failed, errno: {}", .{errno(fd)});
+    const fd = linux.shm_open(name, open_flags, mode) catch |e| {
+        log.err("shm_open failed, error: {}", .{e});
         return error.ShmOpenFailed;
-    }
-    defer _ = linux.close(fd);
+    };
+    defer linux.close(fd) catch |e| {
+        log.err("close shm fd failed, error: {}", .{e});
+    };
 
-    if (std.c.shm_unlink(name) != 0) {
-        log.err("shm_unlink failed, errno: {}", .{errno(-1)});
+    linux.shm_unlink(name) catch |e| {
+        log.err("shm_unlink failed, error: {}", .{e});
         return error.ShmUnlinkFailed;
-    }
+    };
 
     const pixel_count: usize = @intCast(wld.max_width * wld.max_height);
     const buffer_size: usize = pixel_count * bytes_per_pixel;
@@ -1260,10 +1268,10 @@ fn resize_shm() ShmError!void {
     const shm_size = buffer_size * wld.buffers.len;
     log.debug("Allocating shm: {}", .{shm_size});
 
-    if (linux.ftruncate(fd, @intCast(shm_size)) != 0) {
+    linux.ftruncate(fd, @intCast(shm_size)) catch {
         log.err("ftruncate failed", .{});
         return error.FtruncateFailed;
-    }
+    };
 
     const prot = linux.PROT{ .READ = true, .WRITE = true };
     const map = linux.MAP{ .TYPE = .SHARED };
@@ -1360,75 +1368,76 @@ pub const DEBUG = struct {
         assert(std.mem.span(path).len == path_len);
         var result = platform.DEBUG.ReadFileResult{};
 
-        const open_rc = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
-        if (@as(isize, @bitCast(open_rc)) >= 0) {
-            const handle: linux.fd_t = @intCast(open_rc);
-
+        if (linux.open(path, .{ .ACCMODE = .RDONLY }, 0)) |fd| {
             var stat: linux.Stat = undefined;
 
             // TODO: Use statx here! statx needs absolute paths or a dir fd...
-            if (linux.stat(path, &stat) == 0) {
+            if (linux.stat(std.mem.span(path), &stat)) {
                 const file_size: usize = @intCast(stat.st_size);
 
                 if (linux.mmap(null, file_size, .{}, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0)) |mapped| {
-                    if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) == 0) {
-                        if (linux.read(handle, mapped)) |bytes_read| {
-                            assert(bytes_read == file_size);
-                            result.size = bytes_read;
-                            result.content = mapped.ptr;
-                        } else |_| {
+                    if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true })) {
+                        if (linux.read(fd, mapped)) |read| {
+                            assert(read.len == file_size);
+                            result.size = read.len;
+                            result.content = read.ptr;
+                        } else |e| {
                             freeFileMemory(thread_context, mapped.ptr, file_size);
-                            log.warn("File read failed: '{s}'", .{path});
+                            log.warn("File read failed: '{s}', error: {}", .{ path, e });
                         }
-                    } else {
-                        log.warn("mprotect for file read failed", .{});
+                    } else |e| {
+                        log.warn("mprotect for file read failed, error: {}", .{e});
                     }
-                } else |_| {
-                    log.warn("mmap for file read failed", .{});
+                } else |e| {
+                    log.warn("mmap for file read failed, error: {}", .{e});
                 }
-            } else {
-                log.warn("Failed to stat file '{s}'", .{path});
+            } else |e| {
+                log.warn("Failed to stat file '{s}', error: {}", .{ path, e });
             }
 
-            _ = linux.close(handle);
-        } else {
-            log.warn("Failed to open file: '{s}'", .{path});
+            linux.close(fd) catch |e| {
+                log.warn("Failed to close file '{s}', error: {}", .{ path, e });
+            };
+        } else |e| {
+            log.warn("Failed to open file: '{s}', error: {}", .{ path, e });
         }
 
         return result;
     }
 
-    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *const anyopaque, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, ptr: [*]const u8, size: usize) callconv(.c) bool {
         _ = thread_context;
         assert(std.mem.span(path).len == path_len);
         var result = false;
 
         const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
 
-        const open_rc = linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, permissions);
-        if (open_rc != -1) {
-            const handle: linux.fd_t = @intCast(open_rc);
-
-            const written = linux.write(handle, @ptrCast(memory), size);
-            if (written != -1) {
+        if (linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, permissions)) |fd| {
+            const buf = ptr[0..size];
+            if (linux.write(fd, buf)) |written| {
                 result = written == size;
-            } else {
-                log.err("Failed to write to file: '{s}'", .{path});
+            } else |e| {
+                log.err("Failed to write to file: '{s}', error: {}", .{ path, e });
             }
 
-            _ = linux.close(handle);
-        } else {
-            log.err("Failed to open file: '{s}'", .{path});
+            linux.close(fd) catch |e| {
+                log.err("Failed to close file: '{s}', error: {}", .{ path, e });
+            };
+        } else |e| {
+            log.err("Failed to open file: '{s}', error: {}", .{ path, e });
         }
         return result;
     }
 
-    pub fn freeFileMemory(thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void {
+    pub fn freeFileMemory(thread_context: *ThreadContext, ptr: ?[*]const u8, size: usize) callconv(.c) void {
         _ = thread_context;
 
-        if (memory) |m| {
+        if (ptr) |m| {
             assert(size > 0);
-            linux.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(m)))[0..size]);
+            const memory: []align(linux.page_size) const u8 = @alignCast(m[0..size]);
+            linux.munmap(memory) catch |e| {
+                log.err("Failed to free file memory, error: {}", .{e});
+            };
         }
     }
 
@@ -1864,12 +1873,10 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
     }
 
     if (joystick_index_opt) |ji| {
-        const open_rc = linux.open(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
-        if (open_rc == -1) {
-            log.err("Opening controller evdev file failed", .{});
+        const fd = linux.open(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0) catch |e| {
+            log.err("Opening controller evdev file failed, error: {}", .{e});
             return error.OpenFailed;
-        }
-        const fd: linux.fd_t = @intCast(open_rc);
+        };
 
         poll_fds[PollFdSlot.first_joystick + ji] = .{
             .fd = @intCast(fd),
@@ -1893,7 +1900,7 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
             .default, .xbox => {
                 inline for (std.meta.fields(input.Abs)) |axis| {
                     var abs_info: input.AbsInfo = undefined;
-                    if (ioctl.ioctl(fd, input.EVIOCGABS(@enumFromInt(axis.value)), &abs_info) != -1) {
+                    if (ioctl.ioctl(fd, input.EVIOCGABS(@enumFromInt(axis.value)), @intFromPtr(&abs_info))) |_| {
                         if (abs_info.maximum > abs_info.minimum) {
                             if (Joystick.absEventCodeToAxisIndex(kind, axis.value)) |axis_idx| {
                                 joystick.axis_meta[axis_idx] = .{
@@ -1903,8 +1910,8 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
                                 };
                             }
                         }
-                    } else {
-                        log.warn("ioctl EVIOCGABS failed for asix '{s}'", .{axis.name});
+                    } else |e| {
+                        log.warn("ioctl EVIOCGABS failed for asix '{s}', error: {}", .{ axis.name, e });
                     }
                 }
             },
@@ -1931,7 +1938,9 @@ fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) void {
 
     if (joystick_index_opt) |ji| {
         const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
-        _ = linux.close(js_pollfd.fd);
+        linux.close(js_pollfd.fd) catch |e| {
+            log.err("Failed to close joystick file handle, error: {}", .{e});
+        };
         js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
     } else {
         log.warn("Trying to remove a joystick, but is was never registered!", .{});

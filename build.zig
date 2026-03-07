@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 
 const Build = std.Build;
 const OptimizeMode = std.builtin.OptimizeMode;
@@ -29,9 +30,25 @@ pub fn build(b: *Build) !void {
     options.addOption(bool, "debug", optimize == .Debug);
     options.addOption([]const u8, "src_dir_path", src_dir_path);
 
+    const options_module = options.createModule();
+
+    const arch_module = b.createModule(.{
+        .optimize = optimize,
+        .root_source_file = b.path(src_path ++ "/arch/arch.zig"),
+    });
+
     const dynlib_module = b.createModule(.{
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/dynlib.zig"),
+    });
+
+    const linux_module = b.createModule(.{
+        .optimize = optimize,
+        .root_source_file = b.path(src_path ++ "/linux/linux.zig"),
+        .imports = &.{
+            .{ .name = "arch", .module = arch_module },
+            .{ .name = "options", .module = options_module },
+        },
     });
 
     const win32_module = b.createModule(.{
@@ -47,12 +64,15 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/memory/memory.zig"),
         .imports = &.{
+            .{ .name = "linux", .module = linux_module },
             .{ .name = "win32", .module = win32_module },
         },
     });
 
-    const modules = Modules{
-        .options = options.createModule(),
+    var modules = Modules{
+        .options = options_module,
+        .arch = arch_module,
+        .linux = linux_module,
         .win32 = win32_module,
         .memory = mem_module,
         .dynlib = dynlib_module,
@@ -67,7 +87,7 @@ pub fn build(b: *Build) !void {
 
     const tools = try buildTools(b, optimize, native_target, &modules);
 
-    const engine = try buildEngine(b, optimize, target, &modules, &tools);
+    const engine = try buildEngine(b, optimize, target, &modules);
     const game = try buildGameLib(b, optimize, target, &modules);
     engine.run.step.dependOn(&game.install.step);
 
@@ -79,10 +99,13 @@ pub fn build(b: *Build) !void {
 
 const Modules = struct {
     options: *Build.Module,
+    arch: *Build.Module,
+    linux: *Build.Module,
     win32: *Build.Module,
     memory: *Build.Module,
     dynlib: *Build.Module,
     xml: *Build.Module,
+    wayland_module: ?*Build.Module = null,
 };
 
 const Engine = struct {
@@ -91,13 +114,13 @@ const Engine = struct {
     run: *Step.Run,
 };
 
-fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !Engine {
+fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !Engine {
     const os = target.result.os.tag;
 
     const exe = switch (os) {
         else => return error.PlatformNotSupported,
-        .windows => try buildEngineWindows(b, optimize, target, modules, tools),
-        .linux => try buildEngineLinux(b, optimize, target, modules, tools),
+        .windows => try buildEngineWindows(b, optimize, target, modules),
+        .linux => try buildEngineLinux(b, optimize, target, modules),
     };
     exe.root_module.addImport("mem", modules.memory);
     exe.root_module.addImport("options", modules.options);
@@ -119,15 +142,14 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     };
 }
 
-fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
-    _ = tools;
-
+fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !*Step.Compile {
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path(src_path ++ "/win32_v10.zig"),
         .link_libc = true,
         .imports = &.{
+            .{ .name = "arch", .module = modules.arch },
             .{ .name = "win32", .module = modules.win32 },
             .{ .name = "dynlib", .module = modules.dynlib },
         },
@@ -147,15 +169,17 @@ fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget,
     return exe;
 }
 
-fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
+fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !*Step.Compile {
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path(src_path ++ "/linux_v10.zig"),
         .link_libc = true, // Required for dlopen, maybe more
         .imports = &.{
+            .{ .name = "arch", .module = modules.arch },
+            .{ .name = "linux", .module = modules.linux },
             .{ .name = "dynlib", .module = modules.dynlib },
-            .{ .name = "wayland", .module = tools.wayland_module },
+            .{ .name = "wayland", .module = modules.wayland_module.? },
         },
     });
 
@@ -207,11 +231,10 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
 
 // TODO: Maybe merge this with 'Modules'?
 const Tools = struct {
-    wayland_module: *Build.Module,
     aseprite_script_runner: ?*Step.Compile,
 };
 
-fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, modules: *const Modules) !Tools {
+fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, modules: *Modules) !Tools {
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
 
     const wayland_gen_exe = b.addExecutable(.{
@@ -241,7 +264,8 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
     _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg-decoration-unstable-v1.xml"));
 
     const wayland_source = run_wayland_gen_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
-    const wayland_module = b.createModule(.{
+    assert(modules.wayland_module == null);
+    modules.wayland_module = b.createModule(.{
         .optimize = optimize,
         .root_source_file = wayland_source,
     });
@@ -264,7 +288,6 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
         null;
 
     return .{
-        .wayland_module = wayland_module,
         .aseprite_script_runner = aseprite_script_runner_exe,
     };
 }

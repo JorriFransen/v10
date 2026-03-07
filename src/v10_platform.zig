@@ -126,8 +126,8 @@ pub const DEBUG = extern struct {
     };
 
     readEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) ReadFileResult = undefined,
-    freeFileMemory: *const fn (thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void = undefined,
-    writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *const anyopaque, size: usize) callconv(.c) bool = undefined,
+    freeFileMemory: *const fn (thread_context: *ThreadContext, memory: ?[*]const u8, size: usize) callconv(.c) void = undefined,
+    writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: [*]const u8, size: usize) callconv(.c) bool = undefined,
 };
 
 pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8 {

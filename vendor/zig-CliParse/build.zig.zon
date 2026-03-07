@@ -1,7 +1,7 @@
 .{
     .name = .CliParse,
     .version = "0.1.0",
-    .minimum_zig_version = "0.16.0-dev.2596+469bf6af0",
+    .minimum_zig_version = "0.16.0-dev.2694+74f361a5c",
     .fingerprint = 0x74eb3e1531ad2db7, // Changing this has security and trust implications.
     .paths = .{
         "build.zig",

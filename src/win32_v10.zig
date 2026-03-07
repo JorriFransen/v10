@@ -5,7 +5,7 @@ const mem = @import("mem");
 const win32 = @import("win32");
 const xinput = win32.xinput;
 const dsound = win32.direct_sound;
-const x86_64 = @import("arch/x86_64.zig");
+const arch = @import("arch").arch;
 const builtin = @import("builtin");
 
 const platform = @import("v10_platform.zig");
@@ -562,7 +562,7 @@ pub fn windowsEntry(
                 var game_code = GameCode.load(io, temp_dll_name);
                 if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
-                var last_cycle_count = x86_64.rdtsc();
+                var last_cycle_count = arch.rdtsc();
 
                 while (global_running) {
                     const new_dll_write_time = platform.getLastWriteTime(io, source_dll_name);
@@ -862,7 +862,7 @@ pub fn windowsEntry(
                         new_input = old_input;
                         old_input = tmp;
 
-                        const end_cycle_count = x86_64.rdtscp();
+                        const end_cycle_count = arch.rdtscp();
                         const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
                         last_cycle_count = end_cycle_count;
 
@@ -1114,7 +1114,7 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: *const anyopaque, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: [*]const u8, size: usize) callconv(.c) bool {
         _ = thread_context;
         assert(std.mem.span(path).len == path_len);
 
@@ -1141,7 +1141,7 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn freeFileMemory(thread_context: *ThreadContext, memory: ?*anyopaque, size: usize) callconv(.c) void {
+    pub fn freeFileMemory(thread_context: *ThreadContext, memory: ?[*]const u8, size: usize) callconv(.c) void {
         _ = thread_context;
         if (memory) |m| {
             assert(size > 0);

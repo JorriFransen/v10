@@ -1,34 +1,44 @@
 const std = @import("std");
+const log = std.log.scoped(.@".linux.ioctl");
 const linux = @import("linux.zig");
+const abi = linux.abi;
 
-pub extern "c" fn ioctl(fd: linux.fd_t, op: c_int, ...) callconv(.c) c_int;
-
-pub const bits = switch (@import("builtin").cpu.arch) {
-    .mips,
-    .mipsel,
-    .mips64,
-    .mips64el,
-    .powerpc,
-    .powerpcle,
-    .powerpc64,
-    .powerpc64le,
-    .sparc,
-    .sparc64,
-    => .{ .size = 13, .dir = 3, .none = 1, .read = 2, .write = 4 },
-    else => .{ .size = 14, .dir = 2, .none = 0, .read = 2, .write = 1 },
+pub const IOCTLError = linux.Error || error{
+    ArgIsInvalidPointer,
+    InvalidRequestOrArg,
+    InvalidFDForRequest,
 };
 
-const Direction = std.meta.Int(.unsigned, bits.dir);
-const Size = std.meta.Int(.unsigned, bits.size);
+pub fn ioctl(fd: linux.fd_t, request: usize, arg: usize) IOCTLError!usize {
+    const rc = abi.syscall3(.ioctl, @as(u32, @bitCast(fd)), request, arg);
+    if (linux.check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .FAULT => error.ArgIsInvalidPointer,
+        .INVAL => error.InvalidRequestOrArg,
+        .IO => error.IO,
+        .NOTTY => error.InvalidFDForRequest,
+        .INTR => error.Interrupt,
+        .ACCES, .PERM => error.PermissionDenied,
+        else => blk: {
+            log.warn("Unexpected errno for ioctl: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @intCast(rc);
+}
 
 pub const Request = packed struct {
+    pub const SizeInt = @Int(.unsigned, abi.IOC.SIZE);
+    pub const DirectionInt = @Int(.unsigned, abi.IOC.DIR);
+
     nr: u8,
     type: u8,
-    size: std.meta.Int(.unsigned, bits.size),
-    dir: Direction,
+    size: SizeInt,
+    dir: DirectionInt,
 };
 
-pub inline fn IOC(dir: Direction, @"type": u8, nr: u8, size: Size) c_int {
+pub inline fn IOC(dir: Request.DirectionInt, @"type": u8, nr: u8, size: Request.SizeInt) u32 {
     const request = Request{
         .nr = nr,
         .type = @"type",
@@ -39,16 +49,16 @@ pub inline fn IOC(dir: Direction, @"type": u8, nr: u8, size: Size) c_int {
     return @bitCast(request);
 }
 
-pub inline fn IOR(@"type": u8, nr: u8, comptime T: type) c_int {
-    return IOC(bits.read, @"type", nr, @sizeOf(T));
+pub inline fn IOR(@"type": u8, nr: u8, comptime T: type) u32 {
+    return IOC(abi.IOC.READ, @"type", nr, @sizeOf(T));
 }
 
-pub inline fn IOW(@"type": u8, nr: u8, comptime T: type) c_int {
-    return IOC(bits.write, @"type", nr, @sizeOf(T));
+pub inline fn IOW(@"type": u8, nr: u8, comptime T: type) u32 {
+    return IOC(abi.IOC.WRITE, @"type", nr, @sizeOf(T));
 }
 
-pub inline fn IOWR(@"type": u8, nr: u8, comptime T: type) c_int {
-    return IOC(bits.read | bits.write, @"type", nr, @sizeOf(T));
+pub inline fn IOWR(@"type": u8, nr: u8, comptime T: type) u32 {
+    return IOC(abi.IOC.READ | abi.IOC.WRITE, @"type", nr, @sizeOf(T));
 }
 
 comptime {
