@@ -82,9 +82,12 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
     try generator.append(
         \\    pub const EventQueue = opaque {};
-        \\    pub const Proxy = opaque {};
+        \\    pub const Proxy = extern struct {
+        \\        interface: *const Interface,
+        \\        display: *Display,
+        \\    };
         \\    pub const Timespec = opaque {};
-        \\    pub const Object = opaque {};
+        \\    pub const Object = extern struct { proxy: Proxy };
         \\
         \\    pub var event_queue_destroy: *const fn (queue: *EventQueue) callconv(.c) void = undefined;
         \\    pub var proxy_marshal_flags: *const fn (proxy: *Proxy, opcode: u32, interface: ?*const Interface, version: u32, flags: u32, ...) callconv(.c) *Proxy = undefined;
@@ -112,7 +115,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    pub var proxy_set_queue: *const fn (proxy: *Proxy, queue: *EventQueue) callconv(.c) void = undefined;
         \\    pub var proxy_get_queue: *const fn (proxy: *Proxy) callconv(.c) ?*EventQueue = undefined;
         \\    pub var event_queue_get_name: *const fn (queue: *const EventQueue) callconv(.c) ?[*]const u8 = undefined;
-        \\    pub var display_connect: *const fn (name: ?[*:0]const u8) callconv(.c) ?*Display = undefined;
+        // \\    pub var display_connect: *const fn (name: ?[*:0]const u8) callconv(.c) ?*Display = undefined;
         \\    pub var display_connect_to_fd: *const fn (fd: c_int) callconv(.c) ?*Display = undefined;
         \\    pub var display_disconnect: *const fn (display: *Display) callconv(.c) void = undefined;
         \\    pub var display_get_fd: *const fn (display: *Display) callconv(.c) c_int = undefined;
@@ -356,7 +359,14 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
     defer tmp.release();
     const ta = tmp.allocator();
 
-    try this.appendf("    pub const {s} = opaque {{\n", .{try this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
+    try this.appendf("    pub const {s} = extern struct {{\n", .{try this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
+    try this.append("       proxy: wl.Proxy,\n");
+    if (std.mem.eql(u8, interface.name, "wl_display")) {
+        try this.append(
+            \\        fd: std.c.fd_t,
+            \\        next_request_id: u32,
+        );
+    }
 
     try this.genInterfaceData(protocol, interface);
 

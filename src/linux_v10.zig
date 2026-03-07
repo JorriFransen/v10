@@ -11,6 +11,7 @@ const arch = @import("arch").arch;
 
 const wayland = @import("wayland");
 const wl = wayland.wl;
+const wlc = @import("wayland-client.zig");
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
@@ -116,7 +117,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     try wl.load(&lwl);
 
-    const display = wl.display_connect(null) orelse {
+    const display = wlc.display_connect(null) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;
     };
