@@ -88,7 +88,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\
         \\    pub var event_queue_destroy: *const fn (queue: *EventQueue) callconv(.c) void = undefined;
         \\    pub var proxy_marshal_flags: *const fn (proxy: *Proxy, opcode: u32, interface: ?*const Interface, version: u32, flags: u32, ...) callconv(.c) *Proxy = undefined;
-        // \\    pub var proxy_marshal_array_flags: *const fn (proxy: *Proxy, opcode: u32, interface: *const Interface, version: u32, flags: u32, args: ?[*]Argument) callconv(.c) *Proxy = undefined;
+        \\    pub var proxy_marshal_array_flags: *const fn (proxy: *Proxy, opcode: u32, interface: ?*const Interface, version: u32, flags: u32, args: [*]const Argument) callconv(.c) *Proxy = undefined;
         // \\    pub var proxy_marshal: *const fn (proxy: *Proxy, opcode: u32, ...) callconv(.c) void = undefined;
         // \\    pub var proxy_marshal_array: *const fn (proxy: *Proxy, opcode: u32, args: ?[*]Argument) callconv(.c) void = undefined;
         \\    pub var proxy_create: *const fn (proxy: *Proxy, interface: *const Interface) callconv(.c) *Proxy = undefined;
@@ -559,36 +559,64 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
     if (constructor) {
         const interface_def = try tmpPrint(&tmp, "&{s}.interface", .{try this.zigInterfaceTypeName(&tmp, protocol, constructor_interface)});
         try this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
-        try this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, {s}, version, 0, NULL", .{ opcode, interface_def });
+        try this.appendf(
+            \\            const result = wl.proxy_marshal_array_flags(@ptrCast(self), {}, {s}, version, 0, &.{{
+            \\                .{{ .n = 0 }},
+            \\
+        , .{ opcode, interface_def });
         for (request.args) |arg| if (arg.type != .new_id) {
-            const name = try safeArgName(&tmp, fn_names, arg.name);
-            if (arg.enum_name != null) {
-                try this.appendf(", @intFromEnum({s})", .{name});
-            } else {
-                try this.appendf(", {s}", .{name});
-            }
+            try this.appendf("                {s},\n", .{try makeArg(&tmp, fn_names, arg)});
         };
-        try this.append(");\n");
+        try this.append("            });\n");
         try this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
-        try this.appendf("            const result = wl.proxy_marshal_flags(@ptrCast(self), {}, &IType.interface, version, 0, name, IType.interface.name, version, NULL);\n", .{opcode});
+        try this.appendf(
+            \\            const result = wl.proxy_marshal_array_flags(@ptrCast(self), {}, &IType.interface, version, 0, &.{{
+            \\                .{{ .u = name }},
+            \\                .{{ .s = IType.interface.name }},
+            \\                .{{ .u = version }},
+            \\                .{{ .o = null }},
+            \\            }});
+            \\
+        , .{opcode});
         try this.append("            return @ptrCast(result);\n");
     } else {
         try this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         const flags = if (request.destructor) "WL_MARSHAL_FLAG_DESTROY" else "0";
-        const optional_null = if (request.args.len == 0 and !request.destructor) ", NULL" else "";
-        try this.appendf("            _ = wl.proxy_marshal_flags(@ptrCast(self), {}, null, version, {s}{s}", .{ opcode, flags, optional_null });
+        try this.appendf("            _ = wl.proxy_marshal_array_flags(@ptrCast(self), {}, null, version, {s}, &.{{", .{ opcode, flags });
+        if (request.args.len != 0) try this.append("\n");
         for (request.args) |arg| {
-            const name = try safeArgName(&tmp, fn_names, arg.name);
-            if (arg.enum_name != null) {
-                try this.appendf(", @intFromEnum({s})", .{name});
-            } else {
-                try this.appendf(", {s}", .{name});
-            }
+            try this.appendf("                {s},\n", .{try makeArg(&tmp, fn_names, arg)});
         }
-        try this.append(");\n");
+
+        if (request.args.len != 0) try this.append("             ");
+        try this.append("});\n");
     }
     try this.append("        }\n");
+}
+
+fn makeArg(tmp: *mem.TempArena, fn_names: *std.StringHashMapUnmanaged(void), arg: Arg) ![]const u8 {
+    const t: u8 = switch (arg.type) {
+        .int => 'i',
+        .uint => 'u',
+        .fixed => 'f',
+        .string => 's',
+        .object => 'o',
+        .new_id => 'n',
+        .array => 'a',
+        .fd => 'h',
+    };
+
+    const name = try safeArgName(tmp, fn_names, arg.name);
+    return try tmpPrint(tmp, ".{{ .{c} = {s} }}", .{
+        t,
+        if (arg.enum_name != null)
+            try tmpPrint(tmp, "@intFromEnum({s})", .{name})
+        else if (arg.type == .object)
+            try tmpPrint(tmp, "@ptrCast({s})", .{name})
+        else
+            name,
+    });
 }
 
 fn safeArgName(tmp: *mem.TempArena, fn_names: *std.StringHashMapUnmanaged(void), name: []const u8) Allocator.Error![]const u8 {
