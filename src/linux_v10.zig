@@ -112,10 +112,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
     // TODO: Move this into the generator
-    var lwl = try DynLib.open("libwayland-client.so");
-    defer lwl.close();
+    // var lwl = try DynLib.open("libwayland-client.so");
+    // defer lwl.close();
 
-    try wl.load(&lwl);
+    // try wl.load(&lwl);
+
+    wayland.wlc.proxy_marshal_array_flags = wlc.proxy_marshal_array_flags;
 
     const display = wlc.display_connect(null) orelse {
         log.err("wl_display_connect failed", .{});

@@ -68,6 +68,10 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\const std = @import("std");
         \\const log = std.log.scoped(.wayland);
         \\
+        \\pub const wlc = struct {{
+        \\    pub var proxy_marshal_array_flags: *const fn (proxy: *wl.Proxy, op: u32, interface: *const Interface, version: u32, flags: u32, args: []const Argument) ?*wl.Object=undefined;
+        \\}};
+        \\
         \\pub const wl = {s};
         \\pub const {s} = struct {{
         \\
@@ -83,8 +87,10 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
     try generator.append(
         \\    pub const EventQueue = opaque {};
         \\    pub const Proxy = extern struct {
-        \\        interface: *const Interface,
+        \\        id: u32,
+        \\        version: u32,
         \\        display: *Display,
+        \\        interface: *const Interface,
         \\    };
         \\    pub const Timespec = opaque {};
         \\    pub const Object = extern struct { proxy: Proxy };
@@ -175,7 +181,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\const WL_MARSHAL_FLAG_DESTROY = (1 << 0);
         \\const NULL: usize = 0;
         \\
-        \\const Interface = extern struct {
+        \\pub const Interface = extern struct {
         \\    name: [*:0]const u8,
         \\    version: c_int,
         \\    method_count: c_int,
@@ -184,7 +190,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    events: ?[*]const Message,
         \\};
         \\
-        \\const Message = extern struct {
+        \\pub const Message = extern struct {
         \\    name: [*:0]const u8,
         \\    signature: [*:0]const u8,
         \\    types: ?[*]const ?*const Interface,
@@ -208,7 +214,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    data: *anyopaque,
         \\};
         \\
-        \\const Argument = extern union {
+        \\pub const Argument = extern union {
         \\    i: i32,
         \\    u: u32,
         \\    f: Fixed,
@@ -360,11 +366,12 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
     const ta = tmp.allocator();
 
     try this.appendf("    pub const {s} = extern struct {{\n", .{try this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
-    try this.append("       proxy: wl.Proxy,\n");
+    try this.append("        proxy: wl.Proxy,\n");
     if (std.mem.eql(u8, interface.name, "wl_display")) {
         try this.append(
             \\        fd: std.c.fd_t,
-            \\        next_request_id: u32,
+            \\        next_object_id: u32,
+            \\
         );
     }
 
@@ -507,7 +514,7 @@ fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *
         \\        }}
         \\
         \\        pub inline fn get_version(self: *{s}) u32 {{
-        \\            return wl.proxy_get_version(@ptrCast(self));
+        \\            return self.proxy.version;
         \\        }}
         \\
     , .{ name, name, name });
@@ -530,7 +537,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
     defer tmp.release();
 
     try this.genDocComment("        ", request.description);
-    try this.appendf("        pub inline fn {f}(self: *{s}", .{
+    try this.appendf("        pub fn {f}(self: *{s}", .{
         std.zig.fmtId(request.name),
         try this.zigInterfaceTypeName(&tmp, protocol, interface.name),
     });
@@ -568,9 +575,8 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
 
     if (constructor) {
         const interface_def = try tmpPrint(&tmp, "&{s}.interface", .{try this.zigInterfaceTypeName(&tmp, protocol, constructor_interface)});
-        try this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         try this.appendf(
-            \\            const result = wl.proxy_marshal_array_flags(@ptrCast(self), {}, {s}, version, 0, &.{{
+            \\            const result = wlc.proxy_marshal_array_flags(@ptrCast(self), {}, {s}, self.proxy.version, 0, &.{{
             \\                .{{ .n = 0 }},
             \\
         , .{ opcode, interface_def });
@@ -581,7 +587,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         try this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
         try this.appendf(
-            \\            const result = wl.proxy_marshal_array_flags(@ptrCast(self), {}, &IType.interface, version, 0, &.{{
+            \\            const result = wlc.proxy_marshal_array_flags(@ptrCast(self), {}, &IType.interface, version, 0, &.{{
             \\                .{{ .u = name }},
             \\                .{{ .s = IType.interface.name }},
             \\                .{{ .u = version }},
@@ -591,9 +597,8 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         , .{opcode});
         try this.append("            return @ptrCast(result);\n");
     } else {
-        try this.append("            const version = wl.proxy_get_version(@ptrCast(self));\n");
         const flags = if (request.destructor) "WL_MARSHAL_FLAG_DESTROY" else "0";
-        try this.appendf("            _ = wl.proxy_marshal_array_flags(@ptrCast(self), {}, null, version, {s}, &.{{", .{ opcode, flags });
+        try this.appendf("            _ = wl.proxy_marshal_array_flags(@ptrCast(self), {}, null, self.proxy.version, {s}, &.{{", .{ opcode, flags });
         if (request.args.len != 0) try this.append("\n");
         for (request.args) |arg| {
             try this.appendf("                {s},\n", .{try makeArg(&tmp, fn_names, arg)});
