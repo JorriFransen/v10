@@ -18,6 +18,7 @@ pub const page_size = std.heap.page_size_min;
 pub const O = abi.O;
 pub const PROT = abi.PROT;
 pub const MAP = abi.MAP;
+pub const F = abi.F;
 
 pub const Error = error{
     DiskQuotaExceeded,
@@ -193,6 +194,17 @@ pub fn munmap(memory: []align(page_size) const u8) Error!void {
             break :blk error.UnexpectedErrno;
         },
     };
+}
+
+pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
+    const rc = abi.syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
+    if (check_errno(rc)) |e| return switch (e) {
+        else => blk: {
+            log.warn("Unexpected errno for fcntl: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @as(u32, @intCast(rc));
 }
 
 pub fn ftruncate(fd: fd_t, length: usize) !void {

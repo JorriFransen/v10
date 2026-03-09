@@ -190,9 +190,11 @@ fn parseInterface(this: *Parser) Error!Interface {
     }
 
     const name = name_opt orelse {
-        this.xmlErr("Missing name attirbute", .{});
+        this.xmlErr("Missing name attribute", .{});
         return error.MalformedXml;
     };
+
+    var has_destructor = false;
 
     while (true) {
         const node = try this.nextNode();
@@ -212,7 +214,11 @@ fn parseInterface(this: *Parser) Error!Interface {
                 if (std.mem.eql(u8, tag.name, "description")) {
                     description = try this.parseDescription();
                 } else if (std.mem.eql(u8, tag.name, "request")) {
-                    try requests.append(this.allocator, try this.parseRequest());
+                    const request = try this.parseRequest();
+                    try requests.append(this.allocator, request);
+                    if (!has_destructor and std.mem.eql(u8, request.name, "destroy")) {
+                        has_destructor = true;
+                    }
                 } else if (std.mem.eql(u8, tag.name, "event")) {
                     if (try this.parseEvent()) |event| {
                         try events.append(this.allocator, event);
@@ -243,6 +249,7 @@ fn parseInterface(this: *Parser) Error!Interface {
         .requests = try requests.toOwnedSlice(this.allocator),
         .events = try events.toOwnedSlice(this.allocator),
         .enums = try enums.toOwnedSlice(this.allocator),
+        .has_destructor = has_destructor,
     };
 }
 

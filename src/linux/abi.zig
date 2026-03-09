@@ -111,6 +111,68 @@ pub const abi = switch (builtin.cpu.arch) {
             pub const WRITE = 1;
         };
 
+        pub const F = struct {
+            pub const DUPFD = 0;
+            pub const GETFD = 1;
+            pub const SETFD = 2;
+            pub const GETFL = 3;
+            pub const SETFL = 4;
+
+            pub const GETLK = GET_SET_LK.GETLK;
+            pub const SETLK = GET_SET_LK.SETLK;
+            pub const SETLKW = GET_SET_LK.SETLKW;
+
+            const GET_SET_LK = extern struct {
+                pub const GETLK = 5;
+                pub const SETLK = 6;
+                pub const SETLKW = 7;
+            };
+            pub const SETOWN = 8;
+            pub const GETOWN = 9;
+
+            pub const SETSIG = 10;
+            pub const GETSIG = 11;
+
+            pub const SETOWN_EX = 15;
+            pub const GETOWN_EX = 16;
+
+            pub const GETOWNER_UIDS = 17;
+
+            pub const OFD_GETLK = 36;
+            pub const OFD_SETLK = 37;
+            pub const OFD_SETLKW = 38;
+
+            pub const RDLCK = 0;
+            pub const WRLCK = 1;
+            pub const UNLCK = 2;
+
+            pub const LINUX_SPECIFIC_BASE = 1024;
+
+            pub const SETLEASE = LINUX_SPECIFIC_BASE + 0;
+            pub const GETLEASE = LINUX_SPECIFIC_BASE + 1;
+            pub const NOTIFY = LINUX_SPECIFIC_BASE + 2;
+            pub const DUPFD_QUERY = LINUX_SPECIFIC_BASE + 3;
+            pub const CREATED_QUERY = LINUX_SPECIFIC_BASE + 4;
+            pub const CANCELLK = LINUX_SPECIFIC_BASE + 5;
+            pub const DUPFD_CLOEXEC = LINUX_SPECIFIC_BASE + 6;
+            pub const SETPIPE_SZ = LINUX_SPECIFIC_BASE + 7;
+            pub const GETPIPE_SZ = LINUX_SPECIFIC_BASE + 8;
+            pub const ADD_SEALS = LINUX_SPECIFIC_BASE + 9;
+            pub const GET_SEALS = LINUX_SPECIFIC_BASE + 10;
+
+            pub const SEAL_SEAL = 0x0001;
+            pub const SEAL_SHRINK = 0x0002;
+            pub const SEAL_GROW = 0x0004;
+            pub const SEAL_WRITE = 0x0008;
+            pub const SEAL_FUTURE_WRITE = 0x0010;
+            pub const SEAL_EXEC = 0x0020;
+
+            pub const GET_RW_HINT = LINUX_SPECIFIC_BASE + 11;
+            pub const SET_RW_HINT = LINUX_SPECIFIC_BASE + 12;
+            pub const GET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 13;
+            pub const SET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 14;
+        };
+
         pub const SYS = enum(usize) {
             read = 0,
             write = 1,

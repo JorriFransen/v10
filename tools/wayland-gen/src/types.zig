@@ -16,6 +16,8 @@ pub const Interface = struct {
     requests: []Request,
     events: []Event,
     enums: []Enum,
+
+    has_destructor: bool,
 };
 
 pub const Request = struct {

@@ -111,19 +111,20 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
-    // TODO: Move this into the generator
-    // var lwl = try DynLib.open("libwayland-client.so");
-    // defer lwl.close();
+    var lwl = try DynLib.open("libwayland-client.so");
+    defer lwl.close();
 
-    // try wl.load(&lwl);
+    try wl.load(&lwl);
 
+    wayland.wlc.proxy_destroy = wlc.proxy_destroy;
+    wayland.wlc.proxy_add_listener = wlc.proxy_add_listener;
     wayland.wlc.proxy_marshal_array_flags = wlc.proxy_marshal_array_flags;
 
     const display = wlc.display_connect(null) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;
     };
-    defer wl.display_disconnect(display);
+    defer wlc.display_disconnect(display);
     log.debug("Display connected", .{});
 
     const wl_registry = display.get_registry() orelse {
@@ -164,7 +165,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var wli = WlInitData{ .wld = &wld };
     wl_registry.add_listener(&wl_registry_listener, &wli);
-    if (wl.display_roundtrip(display) == -1) {
+    if (wlc.display_roundtrip(display) == -1) {
         log.err("wl_display_roundtrip failed", .{});
         return error.UnexpectedWayland;
     }
@@ -194,7 +195,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // for format events, seat, outputs
     wld.shm.add_listener(&wl_shm_listener, &wli);
     wld.seat.add_listener(&wl_seat_listener, &wli);
-    _ = wl.display_roundtrip(display);
+    _ = wlc.display_roundtrip(display);
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
@@ -256,7 +257,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
             toplevel_decoration.add_listener(&xdg_decoration_listener, &xdg_decoration_mode);
 
-            _ = wl.display_roundtrip(wld.display);
+            _ = wlc.display_roundtrip(wld.display);
             xdg_surface.ack_configure(wld.pending_configure_serial.?);
             wld.pending_configure_serial = null;
 
@@ -304,14 +305,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             wld.surface.commit();
 
-            _ = wl.display_roundtrip(wld.display);
+            _ = wlc.display_roundtrip(wld.display);
             wld.pending_configure_serial = null;
 
             break :blk .{ .libdecor = .{ .decor = @ptrCast(context), .frame = @ptrCast(frame) } };
         } else {
             log.debug("libdecor not supported, falling back to no decorations", .{});
 
-            _ = wl.display_roundtrip(wld.display);
+            _ = wlc.display_roundtrip(wld.display);
             wld.pending_configure_serial = null;
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
@@ -323,7 +324,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     // Wait for surface enter to set current monitor
     wld.surface.commit();
-    _ = wl.display_roundtrip(wld.display);
+    _ = wlc.display_roundtrip(wld.display);
 
     var monitor_hz: f32 = 60;
 
@@ -547,7 +548,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        if (wl.display_dispatch(display) == -1) {
+        if (wlc.display_dispatch(display) == -1) {
             running = false;
         }
 
@@ -802,7 +803,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             const wayland_blit = displayBufferInWindow(global_back_buffer);
 
-            _ = wl.display_flush(display);
+            _ = wlc.display_flush(display);
 
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
@@ -1466,9 +1467,12 @@ comptime {
     }
 }
 
-fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: [*:0]const u8, version: u32) callconv(.c) void {
+fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: []const u8, version: u32) void {
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     const registry = registry_opt.?;
+
+    log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
+    log.debug("handleWlRegisterGlobal name len: {}", .{interface_name.len});
 
     const Mapping = struct {
         []const u8,
@@ -1488,7 +1492,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
         const target_field_name: []const u8 = map[0];
         const Interface: type = map[1];
 
-        if (std.mem.eql(u8, std.mem.span(interface_name), std.mem.span(Interface.interface.name))) {
+        if (std.mem.eql(u8, interface_name, Interface.interface.name)) {
             @field(wli, target_field_name) = registry.bind(name, Interface, @min(version, Interface.interface.version));
             found = true;
             break;
@@ -1496,7 +1500,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     }
 
     if (!found) {
-        if (std.mem.eql(u8, "wl_output", std.mem.span(interface_name))) {
+        if (std.mem.eql(u8, "wl_output", interface_name)) {
             var free_slot_found = false;
             for (&wld.outputs) |*output| {
                 if (output.* == null) {
@@ -1515,7 +1519,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     }
 }
 
-fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) callconv(.c) void {
+fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) void {
     _ = data;
     _ = registry;
 
@@ -1523,7 +1527,7 @@ fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) c
     log.debug("Remove global: {}", .{name});
 }
 
-fn handleWlSurfaceEnter(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) callconv(.c) void {
+fn handleWlSurfaceEnter(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) void {
     _ = .{ data, surface, current_output_object_opt };
 
     if (current_output_object_opt) |current_output_object| {
@@ -1547,7 +1551,7 @@ fn handleWlSurfaceEnter(data: ?*anyopaque, surface: ?*wl.Surface, current_output
     }
 }
 
-fn handleWlSurfaceLeave(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) callconv(.c) void {
+fn handleWlSurfaceLeave(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) void {
     _ = .{ data, surface, current_output_object_opt };
 
     if (current_output_object_opt) |current_output_object| {
@@ -1571,19 +1575,19 @@ fn handleWlSurfaceLeave(data: ?*anyopaque, surface: ?*wl.Surface, current_output
     }
 }
 
-fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) callconv(.c) void {
+fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) void {
     _ = shm;
 
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     if (format == .xrgb8888) wli.xrgb8888 = true;
 }
 
-fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) callconv(.c) void {
+fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) void {
     _ = data;
     wm_base.?.pong(serial);
 }
 
-fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, serial: u32) callconv(.c) void {
+fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, serial: u32) void {
     _ = data;
     _ = surface;
 
@@ -1591,7 +1595,7 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, se
     wld.pending_configure_serial = serial;
 }
 
-fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states: wayland.Array) callconv(.c) void {
+fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states: wayland.Array) void {
     _ = data;
     _ = toplevel;
     _ = states;
@@ -1601,7 +1605,7 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel,
     wld.pending_resize = .{ .width = width, .height = height };
 }
 
-fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32) callconv(.c) void {
+fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32) void {
     _ = data;
     _ = toplevel;
 
@@ -1610,20 +1614,20 @@ fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Top
     log.debug("xdg toplevel configure bounds {},{}", .{ width, height });
 }
 
-fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, capabilities: wayland.Array) callconv(.c) void {
+fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, capabilities: wayland.Array) void {
     _ = data;
     _ = toplevel;
     log.debug("xdg toplevel capabilities count {}", .{capabilities.size});
 }
 
-fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) callconv(.c) void {
+fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) void {
     _ = data;
     _ = toplevel;
 
     running = false;
 }
 
-fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_data: u32) callconv(.c) void {
+fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_data: u32) void {
     _ = data;
     _ = callback_data;
     callback.?.destroy();
@@ -1631,7 +1635,7 @@ fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_dat
     wld.should_draw = true;
 }
 
-fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) callconv(.c) void {
+fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) void {
     _ = wl_buffer;
     const buffer: *WlBuffer = @ptrCast(@alignCast(data));
 
@@ -1643,14 +1647,14 @@ fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) callconv(.c)
     buffer.free = true;
 }
 
-fn handleWlSeatCapabilities(data: ?*anyopaque, seat: ?*wl.Seat, capabilities: wl.Seat.Capability) callconv(.c) void {
+fn handleWlSeatCapabilities(data: ?*anyopaque, seat: ?*wl.Seat, capabilities: wl.Seat.Capability) void {
     _ = seat;
 
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     wli.seat_capabilities = capabilities;
 }
 
-fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u32, rawkey: u32, state: wl.Keyboard.KeyState) callconv(.c) void {
+fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u32, rawkey: u32, state: wl.Keyboard.KeyState) void {
     _ = data;
     _ = keyboard;
     _ = time;
@@ -1715,7 +1719,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
     }
 }
 
-fn handleWlKeyModifiers(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) callconv(.c) void {
+fn handleWlKeyModifiers(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) void {
     _ = .{ data, keyboard, serial, mods_depressed, mods_latched, mods_locked, group };
 
     wld.key_mods_pressed = @bitCast(mods_depressed);
@@ -1734,7 +1738,7 @@ fn toggleFullscreen() void {
     }
 }
 
-fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
+fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
     _ = .{ data, pointer, serial, surface, surface_x, surface_y };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
@@ -1748,14 +1752,14 @@ fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, s
     }
 }
 
-fn handleWlMouseMotion(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) callconv(.c) void {
+fn handleWlMouseMotion(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
     _ = .{ data, pointer, time };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
     wld.new_input.debug_mouse.y = surface_y.toInt();
 }
 
-fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) callconv(.c) void {
+fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) void {
     _ = .{ data, pointer, serial, time };
 
     const button: input.Key = @enumFromInt(raw_button);
@@ -1781,7 +1785,7 @@ fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, ti
     }
 }
 
-fn handleWlMouseAxis(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wayland.Fixed) callconv(.c) void {
+fn handleWlMouseAxis(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wayland.Fixed) void {
     _ = .{ data, pointer, time, axis, value };
     // log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
 }
@@ -1821,19 +1825,19 @@ fn handleLibdecorDismissPopup(frame: *libdecor.Frame, seat_name: [*c]const u8, d
     log.debug("handleLibdecorDismissPopup seat: {s}", .{seat_name});
 }
 
-fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) callconv(.c) void {
+fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) void {
     _ = toplevel_decoration;
     log.debug("xdg_decoration configure: {}", .{mode});
 
     const mode_ptr: *?xdg_decoration.ToplevelDecorationV1.Mode = @ptrCast(@alignCast(data));
     mode_ptr.* = mode;
 }
-fn handleWlOutputGeometry(data: ?*anyopaque, output: ?*wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: [*:0]const u8, model: [*:0]const u8, transform: wl.Output.Transform) callconv(.c) void {
+fn handleWlOutputGeometry(data: ?*anyopaque, output: ?*wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: []const u8, model: []const u8, transform: wl.Output.Transform) void {
     _ = .{ data, output };
     log.debug("handleWlOutputGeometry: {},{},{},{},{},{s},{s},{}", .{ x, y, physical_width, physical_height, subpixel, make, model, transform });
 }
 
-fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) callconv(.c) void {
+fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) void {
     const output_data: *WlOutput = @ptrCast(@alignCast(data));
     assert(output_data.handle == output.?);
     output_data.refresh_mhz = refresh;
@@ -2186,7 +2190,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         displayWaylandBufferInWindow(wl_buffer);
         return true;
     } else {
-        _ = wl.display_roundtrip(wld.display);
+        _ = wlc.display_roundtrip(wld.display);
         log.warn("Failed to aquire wayland buffer!", .{});
         // unreachable; // might want to loop util a buffer is aquired
         // continue;
@@ -2212,7 +2216,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.?.add_listener(&wl_callback_listener, &wld);
-    _ = wl.display_flush(wld.display);
+    _ = wlc.display_flush(wld.display);
 
     wld.should_draw = false;
 }
@@ -2281,7 +2285,7 @@ pub fn playbackInput(shared_state: *platform.SharedState, io: std.Io, new_input:
     }
 }
 
-fn nop() callconv(.c) void {}
+fn nop() void {}
 
 const wl_registry_listener = wl.Registry.Listener{
     .global = handleWlRegisterGlobal,
