@@ -12,10 +12,10 @@ const wl = wayland.wl;
 var glob_connected = false;
 var glob_display: wl.Display = undefined;
 var glob_next_object_id: u32 = 1;
-var glob_objects: [512]wl.Object = std.mem.zeroes([512]wl.Object);
+var glob_objects: [32]wl.Object = std.mem.zeroes([32]wl.Object);
 
 var glob_listener_count: usize = 0;
-var glob_listeners: [512]Listener = std.mem.zeroes([512]Listener);
+var glob_listeners: [32]Listener = std.mem.zeroes([32]Listener);
 
 var glob_display_listener = wl.Display.Listener{
     .@"error" = handle_display_error,

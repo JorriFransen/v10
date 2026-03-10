@@ -194,6 +194,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     }
 
+    _ = wlc.display_roundtrip(wld.display); // Wait for max_width/height to be set
+
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
@@ -201,7 +203,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.window_width = @as(f32, @floatFromInt(back_buffer_width)) * 1.5;
     wld.window_height = @as(f32, @floatFromInt(back_buffer_height)) * 1.5;
 
-    _ = wlc.display_roundtrip(wld.display); // Wait for max_width/height to be set
     try resize_shm();
 
     if (wli.seat_capabilities.keyboard == false) {
@@ -241,8 +242,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
             return error.UnexpectedWayland;
         };
         xdg_toplevel.add_listener(&xdg_toplevel_listener, &wld);
-
-        _ = wlc.display_roundtrip(display);
 
         log.debug("xdg_toplevel: {}", .{xdg_toplevel});
         xdg_toplevel.set_app_id(app_id);
@@ -325,8 +324,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     displayWaylandBufferInWindow(buffer);
 
     // Wait for surface enter to set current monitor
-    wld.surface.commit();
-    _ = wlc.display_roundtrip(wld.display);
+    // wld.surface.commit();
+    // _ = wlc.display_roundtrip(wld.display);
 
     var monitor_hz: f32 = 60;
 
@@ -1645,11 +1644,9 @@ fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) voi
     running = false;
 }
 
-fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, callback_data: u32) void {
+fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, _: u32) void {
     _ = data;
-    _ = callback_data;
     callback.?.destroy();
-
     wld.should_draw = true;
 }
 
