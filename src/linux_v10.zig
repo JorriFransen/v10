@@ -74,6 +74,12 @@ const use_debug_allocator = switch (builtin.mode) {
 };
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
+pub const std_options: std.Options = .{
+    .log_scope_levels = &.{
+        // .{ .scope = .@"wayland-client", .level = .warn },
+    },
+};
+
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = if (use_debug_allocator)
         debug_allocator.allocator()
@@ -188,14 +194,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     }
 
-    for (&wld.outputs) |*output_opt| if (output_opt.*) |output| {
-        output.handle.add_listener(&wl_output_listener, output_opt);
-    };
-
-    // for format events, seat, outputs
-    wld.shm.add_listener(&wl_shm_listener, &wli);
-    wld.seat.add_listener(&wl_seat_listener, &wli);
-    _ = wlc.display_roundtrip(display);
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
@@ -219,13 +217,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     }
 
-    wld.wm_base.add_listener(&xdg_wm_base_listener, null);
-
     wld.surface = wld.compositor.create_surface() orelse {
         log.err("wl_compositor_create_surface failed", .{});
         return error.UnexpectedWayland;
     };
     wld.surface.add_listener(&wl_surface_listener, null);
+
+    _ = wlc.display_roundtrip(display);
 
     const app_id = "v10";
     const title = "v10";
@@ -243,6 +241,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
         };
         xdg_toplevel.add_listener(&xdg_toplevel_listener, &wld);
 
+        _ = wlc.display_roundtrip(display);
+
+        log.debug("xdg_toplevel: {}", .{xdg_toplevel});
         xdg_toplevel.set_app_id(app_id);
         xdg_toplevel.set_title(title);
         wld.surface.commit();
@@ -1290,6 +1291,8 @@ fn resize_shm() ShmError!void {
         };
         wld.pool = pool;
 
+        _ = wlc.display_roundtrip(wld.display);
+
         var width = wld.width;
         var height = wld.height;
         if (width == -1 and height == -1) {
@@ -1471,20 +1474,18 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     const registry = registry_opt.?;
 
-    log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
-    log.debug("handleWlRegisterGlobal name len: {}", .{interface_name.len});
-
     const Mapping = struct {
         []const u8,
         type,
+        ?*const anyopaque,
     };
 
     const mappings = [_]Mapping{
-        .{ "wl_shm", wl.Shm },
-        .{ "wl_seat", wl.Seat },
-        .{ "wl_compositor", wl.Compositor },
-        .{ "xdg_wm_base", xdg_shell.WmBase },
-        .{ "xdg_decoration_manager", xdg_decoration.DecorationManagerV1 },
+        .{ "wl_shm", wl.Shm, &wl_shm_listener },
+        .{ "wl_seat", wl.Seat, &wl_seat_listener },
+        .{ "wl_compositor", wl.Compositor, null },
+        .{ "xdg_wm_base", xdg_shell.WmBase, &xdg_wm_base_listener },
+        .{ "xdg_decoration_manager", xdg_decoration.DecorationManagerV1, null },
     };
 
     var found = false;
@@ -1493,21 +1494,31 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
         const Interface: type = map[1];
 
         if (std.mem.eql(u8, interface_name, Interface.interface.name)) {
-            @field(wli, target_field_name) = registry.bind(name, Interface, @min(version, Interface.interface.version));
+            log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
+            const proxy = registry.bind(name, Interface, @min(version, Interface.interface.version));
+            @field(wli, target_field_name) = proxy;
             found = true;
+
+            if (map[2]) |listener| {
+                proxy.?.add_listener(@ptrCast(@alignCast(listener)), wli);
+            }
             break;
         }
     }
 
     if (!found) {
         if (std.mem.eql(u8, "wl_output", interface_name)) {
+            log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
             var free_slot_found = false;
             for (&wld.outputs) |*output| {
                 if (output.* == null) {
+                    const wl_output = registry.bind(name, wl.Output, @min(version, wl.Output.interface.version)).?;
                     output.* = .{
-                        .handle = registry.bind(name, wl.Output, @min(version, wl.Output.interface.version)).?,
+                        .handle = wl_output,
                     };
                     free_slot_found = true;
+
+                    wl_output.add_listener(&wl_output_listener, output);
                     break;
                 }
             }
@@ -1598,9 +1609,12 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, se
 fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states: wayland.Array) void {
     _ = data;
     _ = toplevel;
-    _ = states;
 
     log.debug("xdg toplevel configure: {},{}", .{ width, height });
+
+    const E = xdg_shell.Toplevel.State;
+    const caps: []E = @as([*]E, @ptrCast(@alignCast(states.data)))[0 .. states.size / @sizeOf(u32)];
+    log.debug("states: {any}", .{caps});
 
     wld.pending_resize = .{ .width = width, .height = height };
 }
@@ -1618,6 +1632,10 @@ fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Topl
     _ = data;
     _ = toplevel;
     log.debug("xdg toplevel capabilities count {}", .{capabilities.size});
+
+    const E = xdg_shell.Toplevel.WmCapabilities;
+    const caps: []E = @as([*]E, @ptrCast(@alignCast(capabilities.data)))[0 .. capabilities.size / @sizeOf(u32)];
+    log.debug("caps: {any}", .{caps});
 }
 
 fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) void {

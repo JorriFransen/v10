@@ -184,18 +184,19 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\const NULL: usize = 0;
         \\
         \\pub const Interface = struct {
-        \\    name: []const u8,
+        \\    name: [:0]const u8,
         \\    version: c_int,
         \\    method_count: c_int,
         \\    methods: ?[*]const Message,
         \\    event_count: c_int,
         \\    events: ?[*]const Message,
-        \\};
         \\
-        \\pub const Message = extern struct {
-        \\    name: [*:0]const u8,
-        \\    signature: [*:0]const u8,
-        \\    types: ?[*]const ?*const Interface,
+        \\    pub const Message = extern struct {
+        \\        name: [*:0]const u8,
+        \\        signature: [*:0]const u8,
+        \\        types: ?[*]const ?*const Interface,
+        \\    };
+        \\
         \\};
         \\
         \\pub const Fixed = extern struct {
@@ -216,11 +217,11 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    data: *anyopaque,
         \\};
         \\
-        \\pub const Argument = union {
+        \\pub const Argument = extern union {
         \\    i: i32,
         \\    u: u32,
         \\    f: Fixed,
-        \\    s: []const u8,
+        \\    s: ?[*:0]const u8,
         \\    o: ?*wl.Object,
         \\    n: u32,
         \\    a: ?*Array,
@@ -794,7 +795,7 @@ fn zigType(this: *Generator, tmp: *mem.TempArena, wl_type: Type, interface_name_
         .int => "i32",
         .uint => "u32",
         .fixed => "Fixed",
-        .string => "[]const u8",
+        .string => "[:0]const u8",
         .object, .new_id => blk: {
             if (interface_name_opt) |interface_name| {
                 const iname = try this.zigInterfaceTypeName(tmp, protocol, interface_name);

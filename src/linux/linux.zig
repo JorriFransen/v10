@@ -19,6 +19,7 @@ pub const O = abi.O;
 pub const PROT = abi.PROT;
 pub const MAP = abi.MAP;
 pub const F = abi.F;
+pub const SO = abi.SO;
 
 pub const Error = error{
     DiskQuotaExceeded,
@@ -46,6 +47,9 @@ pub const Error = error{
     TooManySymbolicLinks,
     UnexpectedDirFD,
     UnlinkDirectoryAttempt,
+    ConnectionClosed,
+    ConnectionReset,
+    MessageTooBig,
 
     UnexpectedErrno,
 };
@@ -194,6 +198,25 @@ pub fn munmap(memory: []align(page_size) const u8) Error!void {
             break :blk error.UnexpectedErrno;
         },
     };
+}
+
+pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
+    const rc = abi.syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .AGAIN => error.NoSpaceLeft, // send buffer full
+        .INTR => error.Interrupt,
+        .PIPE => error.ConnectionClosed, // peer closed connection
+        .CONNRESET => error.ConnectionReset,
+        .MSGSIZE => error.MessageTooBig,
+        .INVAL => error.InvalidArg,
+        .NOMEM => error.NoMemory,
+        else => blk: {
+            log.warn("Unexpected errno for sendmsg: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @intCast(rc);
 }
 
 pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
@@ -370,6 +393,143 @@ pub const AT = struct {
     pub const HANDLE_FID = REMOVEDIR;
 };
 
+pub const PF = struct {
+    pub const UNSPEC = 0;
+    pub const LOCAL = 1;
+    pub const UNIX = LOCAL;
+    pub const FILE = LOCAL;
+    pub const INET = 2;
+    pub const AX25 = 3;
+    pub const IPX = 4;
+    pub const APPLETALK = 5;
+    pub const NETROM = 6;
+    pub const BRIDGE = 7;
+    pub const ATMPVC = 8;
+    pub const X25 = 9;
+    pub const INET6 = 10;
+    pub const ROSE = 11;
+    pub const DECnet = 12;
+    pub const NETBEUI = 13;
+    pub const SECURITY = 14;
+    pub const KEY = 15;
+    pub const NETLINK = 16;
+    pub const ROUTE = PF.NETLINK;
+    pub const PACKET = 17;
+    pub const ASH = 18;
+    pub const ECONET = 19;
+    pub const ATMSVC = 20;
+    pub const RDS = 21;
+    pub const SNA = 22;
+    pub const IRDA = 23;
+    pub const PPPOX = 24;
+    pub const WANPIPE = 25;
+    pub const LLC = 26;
+    pub const IB = 27;
+    pub const MPLS = 28;
+    pub const CAN = 29;
+    pub const TIPC = 30;
+    pub const BLUETOOTH = 31;
+    pub const IUCV = 32;
+    pub const RXRPC = 33;
+    pub const ISDN = 34;
+    pub const PHONET = 35;
+    pub const IEEE802154 = 36;
+    pub const CAIF = 37;
+    pub const ALG = 38;
+    pub const NFC = 39;
+    pub const VSOCK = 40;
+    pub const KCM = 41;
+    pub const QIPCRTR = 42;
+    pub const SMC = 43;
+    pub const XDP = 44;
+    pub const MAX = 45;
+};
+
+pub const AF = struct {
+    pub const UNSPEC = PF.UNSPEC;
+    pub const LOCAL = PF.LOCAL;
+    pub const UNIX = AF.LOCAL;
+    pub const FILE = AF.LOCAL;
+    pub const INET = PF.INET;
+    pub const AX25 = PF.AX25;
+    pub const IPX = PF.IPX;
+    pub const APPLETALK = PF.APPLETALK;
+    pub const NETROM = PF.NETROM;
+    pub const BRIDGE = PF.BRIDGE;
+    pub const ATMPVC = PF.ATMPVC;
+    pub const X25 = PF.X25;
+    pub const INET6 = PF.INET6;
+    pub const ROSE = PF.ROSE;
+    pub const DECnet = PF.DECnet;
+    pub const NETBEUI = PF.NETBEUI;
+    pub const SECURITY = PF.SECURITY;
+    pub const KEY = PF.KEY;
+    pub const NETLINK = PF.NETLINK;
+    pub const ROUTE = PF.ROUTE;
+    pub const PACKET = PF.PACKET;
+    pub const ASH = PF.ASH;
+    pub const ECONET = PF.ECONET;
+    pub const ATMSVC = PF.ATMSVC;
+    pub const RDS = PF.RDS;
+    pub const SNA = PF.SNA;
+    pub const IRDA = PF.IRDA;
+    pub const PPPOX = PF.PPPOX;
+    pub const WANPIPE = PF.WANPIPE;
+    pub const LLC = PF.LLC;
+    pub const IB = PF.IB;
+    pub const MPLS = PF.MPLS;
+    pub const CAN = PF.CAN;
+    pub const TIPC = PF.TIPC;
+    pub const BLUETOOTH = PF.BLUETOOTH;
+    pub const IUCV = PF.IUCV;
+    pub const RXRPC = PF.RXRPC;
+    pub const ISDN = PF.ISDN;
+    pub const PHONET = PF.PHONET;
+    pub const IEEE802154 = PF.IEEE802154;
+    pub const CAIF = PF.CAIF;
+    pub const ALG = PF.ALG;
+    pub const NFC = PF.NFC;
+    pub const VSOCK = PF.VSOCK;
+    pub const KCM = PF.KCM;
+    pub const QIPCRTR = PF.QIPCRTR;
+    pub const SMC = PF.SMC;
+    pub const XDP = PF.XDP;
+    pub const MAX = PF.MAX;
+};
+
+pub const SOL = struct {
+    pub const SOCKET = 1;
+
+    pub const IP = 0;
+    pub const IPV6 = 41;
+    pub const ICMPV6 = 58;
+
+    pub const RAW = 255;
+    pub const DECNET = 261;
+    pub const X25 = 262;
+    pub const PACKET = 263;
+    pub const ATM = 264;
+    pub const AAL = 265;
+    pub const IRDA = 266;
+    pub const NETBEUI = 267;
+    pub const LLC = 268;
+    pub const DCCP = 269;
+    pub const NETLINK = 270;
+    pub const TIPC = 271;
+    pub const RXRPC = 272;
+    pub const PPPOL2TP = 273;
+    pub const BLUETOOTH = 274;
+    pub const PNPIPE = 275;
+    pub const RDS = 276;
+    pub const IUCV = 277;
+    pub const CAIF = 278;
+    pub const ALG = 279;
+    pub const NFC = 280;
+    pub const KCM = 281;
+    pub const TLS = 282;
+    pub const XDP = 283;
+};
+
 pub const POLL = struct {
     pub const IN = 0x001;
     pub const PRI = 0x002;
@@ -380,6 +540,64 @@ pub const POLL = struct {
     pub const RDNORM = 0x040;
     pub const RDBAND = 0x080;
 };
+
+pub const MSG = struct {
+    pub const OOB = 0x0001;
+    pub const PEEK = 0x0002;
+    pub const DONTROUTE = 0x0004;
+    pub const CTRUNC = 0x0008;
+    pub const PROXY = 0x0010;
+    pub const TRUNC = 0x0020;
+    pub const DONTWAIT = 0x0040;
+    pub const EOR = 0x0080;
+    pub const WAITALL = 0x0100;
+    pub const FIN = 0x0200;
+    pub const SYN = 0x0400;
+    pub const CONFIRM = 0x0800;
+    pub const RST = 0x1000;
+    pub const ERRQUEUE = 0x2000;
+    pub const NOSIGNAL = 0x4000;
+    pub const MORE = 0x8000;
+    pub const WAITFORONE = 0x10000;
+    pub const BATCH = 0x40000;
+    pub const ZEROCOPY = 0x4000000;
+    pub const FASTOPEN = 0x20000000;
+    pub const CMSG_CLOEXEC = 0x40000000;
+};
+
+pub const SCM = struct {
+    // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/socket.h?id=f777d1112ee597d7f7dd3ca232220873a34ad0c8#n178
+    pub const RIGHTS = 1;
+    pub const CREDENTIALS = 2;
+    pub const SECURITY = 3;
+    pub const PIDFD = 4;
+
+    pub const WIFI_STATUS = SO.WIFI_STATUS;
+    pub const TIMESTAMPING_OPT_STATS = 54;
+    pub const TIMESTAMPING_PKTINFO = 58;
+    pub const TXTIME = SO.TXTIME;
+};
+
+pub inline fn CMSG_FIRSTHDR(msg: *msghdr) ?*cmsghdr {
+    return if (msg.controllen >= @sizeOf(cmsghdr)) @ptrCast(@alignCast(msg.control)) else null;
+}
+
+pub inline fn CMSG_SPACE(len: usize) usize {
+    return CMSG_ALIGN(len) + CMSG_ALIGN(@sizeOf(cmsghdr));
+}
+
+pub inline fn CMSG_ALIGN(len: usize) usize {
+    return ((len + @sizeOf(usize)) - 1) & @as(usize, ~@as(usize, (@sizeOf(usize) - 1)));
+}
+
+pub inline fn CMSG_LEN(len: usize) usize {
+    return CMSG_ALIGN(@sizeOf(cmsghdr)) + len;
+}
+
+pub inline fn CMSG_DATA(msg: *cmsghdr) []u8 {
+    const offset = CMSG_ALIGN(@sizeOf(cmsghdr));
+    return (@as([*]u8, @ptrCast(msg)) + offset)[0 .. msg.len - offset];
+}
 
 pub const pollfd = extern struct {
     fd: fd_t,
@@ -434,6 +652,55 @@ pub const timespec = extern struct {
 pub const timeval = extern struct {
     sec: isize,
     usec: i64,
+};
+
+pub const sa_family_t = u16;
+pub const socklen_t = u32;
+
+pub const sockaddr = extern struct {
+    family: sa_family_t,
+    data: [14]u8,
+
+    pub const SS_MAXSIZE = 128;
+    pub const storage = extern struct {
+        family: sa_family_t align(8),
+        padding: [SS_MAXSIZE - @sizeOf(sa_family_t)]u8 = undefined,
+
+        comptime {
+            std.debug.assert(@sizeOf(storage) == SS_MAXSIZE);
+            std.debug.assert(@alignOf(storage) == 8);
+        }
+    };
+
+    /// UNIX domain socket address
+    pub const un = extern struct {
+        family: sa_family_t = AF.UNIX,
+        path: [108]u8,
+    };
+};
+
+pub const iovec = extern struct {
+    base: [*]u8,
+    len: usize,
+};
+
+pub const msghdr = extern struct {
+    name: ?*sockaddr,
+    namelen: socklen_t,
+    iov: [*]iovec,
+    /// The kernel and glibc use `usize` for this field; POSIX and musl use `c_int`.
+    iovlen: usize,
+    control: ?*anyopaque,
+    /// The kernel and glibc use `usize` for this field; POSIX and musl use `socklen_t`.
+    controllen: usize,
+    flags: u32,
+};
+
+pub const cmsghdr = extern struct {
+    /// The kernel and glibc use `usize` for this field; musl uses `socklen_t`.
+    len: usize,
+    level: i32,
+    type: i32,
 };
 
 pub const Errno = enum(u16) {
