@@ -76,7 +76,7 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
-        // .{ .scope = .@"wayland-client", .level = .warn },
+        .{ .scope = .@"wayland-client", .level = .warn },
     },
 };
 
@@ -201,6 +201,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.window_width = @as(f32, @floatFromInt(back_buffer_width)) * 1.5;
     wld.window_height = @as(f32, @floatFromInt(back_buffer_height)) * 1.5;
 
+    _ = wlc.display_roundtrip(wld.display); // Wait for max_width/height to be set
     try resize_shm();
 
     if (wli.seat_capabilities.keyboard == false) {
@@ -1280,6 +1281,7 @@ fn resize_shm() ShmError!void {
     const prot = linux.PROT{ .READ = true, .WRITE = true };
     const map = linux.MAP{ .TYPE = .SHARED };
 
+    assert(shm_size > 0);
     if (linux.mmap(null, shm_size, prot, map, fd, 0)) |mapped| {
         wld.shm_data = mapped;
 
@@ -1290,8 +1292,6 @@ fn resize_shm() ShmError!void {
             return error.WlShmCreatePoolFailed;
         };
         wld.pool = pool;
-
-        _ = wlc.display_roundtrip(wld.display);
 
         var width = wld.width;
         var height = wld.height;

@@ -372,8 +372,12 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
     if (std.mem.eql(u8, interface.name, "wl_display")) {
         try this.append(
             \\        fd: std.c.fd_t,
-            \\        receive_used: usize = 0,
-            \\        receive_buf: [4096]u8=undefined,
+            \\        receive_payload_used: usize = 0,
+            \\        receive_payload_buf: [4096]u8 = undefined,
+            \\        receive_fds_used: usize = 0,
+            \\        receive_fds_buf: [32]std.c.fd_t = undefined,
+            \\        fd_dispatch_index: usize = 0,
+            \\
             \\
         );
     }

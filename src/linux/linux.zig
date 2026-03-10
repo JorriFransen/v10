@@ -1,7 +1,8 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const log = std.log.scoped(.linux);
-const arch = @import("arch").arch;
 
+const arch = @import("arch").arch;
 pub const abi = @import("abi.zig").abi;
 pub const input = @import("input.zig");
 pub const ioctl = @import("ioctl.zig");
@@ -22,6 +23,8 @@ pub const F = abi.F;
 pub const SO = abi.SO;
 
 pub const Error = error{
+    ConnectionClosed,
+    ConnectionReset,
     DiskQuotaExceeded,
     EndOfFile,
     FileBusy,
@@ -31,25 +34,26 @@ pub const Error = error{
     InvalidArg,
     InvalidDevice,
     InvalidFD,
+    InvalidFlags,
     InvalidPath,
     InvalidPointer,
     IO,
     IsDirectory,
     Lock,
+    MessageTooBig,
     NameTooLong,
     NoData,
     NoMemory,
     NoSpaceLeft,
+    NotConnected,
     PermissionDenied,
     ReadOnly,
+    Timeout,
     TooManyFiles,
     TooManyProcessFiles,
     TooManySymbolicLinks,
     UnexpectedDirFD,
     UnlinkDirectoryAttempt,
-    ConnectionClosed,
-    ConnectionReset,
-    MessageTooBig,
 
     UnexpectedErrno,
 };
@@ -213,6 +217,26 @@ pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
         .NOMEM => error.NoMemory,
         else => blk: {
             log.warn("Unexpected errno for sendmsg: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @intCast(rc);
+}
+
+pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
+    const rc = abi.syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .AGAIN, .TIMEDOUT => error.Timeout,
+        .FAULT => error.InvalidPointer,
+        .INTR => error.Interrupt,
+        .NOTCONN => error.NotConnected,
+        .NOTSOCK => error.InvalidFD,
+        .OPNOTSUPP => error.InvalidFlags,
+        .INVAL => error.InvalidArg,
+        .NOMEM => error.NoMemory,
+        else => blk: {
+            log.warn("Unexpected errno for recvmsg: {}", .{e});
             break :blk error.UnexpectedErrno;
         },
     };
@@ -578,6 +602,18 @@ pub const SCM = struct {
     pub const TXTIME = SO.TXTIME;
 };
 
+pub inline fn CMSG_NXTHDR(msg: *msghdr, cmsg: *cmsghdr) ?*cmsghdr {
+    assert(cmsg.len >= @sizeOf(cmsghdr));
+    const next = @as([*]u8, @ptrCast(cmsg)) + CMSG_ALIGN(cmsg.len);
+    const end = @as([*]u8, @ptrCast(msg.control)) + msg.controllen;
+
+    if (end - next < @sizeOf(cmsghdr)) {
+        return null;
+    }
+
+    return @ptrCast(@alignCast(next));
+}
+
 pub inline fn CMSG_FIRSTHDR(msg: *msghdr) ?*cmsghdr {
     return if (msg.controllen >= @sizeOf(cmsghdr)) @ptrCast(@alignCast(msg.control)) else null;
 }
@@ -587,7 +623,8 @@ pub inline fn CMSG_SPACE(len: usize) usize {
 }
 
 pub inline fn CMSG_ALIGN(len: usize) usize {
-    return ((len + @sizeOf(usize)) - 1) & @as(usize, ~@as(usize, (@sizeOf(usize) - 1)));
+    const algn: usize = @sizeOf(usize);
+    return (len + algn - 1) & ~(algn - 1);
 }
 
 pub inline fn CMSG_LEN(len: usize) usize {

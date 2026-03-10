@@ -12,10 +12,10 @@ const wl = wayland.wl;
 var glob_connected = false;
 var glob_display: wl.Display = undefined;
 var glob_next_object_id: u32 = 1;
-var glob_objects: [32]wl.Object = std.mem.zeroes([32]wl.Object);
+var glob_objects: [512]wl.Object = std.mem.zeroes([512]wl.Object);
 
 var glob_listener_count: usize = 0;
-var glob_listeners: [32]Listener = std.mem.zeroes([32]Listener);
+var glob_listeners: [512]Listener = std.mem.zeroes([512]Listener);
 
 var glob_display_listener = wl.Display.Listener{
     .@"error" = handle_display_error,
@@ -23,6 +23,8 @@ var glob_display_listener = wl.Display.Listener{
 };
 
 const Message = struct {
+    const max_fd_count: usize = 16;
+
     const Header = extern struct {
         id: u32,
         op: u16,
@@ -34,7 +36,7 @@ const Message = struct {
     };
 
     data: Data align(4),
-    fds: [16]linux.fd_t = std.mem.zeroes([16]linux.fd_t),
+    fds: [max_fd_count]linux.fd_t = std.mem.zeroes([max_fd_count]linux.fd_t),
     fds_used: usize = 0,
     buf_used: usize = 0,
     current_arg_offset: usize = 0,
@@ -63,15 +65,11 @@ const Message = struct {
         log.debug("-> {any} (dwords)", .{this.data.buf[0..this.buf_used]});
         log.debug("-> {any} (bytes)", .{@as([]u8, @ptrCast(this.data.buf[0..this.buf_used]))});
 
-        // const written = try linux.write(display.fd, send_buf);
-        // assert(written == total_size); // TODO: Handle partial write
-
         var iov = linux.iovec{ .base = send_buf.ptr, .len = send_buf.len };
 
         const fds_byte_size = @sizeOf(linux.fd_t) * this.fds_used;
         var control_buf: [this.fds.len * @sizeOf(linux.fd_t) + (2 * @sizeOf(linux.cmsghdr))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
-        const control_size = linux.CMSG_SPACE(fds_byte_size);
-        const control = control_buf[0..control_size];
+        var control: []u8 = if (this.fds_used > 0) control_buf[0..linux.CMSG_SPACE(fds_byte_size)] else &.{};
 
         var msg = linux.msghdr{
             .name = null,
@@ -83,23 +81,23 @@ const Message = struct {
             .flags = 0,
         };
 
-        var cmsg: *linux.cmsghdr = linux.CMSG_FIRSTHDR(&msg).?;
-        cmsg.level = linux.SOL.SOCKET;
-        cmsg.type = linux.SCM.RIGHTS;
-        cmsg.len = linux.CMSG_LEN(fds_byte_size);
-        log.debug("ctrl bytes: {any}", .{control});
-
-        @memcpy(linux.CMSG_DATA(cmsg), @as([]u8, @ptrCast(this.fds[0..this.fds_used])));
-
-        log.debug("fds: {any}", .{this.fds[0..this.fds_used]});
-        log.debug("ctrl bytes: {any}\n", .{control});
+        if (this.fds_used > 0) {
+            var cmsg: *linux.cmsghdr = linux.CMSG_FIRSTHDR(&msg).?;
+            cmsg.level = linux.SOL.SOCKET;
+            cmsg.type = linux.SCM.RIGHTS;
+            cmsg.len = linux.CMSG_LEN(fds_byte_size);
+            log.debug("ctrl bytes: {any}", .{control});
+            @memcpy(linux.CMSG_DATA(cmsg), @as([]u8, @ptrCast(this.fds[0..this.fds_used])));
+            log.debug("fds: {any}", .{this.fds[0..this.fds_used]});
+            log.debug("ctrl bytes: {any}\n", .{control});
+        }
 
         const written = try linux.sendmsg(display.fd, &msg, linux.MSG.NOSIGNAL);
         assert(written == total_size); // TODO: Handle partial write
     }
 
     pub fn getIntArg(this: *Message) i32 {
-        return @intCast(this.getUIntArg());
+        return @bitCast(this.getUIntArg());
     }
 
     pub fn getUIntArg(this: *Message) u32 {
@@ -112,6 +110,10 @@ const Message = struct {
         const id = this.getUIntArg();
         assert(id <= glob_objects.len);
         return &glob_objects[id];
+    }
+
+    pub fn getFixedArg(this: *Message) wayland.Fixed {
+        return .{ .value = @bitCast(getUIntArg(this)) };
     }
 
     // TODO: Use getArrayArg
@@ -133,6 +135,15 @@ const Message = struct {
         this.current_arg_offset += (length + arg_size - 1) / arg_size;
 
         return .{ .size = result.len, .alloc = result.len, .data = result.ptr };
+    }
+
+    pub fn getFDArg(this: *Message, display: *wl.Display) linux.fd_t {
+        _ = this;
+        log.debug("fd dispatch index: {} - used: {}", .{ display.fd_dispatch_index, display.receive_fds_used });
+        assert(display.fd_dispatch_index < display.receive_fds_used);
+        const result = display.receive_fds_buf[display.fd_dispatch_index];
+        display.fd_dispatch_index += 1;
+        return result;
     }
 };
 
@@ -222,13 +233,12 @@ fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, callback: ?*wl.Callback, c
 }
 
 pub fn display_dispatch(display: *wl.Display) usize {
-    _ = display;
-    unreachable;
+    return readAndDispatch(display);
 }
 
 pub fn display_flush(display: *wl.Display) void {
     _ = display;
-    unreachable;
+    // TODO:
 }
 
 fn readAndDispatch(display: *wl.Display) usize {
@@ -237,13 +247,49 @@ fn readAndDispatch(display: *wl.Display) usize {
     var pollfd: linux.pollfd = .{ .fd = display.fd, .events = linux.POLL.IN, .revents = undefined };
     while (linux.poll(@ptrCast(&pollfd), 0) catch unreachable > 0) {
         if (pollfd.revents & linux.POLL.IN != 0) {
-            const receive_buf_available = display.receive_buf[display.receive_used..];
-            const read_buf = linux.read(display.fd, receive_buf_available) catch unreachable;
-            display.receive_used += read_buf.len;
+            const receive_buf_available = display.receive_payload_buf[display.receive_payload_used..];
+
+            var control_buf: [Message.max_fd_count * @sizeOf(linux.fd_t) + (2 * @sizeOf(linux.cmsghdr))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
+            _ = &control_buf;
+
+            var iov: linux.iovec = .{ .base = receive_buf_available.ptr, .len = receive_buf_available.len };
+            var msg: linux.msghdr = .{
+                .iov = @ptrCast(&iov),
+                .iovlen = 1,
+                .name = null,
+                .namelen = 0,
+                .control = &control_buf,
+                .controllen = control_buf.len,
+                .flags = 0,
+            };
+            const bytes_read = linux.recvmsg(display.fd, &msg, 0) catch unreachable;
+            assert(msg.flags & linux.MSG.TRUNC == 0);
+            assert(msg.flags & linux.MSG.CTRUNC == 0);
+            const read_buf = receive_buf_available[0..bytes_read];
+            display.receive_payload_used += read_buf.len;
+
+            if (msg.controllen > 0) {
+                log.debug("recv control: {any}", .{control_buf[0..msg.controllen]});
+
+                var cmsg: ?*linux.cmsghdr = linux.CMSG_FIRSTHDR(&msg);
+                while (cmsg) |m| : (cmsg = linux.CMSG_NXTHDR(&msg, m)) {
+                    if (m.level == linux.SOL.SOCKET and m.type == linux.SCM.RIGHTS) {
+                        const fd_count = (m.len - linux.CMSG_LEN(0)) / @sizeOf(linux.fd_t);
+                        const fds = @as([]linux.fd_t, @ptrCast(@alignCast(linux.CMSG_DATA(m))));
+                        assert(fds.len == fd_count);
+                        log.debug("fds: {any}", .{fds});
+
+                        const offset = display.receive_fds_used;
+                        assert(display.receive_fds_buf.len - offset > fds.len);
+                        @memcpy(display.receive_fds_buf[offset .. offset + fds.len], fds);
+                        display.receive_fds_used += fds.len;
+                    }
+                }
+            }
 
             var current_offset: usize = 0;
             while (true) {
-                const receive_remaining = display.receive_buf[current_offset..display.receive_used];
+                const receive_remaining = display.receive_payload_buf[current_offset..display.receive_payload_used];
 
                 if (receive_remaining.len >= @sizeOf(Message.Header)) {
                     const header: *Message.Header = @alignCast(std.mem.bytesAsValue(Message.Header, receive_remaining));
@@ -263,9 +309,14 @@ fn readAndDispatch(display: *wl.Display) usize {
                 }
             }
 
-            const remaining_byte_count = display.receive_used - current_offset;
-            @memmove(display.receive_buf[0..remaining_byte_count], display.receive_buf[current_offset..display.receive_used]);
-            display.receive_used = remaining_byte_count;
+            const remaining_byte_count = display.receive_payload_used - current_offset;
+            @memmove(display.receive_payload_buf[0..remaining_byte_count], display.receive_payload_buf[current_offset..display.receive_payload_used]);
+            display.receive_payload_used = remaining_byte_count;
+
+            const remaining_fd_count = display.receive_fds_used - display.fd_dispatch_index;
+            @memmove(display.receive_fds_buf[0..remaining_fd_count], display.receive_fds_buf[display.fd_dispatch_index..display.receive_fds_used]);
+            display.receive_fds_used = remaining_fd_count;
+            display.fd_dispatch_index = 0;
         } else {
             log.warn("readAndDispatch poll error", .{});
         }
@@ -296,40 +347,64 @@ fn tryDispatch(display: *wl.Display, message: *Message) void {
 }
 
 fn dispatch(display: *wl.Display, object: *wl.Object, message: *Message, listener: *const Listener) void {
-    _ = display;
-
     assert(message.data.header.op < listener.implementation.len);
     const sig = std.mem.span(object.proxy.interface.events.?[message.data.header.op].signature);
 
     log.debug("dispatching signature: '{s}'", .{sig});
 
     if (sig.len == 0) {
-        trampoline_(object, listener, message);
+        trampoline_(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "u")) {
-        trampoline_u(object, listener, message);
+        trampoline_u(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "i")) {
-        trampoline_i(object, listener, message);
+        trampoline_i(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "o")) {
+        trampoline_o(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "s")) {
-        trampoline_s(object, listener, message);
+        trampoline_s(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "a")) {
-        trampoline_a(object, listener, message);
+        trampoline_a(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "ii")) {
+        trampoline_ii(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uu")) {
+        trampoline_uu(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "ui")) {
+        trampoline_ui(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uo")) {
+        trampoline_uo(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uff")) {
+        trampoline_uff(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uuf")) {
+        trampoline_uuf(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uoa")) {
+        trampoline_uoa(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "usu")) {
-        trampoline_usu(object, listener, message);
+        trampoline_usu(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uhu")) {
+        trampoline_uhu(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "ous")) {
-        trampoline_ous(object, listener, message);
+        trampoline_ous(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "iia")) {
-        trampoline_iia(object, listener, message);
+        trampoline_iia(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uuuu")) {
+        trampoline_uuuu(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "uiii")) {
-        trampoline_uiii(object, listener, message);
+        trampoline_uiii(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uoff")) {
+        trampoline_uoff(display, object, listener, message);
+    } else if (std.mem.eql(u8, sig, "uuuuu")) {
+        trampoline_uuuuu(display, object, listener, message);
     } else if (std.mem.eql(u8, sig, "iiiiissi")) {
-        trampoline_iiiiissi(object, listener, message);
+        trampoline_iiiiissi(display, object, listener, message);
     } else {
         log.err("Unhandled dispatch signature: '{s}'", .{sig});
         unreachable;
     }
 }
 
-fn trampoline_(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -337,7 +412,9 @@ fn trampoline_(object: *wl.Object, listener: *const Listener, message: *Message)
     handler(listener.user_data, @ptrCast(object));
 }
 
-fn trampoline_u(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_u(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -347,7 +424,9 @@ fn trampoline_u(object: *wl.Object, listener: *const Listener, message: *Message
     handler(listener.user_data, @ptrCast(object), arg1);
 }
 
-fn trampoline_i(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_i(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -357,7 +436,21 @@ fn trampoline_i(object: *wl.Object, listener: *const Listener, message: *Message
     handler(listener.user_data, @ptrCast(object), arg1);
 }
 
-fn trampoline_s(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_o(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Object) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getObjectArg();
+    handler(listener.user_data, @ptrCast(object), arg1);
+}
+
+fn trampoline_s(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, []const u8) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -367,7 +460,9 @@ fn trampoline_s(object: *wl.Object, listener: *const Listener, message: *Message
     handler(listener.user_data, @ptrCast(object), arg1);
 }
 
-fn trampoline_a(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_a(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, wayland.Array) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -377,7 +472,103 @@ fn trampoline_a(object: *wl.Object, listener: *const Listener, message: *Message
     handler(listener.user_data, @ptrCast(object), arg1);
 }
 
-fn trampoline_usu(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_ii(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getIntArg();
+    const arg2 = message.getIntArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2);
+}
+
+fn trampoline_uu(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getUIntArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2);
+}
+
+fn trampoline_ui(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, i32) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getIntArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2);
+}
+
+fn trampoline_uo(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getObjectArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2);
+}
+
+fn trampoline_uff(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, wayland.Fixed, wayland.Fixed) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getFixedArg();
+    const arg3 = message.getFixedArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
+}
+
+fn trampoline_uuf(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, wayland.Fixed) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getUIntArg();
+    const arg3 = message.getFixedArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
+}
+
+fn trampoline_uoa(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object, wayland.Array) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getObjectArg();
+    const arg3 = message.getArrayArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
+}
+
+fn trampoline_usu(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, []const u8, u32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -389,7 +580,21 @@ fn trampoline_usu(object: *wl.Object, listener: *const Listener, message: *Messa
     handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
 }
 
-fn trampoline_ous(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_uhu(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, fd: linux.fd_t, u32) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getFDArg(display);
+    const arg3 = message.getUIntArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
+}
+
+fn trampoline_ous(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Object, u32, []const u8) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -401,7 +606,9 @@ fn trampoline_ous(object: *wl.Object, listener: *const Listener, message: *Messa
     handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
 }
 
-fn trampoline_iia(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_iia(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32, wayland.Array) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -413,7 +620,24 @@ fn trampoline_iia(object: *wl.Object, listener: *const Listener, message: *Messa
     handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
 }
 
-fn trampoline_uiii(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_uuuu(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, u32, u32) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getUIntArg();
+    const arg3 = message.getUIntArg();
+    const arg4 = message.getUIntArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4);
+}
+
+fn trampoline_uiii(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, i32, i32, i32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -426,7 +650,40 @@ fn trampoline_uiii(object: *wl.Object, listener: *const Listener, message: *Mess
     handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4);
 }
 
-fn trampoline_iiiiissi(object: *wl.Object, listener: *const Listener, message: *Message) void {
+fn trampoline_uoff(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object, wayland.Fixed, wayland.Fixed) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getObjectArg();
+    const arg3 = message.getFixedArg();
+    const arg4 = message.getFixedArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4);
+}
+
+fn trampoline_uuuuu(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
+    assert(message.data.header.op < listener.implementation.len);
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, u32, u32, u32) void;
+    const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
+
+    message.current_arg_offset = 0;
+    const arg1 = message.getUIntArg();
+    const arg2 = message.getUIntArg();
+    const arg3 = message.getUIntArg();
+    const arg4 = message.getUIntArg();
+    const arg5 = message.getUIntArg();
+    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4, arg5);
+}
+
+fn trampoline_iiiiissi(display: *wl.Display, object: *wl.Object, listener: *const Listener, message: *Message) void {
+    _ = display;
+
     assert(message.data.header.op < listener.implementation.len);
     const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32, i32, i32, i32, []const u8, []const u8, i32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.data.header.op]);
@@ -469,7 +726,6 @@ pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const w
     assert(proxy.interface.method_count > op);
     const method = proxy.interface.methods.?[op];
     const sig = std.mem.span(method.signature);
-    assert(sig.len == args.len); // TODO: Smarter verification (nullable)
 
     var result: ?*wl.Proxy = null;
 
@@ -477,10 +733,14 @@ pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const w
 
     log.debug("marshal signature: {s}", .{sig});
 
-    var i: usize = 0;
-    while (i < sig.len) : (i += 1) {
-        const sig_char = sig[i]; // TODO: Nullable (?)
-        const arg = args[i];
+    var si: usize = 0;
+    var ai: usize = 0;
+    while (si < sig.len) : ({
+        si += 1;
+        ai += 1;
+    }) {
+        const sig_char = sig[si]; // TODO: Nullable (?)
+        const arg = args[ai];
         switch (sig_char) {
             'n' => {
                 assert(interface != null);
@@ -491,7 +751,19 @@ pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const w
             },
 
             'u', 'i' => message.addArg(arg.u),
-            'o' => message.addArg(arg.o.?.proxy.id),
+
+            '?' => {
+                si += 1;
+                assert(sig[si] == 'o');
+                const id = if (arg.o) |o| o.proxy.id else 0;
+                message.addArg(id);
+            },
+
+            'o' => {
+                if (arg.o) |o| message.addArg(o.proxy.id) else {
+                    @panic("Non nullable pointer is null");
+                }
+            },
 
             's' => {
                 const s = std.mem.span(arg.s) orelse "";
