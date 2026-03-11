@@ -623,12 +623,12 @@ pub inline fn CMSG_SPACE(len: usize) usize {
 }
 
 pub inline fn CMSG_ALIGN(len: usize) usize {
-    const algn: usize = @sizeOf(usize);
+    const algn: usize = @alignOf(cmsghdr);
     return (len + algn - 1) & ~(algn - 1);
 }
 
 pub inline fn CMSG_LEN(len: usize) usize {
-    return CMSG_ALIGN(@sizeOf(cmsghdr)) + len;
+    return @sizeOf(cmsghdr) + len;
 }
 
 pub inline fn CMSG_DATA(msg: *cmsghdr) []u8 {

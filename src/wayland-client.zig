@@ -26,14 +26,14 @@ const Message = struct {
     };
     const Data = extern struct {
         header: Header,
-        buf: [32]u32 = std.mem.zeroes([32]u32),
+        buf: [64]u32 = std.mem.zeroes([64]u32),
     };
 
-    data: Data align(4),
-    fds: [max_fd_count]linux.fd_t = std.mem.zeroes([max_fd_count]linux.fd_t),
     fds_used: usize = 0,
     buf_used: usize = 0,
     current_arg_offset: usize = 0,
+    fds: [max_fd_count]linux.fd_t = std.mem.zeroes([max_fd_count]linux.fd_t),
+    data: Data align(4),
 
     pub fn addArg(this: *Message, arg: u32) void {
         assert(this.buf_used < this.data.buf.len);
@@ -58,7 +58,7 @@ const Message = struct {
         var iov = linux.iovec{ .base = send_buf.ptr, .len = send_buf.len };
 
         const fds_byte_size = @sizeOf(linux.fd_t) * this.fds_used;
-        var control_buf: [this.fds.len * @sizeOf(linux.fd_t) + (2 * @sizeOf(linux.cmsghdr))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
+        var control_buf: [linux.CMSG_SPACE(this.fds.len * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
         var control: []u8 = if (this.fds_used > 0) control_buf[0..linux.CMSG_SPACE(fds_byte_size)] else &.{};
 
         var msg = linux.msghdr{
@@ -219,7 +219,9 @@ pub fn display_roundtrip(display: *wl.Display) usize {
         // TODO: Remove this listener? I believe the callback is implicitly freed?
 
         while (!done) {
-            dispatched_count += readAndDispatch(display);
+            const dc = readAndDispatch(display);
+            if (dc < 0) break;
+            dispatched_count += @intCast(dc);
         }
     } else {
         log.err("display_roundtrip unable to setup sync callback", .{});
@@ -233,7 +235,7 @@ fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl.Callback, _: u32) 
     done_ptr.* = true;
 }
 
-pub fn display_dispatch(display: *wl.Display) usize {
+pub fn display_dispatch(display: *wl.Display) isize {
     assert(display == &glob_display);
     return readAndDispatch(display);
 }
@@ -243,15 +245,15 @@ pub fn display_flush(display: *wl.Display) void {
     // TODO:
 }
 
-fn readAndDispatch(display: *wl.Display) usize {
-    var dispatched_count: usize = 0;
+fn readAndDispatch(display: *wl.Display) isize {
+    var result: isize = 0;
 
     var pollfd: linux.pollfd = .{ .fd = display.fd, .events = linux.POLL.IN, .revents = undefined };
     while (linux.poll(@ptrCast(&pollfd), 0) catch unreachable > 0) {
         if (pollfd.revents & linux.POLL.IN != 0) {
             const receive_buf_available = display.receive_payload_buf[display.receive_payload_used..];
 
-            var control_buf: [Message.max_fd_count * @sizeOf(linux.fd_t) + (2 * @sizeOf(linux.cmsghdr))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
+            var control_buf: [linux.CMSG_SPACE(Message.max_fd_count * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
             _ = &control_buf;
 
             var iov: linux.iovec = .{ .base = receive_buf_available.ptr, .len = receive_buf_available.len };
@@ -264,64 +266,70 @@ fn readAndDispatch(display: *wl.Display) usize {
                 .controllen = control_buf.len,
                 .flags = 0,
             };
-            const bytes_read = linux.recvmsg(display.fd, &msg, 0) catch unreachable;
-            assert(msg.flags & linux.MSG.TRUNC == 0);
-            assert(msg.flags & linux.MSG.CTRUNC == 0);
-            const read_buf = receive_buf_available[0..bytes_read];
-            display.receive_payload_used += read_buf.len;
 
-            if (msg.controllen > 0) {
-                var cmsg: ?*linux.cmsghdr = linux.CMSG_FIRSTHDR(&msg);
-                while (cmsg) |m| : (cmsg = linux.CMSG_NXTHDR(&msg, m)) {
-                    if (m.level == linux.SOL.SOCKET and m.type == linux.SCM.RIGHTS) {
-                        const fd_count = (m.len - linux.CMSG_LEN(0)) / @sizeOf(linux.fd_t);
-                        const fds = @as([]linux.fd_t, @ptrCast(@alignCast(linux.CMSG_DATA(m))));
-                        assert(fds.len == fd_count);
+            if (linux.recvmsg(display.fd, &msg, 0)) |bytes_read| {
+                assert(msg.flags & linux.MSG.TRUNC == 0);
+                assert(msg.flags & linux.MSG.CTRUNC == 0);
+                const read_buf = receive_buf_available[0..bytes_read];
+                display.receive_payload_used += read_buf.len;
 
-                        const offset = display.receive_fds_used;
-                        assert(display.receive_fds_buf.len - offset > fds.len);
-                        @memcpy(display.receive_fds_buf[offset .. offset + fds.len], fds);
-                        display.receive_fds_used += fds.len;
+                if (msg.controllen > 0) {
+                    var cmsg: ?*linux.cmsghdr = linux.CMSG_FIRSTHDR(&msg);
+                    while (cmsg) |m| : (cmsg = linux.CMSG_NXTHDR(&msg, m)) {
+                        if (m.level == linux.SOL.SOCKET and m.type == linux.SCM.RIGHTS) {
+                            const fd_count = (m.len - linux.CMSG_LEN(0)) / @sizeOf(linux.fd_t);
+                            const fds = @as([]linux.fd_t, @ptrCast(@alignCast(linux.CMSG_DATA(m))));
+                            assert(fds.len == fd_count);
+
+                            const offset = display.receive_fds_used;
+                            assert(display.receive_fds_buf.len - offset > fds.len);
+                            @memcpy(display.receive_fds_buf[offset .. offset + fds.len], fds);
+                            display.receive_fds_used += fds.len;
+                        }
                     }
                 }
-            }
 
-            var current_offset: usize = 0;
-            while (true) {
-                const receive_remaining = display.receive_payload_buf[current_offset..display.receive_payload_used];
+                var current_offset: usize = 0;
+                while (true) {
+                    const receive_remaining = display.receive_payload_buf[current_offset..display.receive_payload_used];
 
-                if (receive_remaining.len >= @sizeOf(Message.Header)) {
-                    const header: *Message.Header = @alignCast(std.mem.bytesAsValue(Message.Header, receive_remaining));
-                    if (receive_remaining.len >= header.size) {
-                        assert(header.size <= @sizeOf(Message.Data));
-                        const message_data: *align(4) Message.Data = @ptrCast(@alignCast(header));
-                        var message: Message = .{ .data = message_data.*, .current_arg_offset = 0 };
-                        tryDispatch(display, &message);
-                        dispatched_count += 1;
+                    if (receive_remaining.len >= @sizeOf(Message.Header)) {
+                        const header: *Message.Header = @ptrCast(@alignCast(receive_remaining.ptr));
+                        if (receive_remaining.len >= header.size) {
+                            assert(header.size <= @sizeOf(Message.Data));
+                            const message_data: *align(4) Message.Data = @ptrCast(@alignCast(header));
+                            var message: Message = .{ .data = message_data.*, .current_arg_offset = 0 };
+                            tryDispatch(display, &message);
+                            result += 1;
 
-                        current_offset += header.size;
+                            current_offset += header.size;
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
-                } else {
-                    break;
                 }
+
+                const remaining_byte_count = display.receive_payload_used - current_offset;
+                @memmove(display.receive_payload_buf[0..remaining_byte_count], display.receive_payload_buf[current_offset..display.receive_payload_used]);
+                display.receive_payload_used = remaining_byte_count;
+
+                const remaining_fd_count = display.receive_fds_used - display.fd_dispatch_index;
+                @memmove(display.receive_fds_buf[0..remaining_fd_count], display.receive_fds_buf[display.fd_dispatch_index..display.receive_fds_used]);
+                display.receive_fds_used = remaining_fd_count;
+                display.fd_dispatch_index = 0;
+            } else |e| {
+                log.warn("recvmsg error: {}", .{e});
+                result = -1;
             }
-
-            const remaining_byte_count = display.receive_payload_used - current_offset;
-            @memmove(display.receive_payload_buf[0..remaining_byte_count], display.receive_payload_buf[current_offset..display.receive_payload_used]);
-            display.receive_payload_used = remaining_byte_count;
-
-            const remaining_fd_count = display.receive_fds_used - display.fd_dispatch_index;
-            @memmove(display.receive_fds_buf[0..remaining_fd_count], display.receive_fds_buf[display.fd_dispatch_index..display.receive_fds_used]);
-            display.receive_fds_used = remaining_fd_count;
-            display.fd_dispatch_index = 0;
         } else {
             log.warn("readAndDispatch poll error", .{});
+            result = -1;
         }
     }
 
-    return dispatched_count;
+    return result;
 }
 
 fn tryDispatch(display: *wl.Display, message: *Message) void {
