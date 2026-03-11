@@ -76,7 +76,7 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
-        .{ .scope = .@"wayland-client", .level = .warn },
+        // .{ .scope = .@"wayland-client", .level = .warn },
     },
 };
 

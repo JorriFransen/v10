@@ -87,15 +87,14 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
     if (core_protocol.interfaces.len > 0) try generator.append("\n");
 
     try generator.append(
-        \\    pub const EventQueue = opaque {};
-        \\    pub const Proxy = extern struct {
+        \\    pub const Proxy = struct {
         \\        id: u32,
         \\        version: u32,
         \\        display: *Display,
         \\        interface: *const Interface,
+        \\        node: std.SinglyLinkedList.Node,
         \\    };
-        \\    pub const Timespec = opaque {};
-        \\    pub const Object = extern struct { proxy: Proxy };
+        \\    pub const Object = struct { proxy: Proxy };
         \\
         // \\    pub var event_queue_destroy: *const fn (queue: *EventQueue) callconv(.c) void = undefined;
         // \\    pub var proxy_marshal_flags: *const fn (proxy: *Proxy, opcode: u32, interface: ?*const Interface, version: u32, flags: u32, ...) callconv(.c) *Proxy = undefined;
@@ -191,7 +190,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    event_count: c_int,
         \\    events: ?[*]const Message,
         \\
-        \\    pub const Message = extern struct {
+        \\    pub const Message = struct {
         \\        name: [*:0]const u8,
         \\        signature: [*:0]const u8,
         \\        types: ?[*]const ?*const Interface,
@@ -211,7 +210,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    }
         \\};
         \\
-        \\pub const Array = extern struct {
+        \\pub const Array = struct {
         \\    size: usize,
         \\    alloc: usize,
         \\    data: *anyopaque,
@@ -367,11 +366,18 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
     defer tmp.release();
     const ta = tmp.allocator();
 
-    try this.appendf("    pub const {s} = extern struct {{\n", .{try this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
+    try this.appendf("    pub const {s} = struct {{\n", .{try this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
     try this.append("        proxy: wl.Proxy,\n");
     if (std.mem.eql(u8, interface.name, "wl_display")) {
         try this.append(
             \\        fd: std.c.fd_t,
+            \\
+            \\        objects: [32]Object = undefined,
+            \\        free_objects: std.SinglyLinkedList = .{},
+            \\
+            \\        listener_count: u32,
+            \\        listeners: [32]Listener = undefined,
+            \\
             \\        receive_payload_used: usize = 0,
             \\        receive_payload_buf: [4096]u8 = undefined,
             \\        receive_fds_used: usize = 0,
@@ -610,10 +616,6 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
 
         if (request.args.len != 0) try this.append("             ");
         try this.append("});\n");
-
-        if (request.destructor) {
-            try this.append("            wlc.proxy_destroy(@ptrCast(self));\n");
-        }
     }
     try this.append("        }\n");
 }
