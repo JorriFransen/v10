@@ -220,7 +220,6 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\
         \\pub const Array = struct {
         \\    size: usize,
-        \\    alloc: usize,
         \\    data: *anyopaque,
         \\};
         \\
