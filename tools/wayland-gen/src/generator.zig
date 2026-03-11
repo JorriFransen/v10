@@ -199,8 +199,8 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    events: ?[*]const Message,
         \\
         \\    pub const Message = struct {
-        \\        name: [*:0]const u8,
-        \\        signature: [*:0]const u8,
+        \\        name: [:0]const u8,
+        \\        signature: [:0]const u8,
         \\        types: ?[*]const ?*const Interface,
         \\    };
         \\
