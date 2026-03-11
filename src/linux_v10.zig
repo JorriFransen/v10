@@ -76,7 +76,7 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
-        // .{ .scope = .@"wayland-client", .level = .warn },
+        .{ .scope = .@"wayland-client", .level = .warn },
     },
 };
 
@@ -247,6 +247,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         xdg_toplevel.set_app_id(app_id);
         xdg_toplevel.set_title(title);
         wld.surface.commit();
+
+        _ = wlc.display_roundtrip(display);
 
         if (wli.xdg_decoration_manager) |manager| {
             const toplevel_decoration = manager.get_toplevel_decoration(xdg_toplevel) orelse {
@@ -824,6 +826,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
             //     wayland_blit,
             // });
             _ = .{ ms_per_frame, fps, mcpf, wayland_blit };
+
+            // var title_buf: [32]u8 = undefined;
+            // const t = try std.fmt.bufPrintSentinel(&title_buf, "{}", .{ms_per_frame}, 0);
+            // wld.toplevel.set_title(t);
         }
     }
 }
@@ -946,6 +952,14 @@ const WlToplevel = union(enum) {
         decor: *libdecor.Context,
         frame: *libdecor.Frame,
     },
+
+    pub fn set_title(this: *WlToplevel, title: [:0]const u8) void {
+        switch (this.*) {
+            .no_decoration => |t| t.xdg_toplevel.set_title(title),
+            .xdg_decoration => |t| t.xdg_toplevel.set_title(title),
+            .libdecor => |ld| libdecor.frame_set_title(ld.frame, title),
+        }
+    }
 
     pub fn set_fullscreen(this: *WlToplevel, output: ?*wl.Output) void {
         switch (this.*) {
@@ -1644,9 +1658,8 @@ fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) voi
     running = false;
 }
 
-fn handleWlCallbackDone(data: ?*anyopaque, callback: ?*wl.Callback, _: u32) void {
+fn handleWlCallbackFrameDone(data: ?*anyopaque, _: ?*wl.Callback, _: u32) void {
     _ = data;
-    callback.?.destroy();
     wld.should_draw = true;
 }
 
@@ -2230,7 +2243,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
 
     wld.surface.commit();
     const callback = wld.surface.frame();
-    callback.?.add_listener(&wl_callback_listener, &wld);
+    callback.?.add_listener(&wl_frame_callback_listener, &wld);
     _ = wlc.display_flush(wld.display);
 
     wld.should_draw = false;
@@ -2333,8 +2346,8 @@ const xdg_toplevel_listener = xdg_shell.Toplevel.Listener{
     .close = handleXdgToplevelClose,
 };
 
-const wl_callback_listener = wl.Callback.Listener{
-    .done = handleWlCallbackDone,
+const wl_frame_callback_listener = wl.Callback.Listener{
+    .done = handleWlCallbackFrameDone,
 };
 
 const wl_buffer_listener = wl.Buffer.Listener{

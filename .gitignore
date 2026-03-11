@@ -1,3 +1,5 @@
+*.lldb
+
 .zig-cache/
 zig-out/
 .vscode/

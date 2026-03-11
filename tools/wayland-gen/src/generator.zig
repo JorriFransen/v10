@@ -74,6 +74,13 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    pub var proxy_add_listener: *const fn (proxy: *wl.Proxy, implementation: []const *const fn ()  void, user_data: ?*anyopaque)void=undefined;
         \\}};
         \\
+        \\pub const RegisteredListener = struct {{
+        \\    user_data: ?*anyopaque,
+        \\    node: std.SinglyLinkedList.Node = .{{}},
+        \\    implementation: []const *const fn () void,
+        \\}};
+        \\
+        \\
         \\pub const wl = {s};
         \\pub const {s} = struct {{
         \\
@@ -92,7 +99,8 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\        version: u32,
         \\        display: *Display,
         \\        interface: *const Interface,
-        \\        node: std.SinglyLinkedList.Node,
+        \\        freelist_node: std.SinglyLinkedList.Node = .{},
+        \\        listeners: std.SinglyLinkedList = .{},
         \\    };
         \\    pub const Object = struct { proxy: Proxy };
         \\
@@ -244,7 +252,7 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         \\            .version = {},
         \\            .method_count = {},
         \\            .methods = &.{{
-        \\    
+        \\
     , .{
         interface.name,
         interface.version,
@@ -286,7 +294,7 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         try this.append(
             \\
             \\                },
-            \\    
+            \\
         );
     }
 
@@ -375,8 +383,8 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
             \\        objects: [32]Object = undefined,
             \\        free_objects: std.SinglyLinkedList = .{},
             \\
-            \\        listener_count: u32,
-            \\        listeners: [32]Listener = undefined,
+            \\        listeners: [32]RegisteredListener = std.mem.zeroes([32]RegisteredListener),
+            \\        free_listeners: std.SinglyLinkedList = .{},
             \\
             \\        receive_payload_used: usize = 0,
             \\        receive_payload_buf: [4096]u8 = undefined,
@@ -518,21 +526,13 @@ fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *
     const name = try this.zigInterfaceTypeName(&tmp, protocol, interface.name);
 
     try this.appendf(
-        \\        pub fn set_user_data(self: *{s}, user_data: *anyopaque) void {{
-        \\            wl.proxy_set_user_data(@ptrCast(self), user_data);
-        \\        }}
-        \\
-        \\        pub fn get_user_data(self: *{s}) ?*anyopaque {{
-        \\            return wl.proxy_get_user_data(@ptrCast(self));
-        \\        }}
-        \\
         \\        pub fn get_version(self: *{s}) u32 {{
         \\            return self.proxy.version;
         \\        }}
         \\
-    , .{ name, name, name });
+    , .{name});
 
-    if (!interface.has_destructor) {
+    if (!interface.has_destructor and !std.mem.eql(u8, interface.name, "wl_callback")) {
         try this.appendf(
             \\        pub fn destroy(self: *{s}) void {{
             \\            wlc.proxy_destroy(@ptrCast(self));
