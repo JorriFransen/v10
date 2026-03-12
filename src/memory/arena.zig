@@ -79,7 +79,6 @@ pub const Arena = struct {
                 const data: []align(page_size_min) u8 = linux.mmap(
                     null,
                     options.reserved_capacity,
-                    // std.c.PROT.NONE,
                     .{},
                     .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
                     -1,
@@ -180,9 +179,10 @@ pub const Arena = struct {
             else => @compileError("missing implementation for platform for 'Arena.grow'"),
 
             .linux => {
-                if (std.os.linux.mprotect(new_slice.ptr, new_slice.len, .{ .READ = true, .WRITE = true }) != 0) {
+                linux.mprotect(new_slice.ptr, new_slice.len, .{ .READ = true, .WRITE = true }) catch |e| {
+                    log.warn("arena mprotect (commit) failed: error: {}", .{e});
                     return error.CommitFailed;
-                }
+                };
             },
 
             .windows => {

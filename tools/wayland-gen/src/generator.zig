@@ -67,6 +67,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
     try generator.appendf(
         \\const std = @import("std");
         \\const log = std.log.scoped(.wayland);
+        \\const linux = @import("linux");
         \\
         \\pub const wlc = struct {{
         \\    pub var proxyDestroy: *const fn (proxy: *wl.Proxy) void = undefined;
@@ -327,7 +328,7 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
     try this.append("        proxy: wl.Proxy,\n");
     if (std.mem.eql(u8, interface.name, "wl_display")) {
         try this.append(
-            \\        fd: std.c.fd_t,
+            \\        fd: linux.fd_t,
             \\
             \\        objects: [32]Object = undefined,
             \\        free_objects: std.SinglyLinkedList = .{},
@@ -338,12 +339,12 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
             \\        send_payload_used: usize = 0,
             \\        send_payload_buf: [2048]u8 = undefined,
             \\        send_fds_used: usize = 0,
-            \\        send_fds_buf: [32]std.c.fd_t = undefined,
+            \\        send_fds_buf: [32]linux.fd_t = undefined,
             \\
             \\        receive_payload_used: usize = 0,
             \\        receive_payload_buf: [4096]u8 = undefined,
             \\        receive_fds_used: usize = 0,
-            \\        receive_fds_buf: [32]std.c.fd_t = undefined,
+            \\        receive_fds_buf: [32]linux.fd_t = undefined,
             \\
             \\
         );
@@ -790,7 +791,7 @@ fn zigType(this: *Generator, tmp: *mem.TempArena, wl_type: Type, interface_name_
             }
         },
         .array => "Array",
-        .fd => "std.c.fd_t",
+        .fd => "linux.fd_t",
     };
 }
 

@@ -21,31 +21,41 @@ pub const PROT = abi.PROT;
 pub const MAP = abi.MAP;
 pub const F = abi.F;
 pub const SO = abi.SO;
+pub const SOCK = abi.SOCK;
 
 pub const Error = error{
+    AddressNotAvailable,
+    AlreadyConnecting,
+    ConnectingInProgress,
     ConnectionClosed,
+    ConnectionRefused,
     ConnectionReset,
     DiskQuotaExceeded,
     EndOfFile,
     FileBusy,
     FileDoesNotExist,
     FileExists,
+    HostUnreachable,
     Interrupt,
+    InvalidAddressFamily,
     InvalidArg,
     InvalidDevice,
     InvalidFD,
     InvalidFlags,
     InvalidPath,
     InvalidPointer,
+    InvalidProtocol,
     IO,
     IsDirectory,
     Lock,
     MessageTooBig,
     NameTooLong,
+    NetworkUnreachable,
     NoData,
     NoMemory,
     NoSpaceLeft,
     NotConnected,
+    NotSocket,
     PermissionDenied,
     ReadOnly,
     Timeout,
@@ -202,6 +212,50 @@ pub fn munmap(memory: []align(page_size) const u8) Error!void {
             break :blk error.UnexpectedErrno;
         },
     };
+}
+
+pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) Error!fd_t {
+    const rc = abi.syscall3(.socket, @as(u32, @bitCast(domain)), @"type", protocol);
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .AFNOSUPPORT => error.InvalidAddressFamily,
+        .INVAL => error.InvalidArg,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .NOBUFS, .NOMEM => error.NoMemory,
+        .PROTONOSUPPORT => error.InvalidProtocol,
+        else => blk: {
+            log.warn("Unexpected errno for socket: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @truncate(rc);
+}
+
+pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c_int {
+    const rc = abi.syscall3(.connect, @as(u32, @bitCast(sock_fd)), @intFromPtr(addr), addrlen);
+    if (check_errno(rc)) |e| return switch (e) {
+        .PERM, .ACCES => error.PermissionDenied,
+        .ADDRNOTAVAIL => error.AddressNotAvailable,
+        .AFNOSUPPORT => error.InvalidAddressFamily,
+        .ALREADY => error.AlreadyConnecting,
+        .BADF => error.InvalidFD,
+        .CONNREFUSED => error.ConnectionRefused,
+        .FAULT => error.InvalidPointer,
+        .INPROGRESS => error.ConnectingInProgress,
+        .INTR => error.Interrupt,
+        .INVAL => error.InvalidArg,
+        .NOTSOCK => error.NotSocket,
+        .TIMEDOUT => error.Timeout,
+        .NETUNREACH => error.NetworkUnreachable,
+        .HOSTUNREACH => error.HostUnreachable,
+        else => blk: {
+            log.warn("Unexpected errno for connect: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    assert(rc == 0);
+    return @intCast(rc);
 }
 
 pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {

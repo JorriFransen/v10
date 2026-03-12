@@ -244,6 +244,18 @@ pub const abi = switch (builtin.cpu.arch) {
             pub const DETACH_REUSEPORT_BPF = 68;
         };
 
+        pub const SOCK = struct {
+            pub const STREAM = 1;
+            pub const DGRAM = 2;
+            pub const RAW = 3;
+            pub const RDM = 4;
+            pub const SEQPACKET = 5;
+            pub const DCCP = 6;
+            pub const PACKET = 10;
+            pub const CLOEXEC = 0o2000000;
+            pub const NONBLOCK = 0o4000;
+        };
+
         pub const SYS = enum(usize) {
             read = 0,
             write = 1,

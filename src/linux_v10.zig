@@ -15,8 +15,6 @@ const wlc = @import("wayland-client.zig");
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
-const libdecor = @import("libdecor.zig");
-
 const linux = @import("linux");
 const input = linux.input;
 const pa = linux.pulse;
@@ -76,7 +74,7 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
-        // .{ .scope = .@"wayland-client", .level = .warn },
+        .{ .scope = .@"wayland-client", .level = .warn },
     },
 };
 
@@ -281,45 +279,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        log.debug("xdg_decoration not supported, falling back to libdecor", .{});
+        log.debug("xdg_decoration not supported, falling back to no decorations", .{});
 
-        var libdecor_available = true;
-        libdecor.load() catch |e| switch (e) {
-            error.LibDecorNotFound => libdecor_available = true,
-            error.LookupFailed => return e,
-        };
+        _ = wlc.displayRoundtrip(wld.display);
+        wld.pending_configure_serial = null;
 
-        if (libdecor_available) {
-            xdg_toplevel.destroy();
-            xdg_surface.destroy();
-
-            const context = libdecor.new(display, null) orelse {
-                log.err("libdecor_new failed", .{});
-                return error.UnexpectedLibDecor;
-            };
-
-            const frame = libdecor.decorate(context, @ptrCast(wld.surface), @ptrCast(@constCast(&libdecor_listener)), &wld) orelse {
-                log.err("libdecor decorate failed", .{});
-                return error.UnexpectedLibDecor;
-            };
-
-            libdecor.frame_set_app_id(frame, app_id);
-            libdecor.frame_set_title(frame, app_id);
-
-            wld.surface.commit();
-
-            _ = wlc.displayRoundtrip(wld.display);
-            wld.pending_configure_serial = null;
-
-            break :blk .{ .libdecor = .{ .decor = @ptrCast(context), .frame = @ptrCast(frame) } };
-        } else {
-            log.debug("libdecor not supported, falling back to no decorations", .{});
-
-            _ = wlc.displayRoundtrip(wld.display);
-            wld.pending_configure_serial = null;
-
-            break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
-        }
+        break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
     };
 
     const buffer = aquireFreeBuffer().?;
@@ -946,16 +911,10 @@ const WlToplevel = union(enum) {
         xdg_toplevel_decoration: *xdg_decoration.ToplevelDecorationV1,
     },
 
-    libdecor: struct {
-        decor: *libdecor.Context,
-        frame: *libdecor.Frame,
-    },
-
     pub fn set_title(this: *WlToplevel, title: [:0]const u8) void {
         switch (this.*) {
             .no_decoration => |t| t.xdg_toplevel.set_title(title),
             .xdg_decoration => |t| t.xdg_toplevel.set_title(title),
-            .libdecor => |ld| libdecor.frame_set_title(ld.frame, title),
         }
     }
 
@@ -963,7 +922,6 @@ const WlToplevel = union(enum) {
         switch (this.*) {
             .no_decoration => |t| t.xdg_toplevel.setFullscreen(output),
             .xdg_decoration => |t| t.xdg_toplevel.setFullscreen(output),
-            .libdecor => |ld| libdecor.frame_set_fullscreen(ld.frame, output),
         }
     }
 
@@ -971,7 +929,6 @@ const WlToplevel = union(enum) {
         switch (this.*) {
             .no_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
             .xdg_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
-            .libdecor => |ld| libdecor.frame_unset_fullscreen(ld.frame),
         }
     }
 
@@ -979,7 +936,6 @@ const WlToplevel = union(enum) {
         switch (this.*) {
             .no_decoration => |t| t.xdg_surface.ackConfigure(serial),
             .xdg_decoration => |t| t.xdg_surface.ackConfigure(serial),
-            .libdecor => unreachable,
         }
     }
 };
@@ -1816,41 +1772,6 @@ fn handleWlMouseAxis(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, axis: 
     // log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
 }
 
-fn handleLibdecorConfigure(frame: *libdecor.Frame, config: *libdecor.Configuration, data: ?*anyopaque) callconv(.c) void {
-    _ = data;
-
-    var width: c_int = undefined;
-    var height: c_int = undefined;
-    if (!libdecor.configuration_get_content_size(config, frame, &width, &height)) {
-        width = back_buffer_width;
-        height = back_buffer_height;
-    }
-
-    const state = libdecor.state_new(width, height) orelse @panic("libdecor_state_new failed");
-    libdecor.frame_commit(frame, state, config);
-    libdecor.state_free(state);
-
-    resize(width, height) catch |e| {
-        log.err("Resize failed during libdecor configure: {}", .{e});
-        std.process.exit(1);
-    };
-
-    wld.pending_configure_serial = 1;
-    log.debug("decor configured {},{}", .{ width, height });
-}
-
-fn handleLibdecorClose(frame: *libdecor.Frame, data: ?*anyopaque) callconv(.c) void {
-    _ = data;
-    _ = frame;
-    running = false;
-}
-
-fn handleLibdecorDismissPopup(frame: *libdecor.Frame, seat_name: [*c]const u8, data: ?*anyopaque) callconv(.c) void {
-    _ = frame;
-    _ = data;
-    log.debug("handleLibdecorDismissPopup seat: {s}", .{seat_name});
-}
-
 fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) void {
     _ = toplevel_decoration;
     log.debug("xdg_decoration configure: {}", .{mode});
@@ -2379,13 +2300,6 @@ const wl_mouse_listener = wl.Pointer.Listener{
     .axisStop = @ptrCast(&nop),
     .axisValue120 = @ptrCast(&nop),
     .axisRelativeDirection = @ptrCast(&nop),
-};
-
-const libdecor_listener = libdecor.FrameInterface{
-    .configure = handleLibdecorConfigure,
-    .commit = @ptrCast(&nop), // This should be safe to ignore, since we continuously redraw
-    .close = handleLibdecorClose,
-    .dismiss_popup = handleLibdecorDismissPopup,
 };
 
 const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{

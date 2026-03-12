@@ -175,7 +175,7 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path(src_path ++ "/linux_v10.zig"),
-        .link_libc = true, // Required for dlopen, maybe more
+        .link_libc = true,
         .imports = &.{
             .{ .name = "arch", .module = modules.arch },
             .{ .name = "linux", .module = modules.linux },
@@ -203,6 +203,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/v10.zig"),
+        .link_libc = false,
         .imports = &.{
             .{ .module = modules.options, .name = "options" },
         },
@@ -269,6 +270,9 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
     modules.wayland_module = b.createModule(.{
         .optimize = optimize,
         .root_source_file = wayland_source,
+        .imports = &.{
+            .{ .name = "linux", .module = modules.linux },
+        },
     });
 
     const aseprite_script_runner_exe = if (b.findProgram(&.{"aseprite"}, &.{})) |_|

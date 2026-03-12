@@ -10,7 +10,7 @@ const wl = wayland.wl;
 var glob_connected = false;
 var glob_display: wl.Display = undefined;
 
-var glob_display_listener = wl.Display.Listener{
+const glob_display_listener = wl.Display.Listener{
     .@"error" = handleDisplayError,
     .deleteId = handleDeleteId,
 };
@@ -101,10 +101,8 @@ const Message = struct {
 pub fn displayConnect(path_opt: ?[*:0]const u8) ?*wl.Display {
     assert(!glob_connected);
 
-    // TODO: Move socket to linux.zig
-    var sock_addr = std.mem.zeroes(std.c.sockaddr.un);
-    const fd = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM, 0);
-    assert(fd >= 0);
+    var sock_addr = std.mem.zeroes(linux.sockaddr.un);
+    const fd = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM, 0) catch unreachable; // TODO: Handle error
 
     var result: ?*wl.Display = null;
 
@@ -117,10 +115,10 @@ pub fn displayConnect(path_opt: ?[*:0]const u8) ?*wl.Display {
                 break :blk "/run/user/1000/wayland-0";
             };
 
-            sock_addr.family = std.c.AF.UNIX;
+            sock_addr.family = linux.AF.UNIX;
             assert(path.len <= sock_addr.path.len);
             @memcpy(sock_addr.path[0..path.len], path);
-            const r = std.c.connect(fd, @ptrCast(&sock_addr), @sizeOf(@TypeOf(sock_addr)));
+            const r = linux.connect(fd, @ptrCast(&sock_addr), @sizeOf(@TypeOf(sock_addr))) catch unreachable; // TODO: Handle error
             assert(r == 0);
 
             // TODO: Is this the right version to pass?
