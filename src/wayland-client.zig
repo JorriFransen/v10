@@ -7,13 +7,12 @@ const wayland = @import("wayland");
 const wl = wayland.wl;
 
 // TODO: Replace wayland.Array with slice/cast array types on dispatch
-// TODO: Adding multiple listeners
 var glob_connected = false;
 var glob_display: wl.Display = undefined;
 
 var glob_display_listener = wl.Display.Listener{
     .@"error" = handleDisplayError,
-    .delete_id = handleDeleteId,
+    .deleteId = handleDeleteId,
 };
 
 const Message = struct {
@@ -99,7 +98,7 @@ const Message = struct {
     }
 };
 
-pub fn display_connect(path_opt: ?[*:0]const u8) ?*wl.Display {
+pub fn displayConnect(path_opt: ?[*:0]const u8) ?*wl.Display {
     assert(!glob_connected);
 
     // TODO: Move socket to linux.zig
@@ -156,7 +155,7 @@ pub fn display_connect(path_opt: ?[*:0]const u8) ?*wl.Display {
 
             glob_connected = true;
 
-            glob_display.add_listener(&glob_display_listener, null);
+            glob_display.addListener(&glob_display_listener, null);
         } else |e| {
             log.err("display_connect fcntl failed, error: {}", .{e});
         }
@@ -167,11 +166,11 @@ pub fn display_connect(path_opt: ?[*:0]const u8) ?*wl.Display {
     return result;
 }
 
-pub fn display_disconnect(display: *wl.Display) void {
+pub fn displayDisconnect(display: *wl.Display) void {
     linux.close(display.fd) catch unreachable;
 }
 
-pub fn display_roundtrip(display: *wl.Display) usize {
+pub fn displayRoundtrip(display: *wl.Display) usize {
     var dispatched_count: usize = 0;
 
     log.debug("display_roundtrip(id = {})", .{display.proxy.id});
@@ -183,11 +182,11 @@ pub fn display_roundtrip(display: *wl.Display) usize {
         const display_roundtrip_done_listener = wl.Callback.Listener{
             .done = &displayRoundtripSyncDoneHandler,
         };
-        sync_callback.add_listener(&display_roundtrip_done_listener, &done);
-        display_flush(display);
+        sync_callback.addListener(&display_roundtrip_done_listener, &done);
+        displayFlush(display);
 
         while (!done) {
-            const dc = display_dispatch_timeout(display, -1);
+            const dc = displayDispatchTimeout(display, -1);
             if (dc < 0) break;
             dispatched_count += @intCast(dc);
         }
@@ -206,11 +205,11 @@ fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl.Callback, _: u32) 
     done_ptr.* = true;
 }
 
-pub fn display_dispatch(display: *wl.Display) isize {
-    return display_dispatch_timeout(display, 0);
+pub fn displayDispatch(display: *wl.Display) isize {
+    return displayDispatchTimeout(display, 0);
 }
 
-fn display_dispatch_timeout(display: *wl.Display, first_timeout: c_int) isize {
+fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
     assert(display == &glob_display);
 
     log.debug("display_dispatch(id = {})", .{display.proxy.id});
@@ -395,7 +394,7 @@ fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
     }
 }
 
-pub fn display_flush(display: *wl.Display) void {
+pub fn displayFlush(display: *wl.Display) void {
     var iov = linux.iovec{ .base = &display.send_payload_buf, .len = display.send_payload_used };
 
     log.debug("display_flush(id = {})", .{display.proxy.id});
@@ -432,7 +431,7 @@ pub fn display_flush(display: *wl.Display) void {
             log.err("message send failed, error: {}", .{e});
             log.err("reading and dispatching errors...", .{});
             glob_connected = false;
-            _ = display_dispatch(display);
+            _ = displayDispatch(display);
             @panic("Wayland error");
         };
 
@@ -442,7 +441,7 @@ pub fn display_flush(display: *wl.Display) void {
             log.err("message send failed, error: {}", .{e});
             log.err("reading and dispatching errors...", .{});
             glob_connected = false;
-            _ = display_dispatch(display);
+            _ = displayDispatch(display);
             @panic("Wayland error");
         };
 
@@ -798,7 +797,7 @@ pub fn proxyDestroy(proxy: *wl.Proxy) void {
     display.free_objects.prepend(&proxy.freelist_node);
 }
 
-pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, flags: u32, args: []const wayland.Argument) ?*wl.Object {
+pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, flags: u32, args: []const wayland.Argument) ?*wl.Object {
     _ = .{ proxy, op, interface, version, flags, args };
 
     assert(glob_connected);
@@ -897,7 +896,7 @@ pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const w
     const payload_rem = display.send_payload_buf.len - display.send_payload_used;
 
     if (payload_rem < payload.len or display.send_fds_used > 0) {
-        display_flush(display);
+        displayFlush(display);
         assert(payload.len <= display.send_payload_buf.len);
     }
 
@@ -911,13 +910,13 @@ pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const w
         @memcpy(display.send_fds_buf[fd_offset .. fd_offset + fds.len], fds);
         display.send_fds_used += fds.len;
 
-        display_flush(display);
+        displayFlush(display);
     }
 
     return @ptrCast(result);
 }
 
-pub fn proxy_add_listener(proxy: *wl.Proxy, implementation: []const *const fn () void, user_data: ?*anyopaque) void {
+pub fn proxyAddListener(proxy: *wl.Proxy, implementation: []const *const fn () void, user_data: ?*anyopaque) void {
     const display = proxy.display;
     assert(display == &glob_display);
 

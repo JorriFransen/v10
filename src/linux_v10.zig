@@ -122,18 +122,18 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     try wl.load(&lwl);
 
-    wayland.wlc.proxy_destroy = wlc.proxyDestroy;
-    wayland.wlc.proxy_add_listener = wlc.proxy_add_listener;
-    wayland.wlc.proxy_marshal_array_flags = wlc.proxy_marshal_array_flags;
+    wayland.wlc.proxyDestroy = wlc.proxyDestroy;
+    wayland.wlc.proxyAddListener = wlc.proxyAddListener;
+    wayland.wlc.proxyMarshalArrayFlags = wlc.proxyMarshalArrayFlags;
 
-    const display = wlc.display_connect(null) orelse {
+    const display = wlc.displayConnect(null) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;
     };
-    defer wlc.display_disconnect(display);
+    defer wlc.displayDisconnect(display);
     log.debug("Display connected", .{});
 
-    const wl_registry = display.get_registry() orelse {
+    const wl_registry = display.getRegistry() orelse {
         log.err("wl_display_get_registry failed", .{});
         return error.UnexpectedWayland;
     };
@@ -170,8 +170,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
 
     var wli = WlInitData{ .wld = &wld };
-    wl_registry.add_listener(&wl_registry_listener, &wli);
-    if (wlc.display_roundtrip(display) == -1) {
+    wl_registry.addListener(&wl_registry_listener, &wli);
+    if (wlc.displayRoundtrip(display) == -1) {
         log.err("wl_display_roundtrip failed", .{});
         return error.UnexpectedWayland;
     }
@@ -194,7 +194,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     }
 
-    _ = wlc.display_roundtrip(wld.display); // Wait for max_width/height to be set
+    _ = wlc.displayRoundtrip(wld.display); // Wait for max_width/height to be set
 
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
@@ -219,49 +219,49 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     }
 
-    wld.surface = wld.compositor.create_surface() orelse {
+    wld.surface = wld.compositor.createSurface() orelse {
         log.err("wl_compositor_create_surface failed", .{});
         return error.UnexpectedWayland;
     };
-    wld.surface.add_listener(&wl_surface_listener, null);
+    wld.surface.addListener(&wl_surface_listener, null);
 
-    _ = wlc.display_roundtrip(display);
+    _ = wlc.displayRoundtrip(display);
 
     const app_id = "v10";
     const title = "v10";
 
     wld.toplevel = blk: {
-        const xdg_surface = wld.wm_base.get_xdg_surface(wld.surface) orelse {
+        const xdg_surface = wld.wm_base.getXdgSurface(wld.surface) orelse {
             log.err("xdg_wm_base_get_xdg_surface failed", .{});
             return error.UnexpectedWayland;
         };
-        xdg_surface.add_listener(&xdg_surface_listener, &wld);
+        xdg_surface.addListener(&xdg_surface_listener, &wld);
 
-        const xdg_toplevel = xdg_surface.get_toplevel() orelse {
+        const xdg_toplevel = xdg_surface.getToplevel() orelse {
             log.err("xdg_surface_get_top_level failed", .{});
             return error.UnexpectedWayland;
         };
-        xdg_toplevel.add_listener(&xdg_toplevel_listener, &wld);
+        xdg_toplevel.addListener(&xdg_toplevel_listener, &wld);
 
         log.debug("xdg_toplevel: {}", .{xdg_toplevel});
-        xdg_toplevel.set_app_id(app_id);
-        xdg_toplevel.set_title(title);
+        xdg_toplevel.setAppId(app_id);
+        xdg_toplevel.setTitle(title);
         wld.surface.commit();
 
-        _ = wlc.display_roundtrip(display);
+        _ = wlc.displayRoundtrip(display);
 
         if (wli.xdg_decoration_manager) |manager| {
-            const toplevel_decoration = manager.get_toplevel_decoration(xdg_toplevel) orelse {
+            const toplevel_decoration = manager.getToplevelDecoration(xdg_toplevel) orelse {
                 log.err("zxdg_decoration_manager_v1_get_toplevel_decoration failed", .{});
                 return error.UnexpectedWayland;
             };
-            toplevel_decoration.set_mode(.server_side);
+            toplevel_decoration.setMode(.server_side);
 
             var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
-            toplevel_decoration.add_listener(&xdg_decoration_listener, &xdg_decoration_mode);
+            toplevel_decoration.addListener(&xdg_decoration_listener, &xdg_decoration_mode);
 
-            _ = wlc.display_roundtrip(wld.display);
-            xdg_surface.ack_configure(wld.pending_configure_serial.?);
+            _ = wlc.displayRoundtrip(wld.display);
+            xdg_surface.ackConfigure(wld.pending_configure_serial.?);
             wld.pending_configure_serial = null;
 
             if (xdg_decoration_mode == .server_side) {
@@ -308,14 +308,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             wld.surface.commit();
 
-            _ = wlc.display_roundtrip(wld.display);
+            _ = wlc.displayRoundtrip(wld.display);
             wld.pending_configure_serial = null;
 
             break :blk .{ .libdecor = .{ .decor = @ptrCast(context), .frame = @ptrCast(frame) } };
         } else {
             log.debug("libdecor not supported, falling back to no decorations", .{});
 
-            _ = wlc.display_roundtrip(wld.display);
+            _ = wlc.displayRoundtrip(wld.display);
             wld.pending_configure_serial = null;
 
             break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
@@ -342,17 +342,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
     log.debug("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
-    wld.keyboard = wld.seat.get_keyboard() orelse {
+    wld.keyboard = wld.seat.getKeyboard() orelse {
         log.debug("wl_seat_get_keyboard failed", .{});
         return error.UnexpectedWayland;
     };
-    wld.keyboard.add_listener(&wl_keyboard_listener, &wld);
+    wld.keyboard.addListener(&wl_keyboard_listener, &wld);
 
-    wld.pointer = wld.seat.get_pointer() orelse {
+    wld.pointer = wld.seat.getPointer() orelse {
         log.debug("wl_set_get_pointer failed", .{});
         return error.UnexpectedWayland;
     };
-    wld.pointer.add_listener(&wl_mouse_listener, &wld);
+    wld.pointer.addListener(&wl_mouse_listener, &wld);
 
     const base_address: ?[*]align(std.heap.page_size_min) u8, const fixed = if (options.internal_build)
         .{ @ptrFromInt(mem.TiB * 2), true }
@@ -551,7 +551,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        if (wlc.display_dispatch(display) == -1) {
+        if (wlc.displayDispatch(display) == -1) {
             running = false;
         }
 
@@ -961,24 +961,24 @@ const WlToplevel = union(enum) {
 
     pub fn set_fullscreen(this: *WlToplevel, output: ?*wl.Output) void {
         switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
-            .xdg_decoration => |t| t.xdg_toplevel.set_fullscreen(output),
+            .no_decoration => |t| t.xdg_toplevel.setFullscreen(output),
+            .xdg_decoration => |t| t.xdg_toplevel.setFullscreen(output),
             .libdecor => |ld| libdecor.frame_set_fullscreen(ld.frame, output),
         }
     }
 
     pub fn unset_fullscreen(this: *WlToplevel) void {
         switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
-            .xdg_decoration => |t| t.xdg_toplevel.unset_fullscreen(),
+            .no_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
+            .xdg_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
             .libdecor => |ld| libdecor.frame_unset_fullscreen(ld.frame),
         }
     }
 
     pub fn ack_configure(this: *WlToplevel, serial: u32) void {
         switch (this.*) {
-            .no_decoration => |t| t.xdg_surface.ack_configure(serial),
-            .xdg_decoration => |t| t.xdg_surface.ack_configure(serial),
+            .no_decoration => |t| t.xdg_surface.ackConfigure(serial),
+            .xdg_decoration => |t| t.xdg_surface.ackConfigure(serial),
             .libdecor => unreachable,
         }
     }
@@ -1298,7 +1298,7 @@ fn resize_shm() ShmError!void {
 
         if (wld.pool) |p| p.destroy();
 
-        const pool = wld.shm.create_pool(fd, @intCast(wld.shm_data.len)) orelse {
+        const pool = wld.shm.createPool(fd, @intCast(wld.shm_data.len)) orelse {
             log.err("wl_shm_create_pool failed", .{});
             return error.WlShmCreatePoolFailed;
         };
@@ -1314,7 +1314,7 @@ fn resize_shm() ShmError!void {
 
         var offset: i32 = 0;
         for (&wld.buffers) |*buffer| {
-            const handle = pool.create_buffer(offset, width, height, stride, .xrgb8888) orelse {
+            const handle = pool.createBuffer(offset, width, height, stride, .xrgb8888) orelse {
                 log.err("wl_pool_create_buffer failed", .{});
                 return error.WlPoolCreateBufferFailed;
             };
@@ -1326,7 +1326,7 @@ fn resize_shm() ShmError!void {
                 .width = width,
                 .height = height,
             };
-            handle.add_listener(&wl_buffer_listener, buffer);
+            handle.addListener(&wl_buffer_listener, buffer);
 
             offset += @intCast(buffer_size);
         }
@@ -1365,8 +1365,8 @@ fn aquireFreeBuffer() ?*WlBuffer {
             if (buffer.handle == null or buffer.width != wld.window_width or buffer.height != wld.window_height) {
                 if (buffer.handle) |h| h.destroy();
 
-                const new_buf = wld.pool.?.create_buffer(buffer.offset, wld.window_width, wld.window_height, wld.window_width * bytes_per_pixel, .xrgb8888) orelse @panic("Buffer recreation failed");
-                new_buf.add_listener(&wl_buffer_listener, buffer);
+                const new_buf = wld.pool.?.createBuffer(buffer.offset, wld.window_width, wld.window_height, wld.window_width * bytes_per_pixel, .xrgb8888) orelse @panic("Buffer recreation failed");
+                new_buf.addListener(&wl_buffer_listener, buffer);
                 buffer.handle = new_buf;
                 buffer.width = wld.window_width;
                 buffer.height = wld.window_height;
@@ -1511,7 +1511,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
             found = true;
 
             if (map[2]) |listener| {
-                proxy.?.add_listener(@ptrCast(@alignCast(listener)), wli);
+                proxy.?.addListener(@ptrCast(@alignCast(listener)), wli);
             }
             break;
         }
@@ -1529,7 +1529,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
                     };
                     free_slot_found = true;
 
-                    wl_output.add_listener(&wl_output_listener, output);
+                    wl_output.addListener(&wl_output_listener, output);
                     break;
                 }
             }
@@ -2217,7 +2217,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         displayWaylandBufferInWindow(wl_buffer);
         return true;
     } else {
-        _ = wlc.display_roundtrip(wld.display);
+        _ = wlc.displayRoundtrip(wld.display);
         log.warn("Failed to aquire wayland buffer!", .{});
         // unreachable; // might want to loop util a buffer is aquired
         // continue;
@@ -2242,8 +2242,8 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
 
     wld.surface.commit();
     const callback = wld.surface.frame();
-    callback.?.add_listener(&wl_frame_callback_listener, &wld);
-    _ = wlc.display_flush(wld.display);
+    callback.?.addListener(&wl_frame_callback_listener, &wld);
+    _ = wlc.displayFlush(wld.display);
 
     wld.should_draw = false;
 }
@@ -2316,7 +2316,7 @@ fn nop() void {}
 
 const wl_registry_listener = wl.Registry.Listener{
     .global = handleWlRegisterGlobal,
-    .global_remove = handleWlRemoveGlobal,
+    .globalRemove = handleWlRemoveGlobal,
 };
 
 const wl_shm_listener = wl.Shm.Listener{
@@ -2326,8 +2326,8 @@ const wl_shm_listener = wl.Shm.Listener{
 const wl_surface_listener = wl.Surface.Listener{
     .enter = handleWlSurfaceEnter,
     .leave = handleWlSurfaceLeave,
-    .preferred_buffer_scale = @ptrCast(&nop),
-    .preferred_buffer_transform = @ptrCast(&nop),
+    .preferredBufferScale = @ptrCast(&nop),
+    .preferredBufferTransform = @ptrCast(&nop),
 };
 
 const xdg_wm_base_listener = xdg_shell.WmBase.Listener{
@@ -2340,8 +2340,8 @@ const xdg_surface_listener = xdg_shell.Surface.Listener{
 
 const xdg_toplevel_listener = xdg_shell.Toplevel.Listener{
     .configure = handleXdgToplevelConfigure,
-    .configure_bounds = handleXdgToplevelConfigureBounds,
-    .wm_capabilities = handleXdgToplevelWmCapabilities,
+    .configureBounds = handleXdgToplevelConfigureBounds,
+    .wmCapabilities = handleXdgToplevelWmCapabilities,
     .close = handleXdgToplevelClose,
 };
 
@@ -2363,7 +2363,7 @@ const wl_keyboard_listener = wl.Keyboard.Listener{
     .enter = @ptrCast(&nop),
     .leave = @ptrCast(&nop),
     .modifiers = handleWlKeyModifiers,
-    .repeat_info = @ptrCast(&nop),
+    .repeatInfo = @ptrCast(&nop),
     .keymap = @ptrCast(&nop),
 };
 
@@ -2374,11 +2374,11 @@ const wl_mouse_listener = wl.Pointer.Listener{
     .button = handleWlMouseButton,
     .axis = handleWlMouseAxis,
     .frame = @ptrCast(&nop), // TODO: Use this to handle incoming data correctly in relation to frame boundaries
-    .axis_discrete = @ptrCast(&nop),
-    .axis_source = @ptrCast(&nop),
-    .axis_stop = @ptrCast(&nop),
-    .axis_value120 = @ptrCast(&nop),
-    .axis_relative_direction = @ptrCast(&nop),
+    .axisDiscrete = @ptrCast(&nop),
+    .axisSource = @ptrCast(&nop),
+    .axisStop = @ptrCast(&nop),
+    .axisValue120 = @ptrCast(&nop),
+    .axisRelativeDirection = @ptrCast(&nop),
 };
 
 const libdecor_listener = libdecor.FrameInterface{

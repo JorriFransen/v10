@@ -69,9 +69,9 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\const log = std.log.scoped(.wayland);
         \\
         \\pub const wlc = struct {{
-        \\    pub var proxy_destroy: *const fn (proxy: *wl.Proxy) void = undefined;
-        \\    pub var proxy_marshal_array_flags: *const fn (proxy: *wl.Proxy, op: u32, interface: ?*const Interface, version: u32, flags: u32, args: []const Argument) ?*wl.Object=undefined;
-        \\    pub var proxy_add_listener: *const fn (proxy: *wl.Proxy, implementation: []const *const fn ()  void, user_data: ?*anyopaque)void=undefined;
+        \\    pub var proxyDestroy: *const fn (proxy: *wl.Proxy) void = undefined;
+        \\    pub var proxyMarshalArrayFlags: *const fn (proxy: *wl.Proxy, op: u32, interface: ?*const Interface, version: u32, flags: u32, args: []const Argument) ?*wl.Object=undefined;
+        \\    pub var proxyAddListener: *const fn (proxy: *wl.Proxy, implementation: []const *const fn ()  void, user_data: ?*anyopaque)void=undefined;
         \\}};
         \\
         \\pub const RegisteredListener = struct {{
@@ -103,56 +103,6 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\        listeners: std.SinglyLinkedList = .{},
         \\    };
         \\    pub const Object = struct { proxy: Proxy };
-        \\
-        // \\    pub var event_queue_destroy: *const fn (queue: *EventQueue) callconv(.c) void = undefined;
-        // \\    pub var proxy_marshal_flags: *const fn (proxy: *Proxy, opcode: u32, interface: ?*const Interface, version: u32, flags: u32, ...) callconv(.c) *Proxy = undefined;
-        // \\    pub var proxy_marshal_array_flags: *const fn (proxy: *Proxy, opcode: u32, interface: ?*const Interface, version: u32, flags: u32, args: [*]const Argument) callconv(.c) *Proxy = undefined;
-        // // \\    pub var proxy_marshal: *const fn (proxy: *Proxy, opcode: u32, ...) callconv(.c) void = undefined;
-        // // \\    pub var proxy_marshal_array: *const fn (proxy: *Proxy, opcode: u32, args: ?[*]Argument) callconv(.c) void = undefined;
-        // \\    pub var proxy_create: *const fn (proxy: *Proxy, interface: *const Interface) callconv(.c) *Proxy = undefined;
-        // \\    pub var proxy_create_wrapper: *const fn (proxy: *anyopaque) callconv(.c) *anyopaque = undefined;
-        // \\    pub var proxy_wrapper_destroy: *const fn (proxy: *anyopaque) callconv(.c) void = undefined;
-        // // \\    pub var proxy_marshal_constructor: *const fn (proxy: *Proxy, opcode: u32, interface: *const Interface, ...) callconv(.c) *Proxy = undefined;
-        // // \\    pub var proxy_marshal_constructor_versioned: *const fn (proxy: *Proxy, opcode: u32, interface: *const Interface, version: u32, ...) callconv(.c) *Proxy = undefined;
-        // // \\    pub var proxy_marshal_array_constructor: *const fn (proxy: *Proxy, opcode: u32, args: [*]Argument, interface: *const Interface) callconv(.c) ?*Proxy = undefined;
-        // // \\    pub var proxy_marshal_array_constructor_versioned: *const fn (proxy: *Proxy, opcode: u32, args: [*]Argument, interface: *const Interface, version: u32) callconv(.c) *Proxy = undefined;
-        // \\    pub var proxy_destroy: *const fn (proxy: *Proxy) callconv(.c) void = undefined;
-        // // \\    pub var proxy_add_listener: *const fn (proxy: *Proxy, implementation: **const fn () callconv(.c) void, data: ?*anyopaque) callconv(.c) void = undefined;
-        // \\    pub var proxy_get_listener: *const fn (proxy: *Proxy) callconv(.c) ?*anyopaque = undefined;
-        // \\    pub var proxy_add_dispatcher: *const fn (proxy: *Proxy, dispatcher_func: DispatcherFunc, dispatcher_data: *const anyopaque, data: *anyopaque) callconv(.c) c_int = undefined;
-        // \\    pub var proxy_set_user_data: *const fn (proxy: *Proxy, user_data: *anyopaque) callconv(.c) void = undefined;
-        // \\    pub var proxy_get_user_data: *const fn (proxy: *Proxy) callconv(.c) *anyopaque = undefined;
-        // \\    pub var proxy_get_version: *const fn (proxy: *Proxy) callconv(.c) u32 = undefined;
-        // \\    pub var proxy_get_id: *const fn (proxy: *Proxy) callconv(.c) u32 = undefined;
-        // \\    pub var proxy_set_tag: *const fn (proxy: *Proxy, tag: ?[*]const ?[*]const u8) callconv(.c) void = undefined;
-        // \\    pub var proxy_get_class: *const fn (proxy: *Proxy) callconv(.c) ?[*]const u8 = undefined;
-        // \\    pub var proxy_get_display: *const fn (proxy: *Proxy) callconv(.c) ?*Display = undefined;
-        // \\    pub var proxy_set_queue: *const fn (proxy: *Proxy, queue: *EventQueue) callconv(.c) void = undefined;
-        // \\    pub var proxy_get_queue: *const fn (proxy: *Proxy) callconv(.c) ?*EventQueue = undefined;
-        // \\    pub var event_queue_get_name: *const fn (queue: *const EventQueue) callconv(.c) ?[*]const u8 = undefined;
-        // // \\    pub var display_connect: *const fn (name: ?[*:0]const u8) callconv(.c) ?*Display = undefined;
-        // \\    pub var display_connect_to_fd: *const fn (fd: c_int) callconv(.c) ?*Display = undefined;
-        // \\    pub var display_disconnect: *const fn (display: *Display) callconv(.c) void = undefined;
-        // \\    pub var display_get_fd: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var display_dispatch: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var display_dispatch_queue: *const fn (display: *Display, queue: *EventQueue) callconv(.c) c_int = undefined;
-        // \\    pub var display_dispatch_timeout: *const fn (display: *Display, timeout: *const Timespec) callconv(.c) c_int = undefined;
-        // \\    pub var display_dispatch_queue_timeout: *const fn (display: *Display, queue: *EventQueue, timeout: *const Timespec) callconv(.c) c_int = undefined;
-        // \\    pub var display_dispatch_queue_pending: *const fn (display: *Display, queue: *EventQueue) callconv(.c) c_int = undefined;
-        // \\    pub var display_dispatch_pending: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var display_get_error: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var display_get_protocol_error: *const fn (display: *Display, interface: **const Interface, id: *u32) callconv(.c) u32 = undefined;
-        // \\    pub var display_flush: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var display_roundtrip_queue: *const fn (display: *Display, queue: *EventQueue) callconv(.c) c_int = undefined;
-        // \\    pub var display_roundtrip: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var display_create_queue: *const fn (display: *Display) callconv(.c) ?*EventQueue = undefined;
-        // \\    pub var display_create_queue_with_name: *const fn (display: *Display, name: [*:0]const u8) callconv(.c) ?*EventQueue = undefined;
-        // \\    pub var display_prepare_read_queue: *const fn (display: *Display, queue: *EventQueue) callconv(.c) c_int = undefined;
-        // \\    pub var display_prepare_read: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var display_cancel_read: *const fn (display: *Display) callconv(.c) void = undefined;
-        // \\    pub var display_read_events: *const fn (display: *Display) callconv(.c) c_int = undefined;
-        // \\    pub var log_set_handler_client: *const fn (handler: LogFunc) callconv(.c) void = undefined;
-        // \\    pub var display_set_max_buffer_size: *const fn (display: *Display, max_buffer_size: usize) callconv(.c) void = undefined;
         \\
         \\    pub fn load(lib: anytype) !void {
         \\        inline for (@typeInfo(@This()).@"struct".decls) |decl| {
@@ -529,7 +479,7 @@ fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *
     const name = try this.zigInterfaceTypeName(&tmp, protocol, interface.name);
 
     try this.appendf(
-        \\        pub fn get_version(self: *{s}) u32 {{
+        \\        pub fn getVersion(self: *{s}) u32 {{
         \\            return self.proxy.version;
         \\        }}
         \\
@@ -538,7 +488,7 @@ fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *
     if (!interface.has_destructor and !std.mem.eql(u8, interface.name, "wl_callback")) {
         try this.appendf(
             \\        pub fn destroy(self: *{s}) void {{
-            \\            wlc.proxy_destroy(@ptrCast(self));
+            \\            wlc.proxyDestroy(@ptrCast(self));
             \\        }}
             \\
         , .{name});
@@ -551,7 +501,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
 
     try this.genDocComment("        ", request.description);
     try this.appendf("        pub fn {f}(self: *{s}", .{
-        std.zig.fmtId(request.name),
+        std.zig.fmtId(try zigFunctionName(&tmp, request.name)),
         try this.zigInterfaceTypeName(&tmp, protocol, interface.name),
     });
 
@@ -589,7 +539,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
     if (constructor) {
         const interface_def = try tmpPrint(&tmp, "&{s}.interface", .{try this.zigInterfaceTypeName(&tmp, protocol, constructor_interface)});
         try this.appendf(
-            \\            const result = wlc.proxy_marshal_array_flags(@ptrCast(self), {}, {s}, self.proxy.version, 0, &.{{
+            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, {s}, self.proxy.version, 0, &.{{
             \\                .{{ .n = 0 }},
             \\
         , .{ opcode, interface_def });
@@ -600,7 +550,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         try this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
         try this.appendf(
-            \\            const result = wlc.proxy_marshal_array_flags(@ptrCast(self), {}, &IType.interface, version, 0, &.{{
+            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, &IType.interface, version, 0, &.{{
             \\                .{{ .u = name }},
             \\                .{{ .s = IType.interface.name }},
             \\                .{{ .u = version }},
@@ -611,7 +561,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         try this.append("            return @ptrCast(result);\n");
     } else {
         const flags = if (request.destructor) "WL_MARSHAL_FLAG_DESTROY" else "0";
-        try this.appendf("            _ = wlc.proxy_marshal_array_flags(@ptrCast(self), {}, null, self.proxy.version, {s}, &.{{", .{ opcode, flags });
+        try this.appendf("            _ = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, null, self.proxy.version, {s}, &.{{", .{ opcode, flags });
         if (request.args.len != 0) try this.append("\n");
         for (request.args) |arg| {
             try this.appendf("                {s},\n", .{try makeArg(&tmp, fn_names, arg)});
@@ -666,7 +616,7 @@ fn genListener(this: *Generator, protocol: *const Protocol, interface: *const In
     for (interface.events, 0..) |event, i| {
         try this.genDocComment("            ", event.description);
         try this.appendf("            {f}: ?*const fn (data: ?*anyopaque, {f}: ?*{s}", .{
-            std.zig.fmtId(event.name),
+            std.zig.fmtId(try zigFunctionName(&tmp, event.name)),
             iface_arg,
             iface_type,
         });
@@ -688,8 +638,8 @@ fn genListener(this: *Generator, protocol: *const Protocol, interface: *const In
 
     try this.appendf(
         \\
-        \\        pub fn add_listener(self: *{s}, listener: *const Listener, data: ?*anyopaque) void {{
-        \\            wlc.proxy_add_listener(@ptrCast(self), @ptrCast(listener), data);
+        \\        pub fn addListener(self: *{s}, listener: *const Listener, data: ?*anyopaque) void {{
+        \\            wlc.proxyAddListener(@ptrCast(self), @ptrCast(listener), data);
         \\        }}
         \\
     , .{iface_type});
@@ -706,6 +656,30 @@ fn zigEnumName(this: *Generator, tmp: *mem.TempArena, name: []const u8, protocol
         try result.appendSlice(ta, try zigTypeName(tmp, name[idx + 1 ..]));
     } else {
         return try zigTypeName(tmp, name);
+    }
+
+    return result.items;
+}
+
+fn zigFunctionName(tmp: *mem.TempArena, name: []const u8) Allocator.Error![]const u8 {
+    const ta = tmp.allocator();
+    var result = std.ArrayList(u8){};
+
+    try result.append(ta, name[0]);
+
+    var cap_next = false;
+    for (name[1..]) |c| {
+        if (c == '_') {
+            cap_next = true;
+            continue;
+        }
+
+        if (cap_next) {
+            try result.append(ta, std.ascii.toUpper(c));
+            cap_next = false;
+        } else {
+            try result.append(ta, c);
+        }
     }
 
     return result.items;
