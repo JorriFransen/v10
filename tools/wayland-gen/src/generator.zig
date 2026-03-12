@@ -385,11 +385,15 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
             \\        listeners: [32]RegisteredListener = std.mem.zeroes([32]RegisteredListener),
             \\        free_listeners: std.SinglyLinkedList = .{},
             \\
+            \\        send_payload_used: usize = 0,
+            \\        send_payload_buf: [2048]u8 = undefined,
+            \\        send_fds_used: usize = 0,
+            \\        send_fds_buf: [32]std.c.fd_t = undefined,
+            \\
             \\        receive_payload_used: usize = 0,
             \\        receive_payload_buf: [4096]u8 = undefined,
             \\        receive_fds_used: usize = 0,
             \\        receive_fds_buf: [32]std.c.fd_t = undefined,
-            \\        fd_dispatch_index: usize = 0,
             \\
             \\
         );

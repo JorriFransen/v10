@@ -174,17 +174,20 @@ pub fn display_disconnect(display: *wl.Display) void {
 pub fn display_roundtrip(display: *wl.Display) usize {
     var dispatched_count: usize = 0;
 
+    log.debug("display_roundtrip(id = {})", .{display.proxy.id});
+
     const sync_callback_opt = display.sync();
+
     if (sync_callback_opt) |sync_callback| {
         var done = false;
         const display_roundtrip_done_listener = wl.Callback.Listener{
             .done = &displayRoundtripSyncDoneHandler,
         };
         sync_callback.add_listener(&display_roundtrip_done_listener, &done);
-        // TODO: Remove this listener? I believe the callback is implicitly freed?
+        display_flush(display);
 
         while (!done) {
-            const dc = display_dispatch(display);
+            const dc = display_dispatch_timeout(display, -1);
             if (dc < 0) break;
             dispatched_count += @intCast(dc);
         }
@@ -192,21 +195,34 @@ pub fn display_roundtrip(display: *wl.Display) usize {
         log.err("display_roundtrip unable to setup sync callback", .{});
     }
 
+    log.debug("display_roundtrip(id = {}) -> {}\n", .{ display.proxy.id, dispatched_count });
+
     return dispatched_count;
 }
 
 fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl.Callback, _: u32) void {
+    log.debug("done handler", .{});
     const done_ptr: *bool = @ptrCast(data);
     done_ptr.* = true;
 }
 
 pub fn display_dispatch(display: *wl.Display) isize {
+    return display_dispatch_timeout(display, 0);
+}
+
+fn display_dispatch_timeout(display: *wl.Display, first_timeout: c_int) isize {
     assert(display == &glob_display);
+
+    log.debug("display_dispatch(id = {})", .{display.proxy.id});
 
     var result: isize = 0;
 
+    var timeout = first_timeout;
     var pollfd: linux.pollfd = .{ .fd = display.fd, .events = linux.POLL.IN, .revents = undefined };
-    while (linux.poll(@ptrCast(&pollfd), 0) catch unreachable > 0) {
+    // TODO: Handle error
+    while (linux.poll(@ptrCast(&pollfd), timeout) catch unreachable > 0) {
+        if (timeout < 0) timeout = 0;
+
         if (pollfd.revents & linux.POLL.IN != 0) {
             const receive_buf_available = display.receive_payload_buf[display.receive_payload_used..];
 
@@ -247,6 +263,8 @@ pub fn display_dispatch(display: *wl.Display) isize {
                 }
 
                 var current_offset: usize = 0;
+                var fd_dispatch_index: usize = 0;
+
                 while (true) {
                     const receive_remaining = display.receive_payload_buf[current_offset..display.receive_payload_used];
 
@@ -265,10 +283,10 @@ pub fn display_dispatch(display: *wl.Display) isize {
                             assert(header.op < object.proxy.interface.event_count);
                             for (object.proxy.interface.events.?[header.op].signature) |c| {
                                 if (c == 'h') {
-                                    assert(display.fd_dispatch_index < display.receive_fds_used);
-                                    fds[fd_count] = display.receive_fds_buf[display.fd_dispatch_index];
+                                    assert(fd_dispatch_index < display.receive_fds_used);
+                                    fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
                                     fd_count += 1;
-                                    display.fd_dispatch_index += 1;
+                                    fd_dispatch_index += 1;
                                 }
                             }
 
@@ -294,10 +312,10 @@ pub fn display_dispatch(display: *wl.Display) isize {
                 @memmove(display.receive_payload_buf[0..remaining_byte_count], display.receive_payload_buf[current_offset..display.receive_payload_used]);
                 display.receive_payload_used = remaining_byte_count;
 
-                const remaining_fd_count = display.receive_fds_used - display.fd_dispatch_index;
-                @memmove(display.receive_fds_buf[0..remaining_fd_count], display.receive_fds_buf[display.fd_dispatch_index..display.receive_fds_used]);
+                const remaining_fd_count = display.receive_fds_used - fd_dispatch_index;
+                @memmove(display.receive_fds_buf[0..remaining_fd_count], display.receive_fds_buf[fd_dispatch_index..display.receive_fds_used]);
                 display.receive_fds_used = remaining_fd_count;
-                display.fd_dispatch_index = 0;
+                fd_dispatch_index = 0;
             } else |e| {
                 log.warn("recvmsg error: {}", .{e});
                 result = -1;
@@ -307,6 +325,8 @@ pub fn display_dispatch(display: *wl.Display) isize {
             result = -1;
         }
     }
+
+    log.debug("display_dispatch(id = {}) -> {}", .{ display.proxy.id, result });
 
     return result;
 }
@@ -376,8 +396,63 @@ fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
 }
 
 pub fn display_flush(display: *wl.Display) void {
-    _ = display;
-    // TODO:
+    var iov = linux.iovec{ .base = &display.send_payload_buf, .len = display.send_payload_used };
+
+    log.debug("display_flush(id = {})", .{display.proxy.id});
+
+    const payload_size = display.send_payload_used;
+    const fds_count = display.send_fds_used;
+
+    var msg = linux.msghdr{
+        .name = null,
+        .namelen = 0,
+        .iov = @ptrCast(&iov),
+        .iovlen = 1,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
+    if (display.send_fds_used > 0) {
+        const fds_byte_size = @sizeOf(linux.fd_t) * display.send_fds_used;
+        var control_buf: [linux.CMSG_SPACE(display.send_fds_buf.len * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
+        var control: []u8 = if (display.send_fds_used > 0) control_buf[0..linux.CMSG_SPACE(fds_byte_size)] else &.{};
+
+        msg.control = control.ptr;
+        msg.controllen = control.len;
+
+        var cmsg: *linux.cmsghdr = linux.CMSG_FIRSTHDR(&msg).?;
+        cmsg.level = linux.SOL.SOCKET;
+        cmsg.type = linux.SCM.RIGHTS;
+        cmsg.len = linux.CMSG_LEN(fds_byte_size);
+        @memcpy(linux.CMSG_DATA(cmsg), @as([]u8, @ptrCast(display.send_fds_buf[0..display.send_fds_used])));
+
+        // This should never result in partial writes when control is attached
+        const written = linux.sendmsg(display.fd, &msg, linux.MSG.NOSIGNAL) catch |e| {
+            log.err("message send failed, error: {}", .{e});
+            log.err("reading and dispatching errors...", .{});
+            glob_connected = false;
+            _ = display_dispatch(display);
+            @panic("Wayland error");
+        };
+
+        assert(written == display.send_payload_used);
+    } else {
+        const written = linux.sendmsg(display.fd, &msg, linux.MSG.NOSIGNAL) catch |e| {
+            log.err("message send failed, error: {}", .{e});
+            log.err("reading and dispatching errors...", .{});
+            glob_connected = false;
+            _ = display_dispatch(display);
+            @panic("Wayland error");
+        };
+
+        assert(written == display.send_payload_used);
+    }
+
+    display.send_payload_used = 0;
+    display.send_fds_used = 0;
+
+    log.debug("display_flush(id = {}) -> payload bytes: {}, fds: {}", .{ display.proxy.id, payload_size, fds_count });
 }
 
 fn trampoline_(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
@@ -737,15 +812,15 @@ pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const w
 
     var msg_buf: [128 + (@sizeOf(Message.Header) / @sizeOf(u32))]u32 align(@alignOf(Message.Header)) = undefined;
     const header: *Message.Header = @ptrCast(&msg_buf);
-    const payload: []u32 = @ptrCast(@as([]Message.Header, @ptrCast(&msg_buf))[1..]);
-    var fds: [Message.max_fd_count]linux.fd_t = undefined;
+    const payload_buf: []u32 = @ptrCast(@as([]Message.Header, @ptrCast(&msg_buf))[1..]);
+    var fd_buf: [Message.max_fd_count]linux.fd_t = undefined;
 
     header.* = .{
         .id = proxy.id,
         .op = @intCast(op),
     };
 
-    var message: Message = .{ .header = header, .payload = payload, .fds = &fds };
+    var message: Message = .{ .header = header, .payload = payload_buf, .fds = &fd_buf };
 
     var payload_used: usize = 0;
     var fds_used: usize = 0;
@@ -813,46 +888,31 @@ pub fn proxy_marshal_array_flags(proxy: *wl.Proxy, op: u32, interface: ?*const w
         }
     }
 
-    // TODO: Instead of writing/sending here, check if the staging buffers would fit in the send buffers,
-    //        flush if required, and append. Call sendmsg in display_flush.
     const header_size = @sizeOf(Message.Header);
-    const total_size = header_size + (payload_used * @sizeOf(@TypeOf(payload[0])));
+    const total_size = header_size + (payload_used * @sizeOf(@TypeOf(payload_buf[0])));
     header.size = @intCast(total_size);
-    const send_buf = std.mem.asBytes(&msg_buf)[0..total_size];
+    const payload = std.mem.asBytes(&msg_buf)[0..total_size];
+    const fds = fd_buf[0..fds_used];
 
-    var iov = linux.iovec{ .base = send_buf.ptr, .len = send_buf.len };
+    const payload_rem = display.send_payload_buf.len - display.send_payload_used;
 
-    const fds_byte_size = @sizeOf(linux.fd_t) * fds_used;
-    var control_buf: [linux.CMSG_SPACE(fds.len * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
-    var control: []u8 = if (fds_used > 0) control_buf[0..linux.CMSG_SPACE(fds_byte_size)] else &.{};
-
-    var msg = linux.msghdr{
-        .name = null,
-        .namelen = 0,
-        .iov = @ptrCast(&iov),
-        .iovlen = 1,
-        .control = control.ptr,
-        .controllen = control.len,
-        .flags = 0,
-    };
-
-    if (fds_used > 0) {
-        var cmsg: *linux.cmsghdr = linux.CMSG_FIRSTHDR(&msg).?;
-        cmsg.level = linux.SOL.SOCKET;
-        cmsg.type = linux.SCM.RIGHTS;
-        cmsg.len = linux.CMSG_LEN(fds_byte_size);
-        @memcpy(linux.CMSG_DATA(cmsg), @as([]u8, @ptrCast(message.fds[0..fds_used])));
+    if (payload_rem < payload.len or display.send_fds_used > 0) {
+        display_flush(display);
+        assert(payload.len <= display.send_payload_buf.len);
     }
 
-    const written = linux.sendmsg(display.fd, &msg, linux.MSG.NOSIGNAL) catch |e| {
-        log.err("message send failed, error: {}", .{e});
-        log.err("reading and dispatching errors...", .{});
-        glob_connected = false;
-        _ = display_dispatch(display);
-        @panic("Wayland error");
-    };
+    const payload_offset = display.send_payload_used;
+    const fd_offset = display.send_fds_used;
 
-    assert(written == total_size); // TODO: Handle partial write
+    @memcpy(display.send_payload_buf[payload_offset .. payload_offset + payload.len], payload);
+    display.send_payload_used += payload.len;
+
+    if (fds.len > 0) {
+        @memcpy(display.send_fds_buf[fd_offset .. fd_offset + fds.len], fds);
+        display.send_fds_used += fds.len;
+
+        display_flush(display);
+    }
 
     return @ptrCast(result);
 }

@@ -806,8 +806,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             const wayland_blit = displayBufferInWindow(global_back_buffer);
 
-            _ = wlc.display_flush(display);
-
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
             wld.old_input = tmp;
