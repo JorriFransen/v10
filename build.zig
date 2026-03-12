@@ -85,7 +85,8 @@ pub fn build(b: *Build) !void {
         }),
     };
 
-    const tools = try buildTools(b, optimize, native_target, &modules);
+    const tools_optimize: OptimizeMode = .ReleaseSafe;
+    const tools = try buildTools(b, tools_optimize, native_target, &modules);
 
     const engine = try buildEngine(b, optimize, target, &modules);
     const game = try buildGameLib(b, optimize, target, &modules);
@@ -147,7 +148,7 @@ fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget,
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path(src_path ++ "/win32_v10.zig"),
-        .link_libc = true,
+        .link_libc = false,
         .imports = &.{
             .{ .name = "arch", .module = modules.arch },
             .{ .name = "win32", .module = modules.win32 },

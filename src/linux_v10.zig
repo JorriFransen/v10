@@ -76,7 +76,7 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
-        .{ .scope = .@"wayland-client", .level = .warn },
+        // .{ .scope = .@"wayland-client", .level = .warn },
     },
 };
 
@@ -122,7 +122,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     try wl.load(&lwl);
 
-    wayland.wlc.proxy_destroy = wlc.proxy_destroy;
+    wayland.wlc.proxy_destroy = wlc.proxyDestroy;
     wayland.wlc.proxy_add_listener = wlc.proxy_add_listener;
     wayland.wlc.proxy_marshal_array_flags = wlc.proxy_marshal_array_flags;
 
@@ -2157,6 +2157,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         const wl_buffer_pitch: usize = @intCast(wl_buffer.width * bytes_per_pixel);
         const wl_buffer_mem: []u8 = wl_buffer_ptr[0 .. wl_buffer_pitch * @as(usize, @intCast(wl_buffer.height))];
 
+        // TODO: Clear gutters in release?
         if (options.internal_build) {
             @memset(@as([]u32, @ptrCast(@alignCast(wl_buffer_mem))), 0);
         }
@@ -2182,9 +2183,9 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
 
                     dest_line1[dst_x] = source_line[src_x];
                     dest_line1[dst_x + 1] = source_line[src_x];
-                    dest_line2[dst_x] = source_line[src_x];
-                    dest_line2[dst_x + 1] = source_line[src_x];
                 }
+
+                @memcpy(dest_line2, dest_line1);
             }
         } else {
 
