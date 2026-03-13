@@ -144,15 +144,13 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\pub const Interface = struct {
         \\    name: [:0]const u8,
         \\    version: c_int,
-        \\    method_count: c_int,
-        \\    methods: ?[*]const Message,
-        \\    event_count: c_int,
-        \\    events: ?[*]const Message,
+        \\    methods: []const Message,
+        \\    events: []const Message,
         \\
         \\    pub const Message = struct {
-        \\        name: [:0]const u8,
-        \\        signature: [:0]const u8,
-        \\        types: ?[*]const ?*const Interface,
+        \\        name: []const u8,
+        \\        signature: []const u8,
+        \\        types: []const ?*const Interface,
         \\    };
         \\
         \\};
@@ -169,23 +167,20 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    }
         \\};
         \\
-        \\pub const Array = struct {
-        \\    size: usize,
-        \\    data: *anyopaque,
-        \\};
+        \\pub const Array = []const u32;
         \\
-        \\pub const Argument = extern union {
+        \\pub const Argument = union(enum) {
         \\    i: i32,
         \\    u: u32,
         \\    f: Fixed,
-        \\    s: ?[*:0]const u8,
-        \\    o: ?*wl.Object,
+        \\    s: []const u8,
+        \\    o: *wl.Object,
+        \\    @"?o": ?*wl.Object,
         \\    n: u32,
-        \\    a: ?*Array,
+        \\    a: Array,
         \\    h: i32,
         \\};
         \\
-        \\const LogFunc = *const fn (fmt: [*]const u8, args: *anyopaque) callconv(.c) void;
         \\
     );
 
@@ -200,18 +195,16 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         \\        pub const interface: Interface = .{{
         \\            .name = "{s}",
         \\            .version = {},
-        \\            .method_count = {},
         \\            .methods = &.{{
         \\
     , .{
         interface.name,
         interface.version,
-        interface.requests.len,
     });
 
     for (interface.requests) |*request| {
         try this.appendf(
-            \\            .{{
+            \\                .{{
             \\                    .name = "{s}",
             \\                    .signature = "
         , .{request.name});
@@ -241,20 +234,14 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
             try this.genArgTypes(&tmp, protocol, request.args);
         }
 
-        try this.append(
-            \\
-            \\                },
-            \\
-        );
+        try this.append("\n                },\n");
     }
 
-    try this.append("        },\n");
-
-    try this.appendf(
-        \\            .event_count = {},
-        \\            .events = &.{{
+    try this.append(
+        \\            },
+        \\            .events = &.{
         \\
-    , .{interface.events.len});
+    );
 
     for (interface.events) |*event| {
         try this.appendf(
@@ -264,18 +251,16 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         , .{event.name});
 
         try this.genSignature(event.args);
-
-        try this.append(
-            \\",
-            \\                    .types =
-        );
-
+        try this.append("\",\n                    .types =");
         try this.genArgTypes(&tmp, protocol, event.args);
 
         try this.append("\n                },\n");
     }
-    try this.append("            },\n");
-    try this.append("        };\n");
+    try this.append(
+        \\            },
+        \\        };
+        \\
+    );
 }
 
 fn genSignature(this: *Generator, args: []const Arg) Allocator.Error!void {
@@ -315,7 +300,7 @@ fn genArgTypes(this: *Generator, tmp: *mem.TempArena, in_protocol: *const Protoc
         };
         try this.append("                    },");
     } else {
-        try this.append(" null,");
+        try this.append(" &.{},");
     }
 }
 
@@ -555,7 +540,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
             \\                .{{ .u = name }},
             \\                .{{ .s = IType.interface.name }},
             \\                .{{ .u = version }},
-            \\                .{{ .o = null }},
+            \\                .{{ .n = 0 }},
             \\            }});
             \\
         , .{opcode});
@@ -779,7 +764,7 @@ fn zigType(this: *Generator, tmp: *mem.TempArena, wl_type: Type, interface_name_
         .int => "i32",
         .uint => "u32",
         .fixed => "Fixed",
-        .string => "[:0]const u8",
+        .string => "[]const u8",
         .object, .new_id => blk: {
             if (interface_name_opt) |interface_name| {
                 const iname = try this.zigInterfaceTypeName(tmp, protocol, interface_name);

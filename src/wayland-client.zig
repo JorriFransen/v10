@@ -6,7 +6,11 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Replace wayland.Array with slice/cast array types on dispatch
+// TODO: Add an extra type in the parser/generator for nullable objects, use non nullable pointers in generated code for objects.
+// TODO: Merge message.signature and message.types.
+// TODO: Add signature index/enum to message.signature (for events)
+// TODO: Generate trampolines, for dispatch switch on signature index/enum. (Don't use function pointers, emit calls in gnerator.)
+
 var glob_connected = false;
 var glob_display: wl.Display = undefined;
 
@@ -77,17 +81,18 @@ const Message = struct {
 
     pub fn getArrayArg(this: *Message, arg_offset: *usize) wayland.Array {
         const length = this.getUIntArg(arg_offset);
+        assert(length % @sizeOf(u32) == 0);
 
         const arg_size = @sizeOf(@TypeOf(this.payload[0]));
-        const arg_count = (length + arg_size - 1) / arg_size;
+        const arg_count = length / arg_size;
         assert(arg_offset.* < this.payload.len);
         assert(arg_offset.* + length <= this.payload.len);
 
-        const result = @as([]u8, @ptrCast(this.payload[arg_offset.*..]))[0..length];
+        const result: []u32 = this.payload[arg_offset.* .. arg_offset.* + arg_count];
 
         arg_offset.* += arg_count;
 
-        return .{ .size = result.len, .data = result.ptr };
+        return result;
     }
 
     pub fn getFDArg(this: *Message, fd_offset: *usize) linux.fd_t {
@@ -277,10 +282,10 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
                             var fds: [Message.max_fd_count]linux.fd_t = undefined;
                             var fd_count: usize = 0;
 
-                            assert(header.op < object.proxy.interface.event_count);
-                            for (object.proxy.interface.events.?[header.op].signature) |c| {
+                            assert(header.op < object.proxy.interface.events.len);
+                            for (object.proxy.interface.events[header.op].signature) |c| {
                                 if (c == 'h') {
-                                    assert(fd_dispatch_index < display.receive_fds_used);
+                                    assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
                                     fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
                                     fd_count += 1;
                                     fd_dispatch_index += 1;
@@ -331,7 +336,7 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
 fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
     assert(display == &glob_display);
 
-    const sig = object.proxy.interface.events.?[message.header.op].signature;
+    const sig = object.proxy.interface.events[message.header.op].signature;
 
     var listener_node = object.proxy.listeners.first;
     while (listener_node) |node| {
@@ -516,7 +521,7 @@ fn trampoline_a(display: *wl.Display, object: *wl.Object, listener: *const wayla
     _ = display;
 
     assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, wayland.Array) void;
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, []const u32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
 
     var arg_offset: usize = 0;
@@ -611,14 +616,14 @@ fn trampoline_uuf(display: *wl.Display, object: *wl.Object, listener: *const way
 
 fn trampoline_uoa(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
     assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object, wayland.Array) void;
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object, []const u32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
 
     var arg_offset: usize = 0;
 
     const arg1 = message.getUIntArg(&arg_offset);
     const arg2 = message.getObjectArg(&arg_offset, display);
-    const arg3: wayland.Array = message.getArrayArg(&arg_offset);
+    const arg3 = message.getArrayArg(&arg_offset);
     handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
 }
 
@@ -670,7 +675,7 @@ fn trampoline_iia(display: *wl.Display, object: *wl.Object, listener: *const way
     _ = display;
 
     assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32, wayland.Array) void;
+    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32, []const u32) void;
     const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
 
     var arg_offset: usize = 0;
@@ -801,9 +806,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
     assert(glob_connected);
     const display = proxy.display;
 
-    assert(proxy.interface.method_count > op);
-    const method = proxy.interface.methods.?[op];
-    const sig = method.signature;
+    assert(proxy.interface.methods.len > op);
 
     var result: ?*wl.Proxy = null;
 
@@ -822,44 +825,13 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
     var payload_used: usize = 0;
     var fds_used: usize = 0;
 
-    var si: usize = 0;
-    var ai: usize = 0;
-    while (si < sig.len) : ({
-        si += 1;
-        ai += 1;
-    }) {
-        const sig_char = sig[si];
-        var arg = args[ai];
-        blk: switch (sig_char) {
-            'n' => {
-                assert(interface != null);
-                const new_proxy = proxyCreate(display, interface.?, version); // TODO: Is this the right version
-                result = new_proxy;
-                arg.u = new_proxy.id;
-                continue :blk 'u';
-            },
-
-            'u', 'i' => message.addArg(&payload_used, arg.u),
-
-            '?' => {
-                assert(si + 1 < sig.len);
-                si += 1;
-                assert(sig[si] == 'o');
-                arg.u = if (arg.o) |o| o.proxy.id else 0;
-                continue :blk 'u';
-            },
-
-            'o' => {
-                if (arg.o) |o| {
-                    arg.u = o.proxy.id;
-                    continue :blk 'u';
-                } else {
-                    @panic("Non nullable pointer is null");
-                }
-            },
-
-            's' => {
-                const s = std.mem.span(arg.s) orelse "";
+    // TODO: Check arg types (emit more types in interfaces?)
+    for (args) |arg| {
+        arg_type_switch_blk: switch (arg) {
+            .i => |i| message.addArg(&payload_used, @bitCast(i)),
+            .u => |u| message.addArg(&payload_used, u),
+            .f => |f| message.addArg(&payload_used, @bitCast(f)),
+            .s => |s| {
                 message.addArg(&payload_used, @intCast(s.len + 1));
                 var remaining = s.len;
                 while (remaining >= 4) : (remaining -= 4) {
@@ -875,13 +847,19 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 }
                 message.addArg(&payload_used, last_u32);
             },
-
-            'h' => message.addFD(&fds_used, arg.h),
-
-            else => {
-                log.err("Unhandled sig char: {c}", .{sig_char});
+            .o => |o| continue :arg_type_switch_blk .{ .u = o.proxy.id },
+            .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.proxy.id else 0 },
+            .n => {
+                assert(interface != null);
+                const new_proxy = proxyCreate(display, interface.?, version); // TODO: Is this the right version
+                result = new_proxy;
+                continue :arg_type_switch_blk .{ .u = new_proxy.id };
+            },
+            .a => {
+                // TODO: implement
                 unreachable;
             },
+            .h => message.addFD(&fds_used, arg.h),
         }
     }
 

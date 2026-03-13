@@ -203,7 +203,6 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/v10.zig"),
-        .link_libc = false,
         .imports = &.{
             .{ .module = modules.options, .name = "options" },
         },

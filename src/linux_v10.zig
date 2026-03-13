@@ -74,7 +74,7 @@ var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
-        .{ .scope = .@"wayland-client", .level = .warn },
+        // .{ .scope = .@"wayland-client", .level = .warn },
     },
 };
 
@@ -1573,15 +1573,15 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, se
     wld.pending_configure_serial = serial;
 }
 
-fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states: wayland.Array) void {
+fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states_: []const u32) void {
     _ = data;
     _ = toplevel;
 
     log.debug("xdg toplevel configure: {},{}", .{ width, height });
 
     const E = xdg_shell.Toplevel.State;
-    const caps: []E = @as([*]E, @ptrCast(@alignCast(states.data)))[0 .. states.size / @sizeOf(u32)];
-    log.debug("states: {any}", .{caps});
+    const states: []const E = @ptrCast(states_);
+    log.debug("states: {any}", .{states});
 
     wld.pending_resize = .{ .width = width, .height = height };
 }
@@ -1595,14 +1595,14 @@ fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Top
     log.debug("xdg toplevel configure bounds {},{}", .{ width, height });
 }
 
-fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, capabilities: wayland.Array) void {
+fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, capabilities: []const u32) void {
     _ = data;
     _ = toplevel;
-    log.debug("xdg toplevel capabilities count {}", .{capabilities.size});
+    log.debug("xdg toplevel capabilities count {}", .{capabilities.len});
 
     const E = xdg_shell.Toplevel.WmCapabilities;
-    const caps: []E = @as([*]E, @ptrCast(@alignCast(capabilities.data)))[0 .. capabilities.size / @sizeOf(u32)];
-    log.debug("caps: {any}", .{caps});
+    const caps: []const E = @ptrCast(capabilities);
+    log.debug("toplevel caps: {any}", .{caps});
 }
 
 fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) void {
