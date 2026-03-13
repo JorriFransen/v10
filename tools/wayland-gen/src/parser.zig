@@ -18,6 +18,7 @@ const Event = types.Event;
 const Enum = types.Enum;
 const Arg = types.Arg;
 const Type = types.Type;
+const TypeTag = types.TypeTag;
 
 allocator: Allocator,
 
@@ -476,7 +477,7 @@ fn parseEnum(this: *Parser) Error!Enum {
 
 fn parseArg(this: *Parser) Error!Arg {
     var name: ?[]const u8 = "";
-    var arg_type: ?Type = null;
+    var arg_type: ?TypeTag = null;
     var allow_null = false;
     var interface: ?[]const u8 = null;
     var enum_name_opt: ?[]const u8 = null;
@@ -496,7 +497,7 @@ fn parseArg(this: *Parser) Error!Arg {
         if (std.mem.eql(u8, attr.name, "name")) {
             name = try copyString(this.allocator, attr.value);
         } else if (std.mem.eql(u8, attr.name, "type")) {
-            arg_type = std.meta.stringToEnum(Type, attr.value) orelse {
+            arg_type = std.meta.stringToEnum(TypeTag, attr.value) orelse {
                 this.xmlErr("Invalid type '{s}'", .{attr.value});
                 return error.MalformedXml;
             };
@@ -532,9 +533,8 @@ fn parseArg(this: *Parser) Error!Arg {
 
     return .{
         .name = name.?,
-        .type = arg_type.?,
+        .type = .{ .tag = arg_type.?, .allow_null = allow_null },
         .enum_name = enum_name_opt,
-        .allow_null = allow_null,
         .interface = interface,
         .summary = summary,
     };

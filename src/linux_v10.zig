@@ -109,11 +109,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
-    var lwl = try DynLib.open("libwayland-client.so");
-    defer lwl.close();
-
-    try wl.load(&lwl);
-
     wayland.wlc.proxyDestroy = wlc.proxyDestroy;
     wayland.wlc.proxyAddListener = wlc.proxyAddListener;
     wayland.wlc.proxyMarshalArrayFlags = wlc.proxyMarshalArrayFlags;
@@ -125,10 +120,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer wlc.displayDisconnect(display);
     log.debug("Display connected", .{});
 
-    const wl_registry = display.getRegistry() orelse {
-        log.err("wl_display_get_registry failed", .{});
-        return error.UnexpectedWayland;
-    };
+    const wl_registry = display.getRegistry();
 
     running = true;
 
@@ -211,26 +203,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.UnexpectedWayland;
     }
 
-    wld.surface = wld.compositor.createSurface() orelse {
-        log.err("wl_compositor_create_surface failed", .{});
-        return error.UnexpectedWayland;
-    };
+    wld.surface = wld.compositor.createSurface();
     wld.surface.addListener(&wl_surface_listener, null);
 
     const app_id = "v10";
     const title = "v10";
 
     wld.toplevel = blk: {
-        const xdg_surface = wld.wm_base.getXdgSurface(wld.surface) orelse {
-            log.err("xdg_wm_base_get_xdg_surface failed", .{});
-            return error.UnexpectedWayland;
-        };
+        const xdg_surface = wld.wm_base.getXdgSurface(wld.surface);
         xdg_surface.addListener(&xdg_surface_listener, &wld);
 
-        const xdg_toplevel = xdg_surface.getToplevel() orelse {
-            log.err("xdg_surface_get_top_level failed", .{});
-            return error.UnexpectedWayland;
-        };
+        const xdg_toplevel = xdg_surface.getToplevel();
         xdg_toplevel.addListener(&xdg_toplevel_listener, &wld);
 
         log.debug("xdg_toplevel: {}", .{xdg_toplevel});
@@ -239,10 +222,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         wld.surface.commit();
 
         if (wli.xdg_decoration_manager) |manager| {
-            const toplevel_decoration = manager.getToplevelDecoration(xdg_toplevel) orelse {
-                log.err("zxdg_decoration_manager_v1_get_toplevel_decoration failed", .{});
-                return error.UnexpectedWayland;
-            };
+            const toplevel_decoration = manager.getToplevelDecoration(xdg_toplevel);
             toplevel_decoration.setMode(.server_side);
 
             var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
@@ -293,16 +273,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     log.debug("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
-    wld.keyboard = wld.seat.getKeyboard() orelse {
-        log.debug("wl_seat_get_keyboard failed", .{});
-        return error.UnexpectedWayland;
-    };
+    wld.keyboard = wld.seat.getKeyboard();
     wld.keyboard.addListener(&wl_keyboard_listener, &wld);
 
-    wld.pointer = wld.seat.getPointer() orelse {
-        log.debug("wl_set_get_pointer failed", .{});
-        return error.UnexpectedWayland;
-    };
+    wld.pointer = wld.seat.getPointer();
     wld.pointer.addListener(&wl_mouse_listener, &wld);
 
     const base_address: ?[*]align(std.heap.page_size_min) u8, const fixed = if (options.internal_build)
@@ -1240,10 +1214,7 @@ fn resize_shm() ShmError!void {
 
         if (wld.pool) |p| p.destroy();
 
-        const pool = wld.shm.createPool(fd, @intCast(wld.shm_data.len)) orelse {
-            log.err("wl_shm_create_pool failed", .{});
-            return error.WlShmCreatePoolFailed;
-        };
+        const pool = wld.shm.createPool(fd, @intCast(wld.shm_data.len));
         wld.pool = pool;
 
         var width = wld.width;
@@ -1256,10 +1227,7 @@ fn resize_shm() ShmError!void {
 
         var offset: i32 = 0;
         for (&wld.buffers) |*buffer| {
-            const handle = pool.createBuffer(offset, width, height, stride, .xrgb8888) orelse {
-                log.err("wl_pool_create_buffer failed", .{});
-                return error.WlPoolCreateBufferFailed;
-            };
+            const handle = pool.createBuffer(offset, width, height, stride, .xrgb8888);
 
             buffer.* = .{
                 .handle = handle,
@@ -1302,12 +1270,14 @@ fn resize(width: i32, height: i32) !void {
 }
 
 fn aquireFreeBuffer() ?*WlBuffer {
+    const pool = wld.pool.?;
+
     for (&wld.buffers) |*buffer| {
         if (buffer.free) {
             if (buffer.handle == null or buffer.width != wld.window_width or buffer.height != wld.window_height) {
                 if (buffer.handle) |h| h.destroy();
 
-                const new_buf = wld.pool.?.createBuffer(buffer.offset, wld.window_width, wld.window_height, wld.window_width * bytes_per_pixel, .xrgb8888) orelse @panic("Buffer recreation failed");
+                const new_buf = pool.createBuffer(buffer.offset, wld.window_width, wld.window_height, wld.window_width * bytes_per_pixel, .xrgb8888);
                 new_buf.addListener(&wl_buffer_listener, buffer);
                 buffer.handle = new_buf;
                 buffer.width = wld.window_width;
@@ -2149,7 +2119,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
 
     wld.surface.commit();
     const callback = wld.surface.frame();
-    callback.?.addListener(&wl_frame_callback_listener, &wld);
+    callback.addListener(&wl_frame_callback_listener, &wld);
     _ = wlc.displayFlush(wld.display);
 
     wld.should_draw = false;

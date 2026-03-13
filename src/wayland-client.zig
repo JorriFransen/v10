@@ -8,8 +8,6 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Add an extra type in the parser/generator for nullable objects, use non nullable pointers in generated code for objects.
-// TODO: Merge message.signature and message.types.
 // TODO: Add signature index/enum to message.signature (for events)
 // TODO: Generate trampolines, for dispatch switch on signature index/enum. (Don't use function pointers, emit calls in gnerator.)
 
@@ -186,23 +184,19 @@ pub fn displayRoundtrip(display: *wl.Display) usize {
 
     verbose("display_roundtrip(id = {}) ...", .{display.proxy.id});
 
-    const sync_callback_opt = display.sync();
+    const sync_callback = display.sync();
 
-    if (sync_callback_opt) |sync_callback| {
-        var done = false;
-        const display_roundtrip_done_listener = wl.Callback.Listener{
-            .done = &displayRoundtripSyncDoneHandler,
-        };
-        sync_callback.addListener(&display_roundtrip_done_listener, &done);
-        displayFlush(display);
+    var done = false;
+    const display_roundtrip_done_listener = wl.Callback.Listener{
+        .done = &displayRoundtripSyncDoneHandler,
+    };
+    sync_callback.addListener(&display_roundtrip_done_listener, &done);
+    displayFlush(display);
 
-        while (!done) {
-            const dc = displayDispatchTimeout(display, -1);
-            if (dc < 0) break;
-            dispatched_count += @intCast(dc);
-        }
-    } else {
-        log.err("display_roundtrip unable to setup sync callback", .{});
+    while (!done) {
+        const dc = displayDispatchTimeout(display, -1);
+        if (dc < 0) break;
+        dispatched_count += @intCast(dc);
     }
 
     verbose("display_roundtrip(id = {}) dispatched: {}\n", .{ display.proxy.id, dispatched_count });

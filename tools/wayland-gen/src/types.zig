@@ -63,12 +63,16 @@ pub const Arg = struct {
     name: []const u8,
     type: Type,
     enum_name: ?[]const u8,
-    allow_null: bool,
     interface: ?[]const u8,
     summary: []const u8,
 };
 
-pub const Type = enum {
+pub const Type = struct {
+    tag: TypeTag,
+    allow_null: bool,
+};
+
+pub const TypeTag = enum {
     int,
     uint,
     fixed,
