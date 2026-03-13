@@ -6,8 +6,9 @@ const OptimizeMode = std.builtin.OptimizeMode;
 const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
-var use_llvm: bool = undefined;
+var use_llvm: bool = false;
 var internal_build: bool = true;
+var verbose_wayland: bool = false;
 
 const src_path = "src";
 
@@ -16,19 +17,15 @@ pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const native_target = b.resolveTargetQuery(.{});
 
-    use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse false;
+    use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse use_llvm;
     if (target.result.os.tag == .windows) use_llvm = true;
 
     internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
-
-    var src_dir_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const src_dir_path_len = std.Io.Dir.cwd().realPathFile(b.graph.io, src_path, &src_dir_path_buffer) catch @panic("realPathFile failed!");
-    const src_dir_path = src_dir_path_buffer[0..src_dir_path_len];
+    verbose_wayland = b.option(bool, "verbose_wayland", "Verbose wayland logging") orelse verbose_wayland;
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
     options.addOption(bool, "debug", optimize == .Debug);
-    options.addOption([]const u8, "src_dir_path", src_dir_path);
 
     const options_module = options.createModule();
 
@@ -86,7 +83,7 @@ pub fn build(b: *Build) !void {
     };
 
     const tools_optimize: OptimizeMode = .ReleaseSafe;
-    const tools = try buildTools(b, tools_optimize, native_target, &modules);
+    const tools = try buildTools(b, optimize, tools_optimize, native_target, &modules);
 
     const engine = try buildEngine(b, optimize, target, &modules);
     const game = try buildGameLib(b, optimize, target, &modules);
@@ -106,7 +103,8 @@ const Modules = struct {
     memory: *Build.Module,
     dynlib: *Build.Module,
     xml: *Build.Module,
-    wayland_module: ?*Build.Module = null,
+    wayland: ?*Build.Module = null,
+    wlc: ?*Build.Module = null,
 };
 
 const Engine = struct {
@@ -180,7 +178,8 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
             .{ .name = "arch", .module = modules.arch },
             .{ .name = "linux", .module = modules.linux },
             .{ .name = "dynlib", .module = modules.dynlib },
-            .{ .name = "wayland", .module = modules.wayland_module.? },
+            .{ .name = "wayland", .module = modules.wayland.? },
+            .{ .name = "wlc", .module = modules.wlc.? },
         },
     });
 
@@ -235,7 +234,7 @@ const Tools = struct {
     aseprite_script_runner: ?*Step.Compile,
 };
 
-fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, modules: *Modules) !Tools {
+fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, native_target: ResolvedTarget, modules: *Modules) !Tools {
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
 
     const wayland_gen_exe = b.addExecutable(.{
@@ -243,7 +242,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/wayland-gen/src/main.zig"),
             .target = native_target,
-            .optimize = optimize,
+            .optimize = tools_optimize,
             .imports = &.{
                 .{ .name = "xml", .module = modules.xml },
                 .{ .name = "mem", .module = modules.memory },
@@ -265,8 +264,25 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
     _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg-decoration-unstable-v1.xml"));
 
     const wayland_source = run_wayland_gen_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
-    assert(modules.wayland_module == null);
-    modules.wayland_module = b.createModule(.{
+    assert(modules.wayland == null);
+
+    assert(modules.wayland == null);
+    assert(modules.wlc == null);
+
+    const options = b.addOptions();
+    options.addOption(bool, "verbose_wayland", verbose_wayland);
+    const options_module = options.createModule();
+
+    modules.wlc = b.createModule(.{
+        .optimize = optimize,
+        .root_source_file = b.path(src_path ++ "/wayland-client.zig"),
+        .imports = &.{
+            .{ .name = "linux", .module = modules.linux },
+            .{ .name = "options", .module = options_module },
+        },
+    });
+
+    modules.wayland = b.createModule(.{
         .optimize = optimize,
         .root_source_file = wayland_source,
         .imports = &.{
@@ -274,13 +290,15 @@ fn buildTools(b: *Build, optimize: OptimizeMode, native_target: ResolvedTarget, 
         },
     });
 
+    modules.wlc.?.addImport("wayland", modules.wayland.?);
+
     const aseprite_script_runner_exe = if (b.findProgram(&.{"aseprite"}, &.{})) |_|
         b.addExecutable(.{
             .name = "aseprite-script-runner",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("tools/aseprite/script_runner.zig"),
                 .target = native_target,
-                .optimize = optimize,
+                .optimize = tools_optimize,
                 .imports = &.{
                     .{ .name = "mem", .module = modules.memory },
                     .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },

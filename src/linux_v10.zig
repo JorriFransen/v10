@@ -11,7 +11,7 @@ const arch = @import("arch").arch;
 
 const wayland = @import("wayland");
 const wl = wayland.wl;
-const wlc = @import("wayland-client.zig");
+const wlc = @import("wlc");
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
@@ -71,12 +71,6 @@ const use_debug_allocator = switch (builtin.mode) {
     .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-
-pub const std_options: std.Options = .{
-    .log_scope_levels = &.{
-        // .{ .scope = .@"wayland-client", .level = .warn },
-    },
-};
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = if (use_debug_allocator)
@@ -223,8 +217,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
     wld.surface.addListener(&wl_surface_listener, null);
 
-    _ = wlc.displayRoundtrip(display);
-
     const app_id = "v10";
     const title = "v10";
 
@@ -245,8 +237,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         xdg_toplevel.setAppId(app_id);
         xdg_toplevel.setTitle(title);
         wld.surface.commit();
-
-        _ = wlc.displayRoundtrip(display);
 
         if (wli.xdg_decoration_manager) |manager| {
             const toplevel_decoration = manager.getToplevelDecoration(xdg_toplevel) orelse {
@@ -289,10 +279,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     const buffer = aquireFreeBuffer().?;
     displayWaylandBufferInWindow(buffer);
-
-    // Wait for surface enter to set current monitor
-    // wld.surface.commit();
-    // _ = wlc.display_roundtrip(wld.display);
 
     var monitor_hz: f32 = 60;
 

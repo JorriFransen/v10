@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.@"wayland-client");
 const assert = std.debug.assert;
+const options = @import("options");
+const builtin = @import("builtin");
 
 const linux = @import("linux");
 const wayland = @import("wayland");
@@ -10,6 +12,12 @@ const wl = wayland.wl;
 // TODO: Merge message.signature and message.types.
 // TODO: Add signature index/enum to message.signature (for events)
 // TODO: Generate trampolines, for dispatch switch on signature index/enum. (Don't use function pointers, emit calls in gnerator.)
+
+comptime {
+    if (options.verbose_wayland and builtin.mode != .Debug) {
+        @compileError("Option verbose_wayland requires debug mode");
+    }
+}
 
 var glob_connected = false;
 var glob_display: wl.Display = undefined;
@@ -176,7 +184,7 @@ pub fn displayDisconnect(display: *wl.Display) void {
 pub fn displayRoundtrip(display: *wl.Display) usize {
     var dispatched_count: usize = 0;
 
-    log.debug("display_roundtrip(id = {})", .{display.proxy.id});
+    verbose("display_roundtrip(id = {}) ...", .{display.proxy.id});
 
     const sync_callback_opt = display.sync();
 
@@ -197,13 +205,12 @@ pub fn displayRoundtrip(display: *wl.Display) usize {
         log.err("display_roundtrip unable to setup sync callback", .{});
     }
 
-    log.debug("display_roundtrip(id = {}) -> {}\n", .{ display.proxy.id, dispatched_count });
+    verbose("display_roundtrip(id = {}) dispatched: {}\n", .{ display.proxy.id, dispatched_count });
 
     return dispatched_count;
 }
 
 fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl.Callback, _: u32) void {
-    log.debug("done handler", .{});
     const done_ptr: *bool = @ptrCast(data);
     done_ptr.* = true;
 }
@@ -215,7 +222,7 @@ pub fn displayDispatch(display: *wl.Display) isize {
 fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
     assert(display == &glob_display);
 
-    log.debug("display_dispatch(id = {})", .{display.proxy.id});
+    verbose("display_dispatch(id = {}) ...", .{display.proxy.id});
 
     var result: isize = 0;
 
@@ -328,7 +335,7 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
         }
     }
 
-    log.debug("display_dispatch(id = {}) -> {}", .{ display.proxy.id, result });
+    verbose("display_dispatch(id = {}) -> dispatched = {}", .{ display.proxy.id, result });
 
     return result;
 }
@@ -336,11 +343,53 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
 fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
     assert(display == &glob_display);
 
-    const sig = object.proxy.interface.events[message.header.op].signature;
+    const interface = object.proxy.interface;
+    const sig = interface.events[message.header.op].signature;
 
+    if (options.verbose_wayland) {
+        var print_buf: [1024]u8 = undefined;
+        var used: usize = 0;
+
+        var p = std.fmt.bufPrint(print_buf[used..], "<-   {s}.{s}(id = {}", .{
+            interface.name,
+            interface.events[message.header.op].name,
+            object.proxy.id,
+        }) catch unreachable;
+        used += p.len;
+
+        var arg_offset: usize = 0;
+        var fd_offset: usize = 0;
+        var si: usize = 0;
+        var ai: usize = 0;
+        while (si < sig.len) : ({
+            si += 1;
+            ai += 1;
+        }) {
+            p = switch (sig[si]) {
+                'i' => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getIntArg(&arg_offset)}) catch unreachable,
+                'u' => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
+                'h' => std.fmt.bufPrint(print_buf[used..], ", h = {}", .{message.getFDArg(&fd_offset)}) catch unreachable,
+                'f' => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getFixedArg(&arg_offset).toDouble()}) catch unreachable,
+                'o' => std.fmt.bufPrint(print_buf[used..], ", o = {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
+                's' => std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{message.getStringArg(&arg_offset)}) catch unreachable,
+                'a' => std.fmt.bufPrint(print_buf[used..], ", {any}", .{message.getArrayArg(&arg_offset)}) catch unreachable,
+                'n' => unreachable,
+                else => @panic("unhandled sig char"),
+            };
+            used += p.len;
+        }
+
+        p = std.fmt.bufPrint(print_buf[used..], ")", .{}) catch unreachable;
+        used += p.len;
+
+        verbose("{s}", .{print_buf[0..used]});
+    }
+
+    var listener_count: usize = 0;
     var listener_node = object.proxy.listeners.first;
     while (listener_node) |node| {
         const next = node.next;
+        listener_count += 1;
 
         const listener: *wayland.RegisteredListener = @fieldParentPtr("node", node);
 
@@ -395,12 +444,19 @@ fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
 
         listener_node = next;
     }
+
+    verbose("     {s}.{s}(id = {}) listeners = {}", .{
+        interface.name,
+        interface.events[message.header.op].name,
+        object.proxy.id,
+        listener_count,
+    });
 }
 
 pub fn displayFlush(display: *wl.Display) void {
     var iov = linux.iovec{ .base = &display.send_payload_buf, .len = display.send_payload_used };
 
-    log.debug("display_flush(id = {})", .{display.proxy.id});
+    verbose("display_flush(id = {}) ...", .{display.proxy.id});
 
     const payload_size = display.send_payload_used;
     const fds_count = display.send_fds_used;
@@ -454,9 +510,10 @@ pub fn displayFlush(display: *wl.Display) void {
     display.send_payload_used = 0;
     display.send_fds_used = 0;
 
-    log.debug("display_flush(id = {}) -> payload bytes: {}, fds: {}", .{ display.proxy.id, payload_size, fds_count });
+    verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.proxy.id, payload_size, fds_count });
 }
 
+// TODO: message can be *const Message now
 fn trampoline_(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
     _ = display;
 
@@ -863,6 +920,44 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
         }
     }
 
+    if (options.verbose_wayland) {
+        var print_buf: [1024]u8 = undefined;
+        var used: usize = 0;
+
+        var p = std.fmt.bufPrint(print_buf[used..], "  -> {s}.{s}(id = {}", .{ proxy.interface.name, proxy.interface.methods[op].name, proxy.id }) catch unreachable;
+        used += p.len;
+
+        var return_id = false;
+        for (args) |arg| {
+            if (arg == .n) {
+                return_id = true;
+                continue;
+            }
+
+            p = switch (arg) {
+                .o => |o| std.fmt.bufPrint(print_buf[used..], ", id = {}", .{o.proxy.id}) catch unreachable,
+                .@"?o" => unreachable,
+                .i => |i| std.fmt.bufPrint(print_buf[used..], ", {}", .{i}) catch unreachable,
+                .u => |u| std.fmt.bufPrint(print_buf[used..], ", {}", .{u}) catch unreachable,
+                .h => |h| std.fmt.bufPrint(print_buf[used..], ", fd = {}", .{h}) catch unreachable,
+                .f => unreachable,
+                .s => |s| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{s}) catch unreachable,
+                .n => unreachable,
+                .a => unreachable,
+            };
+            used += p.len;
+        }
+        p = std.fmt.bufPrint(print_buf[used..], ")", .{}) catch unreachable;
+        used += p.len;
+
+        if (return_id) {
+            p = std.fmt.bufPrint(print_buf[used..], " -> id = {}", .{result.?.id}) catch unreachable;
+            used += p.len;
+        }
+
+        verbose("{s}", .{print_buf[0..used]});
+    }
+
     const header_size = @sizeOf(Message.Header);
     const total_size = header_size + (payload_used * @sizeOf(@TypeOf(payload_buf[0])));
     header.size = @intCast(total_size);
@@ -932,4 +1027,9 @@ fn getObject(display: *wl.Display, id: u32) *wl.Object {
     assert(id <= display.objects.len);
     if (id == 1) return @ptrCast(display);
     return &display.objects[id - 1];
+}
+
+const verbose_log = std.log.scoped(.verbose_wayland);
+inline fn verbose(comptime fmt: []const u8, args: anytype) void {
+    if (options.verbose_wayland) verbose_log.debug(fmt, args);
 }
