@@ -109,10 +109,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
-    wayland.wlc.proxyDestroy = wlc.proxyDestroy;
-    wayland.wlc.proxyAddListener = wlc.proxyAddListener;
-    wayland.wlc.proxyMarshalArrayFlags = wlc.proxyMarshalArrayFlags;
-
     const display = wlc.displayConnect(null) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;

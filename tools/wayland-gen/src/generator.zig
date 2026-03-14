@@ -16,11 +16,16 @@ const Enum = types.Enum;
 const Arg = types.Arg;
 const Type = types.Type;
 
+const RegisteredSignature = struct {
+    id: usize,
+    types: []Type,
+};
+
 allocator: Allocator,
 protocol: *const Protocol,
 buf: std.ArrayList(u8),
 interface_protocol_map: std.StringHashMapUnmanaged(*Protocol),
-unique_signatures_map: std.StringArrayHashMapUnmanaged(usize),
+unique_signatures_map: std.StringHashMapUnmanaged(RegisteredSignature),
 next_sig_index: usize = 0,
 
 pub const Error =
@@ -34,7 +39,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         .protocol = core_protocol,
         .buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 },
         .interface_protocol_map = std.StringHashMapUnmanaged(*Protocol){},
-        .unique_signatures_map = std.StringArrayHashMapUnmanaged(usize){},
+        .unique_signatures_map = std.StringHashMapUnmanaged(RegisteredSignature){},
     };
 
     for (core_protocol.interfaces) |i| {
@@ -71,19 +76,13 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\const std = @import("std");
         \\const log = std.log.scoped(.wayland);
         \\const linux = @import("linux");
-        \\
-        \\pub const wlc = struct {{
-        \\    pub var proxyDestroy: *const fn (proxy: *wl.Proxy) void = undefined;
-        \\    pub var proxyMarshalArrayFlags: *const fn (proxy: *wl.Proxy, op: u32, interface: ?*const Interface, version: u32, flags: u32, args: []const Argument) ?*wl.Object=undefined;
-        \\    pub var proxyAddListener: *const fn (proxy: *wl.Proxy, implementation: []const *const fn ()  void, user_data: ?*anyopaque)void=undefined;
-        \\}};
+        \\const wlc = @import("wlc");
         \\
         \\pub const RegisteredListener = struct {{
         \\    user_data: ?*anyopaque,
         \\    node: std.SinglyLinkedList.Node = .{{}},
         \\    implementation: []const *const fn () void,
         \\}};
-        \\
         \\
         \\pub const wl = {s};
         \\pub const {s} = struct {{
@@ -109,6 +108,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\
         \\    pub const Object = struct { proxy: Proxy };
         \\};
+        \\
         \\
     );
 
@@ -189,10 +189,76 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
     var it = generator.unique_signatures_map.iterator();
     while (it.next()) |entry| {
-        try generator.appendf("    {f} = {},\n", .{ std.zig.fmtId(entry.key_ptr.*), entry.value_ptr.* });
+        try generator.appendf("    {f} = {},\n", .{ std.zig.fmtId(entry.key_ptr.*), entry.value_ptr.*.id });
     }
 
-    try generator.append("};\n");
+    try generator.append("};\n\n");
+
+    var tmp = mem.getScratch(@ptrCast(@alignCast(generator.allocator.ptr)));
+    it = generator.unique_signatures_map.iterator();
+    while (it.next()) |entry| {
+        const name = if (std.mem.eql(u8, entry.key_ptr.*, "_"))
+            "trampoline_"
+        else
+            try tmpPrint(&tmp, "trampoline_{s}", .{entry.key_ptr.*});
+
+        try generator.appendf("pub fn {f}(display: *wl.Display, object: *wl.Object, listener: *const RegisteredListener, message: *const wlc.Message) void {{\n", .{std.zig.fmtId(name)});
+        try generator.append("    _ = .{display};\n");
+
+        const info = entry.value_ptr;
+        var regular_arg_count: usize = 0;
+        var fd_arg_count: usize = 0;
+        try generator.append("    const HandlerType = *const fn (?*anyopaque, *wl.Proxy");
+        for (info.types) |arg_type| {
+            try generator.appendf(", {s}", .{try generator.zigType(&tmp, arg_type, null, null)});
+            if (arg_type.tag == .fd) fd_arg_count += 1 else regular_arg_count += 1;
+        }
+        try generator.append(") void;\n");
+
+        try generator.append("    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);\n\n");
+
+        if (regular_arg_count > 0) try generator.append("    var arg_offset: usize = 0;\n");
+        if (fd_arg_count > 0) try generator.append("    var fd_offset: usize = 0;\n");
+
+        if (regular_arg_count > 0 or fd_arg_count > 0) try generator.append("\n");
+
+        for (info.types, 1..) |arg_type, n| {
+            try generator.appendf("    const arg{} = message.{s};\n", .{
+                n,
+                switch (arg_type.tag) {
+                    .int => try tmpPrint(&tmp, "getIntArg(&arg_offset)", .{}),
+                    .uint => try tmpPrint(&tmp, "getUIntArg(&arg_offset)", .{}),
+                    .fixed => try tmpPrint(&tmp, "getFixedArg(&arg_offset)", .{}),
+                    .string => try tmpPrint(&tmp, "getStringArg(&arg_offset)", .{}),
+                    .array => try tmpPrint(&tmp, "getArrayArg(&arg_offset)", .{}),
+                    .object => try tmpPrint(&tmp, "getObjectArg(&arg_offset, display)", .{}),
+                    .new_id => try tmpPrint(&tmp, "getNewIdArg(&arg_offset)", .{}),
+                    .fd => try tmpPrint(&tmp, "getFDArg(&fd_offset)", .{}),
+                },
+            });
+        }
+
+        if (regular_arg_count > 0 or fd_arg_count > 0) try generator.append("\n");
+
+        try generator.append("    handler(listener.user_data, @ptrCast(object)");
+        for (info.types, 1..) |arg_type, n| {
+            const arg_name = try tmpPrint(&tmp, "arg{}", .{n});
+
+            if (!arg_type.allow_null) {
+                switch (arg_type.tag) {
+                    .object => try generator.appendf(", @ptrCast({s})", .{arg_name}),
+                    else => try generator.appendf(", {s}", .{arg_name}),
+                }
+            } else {
+                try generator.appendf(", {s}", .{arg_name});
+            }
+        }
+        try generator.append(");\n");
+
+        try generator.append("}\n\n");
+
+        tmp.release();
+    }
 
     return generator.buf.items;
 }
@@ -330,8 +396,38 @@ fn registerSignature(this: *Generator, sig_: []const u8) ![]const u8 {
         result = entry.key_ptr.*;
     } else {
         result = try this.allocator.dupe(u8, sig);
-        log.debug("register: {s}", .{result});
-        try this.unique_signatures_map.put(this.allocator, result, this.next_sig_index);
+        const sig_types = try this.allocator.alloc(Type, sig_.len);
+        var ti: usize = 0;
+
+        var next_nullable = false;
+        for (sig_) |sig_char| {
+            const nullable = next_nullable;
+            next_nullable = false;
+
+            switch (sig_char) {
+                'u' => sig_types[ti] = .{ .tag = .uint, .allow_null = nullable },
+                'i' => sig_types[ti] = .{ .tag = .int, .allow_null = nullable },
+                'f' => sig_types[ti] = .{ .tag = .fixed, .allow_null = nullable },
+                'n' => sig_types[ti] = .{ .tag = .new_id, .allow_null = nullable },
+                'o' => sig_types[ti] = .{ .tag = .object, .allow_null = nullable },
+                'h' => sig_types[ti] = .{ .tag = .fd, .allow_null = nullable },
+                's' => sig_types[ti] = .{ .tag = .string, .allow_null = nullable },
+                'a' => sig_types[ti] = .{ .tag = .array, .allow_null = nullable },
+                '?' => {
+                    next_nullable = true;
+                },
+                else => {
+                    log.warn("Unhandled signature char: {c}", .{sig_char});
+                    unreachable;
+                },
+            }
+
+            if (!next_nullable) {
+                ti += 1;
+            }
+        }
+
+        try this.unique_signatures_map.put(this.allocator, result, .{ .id = this.next_sig_index, .types = sig_types[0..ti] });
         this.next_sig_index += 1;
     }
 
@@ -793,7 +889,7 @@ fn zigInterfaceArgName(name_: []const u8) []const u8 {
     return name;
 }
 
-fn zigType(this: *Generator, tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, protocol: *const Protocol) Allocator.Error![]const u8 {
+fn zigType(this: *Generator, tmp: *mem.TempArena, wl_type: Type, interface_name_opt: ?[]const u8, protocol: ?*const Protocol) Allocator.Error![]const u8 {
     const prefix = if (wl_type.allow_null) "?" else "";
     const type_str = switch (wl_type.tag) {
         .int => "i32",
@@ -802,9 +898,9 @@ fn zigType(this: *Generator, tmp: *mem.TempArena, wl_type: Type, interface_name_
         .string => "[]const u8",
         .object, .new_id => blk: {
             if (interface_name_opt) |interface_name| {
-                const iname = try this.zigInterfaceTypeName(tmp, protocol, interface_name);
+                const iname = try this.zigInterfaceTypeName(tmp, protocol.?, interface_name);
                 break :blk try tmpPrint(tmp, "*{s}", .{iname});
-            } else if (std.mem.eql(u8, protocol.name, "wayland")) {
+            } else if (protocol != null and std.mem.eql(u8, protocol.?.name, "wayland")) {
                 break :blk "*Object";
             } else {
                 break :blk "*wl.Object";

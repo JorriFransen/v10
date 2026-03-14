@@ -9,6 +9,7 @@ const wayland = @import("wayland");
 const wl = wayland.wl;
 
 // TODO: Generate trampolines, for dispatch switch on signature index/enum. (Don't use function pointers, emit calls in gnerator.)
+// TODO: Verify requests/events with optional array/string args
 
 comptime {
     if (options.verbose_wayland and builtin.mode != .Debug) {
@@ -24,7 +25,7 @@ const glob_display_listener = wl.Display.Listener{
     .deleteId = handleDeleteId,
 };
 
-const Message = struct {
+pub const Message = struct {
     const max_fd_count: usize = 16;
     const Header = extern struct {
         id: u32,
@@ -48,28 +49,34 @@ const Message = struct {
         offset.* += 1;
     }
 
-    pub fn getIntArg(this: *Message, arg_offset: *usize) i32 {
+    pub fn getIntArg(this: *const Message, arg_offset: *usize) i32 {
         return @bitCast(this.getUIntArg(arg_offset));
     }
 
-    pub fn getUIntArg(this: *Message, arg_offset: *usize) u32 {
+    pub fn getUIntArg(this: *const Message, arg_offset: *usize) u32 {
         assert(arg_offset.* < this.payload.len);
         const result = this.payload[arg_offset.*];
         arg_offset.* += 1;
         return result;
     }
 
-    pub fn getObjectArg(this: *Message, arg_offset: *usize, display: *wl.Display) ?*wl.Object {
+    pub fn getObjectArg(this: *const Message, arg_offset: *usize, display: *wl.Display) ?*wl.Object {
         const id = this.getUIntArg(arg_offset);
-        assert(id <= display.objects.len);
+        if (id < 1) return null;
         return getObject(display, id);
     }
 
-    pub fn getFixedArg(this: *Message, arg_offset: *usize) wayland.Fixed {
+    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *wl.Display) ?*wl.Object {
+        _ = .{ this, arg_offset, display };
+        // TODO: Implement (and test, current code doesn't use this path)
+        unreachable;
+    }
+
+    pub fn getFixedArg(this: *const Message, arg_offset: *usize) wayland.Fixed {
         return .{ .value = @bitCast(this.getUIntArg(arg_offset)) };
     }
 
-    pub fn getStringArg(this: *Message, arg_offset: *usize) []const u8 {
+    pub fn getStringArg(this: *const Message, arg_offset: *usize) []const u8 {
         const length = this.getUIntArg(arg_offset);
 
         const arg_size = @sizeOf(@TypeOf(this.payload[0]));
@@ -84,7 +91,7 @@ const Message = struct {
         return result;
     }
 
-    pub fn getArrayArg(this: *Message, arg_offset: *usize) wayland.Array {
+    pub fn getArrayArg(this: *const Message, arg_offset: *usize) wayland.Array {
         const length = this.getUIntArg(arg_offset);
         assert(length % @sizeOf(u32) == 0);
 
@@ -100,7 +107,7 @@ const Message = struct {
         return result;
     }
 
-    pub fn getFDArg(this: *Message, fd_offset: *usize) linux.fd_t {
+    pub fn getFDArg(this: *const Message, fd_offset: *usize) linux.fd_t {
         assert(fd_offset.* < this.fds.len);
         const result = this.fds[fd_offset.*];
         fd_offset.* += 1;
@@ -384,6 +391,7 @@ fn dispatchListeners(display: *wl.Display, message: *Message, object: *wl.Object
         listener_count += 1;
 
         const listener: *const wayland.RegisteredListener = @fieldParentPtr("node", node);
+        assert(message.header.op < listener.implementation.len);
         dispatch(display, message, object, listener, sig_tag);
 
         listener_node = next;
@@ -397,30 +405,30 @@ fn dispatchListeners(display: *wl.Display, message: *Message, object: *wl.Object
     });
 }
 
-inline fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object, listener: *const wayland.RegisteredListener, sig_tag: wayland.Signature) void {
+inline fn dispatch(display: *wl.Display, message: *const Message, object: *wl.Object, listener: *const wayland.RegisteredListener, sig_tag: wayland.Signature) void {
     switch (sig_tag) {
-        ._ => trampoline_(display, object, listener, message),
-        .u => trampoline_u(display, object, listener, message),
-        .i => trampoline_i(display, object, listener, message),
-        .o => trampoline_o(display, object, listener, message),
-        .s => trampoline_s(display, object, listener, message),
-        .a => trampoline_a(display, object, listener, message),
-        .ii => trampoline_ii(display, object, listener, message),
-        .uu => trampoline_uu(display, object, listener, message),
-        .ui => trampoline_ui(display, object, listener, message),
-        .uo => trampoline_uo(display, object, listener, message),
-        .uff => trampoline_uff(display, object, listener, message),
-        .uuf => trampoline_uuf(display, object, listener, message),
-        .uoa => trampoline_uoa(display, object, listener, message),
-        .usu => trampoline_usu(display, object, listener, message),
-        .uhu => trampoline_uhu(display, object, listener, message),
-        .ous => trampoline_ous(display, object, listener, message),
-        .iia => trampoline_iia(display, object, listener, message),
-        .uuuu => trampoline_uuuu(display, object, listener, message),
-        .uiii => trampoline_uiii(display, object, listener, message),
-        .uoff => trampoline_uoff(display, object, listener, message),
-        .uuuuu => trampoline_uuuuu(display, object, listener, message),
-        .iiiiissi => trampoline_iiiiissi(display, object, listener, message),
+        ._ => wayland.trampoline_(display, object, listener, message),
+        .u => wayland.trampoline_u(display, object, listener, message),
+        .i => wayland.trampoline_i(display, object, listener, message),
+        .o => wayland.trampoline_o(display, object, listener, message),
+        .s => wayland.trampoline_s(display, object, listener, message),
+        .a => wayland.trampoline_a(display, object, listener, message),
+        .ii => wayland.trampoline_ii(display, object, listener, message),
+        .uu => wayland.trampoline_uu(display, object, listener, message),
+        .ui => wayland.trampoline_ui(display, object, listener, message),
+        .uo => wayland.trampoline_uo(display, object, listener, message),
+        .uff => wayland.trampoline_uff(display, object, listener, message),
+        .uuf => wayland.trampoline_uuf(display, object, listener, message),
+        .uoa => wayland.trampoline_uoa(display, object, listener, message),
+        .usu => wayland.trampoline_usu(display, object, listener, message),
+        .uhu => wayland.trampoline_uhu(display, object, listener, message),
+        .ous => wayland.trampoline_ous(display, object, listener, message),
+        .iia => wayland.trampoline_iia(display, object, listener, message),
+        .uuuu => wayland.trampoline_uuuu(display, object, listener, message),
+        .uiii => wayland.trampoline_uiii(display, object, listener, message),
+        .uoff => wayland.trampoline_uoff(display, object, listener, message),
+        .uuuuu => wayland.trampoline_uuuuu(display, object, listener, message),
+        .iiiiissi => wayland.trampoline_iiiiissi(display, object, listener, message),
         else => {
             log.err("Unhandled dispatch signature: {s}'", .{@tagName(sig_tag)});
             unreachable;
@@ -486,319 +494,6 @@ pub fn displayFlush(display: *wl.Display) void {
     display.send_fds_used = 0;
 
     verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.proxy.id, payload_size, fds_count });
-}
-
-// TODO: message can be *const Message now
-fn trampoline_(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    handler(listener.user_data, @ptrCast(object));
-}
-
-fn trampoline_u(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1);
-}
-
-fn trampoline_i(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1);
-}
-
-fn trampoline_o(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Object) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getObjectArg(&arg_offset, display);
-    handler(listener.user_data, @ptrCast(object), arg1);
-}
-
-fn trampoline_s(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, []const u8) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getStringArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1);
-}
-
-fn trampoline_a(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, []const u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getArrayArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1);
-}
-
-fn trampoline_ii(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getIntArg(&arg_offset);
-    const arg2 = message.getIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2);
-}
-
-fn trampoline_uu(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getUIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2);
-}
-
-fn trampoline_ui(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, i32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2);
-}
-
-fn trampoline_uo(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getObjectArg(&arg_offset, display);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2);
-}
-
-fn trampoline_uff(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, wayland.Fixed, wayland.Fixed) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getFixedArg(&arg_offset);
-    const arg3 = message.getFixedArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
-}
-
-fn trampoline_uuf(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, wayland.Fixed) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getUIntArg(&arg_offset);
-    const arg3 = message.getFixedArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
-}
-
-fn trampoline_uoa(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object, []const u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getObjectArg(&arg_offset, display);
-    const arg3 = message.getArrayArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
-}
-
-fn trampoline_usu(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, []const u8, u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getStringArg(&arg_offset);
-    const arg3 = message.getUIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
-}
-
-fn trampoline_uhu(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, fd: linux.fd_t, u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-    var fd_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getFDArg(&fd_offset);
-    const arg3 = message.getUIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
-}
-
-fn trampoline_ous(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, ?*wl.Object, u32, []const u8) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getObjectArg(&arg_offset, display);
-    const arg2 = message.getUIntArg(&arg_offset);
-    const arg3 = message.getStringArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
-}
-
-fn trampoline_iia(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32, []const u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getIntArg(&arg_offset);
-    const arg2 = message.getIntArg(&arg_offset);
-    const arg3 = message.getArrayArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3);
-}
-
-fn trampoline_uuuu(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, u32, u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getUIntArg(&arg_offset);
-    const arg3 = message.getUIntArg(&arg_offset);
-    const arg4 = message.getUIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4);
-}
-
-fn trampoline_uiii(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, i32, i32, i32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getIntArg(&arg_offset);
-    const arg3 = message.getIntArg(&arg_offset);
-    const arg4 = message.getIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4);
-}
-
-fn trampoline_uoff(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, ?*wl.Object, wayland.Fixed, wayland.Fixed) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getObjectArg(&arg_offset, display);
-    const arg3 = message.getFixedArg(&arg_offset);
-    const arg4 = message.getFixedArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4);
-}
-
-fn trampoline_uuuuu(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, u32, u32, u32, u32, u32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getUIntArg(&arg_offset);
-    const arg2 = message.getUIntArg(&arg_offset);
-    const arg3 = message.getUIntArg(&arg_offset);
-    const arg4 = message.getUIntArg(&arg_offset);
-    const arg5 = message.getUIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4, arg5);
-}
-
-fn trampoline_iiiiissi(display: *wl.Display, object: *wl.Object, listener: *const wayland.RegisteredListener, message: *Message) void {
-    _ = display;
-
-    assert(message.header.op < listener.implementation.len);
-    const HandlerType = *const fn (?*anyopaque, ?*wl.Proxy, i32, i32, i32, i32, i32, []const u8, []const u8, i32) void;
-    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
-
-    var arg_offset: usize = 0;
-
-    const arg1 = message.getIntArg(&arg_offset);
-    const arg2 = message.getIntArg(&arg_offset);
-    const arg3 = message.getIntArg(&arg_offset);
-    const arg4 = message.getIntArg(&arg_offset);
-    const arg5 = message.getIntArg(&arg_offset);
-    const arg6 = message.getStringArg(&arg_offset);
-    const arg7 = message.getStringArg(&arg_offset);
-    const arg8 = message.getIntArg(&arg_offset);
-    handler(listener.user_data, @ptrCast(object), arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 pub fn proxyCreate(display: *wl.Display, interface: *const wayland.Interface, version: u32) *wl.Proxy {

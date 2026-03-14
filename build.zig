@@ -287,6 +287,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
         .root_source_file = wayland_source,
         .imports = &.{
             .{ .name = "linux", .module = modules.linux },
+            .{ .name = "wlc", .module = modules.wlc.? },
         },
     });
 
