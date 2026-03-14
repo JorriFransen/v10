@@ -779,7 +779,7 @@ fn zigEnumName(this: *Generator, tmp: *mem.TempArena, name: []const u8, protocol
 
 fn zigFunctionName(tmp: *mem.TempArena, name: []const u8) Allocator.Error![]const u8 {
     const ta = tmp.allocator();
-    var result = std.ArrayList(u8){};
+    var result = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
 
     try result.append(ta, name[0]);
 
