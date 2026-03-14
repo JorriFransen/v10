@@ -8,7 +8,6 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Add signature index/enum to message.signature (for events)
 // TODO: Generate trampolines, for dispatch switch on signature index/enum. (Don't use function pointers, emit calls in gnerator.)
 
 comptime {
@@ -284,6 +283,7 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
                             var fd_count: usize = 0;
 
                             assert(header.op < object.proxy.interface.events.len);
+                            // TODO: Add fd_count member?
                             for (object.proxy.interface.events[header.op].signature) |arg_type| {
                                 if (arg_type == .h) {
                                     assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
@@ -299,7 +299,7 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
                                 .fds = fds[0..fd_count],
                             };
 
-                            dispatch(display, &message, object);
+                            dispatchListeners(display, &message, object);
                             result += 1;
 
                             current_offset += header.size;
@@ -334,11 +334,13 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
     return result;
 }
 
-fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
+fn dispatchListeners(display: *wl.Display, message: *Message, object: *wl.Object) void {
     assert(display == &glob_display);
 
     const interface = object.proxy.interface;
-    const sig = interface.events[message.header.op].signature;
+    const event = &interface.events[message.header.op];
+    const sig = event.signature;
+    const sig_tag = event.signature_tag;
 
     if (options.verbose_wayland) {
         var print_buf: [1024]u8 = undefined;
@@ -353,22 +355,18 @@ fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
 
         var arg_offset: usize = 0;
         var fd_offset: usize = 0;
-        var si: usize = 0;
-        var ai: usize = 0;
-        while (si < sig.len) : ({
-            si += 1;
-            ai += 1;
-        }) {
-            p = switch (sig[si]) {
-                'i' => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getIntArg(&arg_offset)}) catch unreachable,
-                'u' => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
-                'h' => std.fmt.bufPrint(print_buf[used..], ", h = {}", .{message.getFDArg(&fd_offset)}) catch unreachable,
-                'f' => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getFixedArg(&arg_offset).toDouble()}) catch unreachable,
-                'o' => std.fmt.bufPrint(print_buf[used..], ", o = {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
-                's' => std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{message.getStringArg(&arg_offset)}) catch unreachable,
-                'a' => std.fmt.bufPrint(print_buf[used..], ", {any}", .{message.getArrayArg(&arg_offset)}) catch unreachable,
-                'n' => unreachable,
-                else => @panic("unhandled sig char"),
+        for (sig) |at| {
+            p = switch (at) {
+                .i => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getIntArg(&arg_offset)}) catch unreachable,
+                .u => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
+                .h => std.fmt.bufPrint(print_buf[used..], ", h = {}", .{message.getFDArg(&fd_offset)}) catch unreachable,
+                .f => std.fmt.bufPrint(print_buf[used..], ", {}", .{message.getFixedArg(&arg_offset).toDouble()}) catch unreachable,
+                .o => std.fmt.bufPrint(print_buf[used..], ", o = {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
+                .@"?o" => std.fmt.bufPrint(print_buf[used..], ", o = {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
+                .s => std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{message.getStringArg(&arg_offset)}) catch unreachable,
+                .a => std.fmt.bufPrint(print_buf[used..], ", {any}", .{message.getArrayArg(&arg_offset)}) catch unreachable,
+                .@"?a" => std.fmt.bufPrint(print_buf[used..], ", {any}", .{message.getArrayArg(&arg_offset)}) catch unreachable,
+                .n => unreachable,
             };
             used += p.len;
         }
@@ -385,56 +383,8 @@ fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
         const next = node.next;
         listener_count += 1;
 
-        const listener: *wayland.RegisteredListener = @fieldParentPtr("node", node);
-
-        if (sig.len == 0) {
-            trampoline_(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.u})) {
-            trampoline_u(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.i})) {
-            trampoline_i(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.o})) {
-            trampoline_o(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.s})) {
-            trampoline_s(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.a})) {
-            trampoline_a(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .i, .i })) {
-            trampoline_ii(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u })) {
-            trampoline_uu(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .i })) {
-            trampoline_ui(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .o })) {
-            trampoline_uo(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .f, .f })) {
-            trampoline_uff(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u, .f })) {
-            trampoline_uuf(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .o, .a })) {
-            trampoline_uoa(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .s, .u })) {
-            trampoline_usu(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .h, .u })) {
-            trampoline_uhu(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .o, .u, .s })) {
-            trampoline_ous(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .i, .i, .a })) {
-            trampoline_iia(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u, .u, .u })) {
-            trampoline_uuuu(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .i, .i, .i })) {
-            trampoline_uiii(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .o, .f, .f })) {
-            trampoline_uoff(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u, .u, .u, .u })) {
-            trampoline_uuuuu(display, object, listener, message);
-        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .i, .i, .i, .i, .i, .s, .s, .i })) {
-            trampoline_iiiiissi(display, object, listener, message);
-        } else {
-            log.err("Unhandled dispatch signature: {any}'", .{sig});
-            unreachable;
-        }
+        const listener: *const wayland.RegisteredListener = @fieldParentPtr("node", node);
+        dispatch(display, message, object, listener, sig_tag);
 
         listener_node = next;
     }
@@ -445,6 +395,37 @@ fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
         object.proxy.id,
         listener_count,
     });
+}
+
+inline fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object, listener: *const wayland.RegisteredListener, sig_tag: wayland.Signature) void {
+    switch (sig_tag) {
+        ._ => trampoline_(display, object, listener, message),
+        .u => trampoline_u(display, object, listener, message),
+        .i => trampoline_i(display, object, listener, message),
+        .o => trampoline_o(display, object, listener, message),
+        .s => trampoline_s(display, object, listener, message),
+        .a => trampoline_a(display, object, listener, message),
+        .ii => trampoline_ii(display, object, listener, message),
+        .uu => trampoline_uu(display, object, listener, message),
+        .ui => trampoline_ui(display, object, listener, message),
+        .uo => trampoline_uo(display, object, listener, message),
+        .uff => trampoline_uff(display, object, listener, message),
+        .uuf => trampoline_uuf(display, object, listener, message),
+        .uoa => trampoline_uoa(display, object, listener, message),
+        .usu => trampoline_usu(display, object, listener, message),
+        .uhu => trampoline_uhu(display, object, listener, message),
+        .ous => trampoline_ous(display, object, listener, message),
+        .iia => trampoline_iia(display, object, listener, message),
+        .uuuu => trampoline_uuuu(display, object, listener, message),
+        .uiii => trampoline_uiii(display, object, listener, message),
+        .uoff => trampoline_uoff(display, object, listener, message),
+        .uuuuu => trampoline_uuuuu(display, object, listener, message),
+        .iiiiissi => trampoline_iiiiissi(display, object, listener, message),
+        else => {
+            log.err("Unhandled dispatch signature: {s}'", .{@tagName(sig_tag)});
+            unreachable;
+        },
+    }
 }
 
 pub fn displayFlush(display: *wl.Display) void {
@@ -906,7 +887,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 result = new_proxy;
                 continue :arg_type_switch_blk .{ .u = new_proxy.id };
             },
-            .a => {
+            .a, .@"?a" => {
                 // TODO: implement
                 unreachable;
             },
@@ -937,7 +918,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 .f => unreachable,
                 .s => |s| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{s}) catch unreachable,
                 .n => unreachable,
-                .a => unreachable,
+                .a, .@"?a" => unreachable,
             };
             used += p.len;
         }

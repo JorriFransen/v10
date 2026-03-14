@@ -20,6 +20,8 @@ allocator: Allocator,
 protocol: *const Protocol,
 buf: std.ArrayList(u8),
 interface_protocol_map: std.StringHashMapUnmanaged(*Protocol),
+unique_signatures_map: std.StringArrayHashMapUnmanaged(usize),
+next_sig_index: usize = 0,
 
 pub const Error =
     std.fmt.ParseIntError ||
@@ -32,6 +34,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         .protocol = core_protocol,
         .buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 },
         .interface_protocol_map = std.StringHashMapUnmanaged(*Protocol){},
+        .unique_signatures_map = std.StringArrayHashMapUnmanaged(usize){},
     };
 
     for (core_protocol.interfaces) |i| {
@@ -135,6 +138,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    pub const Message = struct {
         \\        name: []const u8,
         \\        signature: []const ArgumentType,
+        \\        signature_tag: Signature,
         \\    };
         \\
         \\};
@@ -162,6 +166,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    @"?o",
         \\    n,
         \\    a,
+        \\    @"?a",
         \\    h,
         \\};
         \\
@@ -174,11 +179,20 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    @"?o": ?*wl.Object,
         \\    n: u32,
         \\    a: Array,
+        \\    @"?a": ?Array,
         \\    h: i32,
         \\};
         \\
+        \\pub const Signature = enum(u8) {
         \\
     );
+
+    var it = generator.unique_signatures_map.iterator();
+    while (it.next()) |entry| {
+        try generator.appendf("    {f} = {},\n", .{ std.zig.fmtId(entry.key_ptr.*), entry.value_ptr.* });
+    }
+
+    try generator.append("};\n");
 
     return generator.buf.items;
 }
@@ -207,17 +221,16 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         , .{request.name});
 
         const registry_bind = (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind"));
-        if (registry_bind) {
+        const tag = if (registry_bind) blk: {
             try this.append(" .u, .s, .u, .n");
-        } else {
-            try this.genSignature(request.args);
-        }
+            break :blk try this.registerSignature("usun");
+        } else try this.genSignature(request.args);
 
-        try this.append(" },\n            }");
+        try this.appendf(" }},\n                .signature_tag = .{f},\n            }}", .{std.zig.fmtId(tag)});
     }
 
     try this.append(
-        \\ },
+        \\ }, 
         \\            .events = &.{
     );
 
@@ -229,8 +242,8 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
             \\                .signature = &.{{
         , .{event.name});
 
-        try this.genSignature(event.args);
-        try this.append(" },\n            }");
+        const tag = try this.genSignature(event.args);
+        try this.appendf(" }},\n               .signature_tag = .{f},\n            }}", .{std.zig.fmtId(tag)});
     }
     try this.append(
         \\ },
@@ -239,32 +252,90 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
     );
 }
 
-fn genSignature(this: *Generator, args: []const Arg) Allocator.Error!void {
+fn genSignature(this: *Generator, args: []const Arg) Allocator.Error![]const u8 {
+    var str_buf: [64]u8 = undefined;
+    var str_used: usize = 0;
+
     for (args, 0..) |arg, i| {
         if (i > 0) try this.append(", ") else try this.append(" ");
 
         if (arg.type.allow_null) {
             switch (arg.type.tag) {
-                .object => try this.append(".@\"?o\""),
-                .string => try this.append(".@\"?s\""),
+                .object => {
+                    try this.append(".@\"?o\"");
+                    str_buf[str_used] = '?';
+                    str_buf[str_used + 1] = 'o';
+                },
+                .string => {
+                    try this.append(".@\"?s\"");
+                    str_buf[str_used] = '?';
+                    str_buf[str_used + 1] = 's';
+                },
                 else => {
                     log.warn("Unexpected nullable type: {}", .{arg.type});
                     @panic("Unexpected nullable type");
                 },
             }
+
+            str_used += 2;
         } else {
             switch (arg.type.tag) {
-                .int => try this.append(".i"),
-                .uint => try this.append(".u"),
-                .fixed => try this.append(".f"),
-                .string => try this.append(".s"),
-                .object => try this.append(".o"),
-                .new_id => try this.append(".n"),
-                .array => try this.append(".a"),
-                .fd => try this.append(".h"),
+                .int => {
+                    try this.append(".i");
+                    str_buf[str_used] = 'i';
+                },
+                .uint => {
+                    try this.append(".u");
+                    str_buf[str_used] = 'u';
+                },
+                .fixed => {
+                    try this.append(".f");
+                    str_buf[str_used] = 'f';
+                },
+                .string => {
+                    try this.append(".s");
+                    str_buf[str_used] = 's';
+                },
+                .object => {
+                    try this.append(".o");
+                    str_buf[str_used] = 'o';
+                },
+                .new_id => {
+                    try this.append(".n");
+                    str_buf[str_used] = 'n';
+                },
+                .array => {
+                    try this.append(".a");
+                    str_buf[str_used] = 'a';
+                },
+                .fd => {
+                    try this.append(".h");
+                    str_buf[str_used] = 'h';
+                },
             }
+            str_used += 1;
         }
     }
+
+    return try this.registerSignature(str_buf[0..str_used]);
+}
+
+fn registerSignature(this: *Generator, sig_: []const u8) ![]const u8 {
+    const sig = if (sig_.len > 0) sig_ else "_";
+
+    var result: []const u8 = "";
+
+    // Don't use getOrPut to avoid duplicate copies
+    if (this.unique_signatures_map.getEntry(sig)) |entry| {
+        result = entry.key_ptr.*;
+    } else {
+        result = try this.allocator.dupe(u8, sig);
+        log.debug("register: {s}", .{result});
+        try this.unique_signatures_map.put(this.allocator, result, this.next_sig_index);
+        this.next_sig_index += 1;
+    }
+
+    return result;
 }
 
 fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const Interface) Error!void {
