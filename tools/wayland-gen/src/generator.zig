@@ -232,7 +232,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
                     .string => try tmpPrint(&tmp, "getStringArg(&arg_offset)", .{}),
                     .array => try tmpPrint(&tmp, "getArrayArg(&arg_offset)", .{}),
                     .object => try tmpPrint(&tmp, "getObjectArg(&arg_offset, display)", .{}),
-                    .new_id => try tmpPrint(&tmp, "getNewIdArg(&arg_offset)", .{}),
+                    .new_id => try tmpPrint(&tmp, "getNewIdArg(&arg_offset, display)", .{}),
                     .fd => try tmpPrint(&tmp, "getFDArg(&fd_offset)", .{}),
                 },
             });
@@ -246,7 +246,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
             if (!arg_type.allow_null) {
                 switch (arg_type.tag) {
-                    .object => try generator.appendf(", @ptrCast({s})", .{arg_name}),
+                    .object, .new_id => try generator.appendf(", @ptrCast({s})", .{arg_name}),
                     else => try generator.appendf(", {s}", .{arg_name}),
                 }
             } else {
@@ -259,6 +259,18 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
         tmp.release();
     }
+
+    try generator.append("pub inline fn dispatch(display: *wl.Display, message: *const wlc.Message, object: *wl.Object, listener: *const RegisteredListener, sig_tag: Signature) void {\n");
+    try generator.append("    switch (sig_tag) {\n");
+
+    it = generator.unique_signatures_map.iterator();
+    while (it.next()) |entry| {
+        const enum_name = std.zig.fmtId(entry.key_ptr.*);
+        const trampoline_name = std.zig.fmtId(try tmpPrint(&tmp, "trampoline_{s}", .{if (std.mem.eql(u8, entry.key_ptr.*, "_")) "" else entry.key_ptr.*}));
+        try generator.appendf("        .{f} => {f}(display, object, listener, message),\n", .{ enum_name, trampoline_name });
+    }
+    try generator.append("    }\n");
+    try generator.append("}\n");
 
     return generator.buf.items;
 }
@@ -296,7 +308,7 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
     }
 
     try this.append(
-        \\ }, 
+        \\ },
         \\            .events = &.{
     );
 
@@ -917,7 +929,12 @@ fn genDocComment(this: *Generator, indent: []const u8, desc: []const u8) Allocat
     var it = std.mem.splitAny(u8, desc, &.{ '\r', '\n' });
 
     while (it.next()) |line| {
-        try this.appendf("{s}/// {s}\n", .{ indent, std.mem.trimStart(u8, line, &std.ascii.whitespace) });
+        const trimmed = std.mem.trimStart(u8, line, &std.ascii.whitespace);
+        try this.appendf("{s}///{s}{s}\n", .{
+            indent,
+            if (trimmed.len > 0) " " else "",
+            trimmed,
+        });
     }
 }
 

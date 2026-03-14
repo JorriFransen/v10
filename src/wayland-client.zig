@@ -8,7 +8,6 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Generate trampolines, for dispatch switch on signature index/enum. (Don't use function pointers, emit calls in gnerator.)
 // TODO: Verify requests/events with optional array/string args
 
 comptime {
@@ -392,7 +391,7 @@ fn dispatchListeners(display: *wl.Display, message: *Message, object: *wl.Object
 
         const listener: *const wayland.RegisteredListener = @fieldParentPtr("node", node);
         assert(message.header.op < listener.implementation.len);
-        dispatch(display, message, object, listener, sig_tag);
+        wayland.dispatch(display, message, object, listener, sig_tag);
 
         listener_node = next;
     }
@@ -403,37 +402,6 @@ fn dispatchListeners(display: *wl.Display, message: *Message, object: *wl.Object
         object.proxy.id,
         listener_count,
     });
-}
-
-inline fn dispatch(display: *wl.Display, message: *const Message, object: *wl.Object, listener: *const wayland.RegisteredListener, sig_tag: wayland.Signature) void {
-    switch (sig_tag) {
-        ._ => wayland.trampoline_(display, object, listener, message),
-        .u => wayland.trampoline_u(display, object, listener, message),
-        .i => wayland.trampoline_i(display, object, listener, message),
-        .o => wayland.trampoline_o(display, object, listener, message),
-        .s => wayland.trampoline_s(display, object, listener, message),
-        .a => wayland.trampoline_a(display, object, listener, message),
-        .ii => wayland.trampoline_ii(display, object, listener, message),
-        .uu => wayland.trampoline_uu(display, object, listener, message),
-        .ui => wayland.trampoline_ui(display, object, listener, message),
-        .uo => wayland.trampoline_uo(display, object, listener, message),
-        .uff => wayland.trampoline_uff(display, object, listener, message),
-        .uuf => wayland.trampoline_uuf(display, object, listener, message),
-        .uoa => wayland.trampoline_uoa(display, object, listener, message),
-        .usu => wayland.trampoline_usu(display, object, listener, message),
-        .uhu => wayland.trampoline_uhu(display, object, listener, message),
-        .ous => wayland.trampoline_ous(display, object, listener, message),
-        .iia => wayland.trampoline_iia(display, object, listener, message),
-        .uuuu => wayland.trampoline_uuuu(display, object, listener, message),
-        .uiii => wayland.trampoline_uiii(display, object, listener, message),
-        .uoff => wayland.trampoline_uoff(display, object, listener, message),
-        .uuuuu => wayland.trampoline_uuuuu(display, object, listener, message),
-        .iiiiissi => wayland.trampoline_iiiiissi(display, object, listener, message),
-        else => {
-            log.err("Unhandled dispatch signature: {s}'", .{@tagName(sig_tag)});
-            unreachable;
-        },
-    }
 }
 
 pub fn displayFlush(display: *wl.Display) void {
