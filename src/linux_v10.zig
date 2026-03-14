@@ -1393,9 +1393,8 @@ comptime {
     }
 }
 
-fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: u32, interface_name: []const u8, version: u32) void {
+fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, interface_name: []const u8, version: u32) void {
     const wli: *WlInitData = @ptrCast(@alignCast(data));
-    const registry = registry_opt.?;
 
     const Mapping = struct {
         []const u8,
@@ -1453,7 +1452,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry_opt: ?*wl.Registry, name: 
     }
 }
 
-fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) void {
+fn handleWlRemoveGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32) void {
     _ = data;
     _ = registry;
 
@@ -1461,67 +1460,63 @@ fn handleWlRemoveGlobal(data: ?*anyopaque, registry: ?*wl.Registry, name: u32) v
     log.debug("Remove global: {}", .{name});
 }
 
-fn handleWlSurfaceEnter(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) void {
-    _ = .{ data, surface, current_output_object_opt };
+fn handleWlSurfaceEnter(data: ?*anyopaque, surface: *wl.Surface, current_output_object: *wl.Object) void {
+    _ = .{ data, surface, current_output_object };
 
-    if (current_output_object_opt) |current_output_object| {
-        const current_output: *wl.Output = @ptrCast(current_output_object);
-        log.debug("Surface enter: {}", .{current_output});
+    const current_output: *wl.Output = @ptrCast(current_output_object);
+    log.debug("Surface enter: {}", .{current_output});
 
-        var found = false;
-        for (&wld.outputs) |*output_opt| {
-            if (output_opt.*) |*existing_output| {
-                if (existing_output.handle == current_output) {
-                    existing_output.active = true;
-                    found = true;
-                    break;
-                }
+    var found = false;
+    for (&wld.outputs) |*output_opt| {
+        if (output_opt.*) |*existing_output| {
+            if (existing_output.handle == current_output) {
+                existing_output.active = true;
+                found = true;
+                break;
             }
         }
+    }
 
-        if (!found) {
-            log.warn("Failed to find matching output: {*}", .{current_output_object_opt});
-        }
+    if (!found) {
+        log.warn("Failed to find matching output: {*}", .{current_output_object});
     }
 }
 
-fn handleWlSurfaceLeave(data: ?*anyopaque, surface: ?*wl.Surface, current_output_object_opt: ?*wl.Object) void {
-    _ = .{ data, surface, current_output_object_opt };
+fn handleWlSurfaceLeave(data: ?*anyopaque, surface: *wl.Surface, current_output_object: *wl.Object) void {
+    _ = .{ data, surface, current_output_object };
 
-    if (current_output_object_opt) |current_output_object| {
-        const current_output: *wl.Output = @ptrCast(current_output_object);
-        log.debug("Surface leave: {}", .{current_output});
+    const current_output: *wl.Output = @ptrCast(current_output_object);
+    log.debug("Surface leave: {}", .{current_output});
 
-        var found = false;
-        for (&wld.outputs) |*output_opt| {
-            if (output_opt.*) |*existing_output| {
-                if (existing_output.handle == current_output) {
-                    existing_output.active = false;
-                    found = true;
-                    break;
-                }
+    var found = false;
+    for (&wld.outputs) |*output_opt| {
+        if (output_opt.*) |*existing_output| {
+            if (existing_output.handle == current_output) {
+                existing_output.active = false;
+                found = true;
+                break;
             }
         }
+    }
 
-        if (!found) {
-            log.warn("Failed to find matching output: {*}", .{current_output_object_opt});
-        }
+    if (!found) {
+        log.warn("Failed to find matching output: {*}", .{current_output_object});
     }
 }
 
-fn handleWlShmFormat(data: ?*anyopaque, shm: ?*wl.Shm, format: wl.Shm.Format) void {
+fn handleWlShmFormat(data: ?*anyopaque, shm: *wl.Shm, format: wl.Shm.Format) void {
     _ = shm;
 
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     if (format == .xrgb8888) wli.xrgb8888 = true;
 }
 
-fn handleXdgPing(data: ?*anyopaque, wm_base: ?*xdg_shell.WmBase, serial: u32) void {
+fn handleXdgPing(data: ?*anyopaque, wm_base: *xdg_shell.WmBase, serial: u32) void {
     _ = data;
-    wm_base.?.pong(serial);
+    wm_base.pong(serial);
 }
 
-fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, serial: u32) void {
+fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: *xdg_shell.Surface, serial: u32) void {
     _ = data;
     _ = surface;
 
@@ -1529,7 +1524,7 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: ?*xdg_shell.Surface, se
     wld.pending_configure_serial = serial;
 }
 
-fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32, states_: []const u32) void {
+fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, width: i32, height: i32, states_: []const u32) void {
     _ = data;
     _ = toplevel;
 
@@ -1542,7 +1537,7 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel,
     wld.pending_resize = .{ .width = width, .height = height };
 }
 
-fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, width: i32, height: i32) void {
+fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, width: i32, height: i32) void {
     _ = data;
     _ = toplevel;
 
@@ -1551,7 +1546,7 @@ fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*xdg_shell.Top
     log.debug("xdg toplevel configure bounds {},{}", .{ width, height });
 }
 
-fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel, capabilities: []const u32) void {
+fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, capabilities: []const u32) void {
     _ = data;
     _ = toplevel;
     log.debug("xdg toplevel capabilities count {}", .{capabilities.len});
@@ -1561,19 +1556,19 @@ fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: ?*xdg_shell.Topl
     log.debug("toplevel caps: {any}", .{caps});
 }
 
-fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: ?*xdg_shell.Toplevel) void {
+fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel) void {
     _ = data;
     _ = toplevel;
 
     running = false;
 }
 
-fn handleWlCallbackFrameDone(data: ?*anyopaque, _: ?*wl.Callback, _: u32) void {
+fn handleWlCallbackFrameDone(data: ?*anyopaque, _: *wl.Callback, _: u32) void {
     _ = data;
     wld.should_draw = true;
 }
 
-fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) void {
+fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: *wl.Buffer) void {
     _ = wl_buffer;
     const buffer: *WlBuffer = @ptrCast(@alignCast(data));
 
@@ -1585,14 +1580,14 @@ fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: ?*wl.Buffer) void {
     buffer.free = true;
 }
 
-fn handleWlSeatCapabilities(data: ?*anyopaque, seat: ?*wl.Seat, capabilities: wl.Seat.Capability) void {
+fn handleWlSeatCapabilities(data: ?*anyopaque, seat: *wl.Seat, capabilities: wl.Seat.Capability) void {
     _ = seat;
 
     const wli: *WlInitData = @ptrCast(@alignCast(data));
     wli.seat_capabilities = capabilities;
 }
 
-fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u32, rawkey: u32, state: wl.Keyboard.KeyState) void {
+fn handleWlKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32, rawkey: u32, state: wl.Keyboard.KeyState) void {
     _ = data;
     _ = keyboard;
     _ = time;
@@ -1657,7 +1652,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, time: u3
     }
 }
 
-fn handleWlKeyModifiers(data: ?*anyopaque, keyboard: ?*wl.Keyboard, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) void {
+fn handleWlKeyModifiers(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) void {
     _ = .{ data, keyboard, serial, mods_depressed, mods_latched, mods_locked, group };
 
     wld.key_mods_pressed = @bitCast(mods_depressed);
@@ -1676,7 +1671,7 @@ fn toggleFullscreen() void {
     }
 }
 
-fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, surface: ?*wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
+fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, surface: *wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
     _ = .{ data, pointer, serial, surface, surface_x, surface_y };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
@@ -1690,14 +1685,14 @@ fn handleWlPointerEnter(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, s
     }
 }
 
-fn handleWlMouseMotion(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
+fn handleWlMouseMotion(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
     _ = .{ data, pointer, time };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
     wld.new_input.debug_mouse.y = surface_y.toInt();
 }
 
-fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) void {
+fn handleWlMouseButton(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) void {
     _ = .{ data, pointer, serial, time };
 
     const button: input.Key = @enumFromInt(raw_button);
@@ -1723,26 +1718,26 @@ fn handleWlMouseButton(data: ?*anyopaque, pointer: ?*wl.Pointer, serial: u32, ti
     }
 }
 
-fn handleWlMouseAxis(data: ?*anyopaque, pointer: ?*wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wayland.Fixed) void {
+fn handleWlMouseAxis(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wayland.Fixed) void {
     _ = .{ data, pointer, time, axis, value };
     // log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
 }
 
-fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: ?*xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) void {
+fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: *xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) void {
     _ = toplevel_decoration;
     log.debug("xdg_decoration configure: {}", .{mode});
 
     const mode_ptr: *?xdg_decoration.ToplevelDecorationV1.Mode = @ptrCast(@alignCast(data));
     mode_ptr.* = mode;
 }
-fn handleWlOutputGeometry(data: ?*anyopaque, output: ?*wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: []const u8, model: []const u8, transform: wl.Output.Transform) void {
+fn handleWlOutputGeometry(data: ?*anyopaque, output: *wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: []const u8, model: []const u8, transform: wl.Output.Transform) void {
     _ = .{ data, output };
     log.debug("handleWlOutputGeometry: {},{},{},{},{},{s},{s},{}", .{ x, y, physical_width, physical_height, subpixel, make, model, transform });
 }
 
-fn handleWlOutputMode(data: ?*anyopaque, output: ?*wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) void {
+fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) void {
     const output_data: *WlOutput = @ptrCast(@alignCast(data));
-    assert(output_data.handle == output.?);
+    assert(output_data.handle == output);
     output_data.refresh_mhz = refresh;
 
     log.debug("handleWlOutputMode: {},{},{},{}", .{ flags, width, height, refresh });

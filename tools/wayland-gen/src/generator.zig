@@ -134,7 +134,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\
         \\    pub const Message = struct {
         \\        name: []const u8,
-        \\        signature: []const u8,
+        \\        signature: []const ArgumentType,
         \\    };
         \\
         \\};
@@ -153,7 +153,19 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\
         \\pub const Array = []const u32;
         \\
-        \\pub const Argument = union(enum) {
+        \\pub const ArgumentType = enum(u8) {
+        \\    i,
+        \\    u,
+        \\    f,
+        \\    s,
+        \\    o,
+        \\    @"?o",
+        \\    n,
+        \\    a,
+        \\    h,
+        \\};
+        \\
+        \\pub const Argument = union(ArgumentType) {
         \\    i: i32,
         \\    u: u32,
         \\    f: Fixed,
@@ -191,17 +203,17 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         try this.appendf(
             \\ .{{
             \\                .name = "{s}",
-            \\                .signature = "
+            \\                .signature = &.{{
         , .{request.name});
 
         const registry_bind = (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind"));
         if (registry_bind) {
-            try this.append("usun");
+            try this.append(" .u, .s, .u, .n");
         } else {
             try this.genSignature(request.args);
         }
 
-        try this.append("\",\n            }");
+        try this.append(" },\n            }");
     }
 
     try this.append(
@@ -214,11 +226,11 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         try this.appendf(
             \\ .{{
             \\                .name = "{s}",
-            \\                .signature = "
+            \\                .signature = &.{{
         , .{event.name});
 
         try this.genSignature(event.args);
-        try this.append("\",\n            }");
+        try this.append(" },\n            }");
     }
     try this.append(
         \\ },
@@ -228,18 +240,29 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
 }
 
 fn genSignature(this: *Generator, args: []const Arg) Allocator.Error!void {
-    for (args) |arg| {
-        if (arg.type.allow_null) try this.append("?");
+    for (args, 0..) |arg, i| {
+        if (i > 0) try this.append(", ") else try this.append(" ");
 
-        switch (arg.type.tag) {
-            .int => try this.append("i"),
-            .uint => try this.append("u"),
-            .fixed => try this.append("f"),
-            .string => try this.append("s"),
-            .object => try this.append("o"),
-            .new_id => try this.append("n"),
-            .array => try this.append("a"),
-            .fd => try this.append("h"),
+        if (arg.type.allow_null) {
+            switch (arg.type.tag) {
+                .object => try this.append(".@\"?o\""),
+                .string => try this.append(".@\"?s\""),
+                else => {
+                    log.warn("Unexpected nullable type: {}", .{arg.type});
+                    @panic("Unexpected nullable type");
+                },
+            }
+        } else {
+            switch (arg.type.tag) {
+                .int => try this.append(".i"),
+                .uint => try this.append(".u"),
+                .fixed => try this.append(".f"),
+                .string => try this.append(".s"),
+                .object => try this.append(".o"),
+                .new_id => try this.append(".n"),
+                .array => try this.append(".a"),
+                .fd => try this.append(".h"),
+            }
         }
     }
 }
@@ -541,7 +564,7 @@ fn genListener(this: *Generator, protocol: *const Protocol, interface: *const In
     try this.append("        pub const Listener = extern struct {\n");
     for (interface.events, 0..) |event, i| {
         try this.genDocComment("            ", event.description);
-        try this.appendf("            {f}: ?*const fn (data: ?*anyopaque, {f}: ?*{s}", .{
+        try this.appendf("            {f}: ?*const fn (data: ?*anyopaque, {f}: *{s}", .{
             std.zig.fmtId(try zigFunctionName(&tmp, event.name)),
             iface_arg,
             iface_type,

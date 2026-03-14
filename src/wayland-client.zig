@@ -284,8 +284,8 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
                             var fd_count: usize = 0;
 
                             assert(header.op < object.proxy.interface.events.len);
-                            for (object.proxy.interface.events[header.op].signature) |c| {
-                                if (c == 'h') {
+                            for (object.proxy.interface.events[header.op].signature) |arg_type| {
+                                if (arg_type == .h) {
                                     assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
                                     fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
                                     fd_count += 1;
@@ -389,50 +389,50 @@ fn dispatch(display: *wl.Display, message: *Message, object: *wl.Object) void {
 
         if (sig.len == 0) {
             trampoline_(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "u")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.u})) {
             trampoline_u(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "i")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.i})) {
             trampoline_i(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "o")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.o})) {
             trampoline_o(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "s")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.s})) {
             trampoline_s(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "a")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{.a})) {
             trampoline_a(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "ii")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .i, .i })) {
             trampoline_ii(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uu")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u })) {
             trampoline_uu(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "ui")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .i })) {
             trampoline_ui(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uo")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .o })) {
             trampoline_uo(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uff")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .f, .f })) {
             trampoline_uff(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uuf")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u, .f })) {
             trampoline_uuf(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uoa")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .o, .a })) {
             trampoline_uoa(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "usu")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .s, .u })) {
             trampoline_usu(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uhu")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .h, .u })) {
             trampoline_uhu(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "ous")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .o, .u, .s })) {
             trampoline_ous(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "iia")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .i, .i, .a })) {
             trampoline_iia(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uuuu")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u, .u, .u })) {
             trampoline_uuuu(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uiii")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .i, .i, .i })) {
             trampoline_uiii(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uoff")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .o, .f, .f })) {
             trampoline_uoff(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "uuuuu")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .u, .u, .u, .u, .u })) {
             trampoline_uuuuu(display, object, listener, message);
-        } else if (std.mem.eql(u8, sig, "iiiiissi")) {
+        } else if (std.mem.eql(wayland.ArgumentType, sig, &.{ .i, .i, .i, .i, .i, .s, .s, .i })) {
             trampoline_iiiiissi(display, object, listener, message);
         } else {
-            log.err("Unhandled dispatch signature: '{s}'", .{sig});
+            log.err("Unhandled dispatch signature: {any}'", .{sig});
             unreachable;
         }
 
