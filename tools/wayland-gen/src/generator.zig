@@ -30,7 +30,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
     var generator = Generator{
         .allocator = allocator,
         .protocol = core_protocol,
-        .buf = std.ArrayList(u8){},
+        .buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 },
         .interface_protocol_map = std.StringHashMapUnmanaged(*Protocol){},
     };
 
@@ -669,7 +669,7 @@ fn genListener(this: *Generator, protocol: *const Protocol, interface: *const In
 
 fn zigEnumName(this: *Generator, tmp: *mem.TempArena, name: []const u8, protocol: *const Protocol) Allocator.Error![]const u8 {
     const ta = tmp.allocator();
-    var result = std.ArrayList(u8){};
+    var result = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
 
     if (std.mem.indexOfScalar(u8, name, '.')) |idx| {
         const enum_interface = name[0..idx];
@@ -685,7 +685,7 @@ fn zigEnumName(this: *Generator, tmp: *mem.TempArena, name: []const u8, protocol
 
 fn zigTypeName(tmp: *mem.TempArena, name: []const u8) Allocator.Error![]const u8 {
     const ta = tmp.allocator();
-    var result = std.ArrayList(u8){};
+    var result = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
 
     try result.append(ta, std.ascii.toUpper(name[0]));
     var cap_next = false;
@@ -709,7 +709,7 @@ fn zigTypeName(tmp: *mem.TempArena, name: []const u8) Allocator.Error![]const u8
 /// in_protocol is the protocol where this name will be used.
 fn zigInterfaceTypeName(this: *Generator, tmp: *mem.TempArena, in_protocol: *const Protocol, interface_name: []const u8) Allocator.Error![]const u8 {
     const ta = tmp.allocator();
-    var result = std.ArrayList(u8){};
+    var result = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
 
     const interface_protocol = this.interface_protocol_map.get(interface_name).?;
     if ((in_protocol != interface_protocol) and

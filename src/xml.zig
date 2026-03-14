@@ -139,7 +139,7 @@ pub const Reader = struct {
                         const tag_name = try this.parseIdentifier();
                         this.skipWhitespace();
 
-                        var attributes = std.ArrayList(Node.Attribute){};
+                        var attributes = std.ArrayList(Node.Attribute){ .items = &.{}, .capacity = 0 };
 
                         var self_closing = false;
                         while (!try this.match(">")) {
@@ -233,7 +233,7 @@ pub const Reader = struct {
     }
 
     fn parseIdentifier(this: *Reader) Error![]const u8 {
-        var buffer = std.ArrayList(u8){};
+        var buffer = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
 
         const first = this.reader.peekByte() catch |e| switch (e) {
             error.EndOfStream => return error.MalformedXml,
@@ -270,7 +270,7 @@ pub const Reader = struct {
 
     /// This assumes the leader <-- is already consumed
     fn parseComment(this: *Reader) Error![]const u8 {
-        var buf = std.ArrayList(u8){};
+        var buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
 
         while (true) {
             const r = try this.takeDelimiterInclusive('-');
@@ -320,7 +320,7 @@ pub const Reader = struct {
     }
 
     fn takeDelimiterExclusive(this: *Reader, delim: u8) Error![]const u8 {
-        var buf = std.ArrayList(u8){};
+        var buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
         var rest: []const u8 = "";
 
         flushed: {

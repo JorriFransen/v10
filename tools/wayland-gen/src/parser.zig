@@ -115,7 +115,7 @@ fn parseProtocol(this: *Parser) Error!Protocol {
     }
 
     const protocol_name = try copyString(this.allocator, attr.value);
-    var interfaces = std.ArrayList(Interface){};
+    var interfaces = std.ArrayList(Interface){ .items = &.{}, .capacity = 0 };
     var description: Description = .{};
 
     while (true) {
@@ -168,9 +168,9 @@ fn parseInterface(this: *Parser) Error!Interface {
     var name_opt: ?[]const u8 = null;
     var version: u32 = 0;
     var description: Description = .{};
-    var requests: std.ArrayList(Request) = .{};
-    var events: std.ArrayList(Event) = .{};
-    var enums: std.ArrayList(Enum) = .{};
+    var requests: std.ArrayList(Request) = .{ .items = &.{}, .capacity = 0 };
+    var events: std.ArrayList(Event) = .{ .items = &.{}, .capacity = 0 };
+    var enums: std.ArrayList(Enum) = .{ .items = &.{}, .capacity = 0 };
 
     const interface_tag = this.xml_reader.current_node.tag_open;
 
@@ -251,7 +251,7 @@ fn parseRequest(this: *Parser) Error!Request {
     var destructor = false;
     var since: u32 = 0;
     var description = Description{};
-    var args = std.ArrayList(Arg){};
+    var args = std.ArrayList(Arg){ .items = &.{}, .capacity = 0 };
 
     const req_tag = this.xml_reader.current_node.tag_open;
 
@@ -322,7 +322,7 @@ fn parseEvent(this: *Parser) Error!?Event {
     var since: u32 = 0;
     var deprecated = false;
     var description = Description{};
-    var args = std.ArrayList(Arg){};
+    var args = std.ArrayList(Arg){ .items = &.{}, .capacity = 0 };
 
     const event_tag = this.xml_reader.current_node.tag_open;
 
@@ -401,7 +401,7 @@ fn parseEnum(this: *Parser) Error!Enum {
     var bitfield = false;
     var since: u32 = 0;
     var description = Description{};
-    var entries = std.ArrayList(Enum.Entry){};
+    var entries = std.ArrayList(Enum.Entry){ .items = &.{}, .capacity = 0 };
 
     const enum_tag = this.xml_reader.current_node.tag_open;
 
