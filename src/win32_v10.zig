@@ -197,7 +197,7 @@ fn processPendingMessages(shared_state: *platform.SharedState, keyboard_controll
 
     const buttons = &keyboard_controller.buttons.named;
 
-    while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != 0) {
+    while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != .FALSE) {
         switch (msg.message) {
             win32.WM_QUIT => {
                 global_running = false;
@@ -340,7 +340,7 @@ pub fn main(init: std.process.Init.Minimal) u8 {
 
     const io = threaded.io();
 
-    if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS) == 0) {
+    if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS).toBool() == false) {
         // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
 
         // if (win32.CreateFileA("nul", win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.OPEN_EXISTING, win32.FILE_ATTRIBUTE_NORMAL, null)) |handle| {
@@ -412,7 +412,7 @@ pub fn windowsEntry(
         const ex_style: win32.DWORD = 0; //win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED;
 
         var rc = win32.RECT{ .left = 0, .top = 0, .right = back_buffer_width, .bottom = back_buffer_height };
-        _ = win32.AdjustWindowRectEx(&rc, style, 0, ex_style);
+        _ = win32.AdjustWindowRectEx(&rc, style, .FALSE, ex_style);
 
         const window_opt = win32.CreateWindowExA(
             ex_style,
@@ -558,7 +558,7 @@ pub fn windowsEntry(
 
                 var thread_context: ThreadContext = .{ .io = &io };
 
-                _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
+                _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
                 var game_code = GameCode.load(io, temp_dll_name);
                 if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
@@ -570,10 +570,10 @@ pub fn windowsEntry(
                         var __dummy__: win32.FILE_ATTRIBUTE_DATA = undefined;
 
                         // This isn't required with the zig build system, but it's easy to support
-                        if (win32.GetFileAttributesExA(gamecode_lock_file_name, .standard, &__dummy__) == 0) {
+                        if (win32.GetFileAttributesExA(gamecode_lock_file_name, .standard, &__dummy__).toBool()) {
                             game_code.unload();
 
-                            _ = win32.CopyFileA(source_dll_name, temp_dll_name, win32.FALSE);
+                            _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
                             game_code = GameCode.load(io, temp_dll_name);
                         }
                     }
@@ -604,10 +604,10 @@ pub fn windowsEntry(
                             var cursor_pos: win32.POINT = undefined;
                             var cursor_pos_valid = true;
 
-                            if (win32.GetCursorPos(&cursor_pos) == win32.FALSE) {
+                            if (win32.GetCursorPos(&cursor_pos) == .FALSE) {
                                 cursor_pos_valid = false;
                             } else {
-                                if (win32.ScreenToClient(window, &cursor_pos) == win32.FALSE) {
+                                if (win32.ScreenToClient(window, &cursor_pos) == .FALSE) {
                                     cursor_pos_valid = false;
                                 }
                             }
@@ -1051,7 +1051,7 @@ pub fn recordInput(shared_state: *platform.SharedState, input: *Input) void {
 
 pub fn playbackInput(shared_state: *platform.SharedState, input: *Input) void {
     var read: win32.DWORD = 0;
-    if (win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null) != win32.FALSE) {
+    if (win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null) != .FALSE) {
         if (read == 0) {
             const playing_index = shared_state.input_playing_index;
             endInputPlayback(shared_state);
@@ -1066,8 +1066,8 @@ pub fn toggleFullscreen(window: win32.HWND) void {
     const style = win32.GetWindowLongA(window, win32.GWL_STYLE);
     if (style & win32.WS_OVERLAPPEDWINDOW == win32.WS_OVERLAPPEDWINDOW) {
         var mi: win32.MONITORINFO = .{};
-        if (win32.GetWindowPlacement(window, &global_window_position) != win32.FALSE and
-            win32.GetMonitorInfoA(win32.MonitorFromWindow(window, win32.MONITOR_DEFAULTTOPRIMARY), &mi) != win32.FALSE)
+        if (win32.GetWindowPlacement(window, &global_window_position) != .FALSE and
+            win32.GetMonitorInfoA(win32.MonitorFromWindow(window, win32.MONITOR_DEFAULTTOPRIMARY), &mi) != .FALSE)
         {
             _ = win32.SetWindowLongA(window, win32.GWL_STYLE, style & @as(win32.LONG, @bitCast(~win32.WS_OVERLAPPEDWINDOW)));
             _ = win32.SetWindowPos(window, win32.HWND_TOP, mi.monitor.left, mi.monitor.top, mi.monitor.right - mi.monitor.left, mi.monitor.bottom - mi.monitor.top, win32.SWP_NOOWNERZORDER | win32.SWP_FRAMECHANGED);
@@ -1088,12 +1088,12 @@ pub const DEBUG = struct {
 
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var file_size: win32.LARGE_INTEGER = undefined;
-            if (win32.GetFileSizeEx(handle, &file_size) != 0) {
+            if (win32.GetFileSizeEx(handle, &file_size) != .FALSE) {
                 if (win32.VirtualAlloc(null, file_size.quad_part, win32.MEM_RESERVE | win32.MEM_COMMIT, win32.PAGE_READWRITE)) |alloc_res| {
                     const file_size_32 = safeTruncateU64(file_size.quad_part);
 
                     var bytes_read: win32.DWORD = undefined;
-                    if (win32.ReadFile(handle, alloc_res, file_size_32, &bytes_read, null) != 0 and
+                    if (win32.ReadFile(handle, alloc_res, file_size_32, &bytes_read, null) != .FALSE and
                         file_size_32 == bytes_read)
                     {
                         result.size = file_size_32;
@@ -1127,7 +1127,7 @@ pub const DEBUG = struct {
 
             const memory_size_32 = safeTruncateU64(size);
 
-            if (win32.WriteFile(handle, memory, memory_size_32, &written, null) != 0) {
+            if (win32.WriteFile(handle, memory, memory_size_32, &written, null) != .FALSE) {
                 result = true;
             } else {
                 log.warn("Failed to write file: '{s}'", .{path});

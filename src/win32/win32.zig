@@ -11,7 +11,7 @@ fn cLiteral(comptime T: type, value: comptime_int) T {
 pub const HINSTANCE = zig_win32.HINSTANCE;
 pub const HMODULE = zig_win32.HMODULE;
 pub const HANDLE = zig_win32.HANDLE;
-pub const HRESULT = zig_win32.HRESULT;
+pub const HRESULT = LONG;
 pub const HDC = zig_win32.HDC;
 pub const HBITMAP = HANDLE;
 pub const HGDIOBJ = HANDLE;

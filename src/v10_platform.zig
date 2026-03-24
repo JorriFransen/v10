@@ -248,7 +248,7 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
         .windows => {
             const win32 = @import("win32");
             var data: win32.FILE_ATTRIBUTE_DATA = undefined;
-            if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data) == win32.TRUE) {
+            if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data).toBool()) {
                 result = @as(u64, @bitCast(data.last_write_time));
             }
         },
