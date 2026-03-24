@@ -702,20 +702,30 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
 }
 
 fn makeArg(tmp: *mem.TempArena, fn_names: *std.StringHashMapUnmanaged(void), arg: Arg) ![]const u8 {
-    const t: u8 = switch (arg.type.tag) {
-        .int => 'i',
-        .uint => 'u',
-        .fixed => 'f',
-        .string => 's',
-        .object => 'o',
-        .new_id => 'n',
-        .array => 'a',
-        .fd => 'h',
+    const t: []const u8 = if (arg.type.allow_null) switch (arg.type.tag) {
+        // .int => 'i',
+        // .uint => 'u',
+        // .fixed => 'f',
+        .string => "?s",
+        .object => "?o",
+        .new_id => "?n",
+        // .array => 'a',
+        // .fd => 'h',
+        else => @panic("Unexpected optional type"),
+    } else switch (arg.type.tag) {
+        .int => "i",
+        .uint => "u",
+        .fixed => "f",
+        .string => "s",
+        .object => "o",
+        .new_id => "n",
+        .array => "a",
+        .fd => "h",
     };
 
     const name = try safeArgName(tmp, fn_names, arg.name);
-    return try tmpPrint(tmp, ".{{ .{c} = {s} }}", .{
-        t,
+    return try tmpPrint(tmp, ".{{ .{f} = {s} }}", .{
+        std.zig.fmtId(t),
         if (arg.enum_name != null)
             try tmpPrint(tmp, "@intFromEnum({s})", .{name})
         else if (arg.type.tag == .object)

@@ -1677,7 +1677,7 @@ fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, su
     if (options.internal_build) {
         //
     } else {
-        wld.pointer.set_cursor(serial, null, 0, 0);
+        wld.pointer.setCursor(serial, null, 0, 0);
     }
 }
 

@@ -429,7 +429,7 @@ pub fn displayFlush(display: *wl.Display) void {
     if (display.send_fds_used > 0) {
         const fds_byte_size = @sizeOf(linux.fd_t) * display.send_fds_used;
         var control_buf: [linux.CMSG_SPACE(display.send_fds_buf.len * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
-        var control: []u8 = if (display.send_fds_used > 0) control_buf[0..linux.CMSG_SPACE(fds_byte_size)] else &.{};
+        const control: []u8 = if (display.send_fds_used > 0) control_buf[0..linux.CMSG_SPACE(fds_byte_size)] else &.{};
 
         msg.control = control.ptr;
         msg.controllen = control.len;
@@ -657,7 +657,7 @@ fn handleDeleteId(_: ?*anyopaque, display_opt: ?*wl.Display, id: u32) void {
     assert(id != 1);
     assert(id <= display.objects.len);
 
-    var proxy = &getObject(display, id).proxy;
+    const proxy = &getObject(display, id).proxy;
     assert(proxy.id == id);
 
     proxyDestroy(proxy);
