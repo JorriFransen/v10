@@ -1072,12 +1072,19 @@ pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
     return .{ .red = r, .green = g, .blue = b };
 }
 
-pub inline fn MAKEINTRESOURCEA(i: anytype) LPCSTR {
+pub inline fn MAKEINTRESOURCEA(comptime i: anytype) LPCSTR {
     comptime {
         const T = @TypeOf(i);
         const info = @typeInfo(T);
-        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
-        if (@sizeOf(T) > @sizeOf(LPCSTR)) @compileError("Integer type too big");
+        const size = switch (info) {
+            else => @compileError("Expected integer type"),
+            .int => @sizeOf(T),
+            .comptime_int => blk: {
+                break :blk @sizeOf(LPCSTR);
+            },
+        };
+
+        if (size > @sizeOf(LPCSTR)) @compileError("Integer type too big");
     }
 
     return @ptrFromInt(i);
