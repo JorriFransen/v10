@@ -9,6 +9,10 @@ const wayland = @import("wayland");
 const wl = wayland.wl;
 
 // TODO: Verify requests/events with optional array/string args
+// TODO: Verify events with new_id arguments
+// TODO: Check passed versions
+// TODO: Get XDG_RUNTIME_DIR from env for socket path
+// TODO: Merge this file with generator
 
 comptime {
     if (options.verbose_wayland and builtin.mode != .Debug) {
