@@ -862,7 +862,7 @@ pub fn windowsEntry(
                         new_input = old_input;
                         old_input = tmp;
 
-                        const end_cycle_count = arch.rdtscp();
+                        const end_cycle_count = arch.rdtsc();
                         const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
                         last_cycle_count = end_cycle_count;
 
