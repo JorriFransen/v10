@@ -542,7 +542,7 @@ pub fn windowsEntry(
             if (dib_allocated and audio_frames != null and perm != null and trans != null) {
                 xinput.load();
 
-                var input = [_]Input{.{}} ** 2;
+                var input: [2]Input = @splat(.{});
                 var new_input = &input[0];
                 var old_input = &input[1];
 
@@ -550,7 +550,7 @@ pub fn windowsEntry(
                 var flip_wall_clock = getWallClock();
 
                 var debug_time_marker_index: usize = 0;
-                var debug_time_markers = [_]DEBUG.AudioTimeMarker{.{}} ** DEBUG.audio_time_marker_count;
+                var debug_time_markers: [DEBUG.audio_time_marker_count]DEBUG.AudioTimeMarker = @splat(.{});
 
                 var audio_latency_bytes: win32.DWORD = 0;
                 var audio_latency_seconds: f32 = 0;
