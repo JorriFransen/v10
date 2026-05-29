@@ -11,7 +11,6 @@ const wl = wayland.wl;
 // TODO: Verify requests/events with optional array/string args
 // TODO: Verify events with new_id arguments
 // TODO: Check passed versions
-// TODO: Get XDG_RUNTIME_DIR from env for socket path
 // TODO: Merge this file with generator
 
 comptime {
@@ -118,7 +117,7 @@ pub const Message = struct {
     }
 };
 
-pub fn displayConnect(path_opt: ?[*:0]const u8) ?*wl.Display {
+pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process.Environ) ?*wl.Display {
     assert(!glob_connected);
 
     var sock_addr = std.mem.zeroes(linux.sockaddr.un);
@@ -130,18 +129,27 @@ pub fn displayConnect(path_opt: ?[*:0]const u8) ?*wl.Display {
         var socket_flags: linux.O = @bitCast(flags);
         socket_flags.NONBLOCK = true;
         if (linux.fcntl(fd, linux.F.SETFL, @as(u32, @bitCast(socket_flags)))) |_| {
-            const path: [:0]const u8 = if (path_opt) |path| std.mem.span(path) else blk: {
-                // TODO: Construct from XDG_RUNTIME_DIR
-                break :blk "/run/user/1000/wayland-0";
-            };
+            if (path_opt) |cpath| {
+                const path = std.mem.span(cpath);
+                assert(path.len <= sock_addr.path.len);
+                @memcpy(sock_addr.path[0..path.len], path);
+            } else if (environ_opt) |environ| {
+                const xdg_runtime_dir = environ.getPosix("XDG_RUNTIME_DIR") orelse "/run/user/1000";
+                const wayland_display = environ.getPosix("WAYLAND_DISPLAY") orelse "wayland-0";
+
+                const fmt = std.fs.path.fmtJoin(&.{ xdg_runtime_dir, wayland_display });
+                _ = std.fmt.bufPrintSentinel(&sock_addr.path, "{f}", .{fmt}, 0) catch {
+                    log.err("Failed to construct wayland socket path from env", .{});
+                    return null;
+                };
+            } else {
+                const path = "/run/user/1000/wayland-0";
+                @memcpy(sock_addr.path[0..path.len], path);
+            }
 
             sock_addr.family = linux.AF.UNIX;
-            assert(path.len <= sock_addr.path.len);
-            @memcpy(sock_addr.path[0..path.len], path);
             const r = linux.connect(fd, @ptrCast(&sock_addr), @sizeOf(@TypeOf(sock_addr))) catch unreachable; // TODO: Handle error
             assert(r == 0);
-
-            // TODO: Is this the right version to pass?
 
             glob_display = .{
                 .fd = fd,

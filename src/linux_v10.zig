@@ -84,7 +84,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var threaded: std.Io.Threaded = .init(gpa, .{
         .argv0 = .init(.{ .vector = init.args.vector }),
-        .environ = .{ .block = init.environ.block },
+        .environ = init.environ,
     });
     defer threaded.deinit();
 
@@ -109,7 +109,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
-    const display = wlc.displayConnect(null) orelse {
+    const display = wlc.displayConnect(null, &init.environ) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;
     };
