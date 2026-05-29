@@ -499,9 +499,7 @@ pub fn proxyDestroy(proxy: *wl.Proxy) void {
     display.free_objects.prepend(&proxy.freelist_node);
 }
 
-pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, flags: u32, args: []const wayland.Argument) ?*wl.Object {
-    _ = .{ proxy, op, interface, version, flags, args };
-
+pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, args: []const wayland.Argument) ?*wl.Object {
     assert(glob_connected);
     const display = proxy.display;
 

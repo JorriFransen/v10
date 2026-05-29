@@ -126,9 +126,6 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
     try generator.append(
         \\
-        \\const WL_MARSHAL_FLAG_DESTROY = (1 << 0);
-        \\const NULL: usize = 0;
-        \\
         \\pub const Interface = struct {
         \\    name: []const u8,
         \\    version: c_int,
@@ -452,6 +449,9 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
     const ta = tmp.allocator();
 
     try this.appendf("    pub const {s} = struct {{\n", .{try this.zigInterfaceTypeName(&tmp, protocol, interface.name)});
+    if (std.mem.eql(u8, interface.name, "wl_display")) {
+        try this.append("        /// Read-only!\n");
+    }
     try this.append("        proxy: wl.Proxy,\n");
     if (std.mem.eql(u8, interface.name, "wl_display")) {
         try this.append(
@@ -667,7 +667,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
     if (constructor) {
         const interface_def = try tmpPrint(&tmp, "&{s}.interface", .{try this.zigInterfaceTypeName(&tmp, protocol, constructor_interface)});
         try this.appendf(
-            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, {s}, self.proxy.version, 0, &.{{
+            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, {s}, self.proxy.version, &.{{
             \\                .{{ .n = 0 }},
             \\
         , .{ opcode, interface_def });
@@ -678,7 +678,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         try this.append("            return @ptrCast(result);\n");
     } else if (registry_bind) {
         try this.appendf(
-            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, &IType.interface, version, 0, &.{{
+            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, &IType.interface, version, &.{{
             \\                .{{ .u = name }},
             \\                .{{ .s = IType.interface.name }},
             \\                .{{ .u = version }},
@@ -688,8 +688,7 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         , .{opcode});
         try this.append("            return @ptrCast(result);\n");
     } else {
-        const flags = if (request.destructor) "WL_MARSHAL_FLAG_DESTROY" else "0";
-        try this.appendf("            _ = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, null, self.proxy.version, {s}, &.{{", .{ opcode, flags });
+        try this.appendf("            _ = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, null, self.proxy.version, &.{{", .{opcode});
         if (request.args.len != 0) try this.append("\n");
         for (request.args) |arg| {
             try this.appendf("                {s},\n", .{try makeArg(&tmp, fn_names, arg)});
