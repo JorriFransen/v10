@@ -8,6 +8,8 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
+// TODO: Move listener iteration into the trampolines
+// TODO: Server side id allocation ('n' in event signature) in trampolines
 // TODO: Verify requests/events with optional array/string args
 // TODO: Verify events with new_id arguments
 // TODO: Check passed versions
@@ -168,6 +170,11 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
             }
             last_node.next = null;
 
+            for (glob_display.server_object_ids[0..], glob_display.server_objects[0..]) |*id, *server_obj| {
+                id.* = 0;
+                server_obj.proxy = .{ .id = 0, .version = 0, .display = &glob_display, .interface = undefined, .freelist_node = .{} };
+            }
+
             const display_proxy = proxyCreate(&glob_display, &wl.Display.interface, wl.Display.interface.version);
             glob_display.proxy = display_proxy.*;
 
@@ -301,13 +308,17 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
                             var fd_count: usize = 0;
 
                             assert(header.op < object.proxy.interface.events.len);
-                            // TODO: Add fd_count member?
+                            // TODO: Store fd_count in the generated interface, so we can just pop that amount here. OR, pop them on demand in the trampolines
                             for (object.proxy.interface.events[header.op].signature) |arg_type| {
-                                if (arg_type == .h) {
-                                    assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
-                                    fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
-                                    fd_count += 1;
-                                    fd_dispatch_index += 1;
+                                switch (arg_type) {
+                                    .h => {
+                                        assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
+                                        fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
+                                        fd_count += 1;
+                                        fd_dispatch_index += 1;
+                                    },
+                                    .n => {},
+                                    else => {},
                                 }
                             }
 
@@ -384,7 +395,7 @@ fn dispatchListeners(display: *wl.Display, message: *Message, object: *wl.Object
                 .s => std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{message.getStringArg(&arg_offset)}) catch unreachable,
                 .a => std.fmt.bufPrint(print_buf[used..], ", {any}", .{message.getArrayArg(&arg_offset)}) catch unreachable,
                 .@"?a" => std.fmt.bufPrint(print_buf[used..], ", {any}", .{message.getArrayArg(&arg_offset)}) catch unreachable,
-                .n => unreachable,
+                .n => std.fmt.bufPrint(print_buf[used..], ", (new) {}", .{message.getUIntArg(&arg_offset)}) catch unreachable,
             };
             used += p.len;
         }
@@ -507,6 +518,29 @@ pub fn proxyDestroy(proxy: *wl.Proxy) void {
     display.free_objects.prepend(&proxy.freelist_node);
 }
 
+pub fn serverProxyCreate(display: *wl.Display, server_id: u32, interface: *const wayland.Interface, version: u32) *wl.Proxy {
+    assert(display == &glob_display);
+
+    for (glob_display.server_object_ids, 0..) |*id, idx| {
+        if (id.* == 0) {
+            id.* = server_id;
+            const result = &glob_display.server_objects[idx];
+            result.* = .{
+                .id = server_id,
+                .version = version,
+                .interface = interface,
+                .display = display,
+                .freelist_node = .{},
+                .listener = .{},
+            };
+            return result;
+        }
+    }
+
+    log.err("Out of server objects", .{});
+    @panic("Out of server objects");
+}
+
 pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, args: []const wayland.Argument) ?*wl.Object {
     assert(glob_connected);
     const display = proxy.display;
@@ -584,7 +618,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
 
             p = switch (arg) {
                 .o => |o| std.fmt.bufPrint(print_buf[used..], ", id = {}", .{o.proxy.id}) catch unreachable,
-                .@"?o" => unreachable,
+                .@"?o" => |o| std.fmt.bufPrint(print_buf[used..], ", id = {}", .{if (o) |obj| obj.proxy.id else 0}) catch unreachable,
                 .i => |i| std.fmt.bufPrint(print_buf[used..], ", {}", .{i}) catch unreachable,
                 .u => |u| std.fmt.bufPrint(print_buf[used..], ", {}", .{u}) catch unreachable,
                 .h => |h| std.fmt.bufPrint(print_buf[used..], ", fd = {}", .{h}) catch unreachable,
@@ -672,6 +706,7 @@ fn handleDeleteId(_: ?*anyopaque, display_opt: ?*wl.Display, id: u32) void {
 fn getObject(display: *wl.Display, id: u32) *wl.Object {
     assert(display == &glob_display);
     assert(id != 0);
+    verbose("getobject id: {} (0x{x})", .{ id, id });
     assert(id <= display.objects.len);
     if (id == 1) return @ptrCast(display);
     return &display.objects[id - 1];

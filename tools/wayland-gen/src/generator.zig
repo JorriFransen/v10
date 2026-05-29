@@ -457,8 +457,11 @@ fn genInterface(this: *Generator, protocol: *const Protocol, interface: *const I
         try this.append(
             \\        fd: linux.fd_t,
             \\
-            \\        objects: [32]Object = undefined,
+            \\        objects: [64]Object = undefined,
             \\        free_objects: std.SinglyLinkedList = .{},
+            \\
+            \\        server_object_ids: [16]u32 = undefined,
+            \\        server_objects: [16]Object = undefined,
             \\
             \\        listeners: [32]RegisteredListener = std.mem.zeroes([32]RegisteredListener),
             \\        free_listeners: std.SinglyLinkedList = .{},

@@ -442,6 +442,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var last_cycle_count = arch.rdtsc();
 
+    // const data_device = wli.wl_data_device_manager.?.getDataDevice(wld.seat);
+    // _ = data_device;
+
     log.debug("starting main loop", .{});
     while (running) {
         const new_lib_write_time = platform.getLastWriteTime(io, game_lib_name);
@@ -771,6 +774,8 @@ const WlInitData = struct {
 
     xrgb8888: bool = false,
     seat_capabilities: wl.Seat.Capability = .{},
+
+    wl_data_device_manager: ?*wl.DataDeviceManager = null,
 };
 
 // TODO: Use xkb!
@@ -1404,6 +1409,8 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, 
         .{ "wl_compositor", wl.Compositor, null },
         .{ "xdg_wm_base", xdg_shell.WmBase, &xdg_wm_base_listener },
         .{ "xdg_decoration_manager", xdg_decoration.DecorationManagerV1, null },
+
+        .{ "wl_data_device_manager", wl.DataDeviceManager, null },
     };
 
     var found = false;
