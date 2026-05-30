@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.@"wayland-gen.generator");
 const types = @import("types.zig");
 const mem = @import("mem");
+const options = @import("options");
 
 const assert = std.debug.assert;
 
@@ -74,9 +75,11 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
     try generator.appendf(
         \\const std = @import("std");
+        \\const assert = std.debug.assert;
         \\const log = std.log.scoped(.wayland);
         \\const linux = @import("linux");
         \\const wlc = @import("wlc");
+        \\const options = @import("options");
         \\
         \\pub const RegisteredListener = struct {{
         \\    user_data: ?*anyopaque,
@@ -199,7 +202,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         else
             try tmpPrint(&tmp, "trampoline_{s}", .{entry.key_ptr.*});
 
-        try generator.appendf("pub fn {f}(display: *wl.Display, object: *wl.Object, listener: *const RegisteredListener, message: *const wlc.Message) void {{\n", .{std.zig.fmtId(name)});
+        try generator.appendf("pub fn {f}(display: *wl.Display, object: *wl.Object, first_listener_node: ?*const std.SinglyLinkedList.Node, message: *const wlc.Message) u32 {{\n", .{std.zig.fmtId(name)});
         try generator.append("    _ = .{display};\n");
 
         const info = entry.value_ptr;
@@ -211,8 +214,6 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
             if (arg_type.tag == .fd) fd_arg_count += 1 else regular_arg_count += 1;
         }
         try generator.append(") void;\n");
-
-        try generator.append("    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);\n\n");
 
         if (regular_arg_count > 0) try generator.append("    var arg_offset: usize = 0;\n");
         if (fd_arg_count > 0) try generator.append("    var fd_offset: usize = 0;\n");
@@ -237,7 +238,61 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
         if (regular_arg_count > 0 or fd_arg_count > 0) try generator.append("\n");
 
-        try generator.append("    handler(listener.user_data, @ptrCast(object)");
+        if (options.verbose_wayland) {
+            try generator.append(
+                \\    var print_buf: [1024]u8 = undefined;
+                \\    var used: usize = 0;
+                \\
+                \\    const interface = object.proxy.interface;
+                \\
+                \\    var p = std.fmt.bufPrint(print_buf[used..], "<-   {s}.{s}(id = {}", .{
+                \\        interface.name,
+                \\        interface.events[message.header.op].name,
+                \\        object.proxy.id,
+                \\    }) catch unreachable;
+                \\    used += p.len;
+                \\
+                \\
+            );
+
+            for (info.types, 1..) |arg_type, n| {
+                try generator.append("    p = std.fmt.bufPrint(print_buf[used..], ");
+                switch (arg_type.tag) {
+                    .int, .uint => try generator.appendf("\", {{}}\", .{{ arg{} }})", .{n}),
+                    .fixed => try generator.appendf("\", {{}}\", .{{ arg{}.toDouble() }})", .{n}),
+                    .string => try generator.appendf("\", '{{s}}'\", .{{ arg{} }})", .{n}),
+                    .object => try generator.appendf("\", o = {{}}\", .{{ if (arg{}) |a| a.proxy.id else 0 }})", .{n}),
+                    .new_id => try generator.appendf("\", n = {{}}\", .{{ if (arg{}) |a| a.proxy.id else 0 }})", .{n}),
+                    .array => try generator.appendf("\", {{any}}\", .{{ arg{} }})", .{n}),
+                    .fd => try generator.appendf("\", h = {{}}\", .{{ arg{} }})", .{n}),
+                }
+                try generator.append(" catch unreachable;\n        used += p.len;\n");
+            }
+
+            try generator.append(
+                \\    p = std.fmt.bufPrint(print_buf[used..], ")", .{}) catch unreachable;
+                \\    used += p.len;
+                \\
+                \\    wlc.verbose("{s}", .{print_buf[0..used]});
+                \\
+                \\
+            );
+        }
+
+        try generator.append(
+            \\    var listener_count: u32 = 0;
+            \\    var cnode = first_listener_node;
+            \\
+            \\    while (cnode) |node| {
+            \\        const next = node.next;
+            \\        const listener: *const RegisteredListener = @fieldParentPtr("node", node);
+            \\        assert(message.header.op < listener.implementation.len);
+            \\        const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
+            \\
+            \\        listener_count += 1;
+            \\        handler(listener.user_data, @ptrCast(object)
+        );
+
         for (info.types, 1..) |arg_type, n| {
             const arg_name = try tmpPrint(&tmp, "arg{}", .{n});
 
@@ -250,23 +305,58 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
                 try generator.appendf(", {s}", .{arg_name});
             }
         }
-        try generator.append(");\n");
 
-        try generator.append("}\n\n");
+        try generator.append(
+            \\);
+            \\        cnode = next;
+            \\    }
+            \\
+            \\    return listener_count;
+            \\}
+            \\
+        );
 
         tmp.release();
     }
 
-    try generator.append("pub inline fn dispatch(display: *wl.Display, message: *const wlc.Message, object: *wl.Object, listener: *const RegisteredListener, sig_tag: Signature) void {\n");
-    try generator.append("    switch (sig_tag) {\n");
+    try generator.append(
+        \\pub inline fn dispatch(display: *wl.Display, message: *const wlc.Message, object: *wl.Object) void {
+        \\    const interface = object.proxy.interface;
+        \\    const event = &interface.events[message.header.op];
+        \\    const sig_tag = event.signature_tag;
+        \\
+        \\    const first_listener_node = object.proxy.listeners.first;
+        \\
+        \\    const listener_count = switch (sig_tag) {
+        \\
+    );
 
     it = generator.unique_signatures_map.iterator();
     while (it.next()) |entry| {
         const enum_name = std.zig.fmtId(entry.key_ptr.*);
         const trampoline_name = std.zig.fmtId(try tmpPrint(&tmp, "trampoline_{s}", .{if (std.mem.eql(u8, entry.key_ptr.*, "_")) "" else entry.key_ptr.*}));
-        try generator.appendf("        .{f} => {f}(display, object, listener, message),\n", .{ enum_name, trampoline_name });
+        try generator.appendf("        .{f} => {f}(display, object, first_listener_node, message),\n", .{ enum_name, trampoline_name });
     }
-    try generator.append("    }\n");
+    try generator.append("    };\n");
+
+    if (options.verbose_wayland) {
+        try generator.append(
+            \\
+            \\    wlc.verbose("     {s}.{s}(id = {}) listeners = {}", .{
+            \\        interface.name,
+            \\        interface.events[message.header.op].name,
+            \\        object.proxy.id,
+            \\        listener_count,
+            \\    });
+            \\
+        );
+    } else {
+        try generator.append(
+            \\    _ = listener_count;
+            \\
+        );
+    }
+
     try generator.append("}\n");
 
     return generator.buf.items;

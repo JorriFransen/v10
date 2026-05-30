@@ -237,6 +237,10 @@ const Tools = struct {
 fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, native_target: ResolvedTarget, modules: *Modules) !Tools {
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
 
+    const options = b.addOptions();
+    options.addOption(bool, "verbose_wayland", verbose_wayland);
+    const options_module = options.createModule();
+
     const wayland_gen_exe = b.addExecutable(.{
         .name = "wayland-gen",
         .root_module = b.createModule(.{
@@ -247,6 +251,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
                 .{ .name = "xml", .module = modules.xml },
                 .{ .name = "mem", .module = modules.memory },
                 .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
+                .{ .name = "options", .module = options_module },
             },
         }),
         .use_llvm = use_llvm,
@@ -268,10 +273,6 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
 
     assert(modules.wayland == null);
     assert(modules.wlc == null);
-
-    const options = b.addOptions();
-    options.addOption(bool, "verbose_wayland", verbose_wayland);
-    const options_module = options.createModule();
 
     modules.wlc = b.createModule(.{
         .optimize = optimize,
