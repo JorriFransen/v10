@@ -173,6 +173,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.err("xdg_wm_base not available", .{});
         return error.UnexpectedWayland;
     }
+    if (wli.wl_data_device_manager) |ddm| wld.data_device_manager = ddm else {
+        log.err("wl_data_device_manager not available", .{});
+        return error.UnexpectedWayland;
+    }
+    defer wld.data_device_manager.destroy();
+
+    wld.data_device = wld.data_device_manager.getDataDevice(wld.seat);
+    defer wld.data_device.destroy();
+    wld.data_device.addListener(&wl_data_device_listener, null);
 
     _ = wlc.displayRoundtrip(wld.display); // Wait for max_width/height to be set
 
@@ -441,9 +450,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var last_counter = getWallClock(io);
 
     var last_cycle_count = arch.rdtsc();
-
-    const data_device = wli.wl_data_device_manager.?.getDataDevice(wld.seat);
-    defer data_device.release();
 
     log.debug("starting main loop", .{});
     while (running) {
@@ -804,6 +810,12 @@ const WlData = struct {
     wm_base: *xdg_shell.WmBase = undefined,
     keyboard: *wl.Keyboard = undefined,
     pointer: *wl.Pointer = undefined,
+
+    data_device_manager: *wl.DataDeviceManager = undefined,
+    data_device: *wl.DataDevice = undefined,
+    pending_data_offer: ?*wl.DataOffer = null,
+    active_selection_offer: ?*wl.DataOffer = null,
+    active_dnd_offer: ?*wl.DataOffer = null,
 
     toplevel: WlToplevel = undefined,
 
@@ -2187,6 +2199,70 @@ pub fn playbackInput(shared_state: *platform.SharedState, io: std.Io, new_input:
     }
 }
 
+pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, id: *wl.Object) void {
+    _ = data;
+    _ = data_device;
+    log.debug("DataDevice.DataOffer: {}", .{id.proxy.id});
+
+    assert(wld.pending_data_offer == null);
+
+    wld.pending_data_offer = @ptrCast(id);
+}
+
+pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, serial: u32, surface: *wl.Object, x: wayland.Fixed, y: wayland.Fixed, id_opt: ?*wl.Object) void {
+    _ = data;
+    _ = data_device;
+    _ = surface;
+    log.debug("DataDevice.Enter: x: {}, y: {}, serial: {}, id: {}", .{ x.toDouble(), y.toDouble(), serial, id_opt.?.proxy.id });
+
+    if (id_opt) |id| {
+        assert(wld.pending_data_offer != null);
+        if (id.proxy.id == wld.pending_data_offer.?.proxy.id) {
+            assert(wld.active_dnd_offer == null);
+            wld.active_dnd_offer = wld.pending_data_offer;
+            wld.pending_data_offer = null;
+        }
+    }
+}
+
+pub fn handleWlDataDeviceLeave(data: ?*anyopaque, data_device: *wl.DataDevice) void {
+    _ = data;
+    _ = data_device;
+    log.debug("DataDevice.Leave", .{});
+
+    assert(wld.active_dnd_offer != null);
+    wld.active_dnd_offer.?.destroy();
+    wld.active_dnd_offer = null;
+}
+
+pub fn handleWlDataDeviceDrop(data: ?*anyopaque, data_device: *wl.DataDevice) void {
+    _ = data;
+    _ = data_device;
+    log.debug("DataDevice.Drop", .{});
+
+    assert(wld.active_dnd_offer != null);
+    wld.active_dnd_offer.?.destroy();
+    wld.active_dnd_offer = null;
+}
+
+pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevice, id_opt: ?*wl.Object) void {
+    _ = data;
+    _ = data_device;
+    log.debug("DataDevice.Selection: id: {}", .{id_opt.?.proxy.id});
+
+    if (wld.active_selection_offer) |old| old.destroy();
+
+    if (id_opt) |id| {
+        assert(wld.pending_data_offer != null);
+        if (id.proxy.id == wld.pending_data_offer.?.proxy.id) {
+            wld.active_selection_offer = wld.pending_data_offer;
+            wld.pending_data_offer = null;
+        }
+    } else {
+        wld.active_selection_offer = null;
+    }
+}
+
 fn nop() void {}
 
 const wl_registry_listener = wl.Registry.Listener{
@@ -2231,6 +2307,15 @@ const wl_buffer_listener = wl.Buffer.Listener{
 const wl_seat_listener = wl.Seat.Listener{
     .capabilities = handleWlSeatCapabilities,
     .name = @ptrCast(&nop),
+};
+
+const wl_data_device_listener = wl.DataDevice.Listener{
+    .dataOffer = handleWlDataOffer,
+    .enter = handleWlDataDeviceEnter,
+    .leave = handleWlDataDeviceLeave,
+    .motion = @ptrCast(&nop),
+    .drop = handleWlDataDeviceDrop,
+    .selection = handleWlDataDeviceSelection,
 };
 
 const wl_keyboard_listener = wl.Keyboard.Listener{

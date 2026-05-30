@@ -8,7 +8,6 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Server side id allocation ('n' in event signature) in trampolines
 // TODO: Inline trampolines
 // TODO: Prevent parsing arguments for events without listeners? (Force when verbose_wayland=true?)
 // TODO: Verify requests/events with optional array/string args
@@ -471,13 +470,30 @@ pub fn proxyCreate(display: *wl.Display, interface: *const wayland.Interface, ve
 pub fn proxyDestroy(proxy: *wl.Proxy) void {
     const display = proxy.display;
     assert(display == &glob_display);
-    assert(proxy.id != 1);
 
-    while (proxy.listeners.popFirst()) |node| {
-        display.free_listeners.prepend(node);
+    if (proxy.id < 0xff000000) {
+        assert(proxy.id < glob_display.objects.len);
+        assert(proxy.id != 1);
+
+        while (proxy.listeners.popFirst()) |node| {
+            display.free_listeners.prepend(node);
+        }
+
+        display.free_objects.prepend(&proxy.freelist_node);
+    } else {
+        for (&glob_display.server_object_ids, 0..) |*server_id, idx| {
+            if (proxy.id == server_id.*) {
+                server_id.* = 0;
+                glob_display.server_objects[idx].proxy = .{
+                    .id = 0,
+                    .version = 0,
+                    .display = &glob_display,
+                    .interface = undefined,
+                    .freelist_node = .{},
+                };
+            }
+        }
     }
-
-    display.free_objects.prepend(&proxy.freelist_node);
 }
 
 pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, args: []const wayland.Argument) ?*wl.Object {

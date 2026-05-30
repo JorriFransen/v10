@@ -730,12 +730,16 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
 
     var constructor = false;
     var registry_bind = false;
+    var wl_data_offer_destroy = false;
     var constructor_interface: []const u8 = undefined;
 
     // wl_registry_bind is a special case!
     if (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind")) {
         registry_bind = true;
         try this.append(", name: u32, comptime IType: type, version: u32) ?*IType {\n");
+    } else if (std.mem.eql(u8, interface.name, "wl_data_offer") and std.mem.eql(u8, request.name, "destroy")) {
+        wl_data_offer_destroy = true;
+        try this.append(") void {\n");
     } else {
         var return_type: []const u8 = "void";
 
@@ -791,6 +795,10 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
 
         if (request.args.len != 0) try this.append("             ");
         try this.append("});\n");
+
+        if (wl_data_offer_destroy) {
+            try this.append("            wlc.proxyDestroy(@ptrCast(self));\n");
+        }
     }
     try this.append("        }\n");
 }
