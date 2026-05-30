@@ -131,7 +131,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\
         \\pub const Interface = struct {
         \\    name: []const u8,
-        \\    version: c_int,
+        \\    version: u32,
         \\    methods: []const Message,
         \\    events: []const Message,
         \\
@@ -162,6 +162,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    u,
         \\    f,
         \\    s,
+        \\    @"?s",
         \\    o,
         \\    @"?o",
         \\    n,
@@ -175,6 +176,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    u: u32,
         \\    f: Fixed,
         \\    s: []const u8,
+        \\    @"?s": ?[]const u8,
         \\    o: *wl.Object,
         \\    @"?o": ?*wl.Object,
         \\    n: u32,
@@ -230,7 +232,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
                     .string => try tmpPrint(&tmp, "getStringArg(&arg_offset)", .{}),
                     .array => try tmpPrint(&tmp, "getArrayArg(&arg_offset)", .{}),
                     .object => try tmpPrint(&tmp, "getObjectArg(&arg_offset, display)", .{}),
-                    .new_id => try tmpPrint(&tmp, "getNewIdArg(&arg_offset, display)", .{}),
+                    .new_id => try tmpPrint(&tmp, "getNewIdArg(&arg_offset, display, object.proxy.interface)", .{}),
                     .fd => try tmpPrint(&tmp, "getFDArg(&fd_offset)", .{}),
                 },
             });

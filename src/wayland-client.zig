@@ -71,10 +71,33 @@ pub const Message = struct {
         return getObject(display, id);
     }
 
-    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *wl.Display) ?*wl.Object {
+    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *wl.Display, interface: *const wayland.Interface) ?*wl.Object {
         _ = .{ this, arg_offset, display };
-        // TODO: Implement (and test, current code doesn't use this path)
-        unreachable;
+
+        const server_id = this.getUIntArg(arg_offset);
+
+        assert(std.mem.eql(u8, interface.name, "wl_data_device"));
+        const version = interface.version;
+        const target_interface = &wl.DataOffer.interface;
+
+        for (&glob_display.server_object_ids, 0..) |*id, idx| {
+            if (id.* == 0) {
+                id.* = server_id;
+                const result = &glob_display.server_objects[idx];
+                result.* = .{ .proxy = .{
+                    .id = server_id,
+                    .version = version,
+                    .interface = target_interface,
+                    .display = display,
+                    .freelist_node = .{},
+                    .listeners = .{},
+                } };
+                return result;
+            }
+        }
+
+        log.err("Out of server objects", .{});
+        @panic("Out of server objects");
     }
 
     pub fn getFixedArg(this: *const Message, arg_offset: *usize) wayland.Fixed {
@@ -457,29 +480,6 @@ pub fn proxyDestroy(proxy: *wl.Proxy) void {
     display.free_objects.prepend(&proxy.freelist_node);
 }
 
-pub fn serverProxyCreate(display: *wl.Display, server_id: u32, interface: *const wayland.Interface, version: u32) *wl.Proxy {
-    assert(display == &glob_display);
-
-    for (glob_display.server_object_ids, 0..) |*id, idx| {
-        if (id.* == 0) {
-            id.* = server_id;
-            const result = &glob_display.server_objects[idx];
-            result.* = .{
-                .id = server_id,
-                .version = version,
-                .interface = interface,
-                .display = display,
-                .freelist_node = .{},
-                .listener = .{},
-            };
-            return result;
-        }
-    }
-
-    log.err("Out of server objects", .{});
-    @panic("Out of server objects");
-}
-
 pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, args: []const wayland.Argument) ?*wl.Object {
     assert(glob_connected);
     const display = proxy.display;
@@ -525,6 +525,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 }
                 message.addArg(&payload_used, last_u32);
             },
+            .@"?s" => |s_opt| continue :arg_type_switch_blk .{ .s = if (s_opt) |s| s else "" },
             .o => |o| continue :arg_type_switch_blk .{ .u = o.proxy.id },
             .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.proxy.id else 0 },
             .n => {
@@ -563,6 +564,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 .h => |h| std.fmt.bufPrint(print_buf[used..], ", fd = {}", .{h}) catch unreachable,
                 .f => unreachable,
                 .s => |s| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{s}) catch unreachable,
+                .@"?s" => |so| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{if (so) |s| s else ""}) catch unreachable,
                 .n => unreachable,
                 .a, .@"?a" => unreachable,
             };
@@ -645,9 +647,17 @@ fn handleDeleteId(_: ?*anyopaque, display_opt: ?*wl.Display, id: u32) void {
 fn getObject(display: *wl.Display, id: u32) *wl.Object {
     assert(display == &glob_display);
     assert(id != 0);
-    assert(id <= display.objects.len);
-    if (id == 1) return @ptrCast(display);
-    return &display.objects[id - 1];
+
+    if (id < 0xff000000) {
+        assert(id <= display.objects.len);
+        if (id == 1) return @ptrCast(display);
+        return &display.objects[id - 1];
+    } else {
+        for (glob_display.server_object_ids, 0..) |server_id, idx| {
+            if (id == server_id) return &display.server_objects[idx];
+        }
+        @panic("Server side id object not found");
+    }
 }
 
 const verbose_log = std.log.scoped(.verbose_wayland);

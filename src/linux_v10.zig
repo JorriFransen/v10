@@ -442,8 +442,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var last_cycle_count = arch.rdtsc();
 
-    // const data_device = wli.wl_data_device_manager.?.getDataDevice(wld.seat);
-    // _ = data_device;
+    const data_device = wli.wl_data_device_manager.?.getDataDevice(wld.seat);
+    defer data_device.release();
 
     log.debug("starting main loop", .{});
     while (running) {
