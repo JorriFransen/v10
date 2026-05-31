@@ -36,6 +36,7 @@ pub const Error = error{
     FileDoesNotExist,
     FileExists,
     HostUnreachable,
+    IO,
     Interrupt,
     InvalidAddressFamily,
     InvalidArg,
@@ -45,7 +46,6 @@ pub const Error = error{
     InvalidPath,
     InvalidPointer,
     InvalidProtocol,
-    IO,
     IsDirectory,
     Lock,
     MessageTooBig,
@@ -56,6 +56,7 @@ pub const Error = error{
     NoSpaceLeft,
     NotConnected,
     NotSocket,
+    PackageNotCompiled,
     PermissionDenied,
     ReadOnly,
     Timeout,
@@ -198,6 +199,19 @@ pub fn mprotect(addr: [*]align(page_size) u8, size: usize, prot: PROT) Error!voi
         .INVAL => error.InvalidArg,
         else => blk: {
             log.warn("Unexpected errno for mprotect: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn pipe(fds: *[2]fd_t) Error!void {
+    const rc = abi.syscall1(.pipe, @intFromPtr(fds));
+    if (check_errno(rc)) |e| return switch (e) {
+        .FAULT => error.InvalidPointer,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        else => blk: {
+            log.warn("Unexpected errno for pipe: {}", .{e});
             break :blk error.UnexpectedErrno;
         },
     };
@@ -375,6 +389,21 @@ pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
         .IO => error.IO,
         else => blk: {
             log.warn("Unexpected errno for stat: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn pipe2(fds: *[2]fd_t, flags: O) Error!void {
+    const rc = abi.syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
+    if (check_errno(rc)) |e| return switch (e) {
+        .FAULT => error.InvalidPointer,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .INVAL => error.InvalidArg,
+        .NOPKG => error.PackageNotCompiled,
+        else => blk: {
+            log.warn("Unexpected errno for pipe: {}", .{e});
             break :blk error.UnexpectedErrno;
         },
     };

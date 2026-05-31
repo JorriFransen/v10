@@ -813,9 +813,19 @@ const WlData = struct {
 
     data_device_manager: *wl.DataDeviceManager = undefined,
     data_device: *wl.DataDevice = undefined,
+
     pending_data_offer: ?*wl.DataOffer = null,
     active_selection_offer: ?*wl.DataOffer = null,
     active_dnd_offer: ?*wl.DataOffer = null,
+
+    pending_offer_mime_weight: u8 = 0,
+    pending_offer_mime: ?[]const u8 = null,
+    selection_mime: ?[]const u8 = null,
+    dnd_mime: ?[]const u8 = null,
+
+    pending_offer_mime_buffer: [256]u8 = @splat(0),
+    selection_mime_buffer: [256]u8 = @splat(0),
+    dnd_mime_buffer: [256]u8 = @splat(0),
 
     toplevel: WlToplevel = undefined,
 
@@ -1390,6 +1400,31 @@ pub const DEBUG = struct {
             const pixel: *u32 = @ptrCast(@alignCast(cursor));
             pixel.* = color;
             cursor += @intCast(buffer.pitch);
+        }
+    }
+
+    // TODO: Streaming, cancel-able version
+    // - If this needs to support pasting (like ctrl-v), this result needs to be
+    //    kept around, and associated with the data offer.
+    pub fn readClipboard() callconv(.c) void {
+        if (wld.active_selection_offer) |offer| {
+            assert(wld.selection_mime != null);
+
+            var fds: [2]linux.fd_t = undefined;
+            // TODO: Add NONBLOCK when making this streaming
+            linux.pipe2(&fds, .{ .CLOEXEC = true }) catch @panic("Pipe creation failed!");
+
+            const read_fd = fds[0];
+            const write_fd = fds[1];
+            defer linux.close(read_fd) catch unreachable;
+
+            offer.receive(wld.selection_mime.?, write_fd);
+            linux.close(write_fd) catch unreachable;
+
+            var buf: [4096]u8 = undefined;
+            const clip_str = linux.read(read_fd, &buf) catch unreachable;
+            assert(clip_str.len < buf.len - 1);
+            log.debug("Clipboard: \"{s}\"", .{clip_str});
         }
     }
 };
@@ -2205,8 +2240,12 @@ pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, id: *wl
     log.debug("DataDevice.DataOffer: {}", .{id.proxy.id});
 
     assert(wld.pending_data_offer == null);
+    const offer: *wl.DataOffer = @ptrCast(id);
+    wld.pending_data_offer = offer;
 
-    wld.pending_data_offer = @ptrCast(id);
+    offer.addListener(&wl_data_offer_listener, null);
+    assert(wld.pending_offer_mime == null);
+    assert(wld.pending_offer_mime_weight == 0);
 }
 
 pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, serial: u32, surface: *wl.Object, x: wayland.Fixed, y: wayland.Fixed, id_opt: ?*wl.Object) void {
@@ -2221,6 +2260,13 @@ pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, s
             assert(wld.active_dnd_offer == null);
             wld.active_dnd_offer = wld.pending_data_offer;
             wld.pending_data_offer = null;
+
+            assert(wld.pending_offer_mime != null);
+            assert(wld.dnd_mime == null);
+            wld.dnd_mime = std.fmt.bufPrintSentinel(&wld.dnd_mime_buffer, "{s}", .{wld.pending_offer_mime.?}, 0) catch unreachable;
+            log.debug("dnd mime: {s}", .{wld.dnd_mime.?});
+            wld.pending_offer_mime = null;
+            wld.pending_offer_mime_weight = 0;
         }
     }
 }
@@ -2233,6 +2279,7 @@ pub fn handleWlDataDeviceLeave(data: ?*anyopaque, data_device: *wl.DataDevice) v
     assert(wld.active_dnd_offer != null);
     wld.active_dnd_offer.?.destroy();
     wld.active_dnd_offer = null;
+    wld.dnd_mime = null;
 }
 
 pub fn handleWlDataDeviceDrop(data: ?*anyopaque, data_device: *wl.DataDevice) void {
@@ -2243,6 +2290,7 @@ pub fn handleWlDataDeviceDrop(data: ?*anyopaque, data_device: *wl.DataDevice) vo
     assert(wld.active_dnd_offer != null);
     wld.active_dnd_offer.?.destroy();
     wld.active_dnd_offer = null;
+    wld.dnd_mime = null;
 }
 
 pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevice, id_opt: ?*wl.Object) void {
@@ -2254,13 +2302,72 @@ pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevic
 
     if (id_opt) |id| {
         assert(wld.pending_data_offer != null);
+        assert(wld.pending_offer_mime != null);
+
         if (id.proxy.id == wld.pending_data_offer.?.proxy.id) {
             wld.active_selection_offer = wld.pending_data_offer;
             wld.pending_data_offer = null;
+
+            log.debug("selection mime: {s}", .{wld.pending_offer_mime.?});
+
+            wld.selection_mime = std.fmt.bufPrintSentinel(&wld.selection_mime_buffer, "{s}", .{wld.pending_offer_mime.?}, 0) catch unreachable;
+            wld.pending_offer_mime = null;
+            wld.pending_offer_mime_weight = 0;
+
+            DEBUG.readClipboard();
         }
     } else {
         wld.active_selection_offer = null;
     }
+}
+
+pub fn handleWlDataOfferOffer(data: ?*anyopaque, data_offer: *wl.DataOffer, mime_type: []const u8) void {
+    _ = data;
+
+    log.debug("DataOffer.Offer: id: {} mime: '{s}'", .{ data_offer.proxy.id, mime_type });
+
+    const mimes = [_][]const u8{
+        "STRING",
+        "TEXT",
+        "UTF8_STRING",
+        "text/plain",
+        "text/plain;charset=utf-8",
+
+        "text/uri-list",
+
+        "image/gif",
+        "image/png",
+        "image/jpeg",
+        "image/jpg",
+    };
+
+    var new_weight: u8 = 0;
+    var match = false;
+
+    inline for (mimes, 1..) |mime, weight| {
+        if (std.mem.eql(u8, mime_type, mime)) {
+            new_weight = weight;
+            match = true;
+            break;
+        }
+    }
+
+    if ((match and new_weight > wld.pending_offer_mime_weight) or (!match and wld.pending_offer_mime == null)) {
+        wld.pending_offer_mime = std.fmt.bufPrintSentinel(&wld.pending_offer_mime_buffer, "{s}", .{mime_type}, 0) catch unreachable;
+        wld.pending_offer_mime_weight = new_weight;
+    }
+}
+
+pub fn handleWlDataOfferSourceActions(data: ?*anyopaque, data_offer: *wl.DataOffer, source_actions: wl.DataDeviceManager.DndAction) void {
+    _ = data;
+
+    log.debug("DataOffer.SourceActions: id: {}, actions: {}", .{ data_offer.proxy.id, source_actions });
+}
+
+pub fn handleWlDataOfferAction(data: ?*anyopaque, data_offer: *wl.DataOffer, dnd_action: wl.DataDeviceManager.DndAction) void {
+    _ = data;
+
+    log.debug("DataOffer.Action: id: {}, action: {}", .{ data_offer.proxy.id, dnd_action });
 }
 
 fn nop() void {}
@@ -2316,6 +2423,12 @@ const wl_data_device_listener = wl.DataDevice.Listener{
     .motion = @ptrCast(&nop),
     .drop = handleWlDataDeviceDrop,
     .selection = handleWlDataDeviceSelection,
+};
+
+const wl_data_offer_listener = wl.DataOffer.Listener{
+    .offer = handleWlDataOfferOffer,
+    .sourceActions = handleWlDataOfferSourceActions,
+    .action = handleWlDataOfferAction,
 };
 
 const wl_keyboard_listener = wl.Keyboard.Listener{

@@ -471,13 +471,13 @@ pub fn proxyDestroy(proxy: *wl.Proxy) void {
     const display = proxy.display;
     assert(display == &glob_display);
 
+    while (proxy.listeners.popFirst()) |node| {
+        display.free_listeners.prepend(node);
+    }
+
     if (proxy.id < 0xff000000) {
         assert(proxy.id < glob_display.objects.len);
         assert(proxy.id != 1);
-
-        while (proxy.listeners.popFirst()) |node| {
-            display.free_listeners.prepend(node);
-        }
 
         display.free_objects.prepend(&proxy.freelist_node);
     } else {
