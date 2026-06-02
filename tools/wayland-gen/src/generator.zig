@@ -205,7 +205,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         else
             try tmpPrint(&tmp, "trampoline_{s}", .{entry.key_ptr.*});
 
-        try generator.appendf("pub fn {f}(display: *wl.Display, object: *wl.Object, first_listener_node: ?*const std.SinglyLinkedList.Node, message: *const wlc.Message) u32 {{\n", .{std.zig.fmtId(name)});
+        try generator.appendf("pub inline fn {f}(display: *wl.Display, object: *wl.Object, first_listener_node: ?*const std.SinglyLinkedList.Node, message: *const wlc.Message) u32 {{\n", .{std.zig.fmtId(name)});
         try generator.append("    _ = .{display};\n");
 
         const info = entry.value_ptr;
@@ -330,9 +330,18 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\
         \\    const first_listener_node = object.proxy.listeners.first;
         \\
-        \\    const listener_count = switch (sig_tag) {
-        \\
     );
+
+    if (options.verbose_wayland) {
+        try generator.append("\n    const listener_count = switch (sig_tag) {\n");
+    } else {
+        try generator.append(
+            \\    if (first_listener_node == null) return;
+            \\
+            \\    _ = switch (sig_tag) {
+            \\
+        );
+    }
 
     it = generator.unique_signatures_map.iterator();
     while (it.next()) |entry| {
@@ -351,11 +360,6 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
             \\        object.proxy.id,
             \\        listener_count,
             \\    });
-            \\
-        );
-    } else {
-        try generator.append(
-            \\    _ = listener_count;
             \\
         );
     }

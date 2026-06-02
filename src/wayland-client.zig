@@ -8,8 +8,6 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Prevent parsing arguments for events without listeners? (Force when verbose_wayland=true?)
-// TODO: Inline trampolines
 // TODO: Check passed versions
 // TODO: Merge this file with generator
 
@@ -380,12 +378,6 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
     return result;
 }
 
-fn dispatchListeners(display: *wl.Display, message: *Message, object: *wl.Object) void {
-    assert(display == &glob_display);
-
-    wayland.dispatch(display, message, object, object.proxy.listeners.first);
-}
-
 pub fn displayFlush(display: *wl.Display) void {
     var iov = linux.iovec{ .base = &display.send_payload_buf, .len = display.send_payload_used };
 
@@ -594,7 +586,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 .f => |f| std.fmt.bufPrint(print_buf[used..], ", {}", .{f.toDouble()}) catch unreachable,
                 .s => |s| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{s}) catch unreachable,
                 .@"?s" => |so| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{if (so) |s| s else ""}) catch unreachable,
-                .n => |n| std.fmt.bufPrint(print_buf[used..], ", new-id = {}", .{n.proxy.id}) catch unreachable,
+                .n => |n| std.fmt.bufPrint(print_buf[used..], ", new-id = {}", .{n}) catch unreachable,
                 .a => |a| std.fmt.bufPrint(print_buf[used..], ", {any}", .{a}) catch unreachable,
             };
             used += p.len;
