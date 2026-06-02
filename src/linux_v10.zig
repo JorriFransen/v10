@@ -817,6 +817,8 @@ const WlData = struct {
     pending_data_offer: ?*wl.DataOffer = null,
     active_selection_offer: ?*wl.DataOffer = null,
     active_dnd_offer: ?*wl.DataOffer = null,
+    active_dnd_source_actions: wl.DataDeviceManager.DndAction = .{},
+    active_dnd_action: wl.DataDeviceManager.DndAction = .{},
 
     pending_offer_mime_weight: u8 = 0,
     pending_offer_mime: ?[]const u8 = null,
@@ -1422,9 +1424,45 @@ pub const DEBUG = struct {
             linux.close(write_fd) catch unreachable;
 
             var buf: [4096]u8 = undefined;
-            const clip_str = linux.read(read_fd, &buf) catch unreachable;
-            assert(clip_str.len < buf.len - 1);
-            log.debug("Clipboard: \"{s}\"", .{clip_str});
+            if (linux.read(read_fd, &buf)) |clip_str| {
+                assert(clip_str.len < buf.len - 1);
+                log.debug("Clipboard: \"{s}\"", .{clip_str});
+            } else |e| switch (e) {
+                error.EndOfFile => log.debug("Clipboard empty...", .{}),
+                else => {
+                    log.err("Clipboard read error: {}", .{e});
+                    @panic("Clipboard read error");
+                },
+            }
+        }
+    }
+
+    pub fn readDnd() callconv(.c) void {
+        if (wld.active_dnd_offer) |offer| {
+            assert(wld.dnd_mime != null);
+
+            var fds: [2]linux.fd_t = undefined;
+            linux.pipe2(&fds, .{ .CLOEXEC = true }) catch @panic("Pipe creation failed!");
+
+            const read_fd = fds[0];
+            const write_fd = fds[1];
+            defer linux.close(read_fd) catch unreachable;
+
+            offer.receive(wld.dnd_mime.?, write_fd);
+            linux.close(write_fd) catch unreachable;
+            defer offer.finish();
+
+            var buf: [4096]u8 = undefined;
+            if (linux.read(read_fd, &buf)) |clip_str| {
+                assert(clip_str.len < buf.len - 1);
+                log.debug("DND: \"{s}\"", .{clip_str});
+            } else |e| switch (e) {
+                error.EndOfFile => log.debug("DND empty...", .{}),
+                else => {
+                    log.err("DND read error: {}", .{e});
+                    @panic("DND read error");
+                },
+            }
         }
     }
 };
@@ -2237,7 +2275,6 @@ pub fn playbackInput(shared_state: *platform.SharedState, io: std.Io, new_input:
 pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, id: *wl.Object) void {
     _ = data;
     _ = data_device;
-    log.debug("DataDevice.DataOffer: {}", .{id.proxy.id});
 
     assert(wld.pending_data_offer == null);
     const offer: *wl.DataOffer = @ptrCast(id);
@@ -2252,13 +2289,16 @@ pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, s
     _ = data;
     _ = data_device;
     _ = surface;
-    log.debug("DataDevice.Enter: x: {}, y: {}, serial: {}, id: {}", .{ x.toDouble(), y.toDouble(), serial, id_opt.?.proxy.id });
+    _ = x;
+    _ = y;
 
     if (id_opt) |id| {
         assert(wld.pending_data_offer != null);
         if (id.proxy.id == wld.pending_data_offer.?.proxy.id) {
             assert(wld.active_dnd_offer == null);
-            wld.active_dnd_offer = wld.pending_data_offer;
+            const offer: *wl.DataOffer = @ptrCast(id);
+
+            wld.active_dnd_offer = offer;
             wld.pending_data_offer = null;
 
             assert(wld.pending_offer_mime != null);
@@ -2267,6 +2307,9 @@ pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, s
             log.debug("dnd mime: {s}", .{wld.dnd_mime.?});
             wld.pending_offer_mime = null;
             wld.pending_offer_mime_weight = 0;
+
+            offer.accept(serial, wld.dnd_mime);
+            offer.setActions(wld.active_dnd_source_actions, .{ .copy = true });
         }
     }
 }
@@ -2274,29 +2317,26 @@ pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, s
 pub fn handleWlDataDeviceLeave(data: ?*anyopaque, data_device: *wl.DataDevice) void {
     _ = data;
     _ = data_device;
-    log.debug("DataDevice.Leave", .{});
 
-    assert(wld.active_dnd_offer != null);
-    wld.active_dnd_offer.?.destroy();
-    wld.active_dnd_offer = null;
-    wld.dnd_mime = null;
+    if (wld.active_dnd_offer) |dnd_offer| {
+        dnd_offer.destroy();
+        wld.active_dnd_offer = null;
+        wld.dnd_mime = null;
+    }
 }
 
 pub fn handleWlDataDeviceDrop(data: ?*anyopaque, data_device: *wl.DataDevice) void {
     _ = data;
     _ = data_device;
-    log.debug("DataDevice.Drop", .{});
 
-    assert(wld.active_dnd_offer != null);
-    wld.active_dnd_offer.?.destroy();
-    wld.active_dnd_offer = null;
-    wld.dnd_mime = null;
+    if (wld.active_dnd_offer) |_| {
+        DEBUG.readDnd();
+    }
 }
 
 pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevice, id_opt: ?*wl.Object) void {
     _ = data;
     _ = data_device;
-    log.debug("DataDevice.Selection: id: {}", .{id_opt.?.proxy.id});
 
     if (wld.active_selection_offer) |old| old.destroy();
 
@@ -2324,7 +2364,8 @@ pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevic
 pub fn handleWlDataOfferOffer(data: ?*anyopaque, data_offer: *wl.DataOffer, mime_type: []const u8) void {
     _ = data;
 
-    log.debug("DataOffer.Offer: id: {} mime: '{s}'", .{ data_offer.proxy.id, mime_type });
+    assert(wld.pending_data_offer != null);
+    assert(data_offer.proxy.id == wld.pending_data_offer.?.proxy.id);
 
     const mimes = [_][]const u8{
         "STRING",
@@ -2361,13 +2402,21 @@ pub fn handleWlDataOfferOffer(data: ?*anyopaque, data_offer: *wl.DataOffer, mime
 pub fn handleWlDataOfferSourceActions(data: ?*anyopaque, data_offer: *wl.DataOffer, source_actions: wl.DataDeviceManager.DndAction) void {
     _ = data;
 
-    log.debug("DataOffer.SourceActions: id: {}, actions: {}", .{ data_offer.proxy.id, source_actions });
+    if (wld.active_dnd_offer) |offer| {
+        if (data_offer.proxy.id == offer.proxy.id) {
+            wld.active_dnd_source_actions = source_actions;
+        }
+    }
 }
 
 pub fn handleWlDataOfferAction(data: ?*anyopaque, data_offer: *wl.DataOffer, dnd_action: wl.DataDeviceManager.DndAction) void {
     _ = data;
 
-    log.debug("DataOffer.Action: id: {}, action: {}", .{ data_offer.proxy.id, dnd_action });
+    if (wld.active_dnd_offer) |offer| {
+        if (data_offer.proxy.id == offer.proxy.id) {
+            wld.active_dnd_action = dnd_action;
+        }
+    }
 }
 
 fn nop() void {}
