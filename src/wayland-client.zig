@@ -8,9 +8,8 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Inline trampolines
 // TODO: Prevent parsing arguments for events without listeners? (Force when verbose_wayland=true?)
-// TODO: Verify requests/events with optional array/string args
+// TODO: Inline trampolines
 // TODO: Check passed versions
 // TODO: Merge this file with generator
 
@@ -549,9 +548,24 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 result = new_proxy;
                 continue :arg_type_switch_blk .{ .u = new_proxy.id };
             },
-            .a, .@"?a" => {
-                // TODO: implement
-                unreachable;
+            .a => |a| {
+                message.addArg(&payload_used, @intCast(a.len));
+
+                var remaining = a.len;
+                while (remaining >= 4) : (remaining -= 4) {
+                    message.addArg(
+                        &payload_used,
+                        std.mem.bytesAsValue(u32, a[a.len - remaining .. a.len - remaining + 4]).*,
+                    );
+                }
+
+                if (remaining > 0) {
+                    var last_u32: u32 = 0;
+                    for (a[a.len - remaining ..], 0..) |b, bi| {
+                        last_u32 |= @as(u32, b) << @as(u5, @intCast((bi * 8)));
+                    }
+                    message.addArg(&payload_used, last_u32);
+                }
             },
             .h => message.addFD(&fds_used, arg.h),
         }
@@ -577,11 +591,11 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 .i => |i| std.fmt.bufPrint(print_buf[used..], ", {}", .{i}) catch unreachable,
                 .u => |u| std.fmt.bufPrint(print_buf[used..], ", {}", .{u}) catch unreachable,
                 .h => |h| std.fmt.bufPrint(print_buf[used..], ", fd = {}", .{h}) catch unreachable,
-                .f => unreachable,
+                .f => |f| std.fmt.bufPrint(print_buf[used..], ", {}", .{f.toDouble()}) catch unreachable,
                 .s => |s| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{s}) catch unreachable,
                 .@"?s" => |so| std.fmt.bufPrint(print_buf[used..], ", '{s}'", .{if (so) |s| s else ""}) catch unreachable,
-                .n => unreachable,
-                .a, .@"?a" => unreachable,
+                .n => |n| std.fmt.bufPrint(print_buf[used..], ", new-id = {}", .{n.proxy.id}) catch unreachable,
+                .a => |a| std.fmt.bufPrint(print_buf[used..], ", {any}", .{a}) catch unreachable,
             };
             used += p.len;
         }

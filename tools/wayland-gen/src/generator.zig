@@ -170,7 +170,6 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    @"?o",
         \\    n,
         \\    a,
-        \\    @"?a",
         \\    h,
         \\};
         \\
@@ -184,7 +183,6 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\    @"?o": ?*wl.Object,
         \\    n: u32,
         \\    a: Array,
-        \\    @"?a": ?Array,
         \\    h: i32,
         \\};
         \\
