@@ -535,6 +535,7 @@ fn parseArg(this: *Parser) Error!Arg {
         .name = name.?,
         .type = .{ .tag = arg_type.?, .allow_null = allow_null },
         .enum_name = enum_name_opt,
+        .enum_type = null,
         .interface = interface,
         .summary = summary,
     };

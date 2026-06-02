@@ -63,6 +63,7 @@ pub const Arg = struct {
     name: []const u8,
     type: Type,
     enum_name: ?[]const u8,
+    enum_type: ?*Enum,
     interface: ?[]const u8,
     summary: []const u8,
 };

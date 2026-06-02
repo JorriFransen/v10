@@ -32,7 +32,7 @@ next_sig_index: usize = 0,
 pub const Error =
     std.fmt.ParseIntError ||
     Allocator.Error ||
-    error{ProtocolCollision};
+    error{ ProtocolCollision, InvalidEnumName };
 
 pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Protocol) Error![]const u8 {
     var generator = Generator{
@@ -72,6 +72,9 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
             r.value_ptr.* = p;
         }
     };
+
+    try generator.matchEnumArgs(core_protocol);
+    for (protocols) |*protocol| try generator.matchEnumArgs(protocol);
 
     try generator.appendf(
         \\const std = @import("std");
@@ -362,6 +365,60 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
     try generator.append("}\n");
 
     return generator.buf.items;
+}
+
+fn matchEnumArgs(this: *Generator, protocol: *const Protocol) Error!void {
+    for (protocol.interfaces) |*interface| {
+        for (interface.requests) |*request| {
+            for (request.args) |*arg| {
+                try this.matchEnumArg(protocol, interface, arg);
+            }
+        }
+
+        for (interface.events) |*event| {
+            for (event.args) |*arg| {
+                try this.matchEnumArg(protocol, interface, arg);
+            }
+        }
+    }
+}
+
+fn matchEnumArg(this: *Generator, protocol: *const Protocol, interface: *const Interface, arg: *Arg) Error!void {
+    _ = this;
+
+    if (arg.enum_name) |fullname| {
+        var enum_interface: *const Interface = undefined;
+        var enum_name: []const u8 = undefined;
+
+        if (std.mem.findScalar(u8, fullname, '.')) |dot_idx| {
+            const interface_name = fullname[0..dot_idx];
+            enum_name = fullname[dot_idx + 1 ..];
+
+            enum_interface = for (protocol.interfaces) |*iface| {
+                if (std.mem.eql(u8, iface.name, interface_name)) {
+                    break iface;
+                }
+            } else {
+                return error.InvalidEnumName;
+            };
+        } else {
+            enum_interface = interface;
+            enum_name = fullname;
+        }
+
+        var found = false;
+        for (enum_interface.enums) |*enum_type| {
+            if (std.mem.eql(u8, enum_type.name, enum_name)) {
+                found = true;
+
+                arg.enum_type = enum_type;
+            }
+        }
+        if (!found) {
+            log.err("Failed to find enum type: {s}", .{fullname});
+            @panic("Failed to find enum type");
+        }
+    }
 }
 
 fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *const Interface) Error!void {
@@ -826,15 +883,18 @@ fn makeArg(tmp: *mem.TempArena, fn_names: *std.StringHashMapUnmanaged(void), arg
     };
 
     const name = try safeArgName(tmp, fn_names, arg.name);
-    return try tmpPrint(tmp, ".{{ .{f} = {s} }}", .{
-        std.zig.fmtId(t),
-        if (arg.enum_name != null)
-            try tmpPrint(tmp, "@intFromEnum({s})", .{name})
-        else if (arg.type.tag == .object)
-            try tmpPrint(tmp, "@ptrCast({s})", .{name})
+
+    const arg_str = if (arg.enum_name) |_|
+        if (arg.enum_type.?.bitfield)
+            try tmpPrint(tmp, "@bitCast({s})", .{name})
         else
-            name,
-    });
+            try tmpPrint(tmp, "@intFromEnum({s})", .{name})
+    else if (arg.type.tag == .object)
+        try tmpPrint(tmp, "@ptrCast({s})", .{name})
+    else
+        name;
+
+    return try tmpPrint(tmp, ".{{ .{f} = {s} }}", .{ std.zig.fmtId(t), arg_str });
 }
 
 fn safeArgName(tmp: *mem.TempArena, fn_names: *std.StringHashMapUnmanaged(void), name: []const u8) Allocator.Error![]const u8 {
