@@ -131,7 +131,9 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     run_exe.step.dependOn(&exe_install.step);
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
-    run_exe.setCwd(Build.LazyPath{ .cwd_relative = b.install_prefix });
+    // run_exe.setCwd(b.graph.path(.install_prefix, ""));
+    // run_exe.addPassthruArgs();
+    run_exe.setCwd(std.Build.LazyPath{ .cwd_relative = b.install_prefix });
     if (b.args) |a| run_exe.addArgs(a);
 
     return .{
@@ -198,7 +200,7 @@ const Game = struct {
 };
 
 fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !Game {
-    const game_root_module = b.addModule("main", .{
+    const game_root_module = b.addModule("gamelib", .{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/v10.zig"),
@@ -294,6 +296,8 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
 
     modules.wlc.?.addImport("wayland", modules.wayland.?);
 
+    // TODO: Pass the result of findprogram to the runner
+    // const aseprite_script_runner_exe = if (b.findProgram(.{ .names = &.{"aseprite"} })) |_|
     const aseprite_script_runner_exe = if (b.findProgram(&.{"aseprite"}, &.{})) |_|
         b.addExecutable(.{
             .name = "aseprite-script-runner",

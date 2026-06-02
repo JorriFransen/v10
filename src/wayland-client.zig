@@ -11,7 +11,6 @@ const wl = wayland.wl;
 // TODO: Inline trampolines
 // TODO: Prevent parsing arguments for events without listeners? (Force when verbose_wayland=true?)
 // TODO: Verify requests/events with optional array/string args
-// TODO: Verify events with new_id arguments
 // TODO: Check passed versions
 // TODO: Merge this file with generator
 
