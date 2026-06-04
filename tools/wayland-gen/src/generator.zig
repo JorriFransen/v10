@@ -453,18 +453,12 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
             \\                .signature = &.{{
         , .{request.name});
 
-        const registry_bind = (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind"));
-        const tag = if (registry_bind) blk: {
-            try this.append(" .u, .s, .u, .n");
-            break :blk try this.registerSignature("usun");
-        } else try this.genSignature(request.args);
-
         try this.appendf(
             \\ }},
             \\                .signature_tag = .{f},
             \\                .object_types = &.{{}},
             \\            }}
-        , .{std.zig.fmtId(tag)});
+        , .{std.zig.fmtId(try this.genSignature(request.args))});
     }
 
     try this.append(
@@ -793,15 +787,23 @@ fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
-    const name = try this.zigInterfaceTypeName(&tmp, protocol, interface.name);
-
     if (!interface.has_destructor and !std.mem.eql(u8, interface.name, "wl_callback")) {
+        const name = try this.zigInterfaceTypeName(&tmp, protocol, interface.name);
         try this.appendf(
             \\        pub inline fn destroy(self: *{s}) void {{
             \\            wlc.proxyDestroy(@ptrCast(self));
             \\        }}
             \\
         , .{name});
+    }
+
+    if (std.mem.eql(u8, protocol.name, "wayland") and std.mem.eql(u8, interface.name, "wl_registry")) {
+        try this.append(
+            \\        pub inline fn bindTyped(self: *Registry, comptime InterfaceType: type, name: u32, version: u32) *InterfaceType {
+            \\            const target_interface = &InterfaceType.interface;
+            \\            return @ptrCast(self.bind(name, target_interface, @min(version, interface.version)));
+            \\        }
+        );
     }
 }
 
@@ -815,16 +817,11 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
         try this.zigInterfaceTypeName(&tmp, protocol, interface.name),
     });
 
-    var constructor = false;
-    var registry_bind = false;
     var wl_data_offer_destroy = false;
-    var constructor_interface: []const u8 = undefined;
+    var constructor = false;
+    var constructor_interface_opt: ?[]const u8 = null;
 
-    // wl_registry_bind is a special case!
-    if (std.mem.eql(u8, interface.name, "wl_registry") and std.mem.eql(u8, request.name, "bind")) {
-        registry_bind = true;
-        try this.append(", name: u32, comptime IType: type, version: u32) ?*IType {\n");
-    } else if (std.mem.eql(u8, interface.name, "wl_data_offer") and std.mem.eql(u8, request.name, "destroy")) {
+    if (std.mem.eql(u8, interface.name, "wl_data_offer") and std.mem.eql(u8, request.name, "destroy")) {
         wl_data_offer_destroy = true;
         try this.append(") void {\n");
     } else {
@@ -832,9 +829,14 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
 
         for (request.args) |arg| {
             if (arg.type.tag == .new_id) {
-                constructor_interface = arg.interface orelse interface.name;
-                return_type = try this.zigType(&tmp, arg.type, constructor_interface, protocol);
                 constructor = true;
+                if (arg.interface) |return_type_interface| {
+                    constructor_interface_opt = return_type_interface;
+                    return_type = try this.zigType(&tmp, arg.type, return_type_interface, protocol);
+                } else {
+                    return_type = if (arg.type.allow_null) "?*Object" else "*Object";
+                    try this.append(", target_interface: *const Interface, version: u32");
+                }
             } else {
                 const arg_type = if (arg.enum_name) |ename|
                     try this.zigEnumName(&tmp, ename, protocol)
@@ -851,27 +853,31 @@ fn genRequest(this: *Generator, protocol: *const Protocol, interface: *const Int
     const opcode = index;
 
     if (constructor) {
-        const interface_def = try tmpPrint(&tmp, "&{s}.interface", .{try this.zigInterfaceTypeName(&tmp, protocol, constructor_interface)});
-        try this.appendf(
-            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, {s}, self.proxy.version, &.{{
-            \\                .{{ .n = 0 }},
-            \\
-        , .{ opcode, interface_def });
-        for (request.args) |arg| if (arg.type.tag != .new_id) {
-            try this.appendf("                {s},\n", .{try makeArg(&tmp, fn_names, arg)});
-        };
+        if (constructor_interface_opt) |constructor_interface| {
+            const interface_def = try tmpPrint(&tmp, "&{s}.interface", .{try this.zigInterfaceTypeName(&tmp, protocol, constructor_interface)});
+            try this.appendf(
+                "            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, {s}, self.proxy.version, &.{{\n",
+                .{ opcode, interface_def },
+            );
+        } else {
+            try this.appendf(
+                "            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, target_interface, version, &.{{\n",
+                .{opcode},
+            );
+        }
+
+        for (request.args) |arg| {
+            if (arg.type.tag == .new_id) {
+                if (constructor_interface_opt == null) {
+                    try this.append("                .{ .s = target_interface.name },\n");
+                    try this.append("                .{ .u = version },\n");
+                }
+                try this.append("                .{ .n = 0 },\n");
+            } else {
+                try this.appendf("                {s},\n", .{try makeArg(&tmp, fn_names, arg)});
+            }
+        }
         try this.append("            });\n");
-        try this.append("            return @ptrCast(result);\n");
-    } else if (registry_bind) {
-        try this.appendf(
-            \\            const result = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, &IType.interface, version, &.{{
-            \\                .{{ .u = name }},
-            \\                .{{ .s = IType.interface.name }},
-            \\                .{{ .u = version }},
-            \\                .{{ .n = 0 }},
-            \\            }});
-            \\
-        , .{opcode});
         try this.append("            return @ptrCast(result);\n");
     } else {
         try this.appendf("            _ = wlc.proxyMarshalArrayFlags(@ptrCast(self), {}, null, self.proxy.version, &.{{", .{opcode});
