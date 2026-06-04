@@ -142,6 +142,7 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
         \\        name: []const u8,
         \\        signature: []const ArgumentType,
         \\        signature_tag: Signature,
+        \\        object_types: []const *const Interface,
         \\    };
         \\
         \\};
@@ -223,20 +224,27 @@ pub fn generate(allocator: Allocator, core_protocol: *Protocol, protocols: []Pro
 
         if (regular_arg_count > 0 or fd_arg_count > 0) try generator.append("\n");
 
+        var object_index: u32 = 0;
+
         for (info.types, 1..) |arg_type, n| {
-            try generator.appendf("    const arg{} = message.{s};\n", .{
-                n,
-                switch (arg_type.tag) {
-                    .int => try tmpPrint(&tmp, "getIntArg(&arg_offset)", .{}),
-                    .uint => try tmpPrint(&tmp, "getUIntArg(&arg_offset)", .{}),
-                    .fixed => try tmpPrint(&tmp, "getFixedArg(&arg_offset)", .{}),
-                    .string => try tmpPrint(&tmp, "getStringArg(&arg_offset)", .{}),
-                    .array => try tmpPrint(&tmp, "getArrayArg(&arg_offset)", .{}),
-                    .object => try tmpPrint(&tmp, "getObjectArg(&arg_offset, display)", .{}),
-                    .new_id => try tmpPrint(&tmp, "getNewIdArg(&arg_offset, display, object.proxy.interface)", .{}),
-                    .fd => try tmpPrint(&tmp, "getFDArg(&fd_offset)", .{}),
+            switch (arg_type.tag) {
+                .int => try generator.appendf("    const arg{} = message.getIntArg(&arg_offset)", .{n}),
+                .uint => try generator.appendf("    const arg{} = message.getUIntArg(&arg_offset)", .{n}),
+                .fixed => try generator.appendf("    const arg{} = message.getFixedArg(&arg_offset)", .{n}),
+                .string => try generator.appendf("    const arg{} = message.getStringArg(&arg_offset)", .{n}),
+                .array => try generator.appendf("    const arg{} = message.getArrayArg(&arg_offset)", .{n}),
+                .object => {
+                    object_index += 1;
+                    try generator.appendf("    const arg{} = message.getObjectArg(&arg_offset, display)", .{n});
                 },
-            });
+                .new_id => {
+                    try generator.appendf("    const arg{}_interface = object.proxy.interface.events[message.header.op].object_types[{}];\n", .{ n, object_index });
+                    object_index += 1;
+                    try generator.appendf("    const arg{} = message.getNewIdArg(&arg_offset, display, arg{}_interface, object.proxy.version)", .{ n, n });
+                },
+                .fd => try generator.appendf("    const arg{} = message.getFDArg(&fd_offset)", .{n}),
+            }
+            try generator.append(";\n");
         }
 
         if (regular_arg_count > 0 or fd_arg_count > 0) try generator.append("\n");
@@ -424,7 +432,6 @@ fn matchEnumArg(this: *Generator, protocol: *const Protocol, interface: *const I
 }
 
 fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *const Interface) Error!void {
-    _ = protocol;
     var tmp = mem.getScratch(@ptrCast(@alignCast(this.allocator.ptr)));
     defer tmp.release();
 
@@ -452,7 +459,12 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
             break :blk try this.registerSignature("usun");
         } else try this.genSignature(request.args);
 
-        try this.appendf(" }},\n                .signature_tag = .{f},\n            }}", .{std.zig.fmtId(tag)});
+        try this.appendf(
+            \\ }},
+            \\                .signature_tag = .{f},
+            \\                .object_types = &.{{}},
+            \\            }}
+        , .{std.zig.fmtId(tag)});
     }
 
     try this.append(
@@ -469,7 +481,30 @@ fn genInterfaceData(this: *Generator, protocol: *const Protocol, interface: *con
         , .{event.name});
 
         const tag = try this.genSignature(event.args);
-        try this.appendf(" }},\n               .signature_tag = .{f},\n            }}", .{std.zig.fmtId(tag)});
+        try this.appendf(
+            \\ }},
+            \\                .signature_tag = .{f},
+            \\                .object_types = &.{{
+        , .{std.zig.fmtId(tag)});
+
+        var new_type_count: usize = 0;
+        for (event.args) |e| {
+            if (e.interface) |arg_iface| {
+                if (new_type_count > 0) {
+                    try this.append(", ");
+                } else try this.append(" ");
+
+                const interface_def = try tmpPrint(&tmp, "&{s}.interface", .{try this.zigInterfaceTypeName(&tmp, protocol, arg_iface)});
+
+                try this.appendf("{s} ", .{interface_def});
+                new_type_count += 1;
+            }
+        }
+
+        try this.append(
+            \\},
+            \\            }
+        );
     }
     try this.append(
         \\ },
@@ -759,13 +794,6 @@ fn genImplicitRequests(this: *Generator, protocol: *const Protocol, interface: *
     defer tmp.release();
 
     const name = try this.zigInterfaceTypeName(&tmp, protocol, interface.name);
-
-    try this.appendf(
-        \\        pub inline fn getVersion(self: *{s}) u32 {{
-        \\            return self.proxy.version;
-        \\        }}
-        \\
-    , .{name});
 
     if (!interface.has_destructor and !std.mem.eql(u8, interface.name, "wl_callback")) {
         try this.appendf(

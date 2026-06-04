@@ -66,14 +66,10 @@ pub const Message = struct {
         return getObject(display, id);
     }
 
-    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *wl.Display, interface: *const wayland.Interface) ?*wl.Object {
+    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *wl.Display, interface: *const wayland.Interface, version: u32) ?*wl.Object {
         _ = .{ this, arg_offset, display };
 
         const server_id = this.getUIntArg(arg_offset);
-
-        assert(std.mem.eql(u8, interface.name, "wl_data_device"));
-        const version = interface.version;
-        const target_interface = &wl.DataOffer.interface;
 
         for (&glob_display.server_object_ids, 0..) |*id, idx| {
             if (id.* == 0) {
@@ -82,7 +78,7 @@ pub const Message = struct {
                 result.* = .{ .proxy = .{
                     .id = server_id,
                     .version = version,
-                    .interface = target_interface,
+                    .interface = interface,
                     .display = display,
                     .freelist_node = .{},
                     .listeners = .{},
