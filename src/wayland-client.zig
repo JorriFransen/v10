@@ -8,7 +8,6 @@ const linux = @import("linux");
 const wayland = @import("wayland");
 const wl = wayland.wl;
 
-// TODO: Check passed versions
 // TODO: Merge this file with generator
 
 comptime {
@@ -174,12 +173,24 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
             };
             result = &glob_display;
 
-            glob_display.objects[0].proxy = .{ .id = 1, .version = 0, .display = &glob_display, .interface = &wl.Display.interface, .freelist_node = .{} };
+            glob_display.objects[0].proxy = .{
+                .id = 1,
+                .version = wl.Display.interface.version,
+                .display = &glob_display,
+                .interface = &wl.Display.interface,
+                .freelist_node = .{},
+            };
             glob_display.free_objects = .{ .first = &glob_display.objects[0].proxy.freelist_node };
 
             var last_node = glob_display.free_objects.first.?;
             for (glob_display.objects[1..], 2..) |*obj, id| {
-                obj.proxy = .{ .id = @intCast(id), .version = 0, .display = &glob_display, .interface = undefined, .freelist_node = .{} };
+                obj.proxy = .{
+                    .id = @intCast(id),
+                    .version = wl.Display.interface.version,
+                    .display = &glob_display,
+                    .interface = undefined,
+                    .freelist_node = .{},
+                };
                 last_node.insertAfter(&obj.proxy.freelist_node);
                 last_node = &obj.proxy.freelist_node;
             }
@@ -187,7 +198,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
 
             for (glob_display.server_object_ids[0..], glob_display.server_objects[0..]) |*id, *server_obj| {
                 id.* = 0;
-                server_obj.proxy = .{ .id = 0, .version = 0, .display = &glob_display, .interface = undefined, .freelist_node = .{} };
+                server_obj.proxy = .{ .id = 0, .version = wl.Display.interface.version, .display = &glob_display, .interface = undefined, .freelist_node = .{} };
             }
 
             const display_proxy = proxyCreate(&glob_display, &wl.Display.interface, wl.Display.interface.version);
@@ -527,12 +538,18 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayl
                 }
                 message.addArg(&payload_used, last_u32);
             },
-            .@"?s" => |s_opt| continue :arg_type_switch_blk .{ .s = if (s_opt) |s| s else "" },
+            .@"?s" => |s_opt| {
+                if (s_opt) |s| {
+                    continue :arg_type_switch_blk .{ .s = s };
+                } else {
+                    message.addArg(&payload_used, 0);
+                }
+            },
             .o => |o| continue :arg_type_switch_blk .{ .u = o.proxy.id },
             .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.proxy.id else 0 },
             .n => {
                 assert(interface != null);
-                const new_proxy = proxyCreate(display, interface.?, version); // TODO: Is this the right version
+                const new_proxy = proxyCreate(display, interface.?, version);
                 result = new_proxy;
                 continue :arg_type_switch_blk .{ .u = new_proxy.id };
             },
