@@ -16,11 +16,11 @@ threadlocal var temp_arena_a: Arena = undefined;
 threadlocal var temp_arena_b: Arena = undefined;
 threadlocal var temp_arena_next: *Arena = undefined;
 
-pub fn init() !void {
+pub fn init() void {
     initTemp();
 }
 
-pub fn deinit() !void {
+pub fn deinit() void {
     deinitTemp();
 }
 
@@ -39,8 +39,8 @@ pub fn initTemp() void {
 pub fn deinitTemp() void {
     assert(temp_initialized);
 
-    temp_arena_a.deinit();
-    temp_arena_b.deinit();
+    temp_arena_a.deinit() catch unreachable;
+    temp_arena_b.deinit() catch unreachable;
 
     temp_arena_a = undefined;
     temp_arena_b = undefined;

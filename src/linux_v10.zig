@@ -9,11 +9,9 @@ const platform = @import("v10_platform.zig");
 
 const arch = @import("arch").arch;
 
-const wayland = @import("wayland");
-const wl = wayland.wl;
-const wlc = @import("wlc");
-const xdg_shell = wayland.xdg_shell;
-const xdg_decoration = wayland.xdg_decoration_unstable_v1;
+const wl = @import("wayland");
+const xdg_shell = wl.xdg_shell;
+const xdg_decoration = wl.xdg_decoration_unstable_v1;
 
 const linux = @import("linux");
 const input = linux.input;
@@ -109,11 +107,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
-    const display = wlc.displayConnect(null, &init.environ) orelse {
+    const display = wl.displayConnect(null, &init.environ) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;
     };
-    defer wlc.displayDisconnect(display);
+    defer wl.displayDisconnect(display);
     log.debug("Display connected", .{});
 
     const wl_registry = display.getRegistry();
@@ -151,7 +149,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var wli = WlInitData{ .wld = &wld };
     wl_registry.addListener(&wl_registry_listener, &wli);
-    if (wlc.displayRoundtrip(display) == -1) {
+    if (wl.displayRoundtrip(display) == -1) {
         log.err("wl_display_roundtrip failed", .{});
         return error.UnexpectedWayland;
     }
@@ -183,7 +181,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer wld.data_device.destroy();
     wld.data_device.addListener(&wl_data_device_listener, null);
 
-    _ = wlc.displayRoundtrip(wld.display); // Wait for max_width/height to be set
+    _ = wl.displayRoundtrip(wld.display); // Wait for max_width/height to be set
 
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
@@ -233,7 +231,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
             toplevel_decoration.addListener(&xdg_decoration_listener, &xdg_decoration_mode);
 
-            _ = wlc.displayRoundtrip(wld.display);
+            _ = wl.displayRoundtrip(wld.display);
             xdg_surface.ackConfigure(wld.pending_configure_serial.?);
             wld.pending_configure_serial = null;
 
@@ -256,7 +254,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         log.debug("xdg_decoration not supported, falling back to no decorations", .{});
 
-        _ = wlc.displayRoundtrip(wld.display);
+        _ = wl.displayRoundtrip(wld.display);
         wld.pending_configure_serial = null;
 
         break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
@@ -481,7 +479,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        if (wlc.displayDispatch(display) == -1) {
+        if (wl.displayDispatch(display) == -1) {
             running = false;
         }
 
@@ -1759,7 +1757,7 @@ fn toggleFullscreen() void {
     }
 }
 
-fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, surface: *wl.Object, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
+fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, surface: *wl.Object, surface_x: wl.Fixed, surface_y: wl.Fixed) void {
     _ = .{ data, pointer, serial, surface, surface_x, surface_y };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
@@ -1773,7 +1771,7 @@ fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, su
     }
 }
 
-fn handleWlMouseMotion(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, surface_x: wayland.Fixed, surface_y: wayland.Fixed) void {
+fn handleWlMouseMotion(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, surface_x: wl.Fixed, surface_y: wl.Fixed) void {
     _ = .{ data, pointer, time };
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
@@ -1806,7 +1804,7 @@ fn handleWlMouseButton(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, tim
     }
 }
 
-fn handleWlMouseAxis(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wayland.Fixed) void {
+fn handleWlMouseAxis(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wl.Fixed) void {
     _ = .{ data, pointer, time, axis, value };
     // log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
 }
@@ -2177,7 +2175,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         displayWaylandBufferInWindow(wl_buffer);
         return true;
     } else {
-        _ = wlc.displayRoundtrip(wld.display);
+        _ = wl.displayRoundtrip(wld.display);
         log.warn("Failed to aquire wayland buffer!", .{});
         // unreachable; // might want to loop util a buffer is aquired
         // continue;
@@ -2203,7 +2201,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.addListener(&wl_frame_callback_listener, &wld);
-    _ = wlc.displayFlush(wld.display);
+    _ = wl.displayFlush(wld.display);
 
     wld.should_draw = false;
 }
@@ -2285,7 +2283,7 @@ pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, id: *wl
     assert(wld.pending_offer_mime_weight == 0);
 }
 
-pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, serial: u32, surface: *wl.Object, x: wayland.Fixed, y: wayland.Fixed, id_opt: ?*wl.Object) void {
+pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, serial: u32, surface: *wl.Object, x: wl.Fixed, y: wl.Fixed, id_opt: ?*wl.Object) void {
     _ = data;
     _ = data_device;
     _ = surface;

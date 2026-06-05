@@ -1,6 +1,5 @@
 const std = @import("std");
 const clip = @import("clip");
-const mem = @import("mem");
 
 const OptionParser = clip.OptionParser("aseprite-export", &.{
     clip.arrayOption([]const u8, "input", 'i', "aseprite file"),
@@ -9,10 +8,7 @@ const OptionParser = clip.OptionParser("aseprite-export", &.{
 });
 
 pub fn main(init: std.process.Init) !u8 {
-    try mem.init();
-    var tmp = mem.getTemp();
-
-    var options = try OptionParser.parse(init.minimal.args, init.gpa, tmp.allocator());
+    var options = try OptionParser.parse(init.minimal.args, init.gpa);
     defer OptionParser.freeOptions(&options, init.gpa);
 
     var result: u8 = 0;

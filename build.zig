@@ -104,7 +104,6 @@ const Modules = struct {
     dynlib: *Build.Module,
     xml: *Build.Module,
     wayland: ?*Build.Module = null,
-    wlc: ?*Build.Module = null,
 };
 
 const Engine = struct {
@@ -181,7 +180,6 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
             .{ .name = "linux", .module = modules.linux },
             .{ .name = "dynlib", .module = modules.dynlib },
             .{ .name = "wayland", .module = modules.wayland.? },
-            .{ .name = "wlc", .module = modules.wlc.? },
         },
     });
 
@@ -246,7 +244,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
     const wayland_gen_exe = b.addExecutable(.{
         .name = "wayland-gen",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/wayland-gen/src/main.zig"),
+            .root_source_file = b.path("tools/wayland-gen/src/wayland_generator.zig"),
             .target = native_target,
             .optimize = tools_optimize,
             .imports = &.{
@@ -258,6 +256,8 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
         }),
         .use_llvm = use_llvm,
     });
+    wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/client.zig") });
+    wayland_gen_exe.root_module.addAnonymousImport("lib/common.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/common.zig") });
 
     // b.installArtifact(exe);
 
@@ -270,31 +270,19 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
     _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
     _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg-decoration-unstable-v1.xml"));
 
-    const wayland_source = run_wayland_gen_exe.addPrefixedOutputFileArg("--out=", "wayland.zig");
+    const wayland_source_dir = run_wayland_gen_exe.addPrefixedOutputDirectoryArg("--out=", "wayland");
     assert(modules.wayland == null);
 
     assert(modules.wayland == null);
-    assert(modules.wlc == null);
 
-    modules.wlc = b.createModule(.{
+    modules.wayland = b.createModule(.{
         .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/wayland-client.zig"),
+        .root_source_file = wayland_source_dir.path(b, "client.zig"),
         .imports = &.{
             .{ .name = "linux", .module = modules.linux },
             .{ .name = "options", .module = options_module },
         },
     });
-
-    modules.wayland = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = wayland_source,
-        .imports = &.{
-            .{ .name = "linux", .module = modules.linux },
-            .{ .name = "wlc", .module = modules.wlc.? },
-        },
-    });
-
-    modules.wlc.?.addImport("wayland", modules.wayland.?);
 
     // TODO: Pass the result of findprogram to the runner
     // const aseprite_script_runner_exe = if (b.findProgram(.{ .names = &.{"aseprite"} })) |_|

@@ -172,10 +172,18 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
     };
 
     const OptionStruct = @Struct(.auto, null, &info.field_names, &info.field_types, &info.field_attrs);
+    const ParseError = error{
+        InvalidShortOption,
+        InvalidOption,
+        MissingValue,
+        OutOfMemory,
+        InvalidBoolValue,
+    };
 
     return struct {
         /// Result of the parse operation, struct containing all option fields
         pub const Options = OptionStruct;
+        pub const Error = ParseError;
 
         /// Original options passed into OptionParser()
         pub const from_options = info.options;
@@ -201,10 +209,11 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
         }
 
         // TODO: Handle duplicate non array options (disallow or overwrite and free previous)
-        pub fn parse(args: std.process.Args, allocator: Allocator, tmp_allocator: Allocator) !Options {
+        pub fn parse(args: std.process.Args, allocator: Allocator) Error!Options {
             var result: Options = .{};
 
-            var arg_it = args.iterateAllocator(tmp_allocator) catch @panic("OOM");
+            var arg_it = args.iterateAllocator(allocator) catch @panic("OOM");
+            defer arg_it.deinit();
 
             // First argument is exe path
             _ = arg_it.skip();

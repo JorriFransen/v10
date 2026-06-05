@@ -5,14 +5,11 @@ const options = @import("options");
 const builtin = @import("builtin");
 
 const linux = @import("linux");
-const wayland = @import("wayland");
-const wl = wayland.wl;
 
-// TODO: Inline trampolines
-// TODO: Prevent parsing arguments for events without listeners? (Force when verbose_wayland=true?)
-// TODO: Verify requests/events with optional array/string args
-// TODO: Check passed versions
-// TODO: Merge this file with generator
+const wl = @import("wayland.zig");
+const common = @import("common.zig");
+
+const Display = wl.Display;
 
 comptime {
     if (options.verbose_wayland and builtin.mode != .Debug) {
@@ -21,9 +18,9 @@ comptime {
 }
 
 var glob_connected = false;
-var glob_display: wl.Display = undefined;
+var glob_display: Display = undefined;
 
-const glob_display_listener = wl.Display.Listener{
+const glob_display_listener = Display.Listener{
     .@"error" = handleDisplayError,
     .deleteId = handleDeleteId,
 };
@@ -63,13 +60,13 @@ pub const Message = struct {
         return result;
     }
 
-    pub fn getObjectArg(this: *const Message, arg_offset: *usize, display: *wl.Display) ?*wl.Object {
+    pub fn getObjectArg(this: *const Message, arg_offset: *usize, display: *Display) ?*wl.Object {
         const id = this.getUIntArg(arg_offset);
         if (id < 1) return null;
         return getObject(display, id);
     }
 
-    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *wl.Display, interface: *const wayland.Interface, version: u32) ?*wl.Object {
+    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *Display, interface: *const wl.Interface, version: u32) ?*wl.Object {
         _ = .{ this, arg_offset, display };
 
         const server_id = this.getUIntArg(arg_offset);
@@ -78,7 +75,7 @@ pub const Message = struct {
             if (id.* == 0) {
                 id.* = server_id;
                 const result = &glob_display.server_objects[idx];
-                result.* = .{ .proxy = .{
+                result.* = .{ .object = .{
                     .id = server_id,
                     .version = version,
                     .interface = interface,
@@ -94,7 +91,7 @@ pub const Message = struct {
         @panic("Out of server objects");
     }
 
-    pub fn getFixedArg(this: *const Message, arg_offset: *usize) wayland.Fixed {
+    pub fn getFixedArg(this: *const Message, arg_offset: *usize) wl.Fixed {
         return .{ .value = @bitCast(this.getUIntArg(arg_offset)) };
     }
 
@@ -113,7 +110,7 @@ pub const Message = struct {
         return result;
     }
 
-    pub fn getArrayArg(this: *const Message, arg_offset: *usize) wayland.Array {
+    pub fn getArrayArg(this: *const Message, arg_offset: *usize) wl.Array {
         const length = this.getUIntArg(arg_offset);
         assert(length % @sizeOf(u32) == 0);
 
@@ -137,13 +134,13 @@ pub const Message = struct {
     }
 };
 
-pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process.Environ) ?*wl.Display {
+pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process.Environ) ?*Display {
     assert(!glob_connected);
 
     var sock_addr = std.mem.zeroes(linux.sockaddr.un);
     const fd = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM, 0) catch unreachable; // TODO: Handle error
 
-    var result: ?*wl.Display = null;
+    var result: ?*Display = null;
 
     if (linux.fcntl(fd, linux.F.GETFL, 0)) |flags| {
         var socket_flags: linux.O = @bitCast(flags);
@@ -173,24 +170,24 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
 
             glob_display = .{
                 .fd = fd,
-                .proxy = undefined,
+                .object = undefined,
             };
             result = &glob_display;
 
-            glob_display.objects[0].proxy = .{
+            glob_display.objects[0] = .{
                 .id = 1,
-                .version = wl.Display.interface.version,
+                .version = Display.interface.version,
                 .display = &glob_display,
-                .interface = &wl.Display.interface,
+                .interface = &Display.interface,
                 .freelist_node = .{},
             };
             glob_display.free_objects = .{ .first = &glob_display.objects[0].proxy.freelist_node };
 
             var last_node = glob_display.free_objects.first.?;
             for (glob_display.objects[1..], 2..) |*obj, id| {
-                obj.proxy = .{
+                obj.object = .{
                     .id = @intCast(id),
-                    .version = wl.Display.interface.version,
+                    .version = Display.interface.version,
                     .display = &glob_display,
                     .interface = undefined,
                     .freelist_node = .{},
@@ -202,11 +199,11 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
 
             for (glob_display.server_object_ids[0..], glob_display.server_objects[0..]) |*id, *server_obj| {
                 id.* = 0;
-                server_obj.proxy = .{ .id = 0, .version = wl.Display.interface.version, .display = &glob_display, .interface = undefined, .freelist_node = .{} };
+                server_obj.object = .{ .id = 0, .version = Display.interface.version, .display = &glob_display, .interface = undefined, .freelist_node = .{} };
             }
 
-            const display_proxy = proxyCreate(&glob_display, &wl.Display.interface, wl.Display.interface.version);
-            glob_display.proxy = display_proxy.*;
+            const display_object = proxyCreate(&glob_display, &Display.interface, Display.interface.version);
+            glob_display.object = display_object.*;
 
             glob_display.free_listeners = .{ .first = &glob_display.listeners[0].node };
             var last_listener_node = glob_display.free_listeners.first.?;
@@ -229,11 +226,11 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
     return result;
 }
 
-pub fn displayDisconnect(display: *wl.Display) void {
+pub fn displayDisconnect(display: *Display) void {
     linux.close(display.fd) catch unreachable;
 }
 
-pub fn displayRoundtrip(display: *wl.Display) usize {
+pub fn displayRoundtrip(display: *Display) usize {
     var dispatched_count: usize = 0;
 
     verbose("display_roundtrip(id = {}) ...", .{display.proxy.id});
@@ -263,11 +260,11 @@ fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl.Callback, _: u32) 
     done_ptr.* = true;
 }
 
-pub fn displayDispatch(display: *wl.Display) isize {
+pub fn displayDispatch(display: *Display) isize {
     return displayDispatchTimeout(display, 0);
 }
 
-fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
+fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
     assert(display == &glob_display);
 
     verbose("display_dispatch(id = {}) ...", .{display.proxy.id});
@@ -354,7 +351,7 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
                                 .fds = fds[0..fd_count],
                             };
 
-                            wayland.dispatch(display, &message, object);
+                            wl.dispatch(display, &message, object);
                             result += 1;
 
                             current_offset += header.size;
@@ -389,7 +386,7 @@ fn displayDispatchTimeout(display: *wl.Display, first_timeout: c_int) isize {
     return result;
 }
 
-pub fn displayFlush(display: *wl.Display) void {
+pub fn displayFlush(display: *Display) void {
     var iov = linux.iovec{ .base = &display.send_payload_buf, .len = display.send_payload_used };
 
     verbose("display_flush(id = {}) ...", .{display.proxy.id});
@@ -449,7 +446,7 @@ pub fn displayFlush(display: *wl.Display) void {
     verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.proxy.id, payload_size, fds_count });
 }
 
-pub fn proxyCreate(display: *wl.Display, interface: *const wayland.Interface, version: u32) *wl.Proxy {
+pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u32) *wl.Proxy {
     assert(display == &glob_display);
     assert(display.free_objects.first != null);
 
@@ -497,7 +494,7 @@ pub fn proxyDestroy(proxy: *wl.Proxy) void {
     }
 }
 
-pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wayland.Interface, version: u32, args: []const wayland.Argument) ?*wl.Object {
+pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wl.Interface, version: u32, args: []const wl.Argument) ?*wl.Object {
     assert(glob_connected);
     const display = proxy.display;
 
@@ -654,7 +651,7 @@ pub fn proxyAddListener(proxy: *wl.Proxy, implementation: []const *const fn () v
 
     assert(display.free_listeners.first != null);
 
-    const listener: *wayland.RegisteredListener = @fieldParentPtr("node", display.free_listeners.popFirst().?);
+    const listener: *wl.RegisteredListener = @fieldParentPtr("node", display.free_listeners.popFirst().?);
     listener.* = .{
         .user_data = user_data,
         .implementation = implementation,
@@ -663,13 +660,13 @@ pub fn proxyAddListener(proxy: *wl.Proxy, implementation: []const *const fn () v
     proxy.listeners.prepend(&listener.node);
 }
 
-fn handleDisplayError(user_data: ?*anyopaque, display: ?*wl.Display, object_id: ?*wl.Object, code: u32, message: []const u8) void {
+fn handleDisplayError(user_data: ?*anyopaque, display: ?*Display, object_id: ?*wl.Object, code: u32, message: []const u8) void {
     _ = .{ user_data, display, object_id, code, message };
     log.err("Wayland error: {s}", .{message});
     @panic(message);
 }
 
-fn handleDeleteId(_: ?*anyopaque, display_opt: ?*wl.Display, id: u32) void {
+fn handleDeleteId(_: ?*anyopaque, display_opt: ?*Display, id: u32) void {
     const display = display_opt.?;
     assert(display == &glob_display);
 
@@ -682,7 +679,7 @@ fn handleDeleteId(_: ?*anyopaque, display_opt: ?*wl.Display, id: u32) void {
     proxyDestroy(proxy);
 }
 
-fn getObject(display: *wl.Display, id: u32) *wl.Object {
+fn getObject(display: *Display, id: u32) *wl.Object {
     assert(display == &glob_display);
     assert(id != 0);
 

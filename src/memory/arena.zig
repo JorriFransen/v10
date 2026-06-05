@@ -132,11 +132,11 @@ pub const Arena = struct {
         }
     }
 
-    pub fn deinit(this: *Arena) void {
+    pub fn deinit(this: *Arena) !void {
         if (this.data.len != 0 and this.flags.rvas) {
             switch (builtin.os.tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
-                .linux => linux.munmap(@alignCast(this.data)),
+                .linux => try linux.munmap(@alignCast(this.data)),
                 .windows => win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
             }
         }
