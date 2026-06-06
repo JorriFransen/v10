@@ -54,6 +54,11 @@ pub const Enum = struct {
         zig_name: []const u8 = "XXX_UNRESOLVED_ENUM_ENTRY_NAME__X_X_X_",
     };
 
+    pub const BitfieldEntry = struct {
+        n: u32,
+        name_index: u32,
+    };
+
     name: []const u8,
     since: u32,
     deprecated_since: ?u32,
@@ -65,6 +70,10 @@ pub const Enum = struct {
     zig_name: []const u8 = "XXX_UNRESOLVED_ENUM_NAME__X_X_X_",
     // valid after resolving
     zig_int_type: []const u8 = "XXX_UNRESOLVED_ENUM_INT_TYPE__X_X_X_",
+    // valid after resolving
+    single_bit_bitfield_entries: []BitfieldEntry = &.{},
+    // valid after resolving
+    multi_bit_bitfield_entries: []BitfieldEntry = &.{},
 };
 
 pub const Description = struct {

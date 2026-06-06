@@ -188,10 +188,54 @@ const Writer = struct {
     }
 
     fn emitBitfield(this: *const Writer, @"enum": *const AST.Enum) Error!void {
-        _ = this;
-        _ = @"enum";
+        try this.appendif(1, "\npub const {s} = packed struct(u32) {{\n", .{
+            @"enum".zig_name,
+        });
 
-        unreachable;
+        var current_bit_offset: usize = 0;
+        var pad_count: usize = 0;
+        for (@"enum".single_bit_bitfield_entries) |e| {
+            if (current_bit_offset < e.n) {
+                try this.appendif(2, "_pad_{}: u{} = 0,\n", .{ pad_count, e.n - current_bit_offset });
+                pad_count += 1;
+                unreachable; // Verify!
+            }
+            try this.appendif(2, "{s}: bool = false,\n", .{@"enum".entries[e.name_index].zig_name});
+
+            current_bit_offset = e.n + 1;
+        }
+
+        if (current_bit_offset < 32) {
+            const rem = 32 - current_bit_offset;
+            try this.appendif(2, "_pad_{}: u{} = 0,\n", .{ pad_count, rem });
+        }
+
+        if (@"enum".multi_bit_bitfield_entries.len > 0) {
+            try this.append("\n");
+
+            for (@"enum".multi_bit_bitfield_entries) |mbe| {
+                try this.appendif(2, "pub const {s}: {s} = .{{", .{
+                    @"enum".entries[mbe.name_index].zig_name,
+                    @"enum".zig_name,
+                });
+
+                const bits: std.bit_set.Integer(32) = .{ .mask = mbe.n };
+
+                var set_count: usize = 0;
+                for (@"enum".single_bit_bitfield_entries) |sbe| {
+                    if (bits.isSet(sbe.n)) {
+                        if (set_count > 0) {
+                            try this.append(",");
+                        }
+                        set_count += 1;
+                        try this.appendf(" .{s} = true", .{@"enum".entries[sbe.name_index].zig_name});
+                    }
+                }
+                if (set_count > 0) try this.append(" };\n") else try this.append("};\n");
+            }
+        }
+
+        try this.appendi(1, "};\n");
     }
 
     fn emitEnum(this: *const Writer, @"enum": *const AST.Enum) Error!void {

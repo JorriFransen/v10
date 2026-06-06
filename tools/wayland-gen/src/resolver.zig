@@ -9,6 +9,7 @@ const AST = @import("ast.zig");
 
 pub const Error = error{InterfaceNameWithoutPrefix} ||
     std.mem.Allocator.Error ||
+    std.fmt.ParseIntError ||
     std.Io.Writer.Error;
 
 pub fn resolveProtocol(context: *const Context, protocol: *AST.Protocol, core: bool) Error!void {
@@ -78,6 +79,46 @@ fn resolveEnum(context: *const Context, protocol: *const AST.Protocol, interface
     }
 
     @"enum".zig_int_type = int_type orelse "c_uint";
+
+    if (@"enum".is_bitfield) {
+        @"enum".zig_int_type = "u32";
+
+        var single_bit_entries: std.ArrayList(AST.Enum.BitfieldEntry) = .{ .items = &.{}, .capacity = 0 };
+        var multi_bit_entries: std.ArrayList(AST.Enum.BitfieldEntry) = .{ .items = &.{}, .capacity = 0 };
+
+        for (@"enum".entries, 0..) |*e, i| {
+            const int_val: u32 = try resolveEnumValue(e.value);
+
+            if (int_val > 0 and ((int_val & (int_val - 1)) == 0)) {
+                try single_bit_entries.append(context.arena, .{ .n = @ctz(int_val), .name_index = @intCast(i) });
+            } else {
+                try multi_bit_entries.append(context.arena, .{ .n = int_val, .name_index = @intCast(i) });
+            }
+        }
+
+        @"enum".single_bit_bitfield_entries = try single_bit_entries.toOwnedSlice(context.arena);
+        @"enum".multi_bit_bitfield_entries = try multi_bit_entries.toOwnedSlice(context.arena);
+
+        const lessThanFn = struct {
+            pub fn f(_: void, a: AST.Enum.BitfieldEntry, b: AST.Enum.BitfieldEntry) bool {
+                return a.n < b.n;
+            }
+        }.f;
+
+        std.mem.sort(AST.Enum.BitfieldEntry, @"enum".single_bit_bitfield_entries, {}, lessThanFn);
+    }
+}
+
+fn resolveEnumValue(value: []const u8) !u32 {
+    var base: u8 = 10;
+    var int_str = value;
+
+    if (std.mem.startsWith(u8, value, "0x")) {
+        base = 16;
+        int_str = value[2..];
+    }
+
+    return try std.fmt.parseInt(u32, int_str, base);
 }
 
 fn toZigTypeName(context: *const Context, tmp: *mem.Arena, maybe_prefix_name: []const u8, strip_prefix: bool) ![]const u8 {
