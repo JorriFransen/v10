@@ -97,15 +97,6 @@ fn run(context: Context) !void {
         try writer.interface.flush();
     } else |e| return e;
 
-    const common_source = @embedFile("lib/common.zig");
-    if (output_dir.createFile(context.io, "common.zig", .{})) |file| {
-        defer file.close(context.io);
-        var writer = file.writer(context.io, &output_buffer);
-
-        try writer.interface.writeAll(common_source);
-        try writer.interface.flush();
-    } else |e| return e;
-
     var core_protocol: AST.Protocol = undefined;
 
     if (std.Io.Dir.openFileAbsolute(context.io, cli_options.wayland, .{})) |core_xml_file| {

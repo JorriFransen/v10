@@ -47,11 +47,10 @@ const Writer = struct {
             \\const std = @import("std");
             \\
             \\const client = @import("client.zig");
-            \\const common = @import("common.zig");
-            \\pub const Object = common.Object;
-            \\pub const RegisteredListener = common.RegisteredListener;
-            \\pub const Interface = common.Interface;
-            \\pub const Fixed = common.Fixed;
+            \\pub const Object = client.Object;
+            \\pub const RegisteredListener = client.RegisteredListener;
+            \\pub const Interface = client.Interface;
+            \\pub const Fixed = client.Fixed;
             \\
             \\
         );
