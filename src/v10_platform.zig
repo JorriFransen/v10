@@ -102,7 +102,7 @@ pub const Input = extern struct {
     debug_mouse: DebugMouseInput = undefined,
 
     dt: f32 = 0,
-    controllers: [5]ControllerInput = .{std.mem.zeroes(ControllerInput)} ** 5,
+    controllers: [5]ControllerInput = @splat(std.mem.zeroes(ControllerInput)),
 };
 
 pub const Memory = extern struct {
@@ -142,7 +142,7 @@ pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8
 pub const ReplayBuffer = struct {
     file_handle: std.Io.File,
     memory_map: std.Io.File,
-    filname_buf: [std.Io.Dir.max_path_bytes]u8 = .{0} ** std.Io.Dir.max_path_bytes,
+    filname_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
     memory: []u8 = &.{},
 };
 

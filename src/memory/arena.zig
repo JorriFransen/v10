@@ -315,7 +315,7 @@ pub const TempArena = struct {
 };
 
 test "Arena from slice" {
-    var buf: [70]u8 align(8) = [_]u8{1} ** 70; // Needs to be bigger to account for alignment
+    var buf: [70]u8 align(8) = @splat(1); // Needs to be bigger to account for alignment
     try std.testing.expectEqual(@as(*u8, @ptrCast(&buf)), &buf[0]);
 
     var arena = try Arena.init(.{ .slice = .{ .data = &buf } });

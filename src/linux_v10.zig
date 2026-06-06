@@ -57,14 +57,14 @@ var pa_ml: ?*pa.ThreadedMainLoop = null;
 var pa_stream: ?*pa.Stream = null;
 var pa_sample_spec: pa.SampleSpec = undefined;
 
-var joysticks = [_]Joystick{.{ .fd = -1, .kind = undefined }} ** PollFdSlot.joystick_count;
+var joysticks: [PollFdSlot.joystick_count]Joystick = @splat(.{ .fd = -1, .kind = undefined });
 
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
-var poll_fds: [poll_fd_count]linux.pollfd = [1]linux.pollfd{.{
+var poll_fds: [poll_fd_count]linux.pollfd = @splat(.{
     .fd = -1,
     .events = undefined,
     .revents = undefined,
-}} ** poll_fd_count;
+});
 
 const use_debug_allocator = switch (builtin.mode) {
     .Debug => true,
@@ -902,7 +902,7 @@ const WlData = struct {
     key_mods_pressed: KeyMods = .{},
     key_mods_latched: KeyMods = .{},
     key_mods_locked: KeyMods = .{},
-    game_input: [2]platform.Input = .{Input{}} ** 2,
+    game_input: [2]platform.Input = @splat(.{}),
     new_input: *Input = undefined,
     old_input: *Input = undefined,
 
@@ -996,14 +996,13 @@ const Joystick = struct {
     rumble_weak: u16 = 0,
     rumble_event_id: i16 = -1,
 
-    axis_meta: [axis_count]AxisMeta = [_]AxisMeta{.{}} ** axis_count,
-    axis: [axis_count]f32 = [_]f32{0} ** axis_count,
+    axis_meta: [axis_count]AxisMeta = @splat(.{}),
+    axis: [axis_count]f32 = @splat(0),
 
-    // buttons: Buttons = [_]u1{0} ** button_count,
-    buttons: Buttons = .initEmpty(),
+    buttons: Buttons = .{ .mask = 0 },
 
     /// Zero terminated devnode path
-    path: [32]u8 = [1]u8{0} ** 32,
+    path: [32]u8 = @splat(0),
 
     const Kind = enum {
         default,

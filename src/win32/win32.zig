@@ -849,7 +849,7 @@ pub const GUID = extern struct {
     data1: u32 = 0,
     data2: u16 = 0,
     data3: u16 = 0,
-    data4: [8]u8 = .{0} ** 8,
+    data4: [8]u8 = @splat(0),
 };
 
 pub const WNDCLASSA = extern struct {
