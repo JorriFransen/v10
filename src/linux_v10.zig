@@ -999,7 +999,7 @@ const Joystick = struct {
     axis_meta: [axis_count]AxisMeta = @splat(.{}),
     axis: [axis_count]f32 = @splat(0),
 
-    buttons: Buttons = .{ .mask = 0 },
+    buttons: Buttons = .empty,
 
     /// Zero terminated devnode path
     path: [32]u8 = @splat(0),
