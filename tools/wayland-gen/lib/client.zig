@@ -6,7 +6,7 @@ const builtin = @import("builtin");
 
 const linux = @import("linux");
 
-const wl = @import("wayland.zig");
+pub const wl = @import("wayland.zig");
 const common = @import("common.zig");
 
 const Display = wl.Display;

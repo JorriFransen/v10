@@ -9,9 +9,11 @@ const platform = @import("v10_platform.zig");
 
 const arch = @import("arch").arch;
 
-const wl = @import("wayland");
-const xdg_shell = wl.xdg_shell;
-const xdg_decoration = wl.xdg_decoration_unstable_v1;
+const wayland = @import("wayland");
+const wlc = wayland.client;
+const wl = wayland.wayland;
+const xdg_shell = wayland.xdg_shell;
+const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
 const linux = @import("linux");
 const input = linux.input;
@@ -107,11 +109,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
 
-    const display = wl.displayConnect(null, &init.environ) orelse {
+    const display = wlc.displayConnect(null, &init.environ) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;
     };
-    defer wl.displayDisconnect(display);
+    defer wlc.displayDisconnect(display);
     log.debug("Display connected", .{});
 
     const wl_registry = display.getRegistry();

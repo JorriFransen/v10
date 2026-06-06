@@ -5,7 +5,7 @@ const mem = @import("mem");
 const parser = @import("parser.zig");
 const AST = @import("ast.zig");
 const emit = @import("emit.zig");
-const resolv = @import("resolver.zig");
+const resolve = @import("resolver.zig");
 
 const OptionParser = clip.OptionParser("wayland-gen", &.{
     clip.option(@as([]const u8, ""), "wayland", 'w', "Wayland xml path"),
@@ -113,20 +113,67 @@ fn run(context: Context) !void {
             core_protocol = prot;
         } else |e| {
             core_xml_file.close(context.io);
-            try context.stderr.print("Core protocol parse failed", .{});
+            try context.stderr.print("Core protocol parse failed: '{s}'", .{cli_options.wayland});
             return e;
         }
         core_xml_file.close(context.io);
 
-        resolv.resolveProtocol(&context, &core_protocol, true) catch |e| {
-            try context.stderr.print("Core protocol resolve failed", .{});
+        resolve.resolveProtocol(&context, &core_protocol, true) catch |e| {
+            try context.stderr.print("Core protocol resolve failed: '{s}'", .{cli_options.wayland});
             return e;
         };
 
         emit.emitProtocol(&context, output_dir, &core_protocol, true) catch |e| {
-            try context.stderr.print("Core protocol emit failed", .{});
+            try context.stderr.print("Core protocol emit failed: '{s}'", .{cli_options.wayland});
             return e;
         };
+    } else |e| return e;
+
+    var protocols: std.ArrayList(AST.Protocol) = .{ .items = &.{}, .capacity = 0 };
+
+    for (cli_options.protocol.items) |protocol_path| {
+        if (std.Io.Dir.openFileAbsolute(context.io, protocol_path, .{})) |protocol_xml_file| {
+            if (parser.parse(context, &xml_tmp_arena, &stderr_writer.interface, protocol_path)) |prot| {
+                protocol_xml_file.close(context.io);
+
+                var protocol = prot;
+                if (resolve.resolveProtocol(&context, &protocol, false)) {
+                    if (emit.emitProtocol(&context, output_dir, &protocol, false)) {
+                        try protocols.append(context.arena, protocol);
+                    } else |e| {
+                        try context.stderr.print("Protocol emit failed: '{s}'", .{protocol_path});
+                        return e;
+                    }
+                } else |e| {
+                    try context.stderr.print("Protocol resolve failed: '{s}'", .{protocol_path});
+                    return e;
+                }
+            } else |e| {
+                protocol_xml_file.close(context.io);
+                try context.stderr.print("Protocol parse failed: '{s}'", .{protocol_path});
+                return e;
+            }
+        } else |e| return e;
+    }
+
+    const root_template = @embedFile("lib/root_template.zig");
+    if (output_dir.createFile(context.io, "root.zig", .{})) |file| {
+        defer file.close(context.io);
+        var writer = file.writer(context.io, &output_buffer);
+
+        try writer.interface.writeAll(root_template);
+
+        // Embedfile seems to add a newline?
+        std.debug.assert(root_template[root_template.len - 1] == '\n');
+
+        for (protocols.items) |*protocol| {
+            try writer.interface.print("pub const {s} = @import(\"{s}.zig\");\n", .{
+                protocol.name,
+                protocol.name,
+            });
+        }
+
+        try writer.flush();
     } else |e| return e;
 }
 

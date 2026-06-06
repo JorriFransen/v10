@@ -258,6 +258,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
     });
     wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/client.zig") });
     wayland_gen_exe.root_module.addAnonymousImport("lib/common.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/common.zig") });
+    wayland_gen_exe.root_module.addAnonymousImport("lib/root_template.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/root_template.zig") });
 
     // b.installArtifact(exe);
 
@@ -277,7 +278,7 @@ fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, n
 
     modules.wayland = b.createModule(.{
         .optimize = optimize,
-        .root_source_file = wayland_source_dir.path(b, "client.zig"),
+        .root_source_file = wayland_source_dir.path(b, "root.zig"),
         .imports = &.{
             .{ .name = "linux", .module = modules.linux },
             .{ .name = "options", .module = options_module },

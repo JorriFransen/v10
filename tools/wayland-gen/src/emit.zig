@@ -60,6 +60,7 @@ const Writer = struct {
             try this.append(
                 \\const linux = @import("linux");
                 \\
+                \\
             );
         }
 
@@ -104,6 +105,14 @@ const Writer = struct {
         }
 
         try this.emitStaticInterfaceData(interface);
+
+        if (interface.requests.len > 0) {
+            try this.append("\n");
+            for (interface.requests, 0..) |*request, i| {
+                if (i > 0) try this.append("\n");
+                try this.emitRequest(interface, request);
+            }
+        }
 
         if (interface.events.len > 0) {
             try this.emitInterfaceListener(interface);
@@ -155,6 +164,25 @@ const Writer = struct {
         }
 
         try this.appendi(1, "};\n");
+    }
+
+    fn emitRequest(this: *const Writer, interface: *const AST.Interface, request: *const AST.Message) Error!void {
+        const return_type = "void";
+
+        try this.appendif(1, "pub fn {s}(this: *{s}", .{
+            request.zig_name,
+            interface.zig_name,
+        });
+
+        try this.appendf(") {s} {{\n", .{return_type});
+
+        try this.appendi(2,
+            \\_ = this;
+            \\unreachable;
+            \\
+        );
+
+        try this.appendi(1, "}\n");
     }
 
     fn emitInterfaceListener(this: *const Writer, interface: *const AST.Interface) Error!void {
