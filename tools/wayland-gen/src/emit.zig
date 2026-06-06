@@ -19,6 +19,7 @@ pub fn emitProtocol(context: *const generator.Context, dir: std.Io.Dir, prot: *c
         defer file.close(context.io);
 
         var writer: Writer = .{
+            .context = context,
             .protocol = prot,
             .core = core,
         };
@@ -33,6 +34,7 @@ pub fn emitProtocol(context: *const generator.Context, dir: std.Io.Dir, prot: *c
 }
 
 const Writer = struct {
+    context: *const generator.Context,
     protocol: *const AST.Protocol,
     core: bool,
 
@@ -102,8 +104,16 @@ const Writer = struct {
         }
 
         try this.emitStaticInterfaceData(interface);
+
         if (interface.events.len > 0) {
             try this.emitInterfaceListener(interface);
+        }
+
+        for (interface.enums) |*@"enum"| {
+            if (@"enum".is_bitfield)
+                try this.emitBitfield(@"enum")
+            else
+                try this.emitEnum(@"enum");
         }
 
         try this.append("};\n");
@@ -159,8 +169,8 @@ const Writer = struct {
             });
 
             for (event.args) |arg| {
-                try this.appendf(", {f}: {f}", .{
-                    std.zig.fmtId(arg.name),
+                try this.appendf(", {s}: {f}", .{
+                    arg.zig_name,
                     fmtArgTypeToZigType(&arg),
                 });
             }
@@ -175,6 +185,26 @@ const Writer = struct {
             \\}}
             \\
         , .{interface.zig_name});
+    }
+
+    fn emitBitfield(this: *const Writer, @"enum": *const AST.Enum) Error!void {
+        _ = this;
+        _ = @"enum";
+
+        unreachable;
+    }
+
+    fn emitEnum(this: *const Writer, @"enum": *const AST.Enum) Error!void {
+        try this.appendif(1, "\npub const {s} = enum({s}) {{\n", .{
+            @"enum".zig_name,
+            @"enum".zig_int_type,
+        });
+
+        for (@"enum".entries) |*e| {
+            try this.appendif(2, "{s} = {s},\n", .{ e.zig_name, e.value });
+        }
+
+        try this.appendi(1, "};\n");
     }
 
     inline fn append(this: *const Writer, str: []const u8) !void {
@@ -239,17 +269,26 @@ const FmtArgTypeToZigType = struct {
         const arg_type = this.arg.type;
         if (arg_type.allow_null) try writer.writeByte('?');
 
-        const type_str = switch (arg_type.tag) {
-            .int => "i32",
-            .uint => "u32",
-            .fixed => "Fixed",
-            .string => "[]const u8",
-            .object => "*Object",
-            .new_id => "*Object",
-            .array => "[]u32",
-            .fd => "linux.fd_t",
-        };
+        if (this.arg.zig_enum_name) |enum_name| try writer.writeAll(enum_name) else if (this.arg.zig_interface_name) |interface_name| {
+            try writer.writeByte('*');
+            try writer.writeAll(interface_name);
+        } else {
+            const type_str = if (this.arg.zig_enum_name) |enum_name|
+                enum_name
+            else if (this.arg.zig_interface_name) |interface_name|
+                interface_name
+            else switch (arg_type.tag) {
+                .int => "i32",
+                .uint => "u32",
+                .fixed => "Fixed",
+                .string => "[]const u8",
+                .object => "*Object",
+                .new_id => "*Object",
+                .array => "[]u32",
+                .fd => "linux.fd_t",
+            };
 
-        try writer.writeAll(type_str);
+            try writer.writeAll(type_str);
+        }
     }
 };

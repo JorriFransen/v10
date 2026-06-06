@@ -34,9 +34,26 @@ pub const Arg = struct {
     enum_name: ?[]const u8,
     interface_name: ?[]const u8,
     summary: []const u8,
+
+    /// valid after resolving
+    zig_name: []const u8 = "XXX_UNRESOLVED_ARG_NAME__X_X_X_",
+    /// valid after resolving
+    zig_enum_name: ?[]const u8 = null,
+    /// valid after resolving
+    zig_interface_name: ?[]const u8 = null,
 };
 
 pub const Enum = struct {
+    pub const Entry = struct {
+        name: []const u8,
+        since: u32,
+        value: []const u8,
+        description: Description,
+
+        // valid after resolving
+        zig_name: []const u8 = "XXX_UNRESOLVED_ENUM_ENTRY_NAME__X_X_X_",
+    };
+
     name: []const u8,
     since: u32,
     deprecated_since: ?u32,
@@ -44,12 +61,10 @@ pub const Enum = struct {
     description: Description,
     is_bitfield: bool,
 
-    pub const Entry = struct {
-        name: []const u8,
-        since: u32,
-        value: []const u8,
-        description: Description,
-    };
+    // valid after resolving
+    zig_name: []const u8 = "XXX_UNRESOLVED_ENUM_NAME__X_X_X_",
+    // valid after resolving
+    zig_int_type: []const u8 = "XXX_UNRESOLVED_ENUM_INT_TYPE__X_X_X_",
 };
 
 pub const Description = struct {
