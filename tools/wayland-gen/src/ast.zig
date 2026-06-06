@@ -23,6 +23,9 @@ pub const Message = struct {
     args: []Arg,
     description: Description,
     is_destructor: bool,
+
+    /// valid after resolving
+    zig_name: []const u8 = "XXX_UNRESOLVED_MESSAGE_NAME__X_X_X_",
 };
 
 pub const Arg = struct {

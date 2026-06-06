@@ -177,29 +177,27 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
             glob_display.objects[0] = .{
                 .id = 1,
                 .version = Display.interface.version,
-                .display = &glob_display,
                 .interface = &Display.interface,
                 .freelist_node = .{},
             };
-            glob_display.free_objects = .{ .first = &glob_display.objects[0].proxy.freelist_node };
+            glob_display.free_objects = .{ .first = &glob_display.objects[0].freelist_node };
 
             var last_node = glob_display.free_objects.first.?;
             for (glob_display.objects[1..], 2..) |*obj, id| {
-                obj.object = .{
+                obj.* = .{
                     .id = @intCast(id),
                     .version = Display.interface.version,
-                    .display = &glob_display,
                     .interface = undefined,
                     .freelist_node = .{},
                 };
-                last_node.insertAfter(&obj.proxy.freelist_node);
-                last_node = &obj.proxy.freelist_node;
+                last_node.insertAfter(&obj.freelist_node);
+                last_node = &obj.freelist_node;
             }
             last_node.next = null;
 
             for (glob_display.server_object_ids[0..], glob_display.server_objects[0..]) |*id, *server_obj| {
                 id.* = 0;
-                server_obj.object = .{ .id = 0, .version = Display.interface.version, .display = &glob_display, .interface = undefined, .freelist_node = .{} };
+                server_obj.* = .{ .id = 0, .version = Display.interface.version, .interface = undefined, .freelist_node = .{} };
             }
 
             const display_object = proxyCreate(&glob_display, &Display.interface, Display.interface.version);
@@ -233,7 +231,7 @@ pub fn displayDisconnect(display: *Display) void {
 pub fn displayRoundtrip(display: *Display) usize {
     var dispatched_count: usize = 0;
 
-    verbose("display_roundtrip(id = {}) ...", .{display.proxy.id});
+    verbose("display_roundtrip(id = {}) ...", .{display.id});
 
     const sync_callback = display.sync();
 
@@ -250,7 +248,7 @@ pub fn displayRoundtrip(display: *Display) usize {
         dispatched_count += @intCast(dc);
     }
 
-    verbose("display_roundtrip(id = {}) dispatched: {}\n", .{ display.proxy.id, dispatched_count });
+    verbose("display_roundtrip(id = {}) dispatched: {}\n", .{ display.id, dispatched_count });
 
     return dispatched_count;
 }
@@ -267,7 +265,7 @@ pub fn displayDispatch(display: *Display) isize {
 fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
     assert(display == &glob_display);
 
-    verbose("display_dispatch(id = {}) ...", .{display.proxy.id});
+    verbose("display_dispatch(id = {}) ...", .{display.object.id});
 
     var result: isize = 0;
 
@@ -446,18 +444,17 @@ pub fn displayFlush(display: *Display) void {
     verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.proxy.id, payload_size, fds_count });
 }
 
-pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u32) *wl.Proxy {
+pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u32) *wl.Object {
     assert(display == &glob_display);
     assert(display.free_objects.first != null);
 
-    const result: *wl.Proxy = @fieldParentPtr("freelist_node", display.free_objects.popFirst().?);
+    const result: *wl.Object = @fieldParentPtr("freelist_node", display.free_objects.popFirst().?);
     const id = result.id;
 
     result.* = .{
         .id = id,
         .version = version,
         .interface = interface,
-        .display = display,
         .freelist_node = .{},
         .listeners = .{},
     };
@@ -465,27 +462,23 @@ pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u
     return result;
 }
 
-pub fn proxyDestroy(proxy: *wl.Proxy) void {
-    const display = proxy.display;
-    assert(display == &glob_display);
-
+pub fn proxyDestroy(proxy: *wl.Object) void {
     while (proxy.listeners.popFirst()) |node| {
-        display.free_listeners.prepend(node);
+        glob_display.free_listeners.prepend(node);
     }
 
     if (proxy.id < 0xff000000) {
         assert(proxy.id < glob_display.objects.len);
         assert(proxy.id != 1);
 
-        display.free_objects.prepend(&proxy.freelist_node);
+        glob_display.free_objects.prepend(&proxy.freelist_node);
     } else {
         for (&glob_display.server_object_ids, 0..) |*server_id, idx| {
             if (proxy.id == server_id.*) {
                 server_id.* = 0;
-                glob_display.server_objects[idx].proxy = .{
+                glob_display.server_objects[idx] = .{
                     .id = 0,
                     .version = 0,
-                    .display = &glob_display,
                     .interface = undefined,
                     .freelist_node = .{},
                 };
@@ -494,13 +487,13 @@ pub fn proxyDestroy(proxy: *wl.Proxy) void {
     }
 }
 
-pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wl.Interface, version: u32, args: []const wl.Argument) ?*wl.Object {
+pub fn proxyMarshalArrayFlags(proxy: *wl.Object, op: u32, interface: ?*const wl.Interface, version: u32, args: []const wl.Argument) ?*wl.Object {
     assert(glob_connected);
     const display = proxy.display;
 
     assert(proxy.interface.methods.len > op);
 
-    var result: ?*wl.Proxy = null;
+    var result: ?*wl.Object = null;
 
     var msg_buf: [128 + (@sizeOf(Message.Header) / @sizeOf(u32))]u32 align(@alignOf(Message.Header)) = undefined;
     const header: *Message.Header = @ptrCast(&msg_buf);
@@ -645,19 +638,16 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Proxy, op: u32, interface: ?*const wl.I
     return @ptrCast(result);
 }
 
-pub fn proxyAddListener(proxy: *wl.Proxy, implementation: []const *const fn () void, user_data: ?*anyopaque) void {
-    const display = proxy.display;
-    assert(display == &glob_display);
+pub fn proxyAddListener(object: *wl.Object, implementation: []const *const fn () void, user_data: ?*anyopaque) void {
+    assert(glob_display.free_listeners.first != null);
 
-    assert(display.free_listeners.first != null);
-
-    const listener: *wl.RegisteredListener = @fieldParentPtr("node", display.free_listeners.popFirst().?);
+    const listener: *wl.RegisteredListener = @fieldParentPtr("node", glob_display.free_listeners.popFirst().?);
     listener.* = .{
         .user_data = user_data,
         .implementation = implementation,
     };
 
-    proxy.listeners.prepend(&listener.node);
+    object.listeners.prepend(&listener.node);
 }
 
 fn handleDisplayError(user_data: ?*anyopaque, display: ?*Display, object_id: ?*wl.Object, code: u32, message: []const u8) void {
@@ -666,14 +656,13 @@ fn handleDisplayError(user_data: ?*anyopaque, display: ?*Display, object_id: ?*w
     @panic(message);
 }
 
-fn handleDeleteId(_: ?*anyopaque, display_opt: ?*Display, id: u32) void {
-    const display = display_opt.?;
+fn handleDeleteId(_: ?*anyopaque, display: *Display, id: u32) void {
     assert(display == &glob_display);
 
     assert(id != 1);
-    assert(id <= display.objects.len);
+    assert(id <= glob_display.objects.len);
 
-    const proxy = &getObject(display, id).proxy;
+    const proxy = getObject(&glob_display, id);
     assert(proxy.id == id);
 
     proxyDestroy(proxy);

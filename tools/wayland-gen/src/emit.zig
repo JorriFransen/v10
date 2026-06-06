@@ -1,4 +1,7 @@
 const std = @import("std");
+const assert = std.debug.assert;
+
+const mem = @import("mem");
 
 const AST = @import("ast.zig");
 
@@ -41,10 +44,12 @@ const Writer = struct {
         try this.append(
             \\const std = @import("std");
             \\
+            \\const client = @import("client.zig");
             \\const common = @import("common.zig");
-            \\const Object = common.Object;
-            \\const RegisteredListener = common.RegisteredListener;
-            \\const Interface = common.Interface;
+            \\pub const Object = common.Object;
+            \\pub const RegisteredListener = common.RegisteredListener;
+            \\pub const Interface = common.Interface;
+            \\pub const Fixed = common.Fixed;
             \\
             \\
         );
@@ -97,13 +102,79 @@ const Writer = struct {
         }
 
         try this.emitStaticInterfaceData(interface);
+        if (interface.events.len > 0) {
+            try this.emitInterfaceListener(interface);
+        }
 
         try this.append("};\n");
     }
 
     fn emitStaticInterfaceData(this: *const Writer, interface: *const AST.Interface) Error!void {
-        _ = interface;
-        try this.appendi(1, "\npub const interface: Interface = .{};\n");
+        try this.appendi(1, "\npub const interface: Interface = .{\n");
+        try this.appendif(2,
+            \\.name = "{s}",
+            \\.version = {},
+            \\.requests = &.{{
+        , .{
+            interface.name,
+            interface.version,
+        });
+        for (interface.requests, 0..) |*request, i| {
+            if (i > 0) try this.append(",");
+            try this.append(" .{\n");
+            try this.appendif(3, ".name = \"{s}\",\n", .{request.name});
+            try this.appendi(2, "}");
+        }
+        if (interface.requests.len > 0) {
+            try this.append(" },\n");
+        } else {
+            try this.append("},\n");
+        }
+
+        try this.appendi(2, ".events = &.{");
+        for (interface.events, 0..) |*event, i| {
+            if (i > 0) try this.append(",");
+            try this.append(" .{\n");
+            try this.appendif(3, ".name = \"{s}\",\n", .{event.name});
+            try this.appendi(2, "}");
+        }
+        if (interface.events.len > 0) {
+            try this.append(" },\n");
+        } else {
+            try this.append("},\n");
+        }
+
+        try this.appendi(1, "};\n");
+    }
+
+    fn emitInterfaceListener(this: *const Writer, interface: *const AST.Interface) Error!void {
+        assert(interface.events.len > 0);
+
+        try this.appendi(1, "\npub const Listener = extern struct {\n");
+        for (interface.events) |event| {
+            try this.appendif(2, "{s}: ?*const fn (data: ?*anyopaque, {f}: *{s}", .{
+                event.zig_name,
+                fmtTypeNameToVarName(interface.zig_name),
+                interface.zig_name,
+            });
+
+            for (event.args) |arg| {
+                try this.appendf(", {f}: {f}", .{
+                    std.zig.fmtId(arg.name),
+                    fmtArgTypeToZigType(&arg),
+                });
+            }
+
+            try this.append(") void,\n");
+        }
+        try this.appendi(1, "};\n\n");
+
+        try this.appendif(1,
+            \\pub inline fn addListener(this: *{s}, listener: *const Listener, data: ?*anyopaque) void {{
+            \\    client.proxyAddListener(@ptrCast(this), @ptrCast(listener), data);
+            \\}}
+            \\
+        , .{interface.zig_name});
     }
 
     inline fn append(this: *const Writer, str: []const u8) !void {
@@ -130,5 +201,55 @@ const Writer = struct {
                 try this.append(line);
             }
         }
+    }
+
+    fn appendif(this: *const Writer, indent: usize, comptime fmt: []const u8, args: anytype) !void {
+        var tmp = mem.getTemp();
+        defer tmp.release();
+
+        const str = try std.fmt.allocPrint(tmp.allocator(), fmt, args);
+        try this.appendi(indent, str);
+    }
+};
+
+pub inline fn fmtTypeNameToVarName(type_name: []const u8) FmtTypeNameToVarName {
+    return .{ .type_name = type_name };
+}
+
+const FmtTypeNameToVarName = struct {
+    type_name: []const u8,
+
+    pub fn format(this: FmtTypeNameToVarName, writer: *std.Io.Writer) !void {
+        const first = this.type_name[0];
+        if (std.ascii.isUpper(first)) {
+            try writer.writeByte(std.ascii.toLower(first));
+        }
+
+        try writer.writeAll(this.type_name[1..]);
+    }
+};
+
+pub inline fn fmtArgTypeToZigType(arg: *const AST.Arg) FmtArgTypeToZigType {
+    return .{ .arg = arg };
+}
+const FmtArgTypeToZigType = struct {
+    arg: *const AST.Arg,
+
+    pub fn format(this: FmtArgTypeToZigType, writer: *std.Io.Writer) !void {
+        const arg_type = this.arg.type;
+        if (arg_type.allow_null) try writer.writeByte('?');
+
+        const type_str = switch (arg_type.tag) {
+            .int => "i32",
+            .uint => "u32",
+            .fixed => "Fixed",
+            .string => "[]const u8",
+            .object => "*Object",
+            .new_id => "*Object",
+            .array => "[]u32",
+            .fd => "linux.fd_t",
+        };
+
+        try writer.writeAll(type_str);
     }
 };
