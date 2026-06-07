@@ -14,6 +14,8 @@ pub const Interface = struct {
 
     /// valid after resolving
     zig_name: []const u8 = "XXX_UNRESOLVED_INTERFACE_NAME__X_X_X_",
+    /// valid after resolving
+    has_destructor: bool = false,
 };
 
 pub const Message = struct {
@@ -26,6 +28,12 @@ pub const Message = struct {
 
     /// valid after resolving
     zig_name: []const u8 = "XXX_UNRESOLVED_MESSAGE_NAME__X_X_X_",
+    /// valid after resolving (request)
+    zig_constructor_interface: ?[]const u8 = null,
+    /// valid after resolving (request)
+    is_anonymous_constructor: bool = false,
+    /// valid after resolving
+    fd_count: usize = 0,
 };
 
 pub const Arg = struct {

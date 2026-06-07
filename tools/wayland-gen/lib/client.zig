@@ -6,7 +6,8 @@ const builtin = @import("builtin");
 
 const linux = @import("linux");
 
-pub const wl = @import("wayland.zig");
+const wl = @import("wayland.zig");
+const trampolines = @import("trampolines.zig");
 
 const Display = wl.Display;
 
@@ -40,6 +41,7 @@ pub const Interface = struct {
 
     pub const Message = struct {
         name: []const u8,
+        fd_count: usize,
     };
 };
 
@@ -267,7 +269,7 @@ pub fn displayDisconnect(display: *Display) void {
 pub fn displayRoundtrip(display: *Display) usize {
     var dispatched_count: usize = 0;
 
-    verbose("display_roundtrip(id = {}) ...", .{display.id});
+    verbose("display_roundtrip(id = {}) ...", .{display.object.id});
 
     const sync_callback = display.sync();
 
@@ -284,7 +286,7 @@ pub fn displayRoundtrip(display: *Display) usize {
         dispatched_count += @intCast(dc);
     }
 
-    verbose("display_roundtrip(id = {}) dispatched: {}\n", .{ display.id, dispatched_count });
+    verbose("display_roundtrip(id = {}) dispatched: {}\n", .{ display.object.id, dispatched_count });
 
     return dispatched_count;
 }
@@ -363,21 +365,23 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
                             const payload: []u32 = payload_ptr[0 .. header.size - @sizeOf(Message.Header)];
 
                             const object = getObject(display, header.id);
-                            assert(object.proxy.id == header.id);
+                            assert(object.id == header.id);
 
                             var fds: [Message.max_fd_count]linux.fd_t = undefined;
                             var fd_count: usize = 0;
 
-                            assert(header.op < object.proxy.interface.events.len);
-                            // TODO: Store fd_count in the generated interface, so we can just pop that amount here. OR, pop them on demand in the trampolines
-                            for (object.proxy.interface.events[header.op].signature) |arg_type| {
-                                if (arg_type == .h) {
-                                    assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
-                                    fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
-                                    fd_count += 1;
-                                    fd_dispatch_index += 1;
-                                }
-                            }
+                            assert(header.op < object.interface.events.len);
+                            // TODO: Store fd_count in the generated interface, so we can just pop that amount here. OR, pop them on demand in the trampolines (might be able to remove signature)
+                            // for (object.interface.events[header.op].signature) |arg_type| {
+                            //     if (arg_type == .h) {
+                            //         assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
+                            //         fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
+                            //         fd_count += 1;
+                            //         fd_dispatch_index += 1;
+                            //     }
+                            // }
+                            assert(object.interface.events[header.op].fd_count == 0);
+                            _ = &fd_count;
 
                             const message: Message = .{
                                 .header = header,
@@ -385,7 +389,7 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
                                 .fds = fds[0..fd_count],
                             };
 
-                            wl.dispatch(display, &message, object);
+                            trampolines.dispatch(display, &message, object);
                             result += 1;
 
                             current_offset += header.size;
@@ -415,7 +419,7 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
         }
     }
 
-    verbose("display_dispatch(id = {}) -> dispatched = {}", .{ display.proxy.id, result });
+    verbose("display_dispatch(id = {}) -> dispatched = {}", .{ display.object.id, result });
 
     return result;
 }
@@ -423,7 +427,7 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
 pub fn displayFlush(display: *Display) void {
     var iov = linux.iovec{ .base = &display.send_payload_buf, .len = display.send_payload_used };
 
-    verbose("display_flush(id = {}) ...", .{display.proxy.id});
+    verbose("display_flush(id = {}) ...", .{display.object.id});
 
     const payload_size = display.send_payload_used;
     const fds_count = display.send_fds_used;
@@ -477,7 +481,7 @@ pub fn displayFlush(display: *Display) void {
     display.send_payload_used = 0;
     display.send_fds_used = 0;
 
-    verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.proxy.id, payload_size, fds_count });
+    verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.object.id, payload_size, fds_count });
 }
 
 pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u32) *wl.Object {
@@ -498,19 +502,19 @@ pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u
     return result;
 }
 
-pub fn proxyDestroy(proxy: *wl.Object) void {
-    while (proxy.listeners.popFirst()) |node| {
+pub fn proxyDestroy(object: *wl.Object) void {
+    while (object.listeners.popFirst()) |node| {
         glob_display.free_listeners.prepend(node);
     }
 
-    if (proxy.id < 0xff000000) {
-        assert(proxy.id < glob_display.objects.len);
-        assert(proxy.id != 1);
+    if (object.id < 0xff000000) {
+        assert(object.id < glob_display.objects.len);
+        assert(object.id != 1);
 
-        glob_display.free_objects.prepend(&proxy.freelist_node);
+        glob_display.free_objects.prepend(&object.freelist_node);
     } else {
         for (&glob_display.server_object_ids, 0..) |*server_id, idx| {
-            if (proxy.id == server_id.*) {
+            if (object.id == server_id.*) {
                 server_id.* = 0;
                 glob_display.server_objects[idx] = .{
                     .id = 0,

@@ -33,6 +33,35 @@ pub fn emitProtocol(context: *const generator.Context, dir: std.Io.Dir, prot: *c
     } else |e| return e;
 }
 
+pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_path: []const u8) Error!void {
+    if (dir.createFile(context.io, sub_path, .{ .truncate = true })) |file| {
+        defer file.close(context.io);
+
+        var writer: Writer = .{
+            .context = context,
+            .protocol = undefined,
+            .core = undefined,
+        };
+
+        var file_writer = file.writer(context.io, &writer.write_buf);
+        writer.file_writer = &file_writer.interface;
+
+        try writer.append(
+            \\const wl = @import("wayland.zig");
+            \\const client = @import("client.zig");
+            \\
+            \\pub inline fn dispatch(display: *wl.Display, message: *const client.Message, object: *wl.Object) void {
+            \\    _ = display;
+            \\    _ = message;
+            \\    _ = object;
+            \\    unreachable;
+            \\}
+        );
+
+        try file_writer.flush();
+    } else |e| return e;
+}
+
 const Writer = struct {
     context: *const generator.Context,
     protocol: *const AST.Protocol,
@@ -113,6 +142,16 @@ const Writer = struct {
             }
         }
 
+        if (!interface.has_destructor) {
+            try this.appendif(1,
+                \\
+                \\pub inline fn destroy(self: *{s}) void {{
+                \\    client.proxyDestroy(@ptrCast(self));
+                \\}}
+                \\
+            , .{interface.zig_name});
+        }
+
         if (interface.events.len > 0) {
             try this.emitInterfaceListener(interface);
         }
@@ -140,7 +179,14 @@ const Writer = struct {
         for (interface.requests, 0..) |*request, i| {
             if (i > 0) try this.append(",");
             try this.append(" .{\n");
-            try this.appendif(3, ".name = \"{s}\",\n", .{request.name});
+            try this.appendif(3,
+                \\.name = "{s}",
+                \\.fd_count = {},
+                \\
+            , .{
+                request.name,
+                request.fd_count,
+            });
             try this.appendi(2, "}");
         }
         if (interface.requests.len > 0) {
@@ -153,7 +199,14 @@ const Writer = struct {
         for (interface.events, 0..) |*event, i| {
             if (i > 0) try this.append(",");
             try this.append(" .{\n");
-            try this.appendif(3, ".name = \"{s}\",\n", .{event.name});
+            try this.appendif(3,
+                \\.name = "{s}",
+                \\.fd_count = {},
+                \\
+            , .{
+                event.name,
+                event.fd_count,
+            });
             try this.appendi(2, "}");
         }
         if (interface.events.len > 0) {
@@ -166,14 +219,22 @@ const Writer = struct {
     }
 
     fn emitRequest(this: *const Writer, interface: *const AST.Interface, request: *const AST.Message) Error!void {
-        const return_type = "void";
-
         try this.appendif(1, "pub fn {s}(this: *{s}", .{
             request.zig_name,
             interface.zig_name,
         });
 
-        try this.appendf(") {s} {{\n", .{return_type});
+        try this.append(") ");
+
+        if (request.zig_constructor_interface) |constructor_interface_name| {
+            try this.appendf("*{s}", .{constructor_interface_name});
+        } else if (request.is_anonymous_constructor) {
+            try this.append("*Object");
+        } else {
+            try this.append("void");
+        }
+
+        try this.append(" {\n");
 
         try this.appendi(2,
             \\_ = this;

@@ -25,11 +25,15 @@ fn resolveInterface(context: *const Context, protocol: *const AST.Protocol, inte
     interface.zig_name = try toZigTypeName(context, tmp.arena, interface.name, true);
 
     for (interface.requests) |*message| {
-        try resolveMessage(context, protocol, interface, message, core, tmp.arena);
+        try resolveRequest(context, protocol, interface, message, core, tmp.arena);
+        if (message.is_destructor) {
+            assert(!interface.has_destructor);
+            interface.has_destructor = true;
+        }
     }
 
     for (interface.events) |*message| {
-        try resolveMessage(context, protocol, interface, message, core, tmp.arena);
+        try resolveEvent(context, protocol, interface, message, core, tmp.arena);
     }
 
     for (interface.enums) |*@"enum"| {
@@ -37,11 +41,42 @@ fn resolveInterface(context: *const Context, protocol: *const AST.Protocol, inte
     }
 }
 
+fn resolveRequest(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, request: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+    try resolveMessage(context, protocol, interface, request, core, tmp);
+
+    var return_type: ?[]const u8 = null;
+    var is_anonymous_constructor = false;
+
+    if (!request.is_destructor) {
+        for (request.args) |*arg| {
+            if (arg.type.tag == .new_id) {
+                if (arg.interface_name) |return_type_interface| {
+                    return_type = try toZigTypeName(context, tmp, return_type_interface, true);
+                } else {
+                    is_anonymous_constructor = true;
+                }
+                break;
+            }
+        }
+    }
+
+    request.zig_constructor_interface = return_type;
+    request.is_anonymous_constructor = is_anonymous_constructor;
+}
+
+fn resolveEvent(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, event: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+    try resolveMessage(context, protocol, interface, event, core, tmp);
+}
+
 fn resolveMessage(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, message: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     message.zig_name = try toZigFunctionName(context, tmp, message.name);
 
     for (message.args) |*arg| {
         try resolveArg(context, protocol, interface, message, arg, core, tmp);
+
+        if (arg.type.tag == .fd) {
+            message.fd_count += 1;
+        }
     }
 }
 

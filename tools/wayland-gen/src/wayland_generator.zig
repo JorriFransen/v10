@@ -166,4 +166,6 @@ fn run(context: Context) !void {
 
         try writer.flush();
     } else |e| return e;
+
+    try emit.emitTrampolines(&context, output_dir, "trampolines.zig");
 }

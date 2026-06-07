@@ -151,7 +151,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var wli = WlInitData{ .wld = &wld };
     wl_registry.addListener(&wl_registry_listener, &wli);
-    if (wl.displayRoundtrip(display) == -1) {
+    if (wlc.displayRoundtrip(display) == -1) {
         log.err("wl_display_roundtrip failed", .{});
         return error.UnexpectedWayland;
     }
