@@ -180,10 +180,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer wld.data_device_manager.destroy();
 
     wld.data_device = wld.data_device_manager.getDataDevice(wld.seat);
-    defer wld.data_device.destroy();
+    defer wld.data_device.release();
     wld.data_device.addListener(&wl_data_device_listener, null);
 
-    _ = wl.displayRoundtrip(wld.display); // Wait for max_width/height to be set
+    _ = wlc.displayRoundtrip(wld.display); // Wait for max_width/height to be set
 
     log.debug("Format available", .{});
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
@@ -228,16 +228,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         if (wli.xdg_decoration_manager) |manager| {
             const toplevel_decoration = manager.getToplevelDecoration(xdg_toplevel);
-            toplevel_decoration.setMode(.server_side);
+            toplevel_decoration.setMode(.serverSide);
 
             var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
             toplevel_decoration.addListener(&xdg_decoration_listener, &xdg_decoration_mode);
 
-            _ = wl.displayRoundtrip(wld.display);
+            _ = wlc.displayRoundtrip(wld.display);
             xdg_surface.ackConfigure(wld.pending_configure_serial.?);
             wld.pending_configure_serial = null;
 
-            if (xdg_decoration_mode == .server_side) {
+            if (xdg_decoration_mode == .serverSide) {
                 if (wld.pending_resize) |r| {
                     try resize(r.width, r.height);
                 }
@@ -256,7 +256,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         log.debug("xdg_decoration not supported, falling back to no decorations", .{});
 
-        _ = wl.displayRoundtrip(wld.display);
+        _ = wlc.displayRoundtrip(wld.display);
         wld.pending_configure_serial = null;
 
         break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
@@ -481,7 +481,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        if (wl.displayDispatch(display) == -1) {
+        if (wlc.displayDispatch(display) == -1) {
             running = false;
         }
 
@@ -1505,7 +1505,8 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, 
 
         if (std.mem.eql(u8, interface_name, Interface.interface.name)) {
             log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
-            const proxy = registry.bindTyped(Interface, name, version);
+            // const proxy = registry.bindTyped(Interface, name, version);
+            const proxy: *Interface = @ptrCast(registry.bind(name, Interface.interface.name, version));
             @field(wli, target_field_name) = proxy;
             found = true;
 
@@ -1522,7 +1523,8 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, 
             var free_slot_found = false;
             for (&wld.outputs) |*output| {
                 if (output.* == null) {
-                    const wl_output = registry.bindTyped(wl.Output, name, version);
+                    // const wl_output = registry.bindTyped(wl.Output, name, version);
+                    const wl_output: *wl.Output = @ptrCast(registry.bind(name, interface_name, version));
                     output.* = .{
                         .handle = wl_output,
                     };
@@ -1548,10 +1550,10 @@ fn handleWlRemoveGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32) vo
     log.debug("Remove global: {}", .{name});
 }
 
-fn handleWlSurfaceEnter(data: ?*anyopaque, surface: *wl.Surface, current_output_object: *wl.Object) void {
-    _ = .{ data, surface, current_output_object };
+fn handleWlSurfaceEnter(data: ?*anyopaque, surface: *wl.Surface, current_output: *wl.Output) void {
+    _ = data;
+    _ = surface;
 
-    const current_output: *wl.Output = @ptrCast(current_output_object);
     log.debug("Surface enter: {}", .{current_output});
 
     var found = false;
@@ -1566,14 +1568,14 @@ fn handleWlSurfaceEnter(data: ?*anyopaque, surface: *wl.Surface, current_output_
     }
 
     if (!found) {
-        log.warn("Failed to find matching output: {*}", .{current_output_object});
+        log.warn("Failed to find matching output: {*}", .{current_output});
     }
 }
 
-fn handleWlSurfaceLeave(data: ?*anyopaque, surface: *wl.Surface, current_output_object: *wl.Object) void {
-    _ = .{ data, surface, current_output_object };
+fn handleWlSurfaceLeave(data: ?*anyopaque, surface: *wl.Surface, current_output: *wl.Output) void {
+    _ = data;
+    _ = surface;
 
-    const current_output: *wl.Output = @ptrCast(current_output_object);
     log.debug("Surface leave: {}", .{current_output});
 
     var found = false;
@@ -1588,7 +1590,7 @@ fn handleWlSurfaceLeave(data: ?*anyopaque, surface: *wl.Surface, current_output_
     }
 
     if (!found) {
-        log.warn("Failed to find matching output: {*}", .{current_output_object});
+        log.warn("Failed to find matching output: {*}", .{current_output});
     }
 }
 
@@ -1759,8 +1761,10 @@ fn toggleFullscreen() void {
     }
 }
 
-fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, surface: *wl.Object, surface_x: wl.Fixed, surface_y: wl.Fixed) void {
-    _ = .{ data, pointer, serial, surface, surface_x, surface_y };
+fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, surface: *wl.Surface, surface_x: wl.Fixed, surface_y: wl.Fixed) void {
+    _ = data;
+    _ = pointer;
+    _ = surface;
 
     wld.new_input.debug_mouse.x = surface_x.toInt();
     wld.new_input.debug_mouse.y = surface_y.toInt();
@@ -2177,7 +2181,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         displayWaylandBufferInWindow(wl_buffer);
         return true;
     } else {
-        _ = wl.displayRoundtrip(wld.display);
+        _ = wlc.displayRoundtrip(wld.display);
         log.warn("Failed to aquire wayland buffer!", .{});
         // unreachable; // might want to loop util a buffer is aquired
         // continue;
@@ -2203,7 +2207,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     wld.surface.commit();
     const callback = wld.surface.frame();
     callback.addListener(&wl_frame_callback_listener, &wld);
-    _ = wl.displayFlush(wld.display);
+    _ = wlc.displayFlush(wld.display);
 
     wld.should_draw = false;
 }
@@ -2272,12 +2276,11 @@ pub fn playbackInput(shared_state: *platform.SharedState, io: std.Io, new_input:
     }
 }
 
-pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, id: *wl.Object) void {
+pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, offer: *wl.DataOffer) void {
     _ = data;
     _ = data_device;
 
     assert(wld.pending_data_offer == null);
-    const offer: *wl.DataOffer = @ptrCast(id);
     wld.pending_data_offer = offer;
 
     offer.addListener(&wl_data_offer_listener, null);
@@ -2285,18 +2288,17 @@ pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, id: *wl
     assert(wld.pending_offer_mime_weight == 0);
 }
 
-pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, serial: u32, surface: *wl.Object, x: wl.Fixed, y: wl.Fixed, id_opt: ?*wl.Object) void {
+pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, serial: u32, surface: *wl.Surface, x: wl.Fixed, y: wl.Fixed, offer_opt: ?*wl.DataOffer) void {
     _ = data;
     _ = data_device;
     _ = surface;
     _ = x;
     _ = y;
 
-    if (id_opt) |id| {
+    if (offer_opt) |offer| {
         assert(wld.pending_data_offer != null);
-        if (id.proxy.id == wld.pending_data_offer.?.proxy.id) {
+        if (offer.object.id == wld.pending_data_offer.?.object.id) {
             assert(wld.active_dnd_offer == null);
-            const offer: *wl.DataOffer = @ptrCast(id);
 
             wld.active_dnd_offer = offer;
             wld.pending_data_offer = null;
@@ -2334,17 +2336,17 @@ pub fn handleWlDataDeviceDrop(data: ?*anyopaque, data_device: *wl.DataDevice) vo
     }
 }
 
-pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevice, id_opt: ?*wl.Object) void {
+pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevice, offer_opt: ?*wl.DataOffer) void {
     _ = data;
     _ = data_device;
 
     if (wld.active_selection_offer) |old| old.destroy();
 
-    if (id_opt) |id| {
+    if (offer_opt) |offer| {
         assert(wld.pending_data_offer != null);
         assert(wld.pending_offer_mime != null);
 
-        if (id.proxy.id == wld.pending_data_offer.?.proxy.id) {
+        if (offer.object.id == wld.pending_data_offer.?.object.id) {
             wld.active_selection_offer = wld.pending_data_offer;
             wld.pending_data_offer = null;
 
@@ -2365,7 +2367,7 @@ pub fn handleWlDataOfferOffer(data: ?*anyopaque, data_offer: *wl.DataOffer, mime
     _ = data;
 
     assert(wld.pending_data_offer != null);
-    assert(data_offer.proxy.id == wld.pending_data_offer.?.proxy.id);
+    assert(data_offer.object.id == wld.pending_data_offer.?.object.id);
 
     const mimes = [_][]const u8{
         "STRING",
@@ -2403,7 +2405,7 @@ pub fn handleWlDataOfferSourceActions(data: ?*anyopaque, data_offer: *wl.DataOff
     _ = data;
 
     if (wld.active_dnd_offer) |offer| {
-        if (data_offer.proxy.id == offer.proxy.id) {
+        if (data_offer.object.id == offer.object.id) {
             wld.active_dnd_source_actions = source_actions;
         }
     }
@@ -2413,7 +2415,7 @@ pub fn handleWlDataOfferAction(data: ?*anyopaque, data_offer: *wl.DataOffer, dnd
     _ = data;
 
     if (wld.active_dnd_offer) |offer| {
-        if (data_offer.proxy.id == offer.proxy.id) {
+        if (data_offer.object.id == offer.object.id) {
             wld.active_dnd_action = dnd_action;
         }
     }

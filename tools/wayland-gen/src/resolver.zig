@@ -12,13 +12,14 @@ pub const Error = error{InterfaceNameWithoutPrefix} ||
     std.fmt.ParseIntError ||
     std.Io.Writer.Error;
 
-pub fn resolveProtocol(context: *const Context, protocol: *AST.Protocol, core: bool) Error!void {
-    for (protocol.interfaces) |*interface| {
-        try resolveInterface(context, protocol, interface, core);
+pub fn resolveProtocol(context: *Context, protocol: *AST.Protocol, core: bool) Error!void {
+    var interface_it = protocol.interfaces.iterator();
+    while (interface_it.next()) |entry| {
+        try resolveInterface(context, protocol, entry.value_ptr, core);
     }
 }
 
-fn resolveInterface(context: *const Context, protocol: *const AST.Protocol, interface: *AST.Interface, core: bool) Error!void {
+fn resolveInterface(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, core: bool) Error!void {
     var tmp = mem.getTemp();
     defer tmp.release();
 
@@ -41,7 +42,7 @@ fn resolveInterface(context: *const Context, protocol: *const AST.Protocol, inte
     }
 }
 
-fn resolveRequest(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, request: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveRequest(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, request: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     try resolveMessage(context, protocol, interface, request, core, tmp);
 
     var return_type: ?[]const u8 = null;
@@ -64,11 +65,11 @@ fn resolveRequest(context: *const Context, protocol: *const AST.Protocol, interf
     request.is_anonymous_constructor = is_anonymous_constructor;
 }
 
-fn resolveEvent(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, event: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveEvent(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, event: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     try resolveMessage(context, protocol, interface, event, core, tmp);
 }
 
-fn resolveMessage(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, message: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveMessage(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, message: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     message.zig_name = try toZigFunctionName(context, tmp, message.name);
 
     for (message.args) |*arg| {
@@ -80,11 +81,9 @@ fn resolveMessage(context: *const Context, protocol: *const AST.Protocol, interf
     }
 }
 
-fn resolveArg(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, message: *const AST.Message, arg: *AST.Arg, core: bool, tmp: *mem.Arena) Error!void {
-    _ = protocol;
+fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, message: *const AST.Message, arg: *AST.Arg, core: bool, tmp: *mem.Arena) Error!void {
     _ = interface;
     _ = message;
-    _ = core;
 
     arg.zig_name = try toZigVariableName(context, tmp, arg.name);
 
@@ -94,6 +93,21 @@ fn resolveArg(context: *const Context, protocol: *const AST.Protocol, interface:
 
     if (arg.interface_name) |interface_name| {
         arg.zig_interface_name = try toZigTypeName(context, tmp, interface_name, true);
+    }
+
+    if (!core and (arg.type.tag == .new_id or arg.type.tag == .object)) {
+        if (arg.interface_name) |interface_name| {
+            if (!protocol.interfaces.contains(interface_name)) {
+                if (context.interface_to_protocol_map.get(interface_name)) |in_prot| {
+                    if (protocol.protocol_imports.get(in_prot.name) == null) {
+                        try protocol.protocol_imports.put(context.arena, in_prot.name, in_prot);
+                    }
+                    arg.import_name = in_prot.name;
+                } else {
+                    try context.stderr.print("Failed to find protocol for interface: {s}\n", .{interface_name});
+                }
+            }
+        }
     }
 }
 
@@ -118,8 +132,8 @@ fn resolveEnum(context: *const Context, protocol: *const AST.Protocol, interface
     if (@"enum".is_bitfield) {
         @"enum".zig_int_type = "u32";
 
-        var single_bit_entries: std.ArrayList(AST.Enum.BitfieldEntry) = .{ .items = &.{}, .capacity = 0 };
-        var multi_bit_entries: std.ArrayList(AST.Enum.BitfieldEntry) = .{ .items = &.{}, .capacity = 0 };
+        var single_bit_entries: std.ArrayList(AST.Enum.BitfieldEntry) = .empty;
+        var multi_bit_entries: std.ArrayList(AST.Enum.BitfieldEntry) = .empty;
 
         for (@"enum".entries, 0..) |*e, i| {
             const int_val: u32 = try resolveEnumValue(e.value);

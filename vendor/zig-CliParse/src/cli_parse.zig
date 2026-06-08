@@ -55,7 +55,7 @@ pub fn arrayOption(comptime ElemType: type, name: [:0]const u8, short: ?u8, desc
     }
 
     const tag = validateType(ElemType);
-    const default = std.ArrayList(ElemType){ .items = &.{}, .capacity = 0 };
+    const default = std.ArrayList(ElemType).empty;
 
     return .{
         .name = name,

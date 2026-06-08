@@ -11,18 +11,20 @@ pub const Error = error{} || Parser.Error;
 
 /// xml_temp_arena is used by the xml parser.
 /// It will be reset for each node, so don't use it for anything else!
-pub fn parse(context: Context, xml_temp_arena: *mem.Arena, err_writer: *std.Io.Writer, xml_path: []const u8) Error!AST.Protocol {
+pub fn parse(context: *const Context, xml_temp_arena: *mem.Arena, err_writer: *std.Io.Writer, xml_path: []const u8) Error!AST.Protocol {
     var parser: Parser = undefined;
     try parser.init(context, xml_temp_arena, err_writer, xml_path);
 
-    const result = try parser.parse();
+    var result = try parser.parse();
     parser.deinit();
+
+    result.xml_path = xml_path;
 
     return result;
 }
 
 const Parser = struct {
-    context: Context,
+    context: *const Context,
     xml_file_path: []const u8,
     xml_file_reader: std.Io.File.Reader,
     xml_reader: xml.Reader,
@@ -34,7 +36,7 @@ const Parser = struct {
         xml.Reader.Error ||
         std.fmt.ParseIntError;
 
-    pub fn init(this: *Parser, context: Context, xml_tmp_arena: *mem.Arena, err_writer: *std.Io.Writer, xml_path: []const u8) !void {
+    pub fn init(this: *Parser, context: *const Context, xml_tmp_arena: *mem.Arena, err_writer: *std.Io.Writer, xml_path: []const u8) !void {
         if (std.Io.Dir.cwd().openFile(context.io, xml_path, .{})) |xml_file| {
             this.context = context;
             this.xml_file_path = xml_path;
@@ -82,8 +84,13 @@ const Parser = struct {
             this.xmlErr("Expected 'name' attribute, got '{s}'", .{attr.name});
         }
 
+        const InterfaceEntry = struct {
+            name: []const u8,
+            interface: AST.Interface,
+        };
+
         const protocol_name = try this.copyString(attr.value);
-        var interfaces = std.ArrayList(AST.Interface){ .items = &.{}, .capacity = 0 };
+        var interfaces: std.MultiArrayList(InterfaceEntry) = .empty;
         var description: AST.Description = .{};
 
         while (true) {
@@ -105,7 +112,11 @@ const Parser = struct {
                     if (std.mem.eql(u8, tag.name, "copyright")) {
                         try this.skipElement();
                     } else if (std.mem.eql(u8, tag.name, "interface")) {
-                        try interfaces.append(this.context.arena, try this.parseInterface());
+                        const interface = try this.parseInterface();
+                        try interfaces.append(this.context.arena, .{
+                            .interface = interface,
+                            .name = interface.name,
+                        });
                     } else if (std.mem.eql(u8, tag.name, "description")) {
                         description = try this.parseDescription();
                     } else {
@@ -124,10 +135,17 @@ const Parser = struct {
             }
         }
 
+        const ifa_slice = interfaces.toOwnedSlice();
+
         return .{
             .name = protocol_name,
-            .interfaces = try interfaces.toOwnedSlice(this.context.arena),
+            .interfaces = try .init(
+                this.context.arena,
+                ifa_slice.items(.name),
+                ifa_slice.items(.interface),
+            ),
             .description = description,
+            .protocol_imports = .empty,
         };
     }
 
@@ -135,9 +153,9 @@ const Parser = struct {
         var name_opt: ?[]const u8 = null;
         var version: u32 = 0;
         var description: AST.Description = .{};
-        var requests: std.ArrayList(AST.Message) = .{ .items = &.{}, .capacity = 0 };
-        var events: std.ArrayList(AST.Message) = .{ .items = &.{}, .capacity = 0 };
-        var enums: std.ArrayList(AST.Enum) = .{ .items = &.{}, .capacity = 0 };
+        var requests: std.ArrayList(AST.Message) = .empty;
+        var events: std.ArrayList(AST.Message) = .empty;
+        var enums: std.ArrayList(AST.Enum) = .empty;
 
         const interface_tag = this.xml_reader.current_node.tag_open;
 
@@ -217,7 +235,7 @@ const Parser = struct {
         var since: u32 = 0;
         var deprecated_since: ?u32 = null;
         var description = AST.Description{};
-        var args = std.ArrayList(AST.Arg){ .items = &.{}, .capacity = 0 };
+        var args = std.ArrayList(AST.Arg).empty;
 
         const req_tag = this.xml_reader.current_node.tag_open;
 
@@ -290,7 +308,7 @@ const Parser = struct {
         var since: u32 = 0;
         var deprecated_since: ?u32 = null;
         var description = AST.Description{};
-        var args = std.ArrayList(AST.Arg){ .items = &.{}, .capacity = 0 };
+        var args = std.ArrayList(AST.Arg).empty;
 
         const event_tag = this.xml_reader.current_node.tag_open;
 
@@ -434,7 +452,7 @@ const Parser = struct {
         var since: u32 = 0;
         var deprecated_since: ?u32 = null;
         var description = AST.Description{};
-        var entries = std.ArrayList(AST.Enum.Entry){ .items = &.{}, .capacity = 0 };
+        var entries = std.ArrayList(AST.Enum.Entry).empty;
 
         const enum_tag = this.xml_reader.current_node.tag_open;
 

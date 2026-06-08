@@ -1,7 +1,14 @@
+const std = @import("std");
+
 pub const Protocol = struct {
     name: []const u8,
-    interfaces: []Interface,
+    interfaces: std.array_hash_map.String(Interface),
     description: Description,
+
+    /// valid after parsing
+    xml_path: []const u8 = "XXX_UNINITIALIZED_XML_PATH__X_X_X_",
+    /// valid after resolving
+    protocol_imports: std.array_hash_map.String(*const Protocol),
 };
 
 pub const Interface = struct {
@@ -49,6 +56,8 @@ pub const Arg = struct {
     zig_enum_name: ?[]const u8 = null,
     /// valid after resolving
     zig_interface_name: ?[]const u8 = null,
+    /// valid after resolving
+    import_name: ?[]const u8 = null,
 };
 
 pub const Enum = struct {

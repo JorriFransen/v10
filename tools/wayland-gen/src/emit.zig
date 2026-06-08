@@ -90,11 +90,20 @@ const Writer = struct {
                 \\
                 \\
             );
+        } else {
+            var it = this.protocol.protocol_imports.iterator();
+            while (it.next()) |entry| {
+                const name = entry.key_ptr.*;
+                try this.appendf("const {s} = @import(\"{s}.zig\");\n", .{ name, name });
+            }
+            try this.append("\n");
         }
 
-        for (this.protocol.interfaces, 0..) |*interface, interface_idx| {
-            try this.emitInterface(interface);
-            if (interface_idx < this.protocol.interfaces.len - 1) {
+        var interface_it = this.protocol.interfaces.iterator();
+        var interface_idx: usize = 0;
+        while (interface_it.next()) |entry| : (interface_idx += 1) {
+            try this.emitInterface(entry.value_ptr);
+            if (interface_idx < this.protocol.interfaces.count() - 1) {
                 try this.append("\n");
             }
         }
@@ -224,6 +233,15 @@ const Writer = struct {
             interface.zig_name,
         });
 
+        for (request.args) |*arg| {
+            if (arg.type.tag != .new_id) {
+                try this.appendf(", {s}: {f}", .{ arg.zig_name, fmtArgTypeToZigType(this, arg, this.protocol) });
+            } else if (arg.interface_name == null) {
+                assert(request.is_anonymous_constructor);
+                try this.append(", string_name: []const u8, version: u32");
+            }
+        }
+
         try this.append(") ");
 
         if (request.zig_constructor_interface) |constructor_interface_name| {
@@ -236,11 +254,20 @@ const Writer = struct {
 
         try this.append(" {\n");
 
-        try this.appendi(2,
-            \\_ = this;
-            \\unreachable;
-            \\
-        );
+        try this.appendi(2, "_ = this;\n");
+        for (request.args) |*arg| {
+            if (arg.type.tag != .new_id) {
+                try this.appendif(2, "_ = {s};\n", .{arg.zig_name});
+            } else if (arg.interface_name == null) {
+                assert(request.is_anonymous_constructor);
+                try this.appendi(2,
+                    \\_ = string_name;
+                    \\_ = version;
+                    \\
+                );
+            }
+        }
+        try this.appendi(2, "unreachable;\n");
 
         try this.appendi(1, "}\n");
     }
@@ -259,7 +286,7 @@ const Writer = struct {
             for (event.args) |arg| {
                 try this.appendf(", {s}: {f}", .{
                     arg.zig_name,
-                    fmtArgTypeToZigType(&arg),
+                    fmtArgTypeToZigType(this, &arg, this.protocol),
                 });
             }
 
@@ -381,7 +408,7 @@ pub inline fn fmtTypeNameToVarName(type_name: []const u8) FmtTypeNameToVarName {
 const FmtTypeNameToVarName = struct {
     type_name: []const u8,
 
-    pub fn format(this: FmtTypeNameToVarName, writer: *std.Io.Writer) !void {
+    pub fn format(this: FmtTypeNameToVarName, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const first = this.type_name[0];
         if (std.ascii.isUpper(first)) {
             try writer.writeByte(std.ascii.toLower(first));
@@ -391,18 +418,36 @@ const FmtTypeNameToVarName = struct {
     }
 };
 
-pub inline fn fmtArgTypeToZigType(arg: *const AST.Arg) FmtArgTypeToZigType {
-    return .{ .arg = arg };
+pub inline fn fmtArgTypeToZigType(context: *const Writer, arg: *const AST.Arg, protocol: *const AST.Protocol) FmtArgTypeToZigType {
+    return .{
+        .context = context,
+        .arg = arg,
+        .protocol = protocol,
+    };
 }
 const FmtArgTypeToZigType = struct {
+    context: *const Writer,
     arg: *const AST.Arg,
 
-    pub fn format(this: FmtArgTypeToZigType, writer: *std.Io.Writer) !void {
+    /// Protocol in which this arguments is emitted in
+    protocol: *const AST.Protocol,
+
+    pub fn format(this: FmtArgTypeToZigType, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const arg_type = this.arg.type;
+
         if (arg_type.allow_null) try writer.writeByte('?');
 
-        if (this.arg.zig_enum_name) |enum_name| try writer.writeAll(enum_name) else if (this.arg.zig_interface_name) |interface_name| {
+        if (this.arg.zig_enum_name) |enum_name|
+            try writer.writeAll(enum_name)
+        else if (this.arg.zig_interface_name) |interface_name| {
             try writer.writeByte('*');
+
+            if (!this.context.core) {
+                if (this.arg.import_name) |import_name| {
+                    try writer.print("{s}.", .{import_name});
+                }
+            }
+
             try writer.writeAll(interface_name);
         } else {
             const type_str = if (this.arg.zig_enum_name) |enum_name|
