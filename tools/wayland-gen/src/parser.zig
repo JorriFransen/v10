@@ -155,7 +155,7 @@ const Parser = struct {
         var description: AST.Description = .{};
         var requests: std.ArrayList(AST.Message) = .empty;
         var events: std.ArrayList(AST.Message) = .empty;
-        var enums: std.ArrayList(AST.Enum) = .empty;
+        var enums: std.array_hash_map.String(AST.Enum) = .empty;
 
         const interface_tag = this.xml_reader.current_node.tag_open;
 
@@ -202,7 +202,8 @@ const Parser = struct {
                     } else if (std.mem.eql(u8, tag.name, "event")) {
                         try events.append(this.context.arena, try this.parseEvent());
                     } else if (std.mem.eql(u8, tag.name, "enum")) {
-                        try enums.append(this.context.arena, try this.parseEnum());
+                        const e = try this.parseEnum();
+                        try enums.putNoClobber(this.context.arena, e.name, e);
                     } else {
                         this.xmlErr("Unexpected element in interface: '{s}'", .{tag.name});
                         return error.MalformedXml;
@@ -225,7 +226,7 @@ const Parser = struct {
             .description = description,
             .requests = try requests.toOwnedSlice(this.context.arena),
             .events = try events.toOwnedSlice(this.context.arena),
-            .enums = try enums.toOwnedSlice(this.context.arena),
+            .enums = enums,
         };
     }
 
@@ -403,7 +404,23 @@ const Parser = struct {
             if (std.mem.eql(u8, attr.name, "name")) {
                 name = try this.copyString(attr.value);
             } else if (std.mem.eql(u8, attr.name, "type")) {
-                arg_type = std.meta.stringToEnum(AST.TypeTag, attr.value) orelse {
+                arg_type = if (std.mem.eql(u8, attr.value, "int"))
+                    .i
+                else if (std.mem.eql(u8, attr.value, "uint"))
+                    .u
+                else if (std.mem.eql(u8, attr.value, "fixed"))
+                    .f
+                else if (std.mem.eql(u8, attr.value, "string"))
+                    .s
+                else if (std.mem.eql(u8, attr.value, "object"))
+                    .o
+                else if (std.mem.eql(u8, attr.value, "new_id"))
+                    .n
+                else if (std.mem.eql(u8, attr.value, "array"))
+                    .a
+                else if (std.mem.eql(u8, attr.value, "fd"))
+                    .h
+                else {
                     this.xmlErr("Invalid type '{s}'", .{attr.value});
                     return error.MalformedXml;
                 };

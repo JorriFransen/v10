@@ -17,7 +17,7 @@ pub const Interface = struct {
     description: Description,
     requests: []Message,
     events: []Message,
-    enums: []Enum,
+    enums: std.array_hash_map.String(Enum),
 
     /// valid after resolving
     zig_name: []const u8 = "XXX_UNRESOLVED_INTERFACE_NAME__X_X_X_",
@@ -53,7 +53,7 @@ pub const Arg = struct {
     /// valid after resolving
     zig_name: []const u8 = "XXX_UNRESOLVED_ARG_NAME__X_X_X_",
     /// valid after resolving
-    zig_enum_name: ?[]const u8 = null,
+    enum_type: ?*const Enum = null,
     /// valid after resolving
     zig_interface_name: ?[]const u8 = null,
     /// valid after resolving
@@ -83,13 +83,15 @@ pub const Enum = struct {
     description: Description,
     is_bitfield: bool,
 
-    // valid after resolving
+    /// valid after resolving
+    interface: *const Interface = undefined,
+    /// valid after resolving
     zig_name: []const u8 = "XXX_UNRESOLVED_ENUM_NAME__X_X_X_",
-    // valid after resolving
+    /// valid after resolving
     zig_int_type: []const u8 = "XXX_UNRESOLVED_ENUM_INT_TYPE__X_X_X_",
-    // valid after resolving
+    /// valid after resolving
     single_bit_bitfield_entries: []BitfieldEntry = &.{},
-    // valid after resolving
+    /// valid after resolving
     multi_bit_bitfield_entries: []BitfieldEntry = &.{},
 };
 
@@ -104,12 +106,12 @@ pub const Type = struct {
 };
 
 pub const TypeTag = enum {
-    int,
-    uint,
-    fixed,
-    string,
-    object,
-    new_id,
-    array,
-    fd,
+    i,
+    u,
+    f,
+    s,
+    o,
+    n,
+    a,
+    h,
 };

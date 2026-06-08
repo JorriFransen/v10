@@ -63,6 +63,19 @@ pub const Fixed = extern struct {
     }
 };
 
+pub const Argument = union(enum) {
+    i: i32,
+    u: u32,
+    f: Fixed,
+    s: []const u8,
+    @"?s": ?[]const u8,
+    o: *Object,
+    @"?o": ?*Object,
+    n: u32,
+    a: []u32,
+    h: linux.fd_t,
+};
+
 pub const Message = struct {
     const max_fd_count: usize = 16;
     const Header = extern struct {
@@ -215,7 +228,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
             glob_display.objects[0] = .{
                 .id = 1,
                 .version = Display.interface.version,
-                .interface = &Display.interface,
+                .interface = Display.interface,
                 .freelist_node = .{},
             };
             glob_display.free_objects = .{ .first = &glob_display.objects[0].freelist_node };
@@ -238,7 +251,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
                 server_obj.* = .{ .id = 0, .version = Display.interface.version, .interface = undefined, .freelist_node = .{} };
             }
 
-            const display_object = proxyCreate(&glob_display, &Display.interface, Display.interface.version);
+            const display_object = proxyCreate(&glob_display, Display.interface, Display.interface.version);
             glob_display.object = display_object.*;
 
             glob_display.free_listeners = .{ .first = &glob_display.listeners[0].node };
@@ -527,11 +540,11 @@ pub fn proxyDestroy(object: *wl.Object) void {
     }
 }
 
-pub fn proxyMarshalArrayFlags(proxy: *wl.Object, op: u32, interface: ?*const wl.Interface, version: u32, args: []const wl.Argument) ?*wl.Object {
+// TODO: move new-id allocation into the requests, remove interface parameter
+pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interface, version: u32, args: []const Argument) ?*Object {
     assert(glob_connected);
-    const display = proxy.display;
 
-    assert(proxy.interface.methods.len > op);
+    assert(proxy.interface.requests.len > op);
 
     var result: ?*wl.Object = null;
 
@@ -579,13 +592,13 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Object, op: u32, interface: ?*const wl.
                     message.addArg(&payload_used, 0);
                 }
             },
-            .o => |o| continue :arg_type_switch_blk .{ .u = o.proxy.id },
-            .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.proxy.id else 0 },
+            .o => |o| continue :arg_type_switch_blk .{ .u = o.id },
+            .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.id else 0 },
             .n => {
                 assert(interface != null);
-                const new_proxy = proxyCreate(display, interface.?, version);
-                result = new_proxy;
-                continue :arg_type_switch_blk .{ .u = new_proxy.id };
+                const new_object = proxyCreate(&glob_display, interface.?, version);
+                result = new_object;
+                continue :arg_type_switch_blk .{ .u = new_object.id };
             },
             .a => |a| {
                 message.addArg(&payload_used, @intCast(a.len));
@@ -614,7 +627,7 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Object, op: u32, interface: ?*const wl.
         var print_buf: [1024]u8 = undefined;
         var used: usize = 0;
 
-        var p = std.fmt.bufPrint(print_buf[used..], "  -> {s}.{s}(id = {}", .{ proxy.interface.name, proxy.interface.methods[op].name, proxy.id }) catch unreachable;
+        var p = std.fmt.bufPrint(print_buf[used..], "  -> {s}.{s}(id = {}", .{ proxy.interface.name, proxy.interface.requests[op].name, proxy.id }) catch unreachable;
         used += p.len;
 
         var return_id = false;
@@ -625,8 +638,8 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Object, op: u32, interface: ?*const wl.
             }
 
             p = switch (arg) {
-                .o => |o| std.fmt.bufPrint(print_buf[used..], ", id = {}", .{o.proxy.id}) catch unreachable,
-                .@"?o" => |o| std.fmt.bufPrint(print_buf[used..], ", id = {}", .{if (o) |obj| obj.proxy.id else 0}) catch unreachable,
+                .o => |o| std.fmt.bufPrint(print_buf[used..], ", id = {}", .{o.id}) catch unreachable,
+                .@"?o" => |o| std.fmt.bufPrint(print_buf[used..], ", id = {}", .{if (o) |obj| obj.id else 0}) catch unreachable,
                 .i => |i| std.fmt.bufPrint(print_buf[used..], ", {}", .{i}) catch unreachable,
                 .u => |u| std.fmt.bufPrint(print_buf[used..], ", {}", .{u}) catch unreachable,
                 .h => |h| std.fmt.bufPrint(print_buf[used..], ", fd = {}", .{h}) catch unreachable,
@@ -655,24 +668,24 @@ pub fn proxyMarshalArrayFlags(proxy: *wl.Object, op: u32, interface: ?*const wl.
     const payload = std.mem.asBytes(&msg_buf)[0..total_size];
     const fds = fd_buf[0..fds_used];
 
-    const payload_rem = display.send_payload_buf.len - display.send_payload_used;
+    const payload_rem = glob_display.send_payload_buf.len - glob_display.send_payload_used;
 
-    if (payload_rem < payload.len or display.send_fds_used > 0) {
-        displayFlush(display);
-        assert(payload.len <= display.send_payload_buf.len);
+    if (payload_rem < payload.len or glob_display.send_fds_used > 0) {
+        displayFlush(&glob_display);
+        assert(payload.len <= glob_display.send_payload_buf.len);
     }
 
-    const payload_offset = display.send_payload_used;
-    const fd_offset = display.send_fds_used;
+    const payload_offset = glob_display.send_payload_used;
+    const fd_offset = glob_display.send_fds_used;
 
-    @memcpy(display.send_payload_buf[payload_offset .. payload_offset + payload.len], payload);
-    display.send_payload_used += payload.len;
+    @memcpy(glob_display.send_payload_buf[payload_offset .. payload_offset + payload.len], payload);
+    glob_display.send_payload_used += payload.len;
 
     if (fds.len > 0) {
-        @memcpy(display.send_fds_buf[fd_offset .. fd_offset + fds.len], fds);
-        display.send_fds_used += fds.len;
+        @memcpy(glob_display.send_fds_buf[fd_offset .. fd_offset + fds.len], fds);
+        glob_display.send_fds_used += fds.len;
 
-        displayFlush(display);
+        displayFlush(&glob_display);
     }
 
     return @ptrCast(result);

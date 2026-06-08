@@ -1505,8 +1505,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, 
 
         if (std.mem.eql(u8, interface_name, Interface.interface.name)) {
             log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
-            // const proxy = registry.bindTyped(Interface, name, version);
-            const proxy: *Interface = @ptrCast(registry.bind(name, Interface.interface.name, version));
+            const proxy = registry.bindTyped(Interface, name, version);
             @field(wli, target_field_name) = proxy;
             found = true;
 
@@ -1523,8 +1522,7 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, 
             var free_slot_found = false;
             for (&wld.outputs) |*output| {
                 if (output.* == null) {
-                    // const wl_output = registry.bindTyped(wl.Output, name, version);
-                    const wl_output: *wl.Output = @ptrCast(registry.bind(name, interface_name, version));
+                    const wl_output = registry.bindTyped(wl.Output, name, version);
                     output.* = .{
                         .handle = wl_output,
                     };

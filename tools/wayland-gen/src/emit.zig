@@ -143,11 +143,21 @@ const Writer = struct {
 
         try this.emitStaticInterfaceData(interface);
 
+        if (this.core and std.mem.eql(u8, interface.name, "wl_registry")) {
+            try this.appendi(1,
+                \\
+                \\pub inline fn bindTyped(this: *Registry, comptime InterfaceType: type, name: u32, version: u32) *InterfaceType {
+                \\    return @ptrCast(this.bind(name, InterfaceType.interface, version));
+                \\}
+                \\
+            );
+        }
+
         if (interface.requests.len > 0) {
             try this.append("\n");
             for (interface.requests, 0..) |*request, i| {
                 if (i > 0) try this.append("\n");
-                try this.emitRequest(interface, request);
+                try this.emitRequest(interface, request, @intCast(i));
             }
         }
 
@@ -165,18 +175,20 @@ const Writer = struct {
             try this.emitInterfaceListener(interface);
         }
 
-        for (interface.enums) |*@"enum"| {
-            if (@"enum".is_bitfield)
-                try this.emitBitfield(@"enum")
+        var enum_it = interface.enums.iterator();
+        while (enum_it.next()) |entry| {
+            const e = entry.value_ptr;
+            if (e.is_bitfield)
+                try this.emitBitfield(e)
             else
-                try this.emitEnum(@"enum");
+                try this.emitEnum(e);
         }
 
         try this.append("};\n");
     }
 
     fn emitStaticInterfaceData(this: *const Writer, interface: *const AST.Interface) Error!void {
-        try this.appendi(1, "\npub const interface: Interface = .{\n");
+        try this.appendi(1, "\npub const interface: *const Interface = &.{\n");
         try this.appendif(2,
             \\.name = "{s}",
             \\.version = {},
@@ -227,47 +239,94 @@ const Writer = struct {
         try this.appendi(1, "};\n");
     }
 
-    fn emitRequest(this: *const Writer, interface: *const AST.Interface, request: *const AST.Message) Error!void {
+    fn emitRequest(this: *const Writer, interface: *const AST.Interface, request: *const AST.Message, opcode: u32) Error!void {
         try this.appendif(1, "pub fn {s}(this: *{s}", .{
             request.zig_name,
             interface.zig_name,
         });
 
+        var constructor_interface_string: []const u8 = "null";
+        var version_string: []const u8 = "this.object.version";
+        var returns_value = true;
+
+        // signature args
         for (request.args) |*arg| {
-            if (arg.type.tag != .new_id) {
-                try this.appendf(", {s}: {f}", .{ arg.zig_name, fmtArgTypeToZigType(this, arg, this.protocol) });
-            } else if (arg.interface_name == null) {
-                assert(request.is_anonymous_constructor);
-                try this.append(", string_name: []const u8, version: u32");
+            if (arg.type.tag != .n) {
+                try this.appendf(", {s}: {f}", .{ arg.zig_name, fmtArgTypeToZigType(this, arg, interface) });
+            } else {
+                if (arg.interface_name == null) {
+                    assert(request.is_anonymous_constructor);
+                    try this.append(", target_interface: *const Interface, version: u32");
+                    constructor_interface_string = "target_interface";
+                    version_string = "version";
+                } else {
+                    constructor_interface_string = arg.zig_interface_name.?;
+                    assert(std.mem.eql(u8, constructor_interface_string, request.zig_constructor_interface.?));
+                }
             }
         }
 
         try this.append(") ");
 
         if (request.zig_constructor_interface) |constructor_interface_name| {
+            assert(std.mem.eql(u8, constructor_interface_name, constructor_interface_string));
             try this.appendf("*{s}", .{constructor_interface_name});
         } else if (request.is_anonymous_constructor) {
             try this.append("*Object");
         } else {
             try this.append("void");
+            returns_value = false;
         }
 
         try this.append(" {\n");
 
-        try this.appendi(2, "_ = this;\n");
+        try this.appendif(
+            2,
+            "{s} = client.proxyMarshalArrayFlags(@ptrCast(this), {}, {s}{s}, {s}, &.{{\n",
+            .{
+                if (returns_value) "const result" else "_",
+                opcode,
+                constructor_interface_string,
+                if (request.zig_constructor_interface != null) ".interface" else "",
+                version_string,
+            },
+        );
+
         for (request.args) |*arg| {
-            if (arg.type.tag != .new_id) {
-                try this.appendif(2, "_ = {s};\n", .{arg.zig_name});
-            } else if (arg.interface_name == null) {
-                assert(request.is_anonymous_constructor);
-                try this.appendi(2,
-                    \\_ = string_name;
-                    \\_ = version;
-                    \\
-                );
+            try this.appendif(3, ".{{ .{s}{s}{s} = ", .{
+                if (arg.type.allow_null) "@\"?" else "",
+                @tagName(arg.type.tag),
+                if (arg.type.allow_null) "\"" else "",
+            });
+
+            switch (arg.type.tag) {
+                .n => try this.append("0"),
+                .o => try this.appendf("@ptrCast({s})", .{arg.zig_name}),
+                .i, .u => {
+                    if (arg.enum_type) |enum_type| {
+                        if (enum_type.is_bitfield) {
+                            try this.appendf("@bitCast({s})", .{arg.zig_name});
+                        } else {
+                            try this.appendf("@intFromEnum({s})", .{arg.zig_name});
+                        }
+                    } else {
+                        try this.appendf("{s}", .{arg.zig_name});
+                    }
+                },
+                else => {
+                    try this.appendf("{s}", .{arg.zig_name});
+                },
             }
+
+            try this.append(" },\n");
         }
-        try this.appendi(2, "unreachable;\n");
+
+        try this.appendi(2, "});\n");
+
+        if (returns_value) {
+            // TODO: Check if this could be optional
+            try this.appendi(2, "return @ptrCast(result.?);\n");
+        }
 
         try this.appendi(1, "}\n");
     }
@@ -286,7 +345,7 @@ const Writer = struct {
             for (event.args) |arg| {
                 try this.appendf(", {s}: {f}", .{
                     arg.zig_name,
-                    fmtArgTypeToZigType(this, &arg, this.protocol),
+                    fmtArgTypeToZigType(this, &arg, interface),
                 });
             }
 
@@ -418,51 +477,50 @@ const FmtTypeNameToVarName = struct {
     }
 };
 
-pub inline fn fmtArgTypeToZigType(context: *const Writer, arg: *const AST.Arg, protocol: *const AST.Protocol) FmtArgTypeToZigType {
+pub inline fn fmtArgTypeToZigType(context: *const Writer, arg: *const AST.Arg, from_interface: *const AST.Interface) FmtArgTypeToZigType {
     return .{
         .context = context,
         .arg = arg,
-        .protocol = protocol,
+        .from_interface = from_interface,
     };
 }
 const FmtArgTypeToZigType = struct {
     context: *const Writer,
     arg: *const AST.Arg,
-
-    /// Protocol in which this arguments is emitted in
-    protocol: *const AST.Protocol,
+    from_interface: *const AST.Interface,
 
     pub fn format(this: FmtArgTypeToZigType, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const arg_type = this.arg.type;
 
         if (arg_type.allow_null) try writer.writeByte('?');
 
-        if (this.arg.zig_enum_name) |enum_name|
-            try writer.writeAll(enum_name)
-        else if (this.arg.zig_interface_name) |interface_name| {
+        if (this.arg.zig_interface_name) |_| {
             try writer.writeByte('*');
+        }
 
-            if (!this.context.core) {
-                if (this.arg.import_name) |import_name| {
-                    try writer.print("{s}.", .{import_name});
-                }
+        if (!this.context.core) {
+            if (this.arg.import_name) |import_name| {
+                try writer.print("{s}.", .{import_name});
             }
+        }
 
+        if (this.arg.enum_type) |enum_type| {
+            if (enum_type.interface != this.from_interface) {
+                try writer.print("{s}.", .{enum_type.interface.zig_name});
+            }
+            try writer.writeAll(enum_type.zig_name);
+        } else if (this.arg.zig_interface_name) |interface_name| {
             try writer.writeAll(interface_name);
         } else {
-            const type_str = if (this.arg.zig_enum_name) |enum_name|
-                enum_name
-            else if (this.arg.zig_interface_name) |interface_name|
-                interface_name
-            else switch (arg_type.tag) {
-                .int => "i32",
-                .uint => "u32",
-                .fixed => "Fixed",
-                .string => "[]const u8",
-                .object => "*Object",
-                .new_id => "*Object",
-                .array => "[]u32",
-                .fd => "linux.fd_t",
+            const type_str = switch (arg_type.tag) {
+                .i => "i32",
+                .u => "u32",
+                .f => "Fixed",
+                .s => "[]const u8",
+                .o => "*Object",
+                .n => "*Object",
+                .a => "[]u32",
+                .h => "linux.fd_t",
             };
 
             try writer.writeAll(type_str);
