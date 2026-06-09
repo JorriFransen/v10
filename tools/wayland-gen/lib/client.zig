@@ -89,17 +89,10 @@ pub const Message = struct {
 
     header: *Header,
     payload: []u32,
-    fds: []linux.fd_t,
 
     pub fn addArg(this: *Message, offset: *usize, arg: u32) void {
         assert(offset.* < this.payload.len);
         this.payload[offset.*] = arg;
-        offset.* += 1;
-    }
-
-    pub fn addFD(this: *Message, offset: *usize, fd: linux.fd_t) void {
-        assert(offset.* < this.fds.len);
-        this.fds[offset.*] = fd;
         offset.* += 1;
     }
 
@@ -115,13 +108,15 @@ pub const Message = struct {
     }
 
     pub fn getObjectArg(this: *const Message, arg_offset: *usize, display: *Display) ?*Object {
+        assert(display == &glob_display);
+
         const id = this.getUIntArg(arg_offset);
         if (id < 1) return null;
         return getObject(display, id);
     }
 
     pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *Display, interface: *const Interface, version: u32) ?*Object {
-        _ = .{ this, arg_offset, display };
+        assert(display == &glob_display);
 
         const server_id = this.getUIntArg(arg_offset);
 
@@ -179,10 +174,14 @@ pub const Message = struct {
         return result;
     }
 
-    pub fn getFDArg(this: *const Message, fd_offset: *usize) linux.fd_t {
-        assert(fd_offset.* < this.fds.len);
-        const result = this.fds[fd_offset.*];
-        fd_offset.* += 1;
+    pub fn getFDArg(this: *const Message, display: *Display) linux.fd_t {
+        _ = this;
+        assert(display == &glob_display);
+
+        assert(display.fd_dispatch_index < display.receive_fds_used);
+
+        const result = display.receive_fds_buf[display.fd_dispatch_index];
+        display.fd_dispatch_index += 1;
         return result;
     }
 };
@@ -368,7 +367,7 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
                 }
 
                 var current_offset: usize = 0;
-                var fd_dispatch_index: usize = 0;
+                display.fd_dispatch_index = 0;
 
                 while (true) {
                     const receive_remaining = display.receive_payload_buf[current_offset..display.receive_payload_used];
@@ -382,32 +381,9 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
                             const object = getObject(display, header.id);
                             assert(object.id == header.id);
 
-                            var fds: [Message.max_fd_count]linux.fd_t = undefined;
-                            var fd_count: usize = 0;
-
-                            assert(header.op < object.interface.events.len);
-                            // TODO: Store fd_count in the generated interface, so we can just pop that amount here. OR, pop them on demand in the trampolines (might be able to remove signature)
-                            for (0..object.interface.events[header.op].fd_count) |_| {
-                                assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
-                                fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
-                                fd_count += 1;
-                                fd_dispatch_index += 1;
-                            }
-                            // for (object.interface.events[header.op].signature) |arg_type| {
-                            //     if (arg_type == .h) {
-                            //         assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
-                            //         fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
-                            //         fd_count += 1;
-                            //         fd_dispatch_index += 1;
-                            //     }
-                            // }
-                            // assert(object.interface.events[header.op].fd_count == 0);
-                            // _ = &fd_count;
-
                             const message: Message = .{
                                 .header = header,
                                 .payload = payload,
-                                .fds = fds[0..fd_count],
                             };
 
                             trampolines.dispatch(display, &message, object);
@@ -426,10 +402,10 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
                 @memmove(display.receive_payload_buf[0..remaining_byte_count], display.receive_payload_buf[current_offset..display.receive_payload_used]);
                 display.receive_payload_used = remaining_byte_count;
 
-                const remaining_fd_count = display.receive_fds_used - fd_dispatch_index;
-                @memmove(display.receive_fds_buf[0..remaining_fd_count], display.receive_fds_buf[fd_dispatch_index..display.receive_fds_used]);
+                const remaining_fd_count = display.receive_fds_used - display.fd_dispatch_index;
+                @memmove(display.receive_fds_buf[0..remaining_fd_count], display.receive_fds_buf[display.fd_dispatch_index..display.receive_fds_used]);
                 display.receive_fds_used = remaining_fd_count;
-                fd_dispatch_index = 0;
+                display.fd_dispatch_index = 0;
             } else |e| {
                 log.warn("recvmsg error: {}", .{e});
                 result = -1;
@@ -566,7 +542,7 @@ pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interf
         .op = @intCast(op),
     };
 
-    var message: Message = .{ .header = header, .payload = payload_buf, .fds = &fd_buf };
+    var message: Message = .{ .header = header, .payload = payload_buf };
 
     var payload_used: usize = 0;
     var fds_used: usize = 0;
@@ -627,7 +603,11 @@ pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interf
                     message.addArg(&payload_used, last_u32);
                 }
             },
-            .h => message.addFD(&fds_used, arg.h),
+            .h => {
+                assert(fds_used < fd_buf.len);
+                fd_buf[fds_used] = arg.h;
+                fds_used += 1;
+            },
         }
     }
 

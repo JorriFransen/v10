@@ -101,18 +101,27 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
 
             var regular_arg_count: usize = 0;
             var fd_arg_count: usize = 0;
+            var newid_arg_count: usize = 0;
+
             for (types) |t| {
                 try writer.appendf(", {s}{s}", .{
                     if (t.allow_null) "?" else "",
                     basicTypeString(t.tag),
                 });
-                if (t.tag == .h) fd_arg_count += 1 else regular_arg_count += 1;
+
+                switch (t.tag) {
+                    .n => newid_arg_count += 1,
+                    .h => fd_arg_count += 1,
+                    else => regular_arg_count += 1,
+                }
             }
             try writer.append(") void;\n\n");
 
-            if (regular_arg_count > 0) try writer.appendi(1, "var arg_offset: usize = 0;\n");
-            if (fd_arg_count > 0) try writer.appendi(1, "var fd_offset: usize = 0;\n");
-            if (regular_arg_count > 0 or fd_arg_count > 0) try writer.append("\n");
+            if (fd_arg_count + newid_arg_count == 0) {
+                try writer.appendi(1, "if (first_listener_node == null) return 0;\n\n");
+            }
+
+            if (regular_arg_count + newid_arg_count > 0) try writer.appendi(1, "var arg_offset: usize = 0;\n\n");
 
             var object_index: u32 = 0;
 
@@ -132,14 +141,22 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
                         object_index += 1;
                         try writer.appendif(1, "const arg{} = message.getNewIdArg(&arg_offset, display, arg{}_interface, object.version)", .{ n, n });
                     },
-                    .h => try writer.appendif(1, "const arg{} = message.getFDArg(&fd_offset)", .{n}),
+                    .h => try writer.appendif(1, "const arg{} = message.getFDArg(display)", .{n}),
                 }
                 try writer.append(";\n");
             }
 
-            // TODO: Close fd's if not dispatched!
-            // TODO: Make this context aware, place it after all new-ids and fds
-            try writer.appendi(1, "\nif (first_listener_node == null) return 0;\n");
+            if (fd_arg_count + newid_arg_count != 0) {
+                try writer.appendi(1, "\nif (first_listener_node == null) {\n");
+                for (types, 1..) |t, i| {
+                    if (t.tag == .h) try writer.appendif(2, "linux.close(arg{}) catch @panic(\"unhandled fd close failed\");\n", .{i});
+                }
+                try writer.appendi(1,
+                    \\    return 0;
+                    \\}
+                    \\
+                );
+            }
 
             try writer.appendi(1,
                 \\
@@ -267,6 +284,7 @@ const Writer = struct {
                 \\receive_payload_buf: [4096]u8 = undefined,
                 \\receive_fds_used: usize = 0,
                 \\receive_fds_buf: [32]linux.fd_t = undefined,
+                \\fd_dispatch_index: usize = 0,
                 \\
             );
         }
