@@ -277,7 +277,7 @@ const Writer = struct {
             try this.appendi(1,
                 \\
                 \\pub inline fn bindTyped(this: *Registry, comptime InterfaceType: type, name: u32, version: u32) *InterfaceType {
-                \\    return @ptrCast(this.bind(name, &InterfaceType.interface, version));
+                \\    return @ptrCast(this.bind(name, &InterfaceType.interface, @min(version, InterfaceType.interface.version)));
                 \\}
                 \\
             );
@@ -436,14 +436,31 @@ const Writer = struct {
         );
 
         for (request.args) |*arg| {
-            try this.appendif(3, ".{{ .{s}{s}{s} = ", .{
-                if (arg.type.allow_null) "@\"?" else "",
-                @tagName(arg.type.tag),
-                if (arg.type.allow_null) "\"" else "",
-            });
+            var emit_close = true;
+
+            if (arg.type.tag == .n and request.is_anonymous_constructor) {
+                emit_close = false;
+            } else {
+                try this.appendif(3, ".{{ .{s}{s}{s} = ", .{
+                    if (arg.type.allow_null) "@\"?" else "",
+                    @tagName(arg.type.tag),
+                    if (arg.type.allow_null) "\"" else "",
+                });
+            }
 
             switch (arg.type.tag) {
-                .n => try this.append("0"),
+                .n => {
+                    if (request.is_anonymous_constructor) {
+                        try this.appendi(3,
+                            \\.{ .s = target_interface.name },
+                            \\.{ .u = version },
+                            \\.{ .n = 0 },
+                            \\
+                        );
+                    } else {
+                        try this.append("0");
+                    }
+                },
                 .o => try this.appendf("@ptrCast({s})", .{arg.zig_name}),
                 .i, .u => {
                     if (arg.enum_type) |enum_type| {
@@ -461,10 +478,15 @@ const Writer = struct {
                 },
             }
 
-            try this.append(" },\n");
+            if (emit_close) try this.append(" },\n");
         }
 
         try this.appendi(2, "});\n");
+
+        // TODO: Don't hardcode this, this should be done for each destructor on an interface created by a new-id event (server-managed-id)
+        if (this.core and std.mem.eql(u8, interface.name, "wl_data_offer") and std.mem.eql(u8, request.name, "destroy")) {
+            try this.appendi(2, "client.proxyDestroy(@ptrCast(this));\n");
+        }
 
         if (returns_value) {
             // TODO: Check if this could be optional

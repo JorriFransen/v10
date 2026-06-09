@@ -387,6 +387,12 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
 
                             assert(header.op < object.interface.events.len);
                             // TODO: Store fd_count in the generated interface, so we can just pop that amount here. OR, pop them on demand in the trampolines (might be able to remove signature)
+                            for (0..object.interface.events[header.op].fd_count) |_| {
+                                assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
+                                fds[fd_count] = display.receive_fds_buf[fd_dispatch_index];
+                                fd_count += 1;
+                                fd_dispatch_index += 1;
+                            }
                             // for (object.interface.events[header.op].signature) |arg_type| {
                             //     if (arg_type == .h) {
                             //         assert(fd_dispatch_index < display.receive_fds_used); // TODO: report?
@@ -395,8 +401,8 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
                             //         fd_dispatch_index += 1;
                             //     }
                             // }
-                            assert(object.interface.events[header.op].fd_count == 0);
-                            _ = &fd_count;
+                            // assert(object.interface.events[header.op].fd_count == 0);
+                            // _ = &fd_count;
 
                             const message: Message = .{
                                 .header = header,
