@@ -41,6 +41,8 @@ pub const Message = struct {
     is_anonymous_constructor: bool = false,
     /// valid after resolving
     fd_count: usize = 0,
+    /// valid after resolving
+    signature: []const u8 = "XXX_UNRESOLVED_MESSAGE_SIGNATURE__X_X_X_",
 };
 
 pub const Arg = struct {

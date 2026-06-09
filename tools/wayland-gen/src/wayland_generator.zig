@@ -23,6 +23,7 @@ pub const Context = struct {
     stdout: *std.Io.Writer,
 
     interface_to_protocol_map: std.StringHashMap(*const AST.Protocol),
+    signatures: std.StringHashMap([]AST.Type),
 };
 
 var stderr_buf: [2048]u8 = undefined;
@@ -51,6 +52,7 @@ pub fn main(init: std.process.Init) !u8 {
         .stderr = &stderr_writer.interface,
         .stdout = &stdout_writer.interface,
         .interface_to_protocol_map = .init(arena),
+        .signatures = .init(arena),
     };
 
     run(&context) catch |e| {

@@ -47,16 +47,144 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
         writer.file_writer = &file_writer.interface;
 
         try writer.append(
-            \\const wl = @import("wayland.zig");
-            \\const client = @import("client.zig");
+            \\const std = @import("std");
+            \\const assert = std.debug.assert;
             \\
-            \\pub inline fn dispatch(display: *wl.Display, message: *const client.Message, object: *wl.Object) void {
-            \\    _ = display;
-            \\    _ = message;
-            \\    _ = object;
-            \\    unreachable;
-            \\}
+            \\const linux = @import("linux");
+            \\
+            \\const client = @import("client.zig");
+            \\const Display = client.Display;
+            \\const Message = client.Message;
+            \\const Object = client.Object;
+            \\const Fixed = client.Fixed;
+            \\const RegisteredListener = client.RegisteredListener;
+            \\
+            \\pub inline fn dispatch(display: *Display, message: *const Message, object: *Object) void {
+            \\    const event = &object.interface.events[message.header.op];
+            \\
+            \\    const first_listener_node = object.listeners.first;
+            \\
+            \\    _ = switch (event.signature) {
+            \\
         );
+
+        var tmp_arena = std.heap.ArenaAllocator.init(context.arena);
+        defer tmp_arena.deinit();
+        const tmp = tmp_arena.allocator();
+
+        var sig_it = context.signatures.iterator();
+        while (sig_it.next()) |entry| {
+            const trampoline_name_raw = try std.mem.concat(tmp, u8, &.{ "trampoline_", entry.key_ptr.* });
+            try writer.appendif(2, ".{f} => {f}(display, object, first_listener_node, message", .{
+                std.zig.fmtId(entry.key_ptr.*),
+                std.zig.fmtId(trampoline_name_raw),
+            });
+            try writer.append("),\n");
+        }
+
+        try writer.append(
+            \\    };
+            \\}
+            \\
+        );
+
+        sig_it = context.signatures.iterator();
+        while (sig_it.next()) |entry| {
+            const sig = entry.key_ptr.*;
+            const types = entry.value_ptr.*;
+
+            const trampoline_name_raw = try std.mem.concat(tmp, u8, &.{ "trampoline_", sig });
+
+            try writer.appendf("\ninline fn {f}(display: *Display, object: *Object, first_listener_node: ?*const std.SinglyLinkedList.Node, message: *const Message) u32 {{\n", .{std.zig.fmtId(trampoline_name_raw)});
+            try writer.appendi(1, "_ = .{display};\n");
+            try writer.appendi(1, "const HandlerType = *const fn (?*anyopaque, *Object");
+
+            var regular_arg_count: usize = 0;
+            var fd_arg_count: usize = 0;
+            for (types) |t| {
+                try writer.appendf(", {s}{s}", .{
+                    if (t.allow_null) "?" else "",
+                    basicTypeString(t.tag),
+                });
+                if (t.tag == .h) fd_arg_count += 1 else regular_arg_count += 1;
+            }
+            try writer.append(") void;\n\n");
+
+            if (regular_arg_count > 0) try writer.appendi(1, "var arg_offset: usize = 0;\n");
+            if (fd_arg_count > 0) try writer.appendi(1, "var fd_offset: usize = 0;\n");
+            if (regular_arg_count > 0 or fd_arg_count > 0) try writer.append("\n");
+
+            var object_index: u32 = 0;
+
+            for (types, 1..) |t, n| {
+                switch (t.tag) {
+                    .i => try writer.appendif(1, "const arg{} = message.getIntArg(&arg_offset)", .{n}),
+                    .u => try writer.appendif(1, "const arg{} = message.getUIntArg(&arg_offset)", .{n}),
+                    .f => try writer.appendif(1, "const arg{} = message.getFixedArg(&arg_offset)", .{n}),
+                    .s => try writer.appendif(1, "const arg{} = message.getStringArg(&arg_offset)", .{n}),
+                    .a => try writer.appendif(1, "const arg{} = message.getArrayArg(&arg_offset)", .{n}),
+                    .o => {
+                        object_index += 1;
+                        try writer.appendif(1, "const arg{} = message.getObjectArg(&arg_offset, display)", .{n});
+                    },
+                    .n => {
+                        try writer.appendif(1, "const arg{}_interface = object.interface.events[message.header.op].object_types[{}];\n", .{ n, object_index });
+                        object_index += 1;
+                        try writer.appendif(1, "const arg{} = message.getNewIdArg(&arg_offset, display, arg{}_interface, object.version)", .{ n, n });
+                    },
+                    .h => try writer.appendif(1, "const arg{} = message.getFDArg(&fd_offset)", .{n}),
+                }
+                try writer.append(";\n");
+            }
+
+            // TODO: Close fd's if not dispatched!
+            // TODO: Make this context aware, place it after all new-ids and fds
+            try writer.appendi(1, "\nif (first_listener_node == null) return 0;\n");
+
+            try writer.appendi(1,
+                \\
+                \\var listener_count: u32 = 0;
+                \\var cnode = first_listener_node;
+                \\
+                \\while (cnode) |node| {
+                \\    const next = node.next;
+                \\    const listener: *const RegisteredListener = @fieldParentPtr("node", node);
+                \\    assert(message.header.op < listener.implementation.len);
+                \\    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
+                \\
+                \\    listener_count += 1;
+                \\    handler(listener.user_data, @ptrCast(object)
+            );
+
+            for (types, 1..) |t, n| {
+                if (!t.allow_null) {
+                    switch (t.tag) {
+                        .o, .n => try writer.appendf(", arg{}.?", .{n}),
+                        else => try writer.appendf(", arg{}", .{n}),
+                    }
+                } else {
+                    try writer.appendf(", arg{}", .{n});
+                }
+            }
+
+            try writer.append(");\n");
+            try writer.appendi(1,
+                \\    cnode = next;
+                \\}
+                \\
+                \\return listener_count;
+                \\
+            );
+            try writer.append("}\n");
+        }
+
+        try writer.append("\npub const Signature = enum {\n");
+
+        sig_it = context.signatures.iterator();
+        while (sig_it.next()) |entry| {
+            try writer.appendif(1, "{f},\n", .{std.zig.fmtId(entry.key_ptr.*)});
+        }
+        try writer.append("};\n");
 
         try file_writer.flush();
     } else |e| return e;
@@ -81,6 +209,8 @@ const Writer = struct {
             \\pub const Interface = client.Interface;
             \\pub const Fixed = client.Fixed;
             \\
+            \\const trampolines = @import("trampolines.zig");
+            \\const Signature = trampolines.Signature;
             \\
         );
 
@@ -147,7 +277,7 @@ const Writer = struct {
             try this.appendi(1,
                 \\
                 \\pub inline fn bindTyped(this: *Registry, comptime InterfaceType: type, name: u32, version: u32) *InterfaceType {
-                \\    return @ptrCast(this.bind(name, InterfaceType.interface, version));
+                \\    return @ptrCast(this.bind(name, &InterfaceType.interface, version));
                 \\}
                 \\
             );
@@ -188,7 +318,7 @@ const Writer = struct {
     }
 
     fn emitStaticInterfaceData(this: *const Writer, interface: *const AST.Interface) Error!void {
-        try this.appendi(1, "\npub const interface: *const Interface = &.{\n");
+        try this.appendi(1, "\npub const interface: Interface = .{\n");
         try this.appendif(2,
             \\.name = "{s}",
             \\.version = {},
@@ -199,16 +329,7 @@ const Writer = struct {
         });
         for (interface.requests, 0..) |*request, i| {
             if (i > 0) try this.append(",");
-            try this.append(" .{\n");
-            try this.appendif(3,
-                \\.name = "{s}",
-                \\.fd_count = {},
-                \\
-            , .{
-                request.name,
-                request.fd_count,
-            });
-            try this.appendi(2, "}");
+            try this.emitStaticMessageData(interface, request, false);
         }
         if (interface.requests.len > 0) {
             try this.append(" },\n");
@@ -219,16 +340,7 @@ const Writer = struct {
         try this.appendi(2, ".events = &.{");
         for (interface.events, 0..) |*event, i| {
             if (i > 0) try this.append(",");
-            try this.append(" .{\n");
-            try this.appendif(3,
-                \\.name = "{s}",
-                \\.fd_count = {},
-                \\
-            , .{
-                event.name,
-                event.fd_count,
-            });
-            try this.appendi(2, "}");
+            try this.emitStaticMessageData(interface, event, true);
         }
         if (interface.events.len > 0) {
             try this.append(" },\n");
@@ -237,6 +349,36 @@ const Writer = struct {
         }
 
         try this.appendi(1, "};\n");
+    }
+
+    fn emitStaticMessageData(this: *const Writer, interface: *const AST.Interface, message: *const AST.Message, object_types: bool) Error!void {
+        try this.append(" .{\n");
+        try this.appendif(3,
+            \\.name = "{s}",
+            \\.signature = .{f},
+            \\.fd_count = {},
+            \\.object_types = &.{{
+        , .{
+            message.name,
+            std.zig.fmtId(message.signature),
+            message.fd_count,
+        });
+
+        if (object_types) {
+            var obj_type_count: usize = 0;
+            for (message.args) |*arg| {
+                if (arg.zig_interface_name) |_| {
+                    if (obj_type_count > 0) try this.append(",");
+                    try this.appendf(" &{f}.interface", .{fmtArgTypeToZigType(this, arg, interface, false)});
+                    obj_type_count += 1;
+                }
+            }
+            if (obj_type_count > 0) try this.append(" ");
+        }
+
+        try this.append("},\n");
+
+        try this.appendi(2, "}");
     }
 
     fn emitRequest(this: *const Writer, interface: *const AST.Interface, request: *const AST.Message, opcode: u32) Error!void {
@@ -252,7 +394,7 @@ const Writer = struct {
         // signature args
         for (request.args) |*arg| {
             if (arg.type.tag != .n) {
-                try this.appendf(", {s}: {f}", .{ arg.zig_name, fmtArgTypeToZigType(this, arg, interface) });
+                try this.appendf(", {s}: {f}", .{ arg.zig_name, fmtArgTypeToZigType(this, arg, interface, true) });
             } else {
                 if (arg.interface_name == null) {
                     assert(request.is_anonymous_constructor);
@@ -282,10 +424,11 @@ const Writer = struct {
 
         try this.appendif(
             2,
-            "{s} = client.proxyMarshalArrayFlags(@ptrCast(this), {}, {s}{s}, {s}, &.{{\n",
+            "{s} = client.proxyMarshalArrayFlags(@ptrCast(this), {}, {s}{s}{s}, {s}, &.{{\n",
             .{
                 if (returns_value) "const result" else "_",
                 opcode,
+                if (request.zig_constructor_interface != null) "&" else "",
                 constructor_interface_string,
                 if (request.zig_constructor_interface != null) ".interface" else "",
                 version_string,
@@ -345,7 +488,7 @@ const Writer = struct {
             for (event.args) |arg| {
                 try this.appendf(", {s}: {f}", .{
                     arg.zig_name,
-                    fmtArgTypeToZigType(this, &arg, interface),
+                    fmtArgTypeToZigType(this, &arg, interface, true),
                 });
             }
 
@@ -477,25 +620,29 @@ const FmtTypeNameToVarName = struct {
     }
 };
 
-pub inline fn fmtArgTypeToZigType(context: *const Writer, arg: *const AST.Arg, from_interface: *const AST.Interface) FmtArgTypeToZigType {
+pub inline fn fmtArgTypeToZigType(context: *const Writer, arg: *const AST.Arg, from_interface: *const AST.Interface, pointer: bool) FmtArgTypeToZigType {
     return .{
         .context = context,
         .arg = arg,
         .from_interface = from_interface,
+        .pointer = pointer,
     };
 }
 const FmtArgTypeToZigType = struct {
     context: *const Writer,
     arg: *const AST.Arg,
     from_interface: *const AST.Interface,
+    pointer: bool,
 
     pub fn format(this: FmtArgTypeToZigType, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const arg_type = this.arg.type;
 
-        if (arg_type.allow_null) try writer.writeByte('?');
+        if (this.pointer) {
+            if (arg_type.allow_null) try writer.writeByte('?');
 
-        if (this.arg.zig_interface_name) |_| {
-            try writer.writeByte('*');
+            if (this.arg.zig_interface_name) |_| {
+                try writer.writeByte('*');
+            }
         }
 
         if (!this.context.core) {
@@ -512,18 +659,20 @@ const FmtArgTypeToZigType = struct {
         } else if (this.arg.zig_interface_name) |interface_name| {
             try writer.writeAll(interface_name);
         } else {
-            const type_str = switch (arg_type.tag) {
-                .i => "i32",
-                .u => "u32",
-                .f => "Fixed",
-                .s => "[]const u8",
-                .o => "*Object",
-                .n => "*Object",
-                .a => "[]u32",
-                .h => "linux.fd_t",
-            };
-
-            try writer.writeAll(type_str);
+            try writer.writeAll(basicTypeString(arg_type.tag));
         }
     }
 };
+
+inline fn basicTypeString(tag: AST.TypeTag) []const u8 {
+    return switch (tag) {
+        .i => "i32",
+        .u => "u32",
+        .f => "Fixed",
+        .s => "[]const u8",
+        .o => "*Object",
+        .n => "*Object",
+        .a => "[]u32",
+        .h => "linux.fd_t",
+    };
+}

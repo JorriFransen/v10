@@ -6,10 +6,11 @@ const builtin = @import("builtin");
 
 const linux = @import("linux");
 
-const wl = @import("wayland.zig");
+const core = @import("wayland.zig");
 const trampolines = @import("trampolines.zig");
+const Signature = trampolines.Signature;
 
-const Display = wl.Display;
+pub const Display = core.Display;
 
 comptime {
     if (options.verbose_wayland and builtin.mode != .Debug) {
@@ -41,7 +42,9 @@ pub const Interface = struct {
 
     pub const Message = struct {
         name: []const u8,
+        signature: Signature,
         fd_count: usize,
+        object_types: []const *const Interface,
     };
 };
 
@@ -111,13 +114,13 @@ pub const Message = struct {
         return result;
     }
 
-    pub fn getObjectArg(this: *const Message, arg_offset: *usize, display: *Display) ?*wl.Object {
+    pub fn getObjectArg(this: *const Message, arg_offset: *usize, display: *Display) ?*Object {
         const id = this.getUIntArg(arg_offset);
         if (id < 1) return null;
         return getObject(display, id);
     }
 
-    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *Display, interface: *const wl.Interface, version: u32) ?*wl.Object {
+    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *Display, interface: *const Interface, version: u32) ?*Object {
         _ = .{ this, arg_offset, display };
 
         const server_id = this.getUIntArg(arg_offset);
@@ -126,14 +129,13 @@ pub const Message = struct {
             if (id.* == 0) {
                 id.* = server_id;
                 const result = &glob_display.server_objects[idx];
-                result.* = .{ .object = .{
+                result.* = .{
                     .id = server_id,
                     .version = version,
                     .interface = interface,
-                    .display = display,
                     .freelist_node = .{},
                     .listeners = .{},
-                } };
+                };
                 return result;
             }
         }
@@ -142,7 +144,7 @@ pub const Message = struct {
         @panic("Out of server objects");
     }
 
-    pub fn getFixedArg(this: *const Message, arg_offset: *usize) wl.Fixed {
+    pub fn getFixedArg(this: *const Message, arg_offset: *usize) Fixed {
         return .{ .value = @bitCast(this.getUIntArg(arg_offset)) };
     }
 
@@ -161,7 +163,7 @@ pub const Message = struct {
         return result;
     }
 
-    pub fn getArrayArg(this: *const Message, arg_offset: *usize) wl.Array {
+    pub fn getArrayArg(this: *const Message, arg_offset: *usize) []u32 {
         const length = this.getUIntArg(arg_offset);
         assert(length % @sizeOf(u32) == 0);
 
@@ -228,7 +230,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
             glob_display.objects[0] = .{
                 .id = 1,
                 .version = Display.interface.version,
-                .interface = Display.interface,
+                .interface = &Display.interface,
                 .freelist_node = .{},
             };
             glob_display.free_objects = .{ .first = &glob_display.objects[0].freelist_node };
@@ -251,7 +253,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
                 server_obj.* = .{ .id = 0, .version = Display.interface.version, .interface = undefined, .freelist_node = .{} };
             }
 
-            const display_object = proxyCreate(&glob_display, Display.interface, Display.interface.version);
+            const display_object = proxyCreate(&glob_display, &Display.interface, Display.interface.version);
             glob_display.object = display_object.*;
 
             glob_display.free_listeners = .{ .first = &glob_display.listeners[0].node };
@@ -287,7 +289,7 @@ pub fn displayRoundtrip(display: *Display) usize {
     const sync_callback = display.sync();
 
     var done = false;
-    const display_roundtrip_done_listener = wl.Callback.Listener{
+    const display_roundtrip_done_listener = core.Callback.Listener{
         .done = &displayRoundtripSyncDoneHandler,
     };
     sync_callback.addListener(&display_roundtrip_done_listener, &done);
@@ -304,7 +306,7 @@ pub fn displayRoundtrip(display: *Display) usize {
     return dispatched_count;
 }
 
-fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl.Callback, _: u32) void {
+fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*core.Callback, _: u32) void {
     const done_ptr: *bool = @ptrCast(data);
     done_ptr.* = true;
 }
@@ -497,11 +499,11 @@ pub fn displayFlush(display: *Display) void {
     verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.object.id, payload_size, fds_count });
 }
 
-pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u32) *wl.Object {
+pub fn proxyCreate(display: *Display, interface: *const Interface, version: u32) *Object {
     assert(display == &glob_display);
     assert(display.free_objects.first != null);
 
-    const result: *wl.Object = @fieldParentPtr("freelist_node", display.free_objects.popFirst().?);
+    const result: *Object = @fieldParentPtr("freelist_node", display.free_objects.popFirst().?);
     const id = result.id;
 
     result.* = .{
@@ -515,7 +517,7 @@ pub fn proxyCreate(display: *Display, interface: *const wl.Interface, version: u
     return result;
 }
 
-pub fn proxyDestroy(object: *wl.Object) void {
+pub fn proxyDestroy(object: *Object) void {
     while (object.listeners.popFirst()) |node| {
         glob_display.free_listeners.prepend(node);
     }
@@ -546,7 +548,7 @@ pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interf
 
     assert(proxy.interface.requests.len > op);
 
-    var result: ?*wl.Object = null;
+    var result: ?*Object = null;
 
     var msg_buf: [128 + (@sizeOf(Message.Header) / @sizeOf(u32))]u32 align(@alignOf(Message.Header)) = undefined;
     const header: *Message.Header = @ptrCast(&msg_buf);
@@ -691,10 +693,10 @@ pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interf
     return @ptrCast(result);
 }
 
-pub fn proxyAddListener(object: *wl.Object, implementation: []const *const fn () void, user_data: ?*anyopaque) void {
+pub fn proxyAddListener(object: *Object, implementation: []const *const fn () void, user_data: ?*anyopaque) void {
     assert(glob_display.free_listeners.first != null);
 
-    const listener: *wl.RegisteredListener = @fieldParentPtr("node", glob_display.free_listeners.popFirst().?);
+    const listener: *RegisteredListener = @fieldParentPtr("node", glob_display.free_listeners.popFirst().?);
     listener.* = .{
         .user_data = user_data,
         .implementation = implementation,
@@ -703,7 +705,7 @@ pub fn proxyAddListener(object: *wl.Object, implementation: []const *const fn ()
     object.listeners.prepend(&listener.node);
 }
 
-fn handleDisplayError(user_data: ?*anyopaque, display: ?*Display, object_id: ?*wl.Object, code: u32, message: []const u8) void {
+fn handleDisplayError(user_data: ?*anyopaque, display: ?*Display, object_id: ?*Object, code: u32, message: []const u8) void {
     _ = .{ user_data, display, object_id, code, message };
     log.err("Wayland error: {s}", .{message});
     @panic(message);
@@ -721,7 +723,7 @@ fn handleDeleteId(_: ?*anyopaque, display: *Display, id: u32) void {
     proxyDestroy(proxy);
 }
 
-fn getObject(display: *Display, id: u32) *wl.Object {
+fn getObject(display: *Display, id: u32) *Object {
     assert(display == &glob_display);
     assert(id != 0);
 

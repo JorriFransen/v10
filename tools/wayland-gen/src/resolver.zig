@@ -47,7 +47,7 @@ fn resolveInterface(context: *Context, protocol: *AST.Protocol, interface: *AST.
     }
 }
 
-fn resolveRequest(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, request: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveRequest(context: *Context, protocol: *AST.Protocol, interface: *const AST.Interface, request: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     try resolveMessage(context, protocol, interface, request, core, tmp);
 
     var return_type: ?[]const u8 = null;
@@ -70,12 +70,15 @@ fn resolveRequest(context: *const Context, protocol: *AST.Protocol, interface: *
     request.is_anonymous_constructor = is_anonymous_constructor;
 }
 
-fn resolveEvent(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, event: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveEvent(context: *Context, protocol: *AST.Protocol, interface: *const AST.Interface, event: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     try resolveMessage(context, protocol, interface, event, core, tmp);
 }
 
-fn resolveMessage(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, message: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *const AST.Interface, message: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     message.zig_name = try toZigFunctionName(context, tmp, message.name);
+
+    var signature: std.ArrayList(u8) = .empty;
+    defer signature.deinit(context.arena);
 
     for (message.args) |*arg| {
         try resolveArg(context, protocol, interface, message, arg, core, tmp);
@@ -83,6 +86,32 @@ fn resolveMessage(context: *const Context, protocol: *AST.Protocol, interface: *
         if (arg.type.tag == .h) {
             message.fd_count += 1;
         }
+
+        if (arg.type.allow_null) try signature.append(context.arena, '?');
+        const tag_str = @tagName(arg.type.tag);
+        assert(tag_str.len == 1);
+        try signature.append(context.arena, tag_str[0]);
+    }
+
+    const sig = if (signature.items.len > 0)
+        try signature.toOwnedSlice(context.arena)
+    else
+        "_";
+
+    const sig_entry = try context.signatures.getOrPut(sig);
+    if (sig_entry.found_existing) {
+        if (!std.mem.eql(u8, "_", sig)) context.arena.free(sig);
+        message.signature = sig_entry.key_ptr.*;
+    } else {
+        const types = try context.arena.alloc(AST.Type, message.args.len);
+        for (message.args, types) |arg, *t| {
+            t.* = arg.type;
+        }
+
+        sig_entry.key_ptr.* = sig;
+        sig_entry.value_ptr.* = types;
+
+        message.signature = sig;
     }
 }
 
