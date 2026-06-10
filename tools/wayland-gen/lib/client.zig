@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.@"wayland-client");
 const assert = std.debug.assert;
 const options = @import("options");
+
 const builtin = @import("builtin");
 
 const linux = @import("linux");
@@ -32,6 +33,7 @@ pub const Object = struct {
     interface: *const Interface,
     freelist_node: std.SinglyLinkedList.Node = .{},
     listeners: std.SinglyLinkedList = .{},
+    zombie: bool,
 };
 
 pub const Interface = struct {
@@ -45,6 +47,7 @@ pub const Interface = struct {
         signature: Signature,
         fd_count: usize,
         object_types: []const *const Interface,
+        is_destructor: bool,
     };
 };
 
@@ -115,24 +118,52 @@ pub const Message = struct {
         return getObject(display, id);
     }
 
-    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *Display, interface: *const Interface, version: u32) ?*Object {
+    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *Display, interface: *const Interface, version: u32) *Object {
         assert(display == &glob_display);
 
         const server_id = this.getUIntArg(arg_offset);
+        var result: ?*Object = null;
 
-        for (&glob_display.server_object_ids, 0..) |*id, idx| {
-            if (id.* == 0) {
-                id.* = server_id;
-                const result = &glob_display.server_objects[idx];
-                result.* = .{
-                    .id = server_id,
-                    .version = version,
-                    .interface = interface,
-                    .freelist_node = .{},
-                    .listeners = .{},
-                };
-                return result;
+        // Check for matching zombie
+        for (&glob_display.server_objects) |*obj| {
+            if (obj.id == server_id) {
+                if (obj.zombie) {
+                    result = obj;
+                    break;
+                } else @panic("Server managed id collision");
             }
+        }
+
+        if (result == null) {
+            // Check for unused object
+            for (&glob_display.server_objects) |*obj| {
+                if (obj.id == 0) {
+                    result = obj;
+                    break;
+                }
+            }
+
+            if (result == null) {
+                // Reuse zombie object
+                for (&glob_display.server_objects) |*obj| {
+                    if (obj.zombie) {
+                        result = obj;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (result) |obj| {
+            obj.* = .{
+                .id = server_id,
+                .version = version,
+                .interface = interface,
+                .freelist_node = .{},
+                .listeners = .{},
+                .zombie = false,
+            };
+            return obj;
         }
 
         log.err("Out of server objects", .{});
@@ -231,6 +262,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
                 .version = Display.interface.version,
                 .interface = &Display.interface,
                 .freelist_node = .{},
+                .zombie = false,
             };
             glob_display.free_objects = .{ .first = &glob_display.objects[0].freelist_node };
 
@@ -238,21 +270,27 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
             for (glob_display.objects[1..], 2..) |*obj, id| {
                 obj.* = .{
                     .id = @intCast(id),
-                    .version = Display.interface.version,
+                    .version = 0,
                     .interface = undefined,
                     .freelist_node = .{},
+                    .zombie = false,
                 };
                 last_node.insertAfter(&obj.freelist_node);
                 last_node = &obj.freelist_node;
             }
             last_node.next = null;
 
-            for (glob_display.server_object_ids[0..], glob_display.server_objects[0..]) |*id, *server_obj| {
-                id.* = 0;
-                server_obj.* = .{ .id = 0, .version = Display.interface.version, .interface = undefined, .freelist_node = .{} };
+            for (glob_display.server_objects[0..]) |*server_obj| {
+                server_obj.* = .{
+                    .id = 0,
+                    .version = 0,
+                    .interface = undefined,
+                    .freelist_node = .{},
+                    .zombie = false,
+                };
             }
 
-            const display_object = proxyCreate(&glob_display, &Display.interface, Display.interface.version);
+            const display_object = createClientObject(&glob_display, &Display.interface, Display.interface.version);
             glob_display.object = display_object.*;
 
             glob_display.free_listeners = .{ .first = &glob_display.listeners[0].node };
@@ -481,7 +519,7 @@ pub fn displayFlush(display: *Display) void {
     verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.object.id, payload_size, fds_count });
 }
 
-pub fn proxyCreate(display: *Display, interface: *const Interface, version: u32) *Object {
+pub inline fn createClientObject(display: *Display, interface: *const Interface, version: u32) *Object {
     assert(display == &glob_display);
     assert(display.free_objects.first != null);
 
@@ -494,41 +532,36 @@ pub fn proxyCreate(display: *Display, interface: *const Interface, version: u32)
         .interface = interface,
         .freelist_node = .{},
         .listeners = .{},
+        .zombie = false,
     };
 
     return result;
 }
 
-pub fn proxyDestroy(object: *Object) void {
+pub inline fn destroyClientObject(object: *Object) void {
+    assert(object.id < 0xff000000);
+
+    assert(object.id < glob_display.objects.len);
+    assert(object.id != 1);
+
+    glob_display.free_objects.prepend(&object.freelist_node);
+}
+
+pub inline fn markZombieObject(object: *Object) void {
     while (object.listeners.popFirst()) |node| {
         glob_display.free_listeners.prepend(node);
     }
 
-    if (object.id < 0xff000000) {
-        assert(object.id < glob_display.objects.len);
-        assert(object.id != 1);
-
-        glob_display.free_objects.prepend(&object.freelist_node);
-    } else {
-        for (&glob_display.server_object_ids, 0..) |*server_id, idx| {
-            if (object.id == server_id.*) {
-                server_id.* = 0;
-                glob_display.server_objects[idx] = .{
-                    .id = 0,
-                    .version = 0,
-                    .interface = undefined,
-                    .freelist_node = .{},
-                };
-            }
-        }
-    }
+    object.zombie = true;
 }
 
 // TODO: move new-id allocation into the requests, remove interface parameter
-pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interface, version: u32, args: []const Argument) ?*Object {
+pub fn proxyMarshalArrayFlags(object: *Object, op: u32, interface: ?*const Interface, version: u32, args: []const Argument) ?*Object {
     assert(glob_connected);
 
-    assert(proxy.interface.requests.len > op);
+    if (object.zombie) @panic("Calling request on zombie object");
+
+    assert(object.interface.requests.len > op);
 
     var result: ?*Object = null;
 
@@ -538,7 +571,7 @@ pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interf
     var fd_buf: [Message.max_fd_count]linux.fd_t = undefined;
 
     header.* = .{
-        .id = proxy.id,
+        .id = object.id,
         .op = @intCast(op),
     };
 
@@ -580,7 +613,7 @@ pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interf
             .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.id else 0 },
             .n => {
                 assert(interface != null);
-                const new_object = proxyCreate(&glob_display, interface.?, version);
+                const new_object = createClientObject(&glob_display, interface.?, version);
                 result = new_object;
                 continue :arg_type_switch_blk .{ .u = new_object.id };
             },
@@ -615,7 +648,7 @@ pub fn proxyMarshalArrayFlags(proxy: *Object, op: u32, interface: ?*const Interf
         var print_buf: [1024]u8 = undefined;
         var used: usize = 0;
 
-        var p = std.fmt.bufPrint(print_buf[used..], "  -> {s}.{s}(id = {}", .{ proxy.interface.name, proxy.interface.requests[op].name, proxy.id }) catch unreachable;
+        var p = std.fmt.bufPrint(print_buf[used..], "  -> {s}.{s}(id = {}", .{ object.interface.name, object.interface.requests[op].name, object.id }) catch unreachable;
         used += p.len;
 
         var return_id = false;
@@ -703,10 +736,10 @@ fn handleDeleteId(_: ?*anyopaque, display: *Display, id: u32) void {
     assert(id != 1);
     assert(id <= glob_display.objects.len);
 
-    const proxy = getObject(&glob_display, id);
-    assert(proxy.id == id);
+    const object = getObject(&glob_display, id);
+    assert(object.id == id);
 
-    proxyDestroy(proxy);
+    destroyClientObject(object);
 }
 
 fn getObject(display: *Display, id: u32) *Object {
@@ -718,8 +751,8 @@ fn getObject(display: *Display, id: u32) *Object {
         if (id == 1) return @ptrCast(display);
         return &display.objects[id - 1];
     } else {
-        for (glob_display.server_object_ids, 0..) |server_id, idx| {
-            if (id == server_id) return &display.server_objects[idx];
+        for (&display.server_objects) |*server_obj| {
+            if (id == server_obj.id) return server_obj;
         }
         @panic("Server side id object not found");
     }

@@ -31,10 +31,6 @@ fn resolveInterface(context: *Context, protocol: *AST.Protocol, interface: *AST.
 
     for (interface.requests) |*message| {
         try resolveRequest(context, protocol, interface, message, core, tmp.arena);
-        if (message.is_destructor) {
-            assert(!interface.has_destructor);
-            interface.has_destructor = true;
-        }
     }
 
     for (interface.events) |*message| {
@@ -47,7 +43,7 @@ fn resolveInterface(context: *Context, protocol: *AST.Protocol, interface: *AST.
     }
 }
 
-fn resolveRequest(context: *Context, protocol: *AST.Protocol, interface: *const AST.Interface, request: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveRequest(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, request: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     try resolveMessage(context, protocol, interface, request, core, tmp);
 
     var return_type: ?[]const u8 = null;
@@ -70,11 +66,11 @@ fn resolveRequest(context: *Context, protocol: *AST.Protocol, interface: *const 
     request.is_anonymous_constructor = is_anonymous_constructor;
 }
 
-fn resolveEvent(context: *Context, protocol: *AST.Protocol, interface: *const AST.Interface, event: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveEvent(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, event: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     try resolveMessage(context, protocol, interface, event, core, tmp);
 }
 
-fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *const AST.Interface, message: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
+fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, message: *AST.Message, core: bool, tmp: *mem.Arena) Error!void {
     message.zig_name = try toZigFunctionName(context, tmp, message.name);
 
     var signature: std.ArrayList(u8) = .empty;
@@ -112,6 +108,11 @@ fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *const 
         sig_entry.value_ptr.* = types;
 
         message.signature = sig;
+    }
+
+    if (message.is_destructor) {
+        assert(!interface.has_destructor);
+        interface.has_destructor = true;
     }
 }
 

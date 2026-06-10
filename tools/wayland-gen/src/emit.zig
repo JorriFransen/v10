@@ -84,6 +84,8 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
 
         try writer.append(
             \\    };
+            \\
+            \\    if (event.is_destructor) client.markZombieObject(object);
             \\}
             \\
         );
@@ -118,7 +120,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             try writer.append(") void;\n\n");
 
             if (fd_arg_count + newid_arg_count == 0) {
-                try writer.appendi(1, "if (first_listener_node == null) return 0;\n\n");
+                try writer.appendi(1, "if (object.zombie or first_listener_node == null) return 0;\n\n");
             }
 
             if (regular_arg_count + newid_arg_count > 0) try writer.appendi(1, "var arg_offset: usize = 0;\n\n");
@@ -147,7 +149,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             }
 
             if (fd_arg_count + newid_arg_count != 0) {
-                try writer.appendi(1, "\nif (first_listener_node == null) {\n");
+                try writer.appendi(1, "\nif (object.zombie or first_listener_node == null) {\n");
                 for (types, 1..) |t, i| {
                     if (t.tag == .h) try writer.appendif(2, "linux.close(arg{}) catch @panic(\"unhandled fd close failed\");\n", .{i});
                 }
@@ -176,7 +178,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             for (types, 1..) |t, n| {
                 if (!t.allow_null) {
                     switch (t.tag) {
-                        .o, .n => try writer.appendf(", arg{}.?", .{n}),
+                        .o => try writer.appendf(", arg{}.?", .{n}),
                         else => try writer.appendf(", arg{}", .{n}),
                     }
                 } else {
@@ -269,7 +271,6 @@ const Writer = struct {
                 \\objects: [64]Object = undefined,
                 \\free_objects: std.SinglyLinkedList = .{},
                 \\
-                \\server_object_ids: [16]u32 = undefined,
                 \\server_objects: [16]Object = undefined,
                 \\
                 \\listeners: [32]RegisteredListener = std.mem.zeroes([32]RegisteredListener),
@@ -313,7 +314,8 @@ const Writer = struct {
             try this.appendif(1,
                 \\
                 \\pub inline fn destroy(self: *{s}) void {{
-                \\    client.proxyDestroy(@ptrCast(self));
+                \\    client.markZombieObject(&self.object);
+                \\    client.destroyClientObject(&self.object);
                 \\}}
                 \\
             , .{interface.zig_name});
@@ -395,6 +397,9 @@ const Writer = struct {
         }
 
         try this.append("},\n");
+        try this.appendif(3, ".is_destructor = {s},\n", .{
+            if (message.is_destructor) "true" else "false",
+        });
 
         try this.appendi(2, "}");
     }
@@ -501,13 +506,11 @@ const Writer = struct {
 
         try this.appendi(2, "});\n");
 
-        // TODO: Don't hardcode this, this should be done for each destructor on an interface created by a new-id event (server-managed-id)
-        if (this.core and std.mem.eql(u8, interface.name, "wl_data_offer") and std.mem.eql(u8, request.name, "destroy")) {
-            try this.appendi(2, "client.proxyDestroy(@ptrCast(this));\n");
+        if (request.is_destructor) {
+            try this.appendi(2, "client.markZombieObject(&this.object);\n");
         }
 
         if (returns_value) {
-            // TODO: Check if this could be optional
             try this.appendi(2, "return @ptrCast(result.?);\n");
         }
 
