@@ -37,6 +37,8 @@ pub const GameState = struct {
     backdrop: LoadedBitmap = .{},
     hero_facing_direction: u32 = 0,
     hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
+
+    t_sine: f32 = 0,
 };
 
 pub const LoadedBitmap = struct {
@@ -430,22 +432,23 @@ pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memor
 }
 
 pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer, tone_hz: i32) void {
-    _ = game_state;
-    _ = tone_hz;
-    // const tone_volume = 3000;
-    // const wave_period = @divTrunc(buffer.frames_per_second, tone_hz);
+    // _ = game_state;
+    // _ = tone_hz;
+    const tone_volume = 3000;
+    const wave_period = @divTrunc(buffer.frames_per_second, tone_hz);
 
     assert(buffer.frames_len >= 0);
 
     for (buffer.frames[0..buffer.frames_len]) |*frame| {
-        // const sine_value: f32 = intrinsics.sin(game_state.t_sine);
-        // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
-        const sample_value: i16 = 0;
+        const sine_value: f32 = intrinsics.sin(game_state.t_sine);
+        var sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
+        sample_value = 0;
+        // const sample_value: i16 = 0;
 
         frame.* = .{ .left = sample_value, .right = sample_value };
 
-        // game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
-        // if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
+        game_state.t_sine += std.math.tau / @as(f32, @floatFromInt(wave_period));
+        if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
     }
 }
 

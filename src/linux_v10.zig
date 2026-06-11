@@ -354,13 +354,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var audio_output: AudioOutput = .{};
     audio_output.frames_per_second = 48000;
     audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
-    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 3);
-    audio_output.drift_justification_offset = @max(32, audio_output.frames_per_second / @as(u32, @intFromFloat(game_update_hz * 32)));
+    // audio_output.safety_frames = audio_output.frames_per_game_frame;
+    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 8);
 
     try initPulse(&audio_output);
 
     {
-        const prefill_frame_count = audio_output.safety_frames;
+        const prefill_frame_count = audio_output.frames_per_game_frame + audio_output.safety_frames;
         var buffer_ptr: ?*anyopaque = null;
         var buffer_size: usize = prefill_frame_count * @sizeOf(AudioOutput.Frame);
         const begin_write_rc = pa.stream_begin_write(pa_stream, &buffer_ptr, &buffer_size);
@@ -654,33 +654,27 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 var usec: pa.USec = undefined;
                 _ = pa.stream_get_latency(pa_stream, &usec, null);
-                const latency_frames = usec * @as(u64, @intCast(audio_output.frames_per_second / std.time.us_per_s));
-
-                const min_target_frames = latency_frames + audio_output.frames_per_game_frame;
-                const base_target_frames = audio_output.frames_per_game_frame + audio_output.safety_frames;
-                const target_frames = @max(base_target_frames, min_target_frames);
+                const latency_frames_f = @as(f32, @floatFromInt(usec)) *
+                    @as(f32, @floatFromInt(audio_output.frames_per_second)) / @as(f32, @floatFromInt(std.time.us_per_s));
+                const latency_frames: u64 = @intFromFloat(latency_frames_f);
 
                 const writable_frames = pa.stream_writable_size(pa_stream) / @sizeOf(AudioOutput.Frame);
 
-                var frames_to_write = audio_output.frames_per_game_frame;
-                if (latency_frames < target_frames) {
-                    frames_to_write += audio_output.drift_justification_offset;
-                } else if (latency_frames > target_frames) {
-                    frames_to_write -= audio_output.drift_justification_offset;
-                }
+                const latency_error: i64 = @as(i64, @intCast(audio_output.safety_frames)) - @as(i64, @intCast(latency_frames));
+                const latency_correction: i64 = @divTrunc(latency_error, 3);
 
-                frames_to_write = @min(writable_frames, frames_to_write);
+                const target_frames: usize = @intCast(@max(audio_output.frames_per_game_frame + latency_correction, 0));
+                const frames_to_write: usize = @min(target_frames, writable_frames);
 
                 if (frames_to_write > 0) {
                     var buffer_ptr: ?*anyopaque = null;
                     var buffer_size: usize = frames_to_write * @sizeOf(AudioOutput.Frame);
                     const begin_write_rc = pa.stream_begin_write(pa_stream, &buffer_ptr, &buffer_size);
 
-                    const actual_frame_count = buffer_size / @sizeOf(AudioOutput.Frame);
-
-                    // log.debug("FTW: {} - FTWA: {} - LF: {} - WRITABLE: {} - LS: {d:.3}", .{
+                    // log.debug("FPGF: {} - SF: {} - FTW: {} - LF: {} - WRITABLE: {} - LS: {d:.3}", .{
+                    //     audio_output.frames_per_game_frame,
+                    //     audio_output.safety_frames,
                     //     frames_to_write,
-                    //     actual_frame_count,
                     //     latency_frames,
                     //     writable_frames,
                     //     @as(f64, @floatFromInt(usec)) / std.time.us_per_s,
@@ -689,7 +683,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     if (begin_write_rc == 0 and buffer_ptr != null) {
                         var game_sound_output_buffer: AudioBuffer = .{
                             .frames = @ptrCast(@alignCast(buffer_ptr)),
-                            .frames_len = actual_frame_count,
+                            .frames_len = frames_to_write,
                             .frames_per_second = @intCast(audio_output.frames_per_second),
                         };
 
@@ -727,7 +721,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
                 }
             } else {
-                log.debug("Missed frame time!", .{});
+                log.debug("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
             }
 
             const end_counter = getWallClock(io);
@@ -757,7 +751,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             // var title_buf: [32]u8 = undefined;
             // const t = try std.fmt.bufPrintSentinel(&title_buf, "{}", .{ms_per_frame}, 0);
-            // wld.toplevel.set_title(t);
+            // wld.toplevel.setTitle(t);
         }
     }
 }
@@ -896,10 +890,10 @@ const WlToplevel = union(enum) {
         xdg_toplevel_decoration: *xdg_decoration.ToplevelDecorationV1,
     },
 
-    pub fn set_title(this: *WlToplevel, title: [:0]const u8) void {
+    pub fn setTitle(this: *WlToplevel, title: [:0]const u8) void {
         switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.set_title(title),
-            .xdg_decoration => |t| t.xdg_toplevel.set_title(title),
+            .no_decoration => |t| t.xdg_toplevel.setTitle(title),
+            .xdg_decoration => |t| t.xdg_toplevel.setTitle(title),
         }
     }
 
@@ -1425,7 +1419,7 @@ pub const DEBUG = struct {
 
             var buf: [4096]u8 = undefined;
             if (linux.read(read_fd, &buf)) |clip_str| {
-                assert(clip_str.len < buf.len - 1);
+                assert(clip_str.len < buf.len);
                 log.debug("Clipboard: \"{s}\"", .{clip_str});
             } else |e| switch (e) {
                 error.EndOfFile => log.debug("Clipboard empty...", .{}),
@@ -1995,7 +1989,6 @@ const AudioOutput = struct {
     frames_per_second: u32 = 0,
     frames_per_game_frame: u32 = 0,
     safety_frames: u32 = 0,
-    drift_justification_offset: u32 = 0,
 
     last_underflow_index: i64 = -1,
 
@@ -2108,9 +2101,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
 fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
-
-    // TODO:Don't remember why this is commented out... maybe causes issues on gnome, and waiting for a free buffer signals draw anyway?
-    // if (wld.should_draw) {
+    if (!wld.should_draw) return false;
 
     if (aquireFreeBuffer()) |wl_buffer| {
         const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
@@ -2185,7 +2176,6 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         // continue;
         return false;
     }
-    // }
 }
 
 fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
@@ -2202,12 +2192,12 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
         wld.surface.damage(0, 0, @min(buffer.width, width), @min(buffer.height, height));
     }
 
-    wld.surface.commit();
     const callback = wld.surface.frame();
-    callback.addListener(&wl_frame_callback_listener, &wld);
-    _ = wlc.displayFlush(wld.display);
-
     wld.should_draw = false;
+    callback.addListener(&wl_frame_callback_listener, &wld);
+
+    wld.surface.commit();
+    _ = wlc.displayFlush(wld.display);
 }
 
 pub fn beginRecordingInput(shared_state: *platform.SharedState, io: std.Io, input_recording_index: usize) void {
