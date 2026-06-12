@@ -1,6 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const options = @import("options");
+
 const mem = @import("mem");
 
 const AST = @import("ast.zig");
@@ -50,6 +52,8 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             \\const std = @import("std");
             \\const assert = std.debug.assert;
             \\
+            \\const options = @import("options");
+            \\
             \\const linux = @import("linux");
             \\
             \\const client = @import("client.zig");
@@ -64,9 +68,14 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             \\
             \\    const first_listener_node = object.listeners.first;
             \\
-            \\    _ = switch (event.signature) {
             \\
         );
+
+        if (options.verbose_wayland) {
+            try writer.appendi(1, "const listener_count = switch (event.signature) {\n");
+        } else {
+            try writer.appendi(1, "_ = switch (event.signature) {\n");
+        }
 
         var tmp_arena = std.heap.ArenaAllocator.init(context.arena);
         defer tmp_arena.deinit();
@@ -86,9 +95,23 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             \\    };
             \\
             \\    if (event.is_destructor) client.markZombieObject(object);
-            \\}
             \\
         );
+
+        if (options.verbose_wayland) {
+            try writer.appendi(1,
+                \\
+                \\client.verbose("     {s}.{s}(id = {}) listeners = {}", .{
+                \\    object.interface.name,
+                \\    object.interface.events[message.header.op].name,
+                \\    object.id,
+                \\    listener_count,
+                \\});
+                \\
+            );
+        }
+
+        try writer.append("}\n");
 
         sig_it = context.signatures.iterator();
         while (sig_it.next()) |entry| {
@@ -119,7 +142,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             }
             try writer.append(") void;\n\n");
 
-            if (fd_arg_count + newid_arg_count == 0) {
+            if (!options.verbose_wayland and (fd_arg_count + newid_arg_count == 0)) {
                 try writer.appendi(1, "if (object.zombie or first_listener_node == null) return 0;\n\n");
             }
 
@@ -148,7 +171,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
                 try writer.append(";\n");
             }
 
-            if (fd_arg_count + newid_arg_count != 0) {
+            if (!options.verbose_wayland and (fd_arg_count + newid_arg_count != 0)) {
                 try writer.appendi(1, "\nif (object.zombie or first_listener_node == null) {\n");
                 for (types, 1..) |t, i| {
                     if (t.tag == .h) try writer.appendif(2, "linux.close(arg{}) catch @panic(\"unhandled fd close failed\");\n", .{i});
@@ -158,6 +181,43 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
                     \\}
                     \\
                 );
+            }
+
+            if (options.verbose_wayland) {
+                try writer.append("\n");
+
+                try writer.appendi(1, "client.verbose(\"<-   {s}.{s}(id = {}");
+
+                for (types) |arg_type| {
+                    switch (arg_type.tag) {
+                        .i, .u, .f => try writer.append(", {}"),
+                        .s => try writer.append(", '{s}'"),
+                        .o => try writer.append(", o = {}"),
+                        .n => try writer.append(", n = {}"),
+                        .a => try writer.append(", {any}"),
+                        .h => try writer.append(", h = {}"),
+                    }
+                }
+
+                try writer.append(")\", .{\n");
+
+                try writer.appendi(2,
+                    \\object.interface.name,
+                    \\object.interface.events[message.header.op].name,
+                    \\object.id,
+                    \\
+                );
+
+                for (types, 1..) |arg_type, n| {
+                    switch (arg_type.tag) {
+                        .i, .u, .s, .a, .h => try writer.appendif(2, "arg{},\n", .{n}),
+                        .f => try writer.appendif(2, "arg{}.toDouble(),\n", .{n}),
+                        .o => try writer.appendif(2, "if (arg{}) |a| a.id else 0,\n", .{n}),
+                        .n => try writer.appendif(2, "arg{}.id,\n", .{n}),
+                    }
+                }
+
+                try writer.appendi(1, "});\n");
             }
 
             try writer.appendi(1,

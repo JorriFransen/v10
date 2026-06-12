@@ -547,6 +547,8 @@ pub inline fn destroyClientObject(object: *Object) void {
 }
 
 pub inline fn markZombieObject(object: *Object) void {
+    assert(!object.zombie);
+
     while (object.listeners.popFirst()) |node| {
         glob_display.free_listeners.prepend(node);
     }
