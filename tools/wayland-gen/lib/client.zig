@@ -290,7 +290,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
                 };
             }
 
-            const display_object = createClientObject(&glob_display, &Display.interface, Display.interface.version);
+            const display_object = createClientObject(&Display.interface, Display.interface.version);
             glob_display.object = display_object.*;
 
             glob_display.free_listeners = .{ .first = &glob_display.listeners[0].node };
@@ -519,11 +519,10 @@ pub fn displayFlush(display: *Display) void {
     verbose("display_flush(id = {}) payload bytes = {}, fds = {}", .{ display.object.id, payload_size, fds_count });
 }
 
-pub inline fn createClientObject(display: *Display, interface: *const Interface, version: u32) *Object {
-    assert(display == &glob_display);
-    assert(display.free_objects.first != null);
+pub inline fn createClientObject(interface: *const Interface, version: u32) *Object {
+    assert(glob_display.free_objects.first != null);
 
-    const result: *Object = @fieldParentPtr("freelist_node", display.free_objects.popFirst().?);
+    const result: *Object = @fieldParentPtr("freelist_node", glob_display.free_objects.popFirst().?);
     const id = result.id;
 
     result.* = .{
@@ -555,15 +554,12 @@ pub inline fn markZombieObject(object: *Object) void {
     object.zombie = true;
 }
 
-// TODO: move new-id allocation into the requests, remove interface parameter
-pub fn proxyMarshalArrayFlags(object: *Object, op: u32, interface: ?*const Interface, version: u32, args: []const Argument) ?*Object {
+pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
     assert(glob_connected);
 
     if (object.zombie) @panic("Calling request on zombie object");
 
     assert(object.interface.requests.len > op);
-
-    var result: ?*Object = null;
 
     var msg_buf: [128 + (@sizeOf(Message.Header) / @sizeOf(u32))]u32 align(@alignOf(Message.Header)) = undefined;
     const header: *Message.Header = @ptrCast(&msg_buf);
@@ -611,12 +607,7 @@ pub fn proxyMarshalArrayFlags(object: *Object, op: u32, interface: ?*const Inter
             },
             .o => |o| continue :arg_type_switch_blk .{ .u = o.id },
             .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.id else 0 },
-            .n => {
-                assert(interface != null);
-                const new_object = createClientObject(&glob_display, interface.?, version);
-                result = new_object;
-                continue :arg_type_switch_blk .{ .u = new_object.id };
-            },
+            .n => |n| continue :arg_type_switch_blk .{ .u = n },
             .a => |a| {
                 message.addArg(&payload_used, @intCast(a.len));
 
@@ -651,10 +642,10 @@ pub fn proxyMarshalArrayFlags(object: *Object, op: u32, interface: ?*const Inter
         var p = std.fmt.bufPrint(print_buf[used..], "  -> {s}.{s}(id = {}", .{ object.interface.name, object.interface.requests[op].name, object.id }) catch unreachable;
         used += p.len;
 
-        var return_id = false;
+        var return_id: ?u32 = null;
         for (args) |arg| {
             if (arg == .n) {
-                return_id = true;
+                return_id = arg.n;
                 continue;
             }
 
@@ -675,8 +666,8 @@ pub fn proxyMarshalArrayFlags(object: *Object, op: u32, interface: ?*const Inter
         p = std.fmt.bufPrint(print_buf[used..], ")", .{}) catch unreachable;
         used += p.len;
 
-        if (return_id) {
-            p = std.fmt.bufPrint(print_buf[used..], " -> id = {}", .{result.?.id}) catch unreachable;
+        if (return_id) |id| {
+            p = std.fmt.bufPrint(print_buf[used..], " -> id = {}", .{id}) catch unreachable;
             used += p.len;
         }
 
@@ -708,8 +699,6 @@ pub fn proxyMarshalArrayFlags(object: *Object, op: u32, interface: ?*const Inter
 
         displayFlush(&glob_display);
     }
-
-    return @ptrCast(result);
 }
 
 pub fn proxyAddListener(object: *Object, implementation: []const *const fn () void, user_data: ?*anyopaque) void {

@@ -412,7 +412,7 @@ const Writer = struct {
 
         var constructor_interface_string: []const u8 = "null";
         var version_string: []const u8 = "this.object.version";
-        var returns_value = true;
+        var constructor_arg: ?*const AST.Arg = null;
 
         // signature args
         for (request.args) |*arg| {
@@ -424,9 +424,11 @@ const Writer = struct {
                     try this.append(", target_interface: *const Interface, version: u32");
                     constructor_interface_string = "target_interface";
                     version_string = "version";
+                    constructor_arg = arg;
                 } else {
                     constructor_interface_string = arg.zig_interface_name.?;
                     assert(std.mem.eql(u8, constructor_interface_string, request.zig_constructor_interface.?));
+                    constructor_arg = arg;
                 }
             }
         }
@@ -440,23 +442,24 @@ const Writer = struct {
             try this.append("*Object");
         } else {
             try this.append("void");
-            returns_value = false;
+            assert(constructor_arg == null);
         }
 
         try this.append(" {\n");
 
-        try this.appendif(
-            2,
-            "{s} = client.proxyMarshalArrayFlags(@ptrCast(this), {}, {s}{s}{s}, {s}, &.{{\n",
-            .{
-                if (returns_value) "const result" else "_",
-                opcode,
+        if (constructor_arg) |con_arg| {
+            _ = con_arg;
+            try this.appendif(2, "const result = client.createClientObject({s}{s}{s}, {s});\n", .{
                 if (request.zig_constructor_interface != null) "&" else "",
                 constructor_interface_string,
                 if (request.zig_constructor_interface != null) ".interface" else "",
                 version_string,
-            },
-        );
+            });
+        }
+
+        try this.appendif(2, "client.marshalRequest(@ptrCast(this), {}, &.{{", .{opcode});
+
+        if (request.args.len > 0) try this.append("\n");
 
         for (request.args) |*arg| {
             var emit_close = true;
@@ -477,11 +480,11 @@ const Writer = struct {
                         try this.appendi(3,
                             \\.{ .s = target_interface.name },
                             \\.{ .u = version },
-                            \\.{ .n = 0 },
+                            \\.{ .n = result.id },
                             \\
                         );
                     } else {
-                        try this.append("0");
+                        try this.append("result.id");
                     }
                 },
                 .o => try this.appendf("@ptrCast({s})", .{arg.zig_name}),
@@ -504,14 +507,18 @@ const Writer = struct {
             if (emit_close) try this.append(" },\n");
         }
 
-        try this.appendi(2, "});\n");
+        if (request.args.len > 0) {
+            try this.appendi(2, "});\n");
+        } else {
+            try this.append("});\n");
+        }
 
         if (request.is_destructor) {
             try this.appendi(2, "client.markZombieObject(&this.object);\n");
         }
 
-        if (returns_value) {
-            try this.appendi(2, "return @ptrCast(result.?);\n");
+        if (constructor_arg) |_| {
+            try this.appendi(2, "return @ptrCast(result);\n");
         }
 
         try this.appendi(1, "}\n");
