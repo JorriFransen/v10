@@ -3,7 +3,6 @@ const std = @import("std");
 pub const Protocol = struct {
     name: []const u8,
     interfaces: std.array_hash_map.String(Interface),
-    description: Description,
 
     /// valid after parsing
     xml_path: []const u8 = "XXX_UNINITIALIZED_XML_PATH__X_X_X_",
@@ -75,7 +74,7 @@ pub const Enum = struct {
 
     pub const BitfieldEntry = struct {
         n: u32,
-        name_index: u32,
+        entry_index: u32,
     };
 
     name: []const u8,

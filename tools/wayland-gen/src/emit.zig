@@ -262,6 +262,8 @@ const Writer = struct {
     }
 
     fn emitInterface(this: *const Writer, interface: *const AST.Interface) Error!void {
+        try this.emitDoc(0, &interface.description);
+
         try this.appendf("pub const {s} = struct {{\n", .{interface.zig_name});
 
         try this.appendi(1, "object: Object,\n");
@@ -408,6 +410,8 @@ const Writer = struct {
     }
 
     fn emitRequest(this: *const Writer, interface: *const AST.Interface, request: *const AST.Message, opcode: u32) Error!void {
+        try this.emitDoc(1, &request.description);
+
         try this.appendif(1, "pub fn {s}(this: *{s}", .{
             request.zig_name,
             interface.zig_name,
@@ -531,7 +535,11 @@ const Writer = struct {
         assert(interface.events.len > 0);
 
         try this.appendi(1, "\npub const Listener = extern struct {\n");
-        for (interface.events) |event| {
+        for (interface.events, 0..) |event, i| {
+            if (i > 0) try this.append("\n");
+
+            try this.emitDoc(2, &event.description);
+
             try this.appendif(2, "{s}: ?*const fn (data: ?*anyopaque, {f}: *{s}", .{
                 event.zig_name,
                 fmtTypeNameToVarName(interface.zig_name),
@@ -558,19 +566,22 @@ const Writer = struct {
     }
 
     fn emitBitfield(this: *const Writer, @"enum": *const AST.Enum) Error!void {
-        try this.appendif(1, "\npub const {s} = packed struct(u32) {{\n", .{
+        try this.append("\n");
+        try this.emitDoc(1, &@"enum".description);
+        try this.appendif(1, "pub const {s} = packed struct(u32) {{\n", .{
             @"enum".zig_name,
         });
 
         var current_bit_offset: usize = 0;
         var pad_count: usize = 0;
         for (@"enum".single_bit_bitfield_entries) |e| {
+            try this.emitDoc(2, &@"enum".entries[e.entry_index].description);
             if (current_bit_offset < e.n) {
                 try this.appendif(2, "_pad_{}: u{} = 0,\n", .{ pad_count, e.n - current_bit_offset });
                 pad_count += 1;
                 unreachable; // Verify!
             }
-            try this.appendif(2, "{s}: bool = false,\n", .{@"enum".entries[e.name_index].zig_name});
+            try this.appendif(2, "{s}: bool = false,\n", .{@"enum".entries[e.entry_index].zig_name});
 
             current_bit_offset = e.n + 1;
         }
@@ -584,8 +595,9 @@ const Writer = struct {
             try this.append("\n");
 
             for (@"enum".multi_bit_bitfield_entries) |mbe| {
+                try this.emitDoc(2, &@"enum".entries[mbe.entry_index].description);
                 try this.appendif(2, "pub const {s}: {s} = .{{", .{
-                    @"enum".entries[mbe.name_index].zig_name,
+                    @"enum".entries[mbe.entry_index].zig_name,
                     @"enum".zig_name,
                 });
 
@@ -598,7 +610,7 @@ const Writer = struct {
                             try this.append(",");
                         }
                         set_count += 1;
-                        try this.appendf(" .{s} = true", .{@"enum".entries[sbe.name_index].zig_name});
+                        try this.appendf(" .{s} = true", .{@"enum".entries[sbe.entry_index].zig_name});
                     }
                 }
                 if (set_count > 0) try this.append(" };\n") else try this.append("};\n");
@@ -609,16 +621,46 @@ const Writer = struct {
     }
 
     fn emitEnum(this: *const Writer, @"enum": *const AST.Enum) Error!void {
-        try this.appendif(1, "\npub const {s} = enum({s}) {{\n", .{
+        try this.append("\n");
+
+        try this.emitDoc(1, &@"enum".description);
+
+        try this.appendif(1, "pub const {s} = enum({s}) {{\n", .{
             @"enum".zig_name,
             @"enum".zig_int_type,
         });
 
         for (@"enum".entries) |*e| {
+            try this.emitDoc(2, &e.description);
             try this.appendif(2, "{s} = {s},\n", .{ e.zig_name, e.value });
         }
 
         try this.appendi(1, "};\n");
+    }
+
+    fn emitDoc(this: *const Writer, indent: usize, doc: *const AST.Description) Error!void {
+        if (doc.summary.len > 0) {
+            try this.appendi(indent, "/// ");
+            var summary_line_it = std.mem.splitAny(u8, doc.summary, &.{ '\r', '\n' });
+            while (summary_line_it.next()) |sum_line| {
+                try this.append(sum_line);
+            }
+            try this.append("\n");
+        }
+
+        if (doc.text.len > 0) {
+            var line_it = std.mem.splitScalar(u8, std.mem.trimEnd(u8, doc.text, &std.ascii.whitespace), '\n');
+
+            while (line_it.next()) |raw_line| {
+                const line = std.mem.trimStart(u8, raw_line, &std.ascii.whitespace);
+
+                if (line.len > 0) {
+                    try this.appendif(indent, "///  {s}\n", .{line});
+                } else {
+                    try this.appendi(indent, "///\n");
+                }
+            }
+        }
     }
 
     inline fn append(this: *const Writer, str: []const u8) !void {

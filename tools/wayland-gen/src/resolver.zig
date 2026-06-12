@@ -201,9 +201,9 @@ fn resolveEnum(context: *const Context, protocol: *const AST.Protocol, interface
             const int_val: u32 = try resolveEnumValue(e.value);
 
             if (int_val > 0 and ((int_val & (int_val - 1)) == 0)) {
-                try single_bit_entries.append(context.arena, .{ .n = @ctz(int_val), .name_index = @intCast(i) });
+                try single_bit_entries.append(context.arena, .{ .n = @ctz(int_val), .entry_index = @intCast(i) });
             } else {
-                try multi_bit_entries.append(context.arena, .{ .n = int_val, .name_index = @intCast(i) });
+                try multi_bit_entries.append(context.arena, .{ .n = int_val, .entry_index = @intCast(i) });
             }
         }
 

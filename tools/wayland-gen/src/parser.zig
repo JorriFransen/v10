@@ -91,7 +91,6 @@ const Parser = struct {
 
         const protocol_name = try this.copyString(attr.value);
         var interfaces: std.MultiArrayList(InterfaceEntry) = .empty;
-        var description: AST.Description = .{};
 
         while (true) {
             const node = try this.nextNode();
@@ -118,7 +117,7 @@ const Parser = struct {
                             .name = interface.name,
                         });
                     } else if (std.mem.eql(u8, tag.name, "description")) {
-                        description = try this.parseDescription();
+                        assert(false);
                     } else {
                         this.xmlErr("Unexpected element: '{s}'", .{tag.name});
                         return error.MalformedXml;
@@ -144,7 +143,6 @@ const Parser = struct {
                 ifa_slice.items(.name),
                 ifa_slice.items(.interface),
             ),
-            .description = description,
             .protocol_imports = .empty,
         };
     }
