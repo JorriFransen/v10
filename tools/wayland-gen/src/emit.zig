@@ -197,7 +197,10 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             try writer.append("}\n");
         }
 
-        try writer.append("\npub const Signature = enum {\n");
+        const unique_signature_count = context.signatures.count();
+        const signature_enum_bits = std.math.round(0.5 + std.math.log2(@as(f32, @floatFromInt(unique_signature_count))));
+
+        try writer.appendf("\npub const Signature = enum(u{}) {{\n", .{signature_enum_bits});
 
         sig_it = context.signatures.iterator();
         while (sig_it.next()) |entry| {

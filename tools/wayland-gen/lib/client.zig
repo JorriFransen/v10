@@ -44,9 +44,9 @@ pub const Interface = struct {
 
     pub const Message = struct {
         name: []const u8,
-        signature: Signature,
-        fd_count: usize,
         object_types: []const *const Interface,
+        fd_count: u24,
+        signature: Signature,
         is_destructor: bool,
     };
 };
