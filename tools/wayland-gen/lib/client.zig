@@ -352,10 +352,10 @@ pub fn displayDispatch(display: *Display) isize {
     return displayDispatchTimeout(display, 0);
 }
 
-fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
+pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
     assert(display == &glob_display);
 
-    verbose("display_dispatch(id = {}) ...", .{display.object.id});
+    verbose("display_dispatch(id = {}, timeout = {}) ...", .{ display.object.id, first_timeout });
 
     var result: isize = 0;
 
@@ -363,7 +363,7 @@ fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
     var pollfd: linux.pollfd = .{ .fd = display.fd, .events = linux.POLL.IN, .revents = undefined };
     // TODO: Handle error
     while (linux.poll(@ptrCast(&pollfd), timeout) catch unreachable > 0) {
-        if (timeout < 0) timeout = 0;
+        if (timeout != 0) timeout = 0;
 
         if (pollfd.revents & linux.POLL.IN != 0) {
             const receive_buf_available = display.receive_payload_buf[display.receive_payload_used..];

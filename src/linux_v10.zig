@@ -355,7 +355,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     audio_output.frames_per_second = 48000;
     audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
     // audio_output.safety_frames = audio_output.frames_per_game_frame;
-    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 8);
+    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 4);
 
     try initPulse(&audio_output);
 
@@ -704,18 +704,22 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
             pa.threaded_mainloop_unlock(pa_ml);
 
+            const wayland_blit = displayBufferInWindow(global_back_buffer);
+
             const work_counter = getWallClock(io);
             const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
-            var seconds_elapsed_for_frame = work_seconds_elapsed;
+            var seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
             if (seconds_elapsed_for_frame <= target_seconds_per_frame) {
                 while (seconds_elapsed_for_frame < target_seconds_per_frame) {
                     const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
 
                     if (sleep_ms > 1) {
                         const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
-                        // linux.sleep(s);
                         try std.Io.sleep(io, std.Io.Duration.fromNanoseconds(s), .real);
+                        // _ = wlc.displayDispatchTimeout(display, @intCast(sleep_ms));
+                    } else {
+                        std.atomic.spinLoopHint();
                     }
 
                     seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
@@ -727,8 +731,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const end_counter = getWallClock(io);
             const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
-
-            const wayland_blit = displayBufferInWindow(global_back_buffer);
 
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
@@ -747,7 +749,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             //     work_seconds_elapsed * std.time.ms_per_s,
             //     wayland_blit,
             // });
-            _ = .{ ms_per_frame, fps, mcpf, wayland_blit };
+            _ = .{ ms_per_frame, fps, mcpf, wayland_blit, work_seconds_elapsed };
 
             // var title_buf: [32]u8 = undefined;
             // const t = try std.fmt.bufPrintSentinel(&title_buf, "{}", .{ms_per_frame}, 0);
@@ -1419,7 +1421,7 @@ pub const DEBUG = struct {
 
             var buf: [4096]u8 = undefined;
             if (linux.read(read_fd, &buf)) |clip_str| {
-                assert(clip_str.len < buf.len);
+                assert(clip_str.len < buf.len); // Buffer too small ()
                 log.debug("Clipboard: \"{s}\"", .{clip_str});
             } else |e| switch (e) {
                 error.EndOfFile => log.debug("Clipboard empty...", .{}),
@@ -2101,7 +2103,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
 fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
-    if (!wld.should_draw) return false;
+    // if (!wld.should_draw) return false;
 
     if (aquireFreeBuffer()) |wl_buffer| {
         const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
