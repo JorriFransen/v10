@@ -192,7 +192,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wld.window_width = @as(f32, @floatFromInt(back_buffer_width)) * 1.5;
     wld.window_height = @as(f32, @floatFromInt(back_buffer_height)) * 1.5;
 
-    try resize_shm();
+    try alloc_shm();
 
     if (wli.seat_capabilities.keyboard == false) {
         log.debug("keyboard not available", .{});
@@ -845,7 +845,6 @@ const WlData = struct {
     /// Max height of all outputs
     max_height: i32 = 0,
 
-    should_resize_shm: bool = false,
     shm_data: []align(std.heap.page_size_min) u8 = &.{},
 
     fullscreen: bool = false,
@@ -878,6 +877,7 @@ const WlBuffer = struct {
     free: bool,
     width: i32,
     height: i32,
+    pitch: i32,
 };
 
 const WlToplevel = union(enum) {
@@ -1180,14 +1180,10 @@ const ShmError = error{
     WlPoolCreateBufferFailed,
 };
 
-fn resize_shm() ShmError!void {
+fn alloc_shm() ShmError!void {
     const S = linux.S;
 
-    if (wld.shm_data.len != 0) {
-        linux.munmap(wld.shm_data) catch {
-            log.warn("shm unmap failed", .{});
-        };
-    }
+    assert(wld.shm_data.len == 0);
 
     var name_buf: [16]u8 = undefined;
     name_buf[0] = '/';
@@ -1233,22 +1229,22 @@ fn resize_shm() ShmError!void {
     if (linux.mmap(null, shm_size, prot, map, fd, 0)) |mapped| {
         wld.shm_data = mapped;
 
-        if (wld.pool) |p| p.destroy();
+        assert(wld.pool == null);
 
         const pool = wld.shm.createPool(fd, @intCast(wld.shm_data.len));
         wld.pool = pool;
 
-        var width = wld.width;
-        var height = wld.height;
+        var width = wld.window_width;
+        var height = wld.window_height;
         if (width == -1 and height == -1) {
             width = back_buffer_width;
             height = back_buffer_height;
         }
-        const stride = width * bytes_per_pixel;
+        const pitch = width * bytes_per_pixel;
 
         var offset: i32 = 0;
         for (&wld.buffers) |*buffer| {
-            const handle = pool.createBuffer(offset, width, height, stride, .xrgb8888);
+            const handle = pool.createBuffer(offset, width, height, pitch, .xrgb8888);
 
             buffer.* = .{
                 .handle = handle,
@@ -1256,16 +1252,12 @@ fn resize_shm() ShmError!void {
                 .free = true,
                 .width = width,
                 .height = height,
+                .pitch = pitch,
             };
             handle.addListener(&wl_buffer_listener, buffer);
 
             offset += @intCast(buffer_size);
         }
-
-        wld.should_resize_shm = false;
-        // TODO: Signal a buffer resize is required!
-        // TODO: Test by plugging in external monitor
-
     } else |_| {
         log.err("mmap call failed during shm buffer resize", .{});
         return error.MmapFailed;
@@ -1298,11 +1290,20 @@ fn aquireFreeBuffer() ?*WlBuffer {
             if (buffer.handle == null or buffer.width != wld.window_width or buffer.height != wld.window_height) {
                 if (buffer.handle) |h| h.destroy();
 
-                const new_buf = pool.createBuffer(buffer.offset, wld.window_width, wld.window_height, wld.window_width * bytes_per_pixel, .xrgb8888);
+                const pitch = wld.window_width * bytes_per_pixel;
+
+                const new_buf = pool.createBuffer(buffer.offset, wld.window_width, wld.window_height, pitch, .xrgb8888);
+
+                buffer.* = .{
+                    .handle = new_buf,
+                    .offset = buffer.offset,
+                    .width = wld.window_width,
+                    .height = wld.window_height,
+                    .pitch = pitch,
+                    .free = false,
+                };
+
                 new_buf.addListener(&wl_buffer_listener, buffer);
-                buffer.handle = new_buf;
-                buffer.width = wld.window_width;
-                buffer.height = wld.window_height;
             }
 
             buffer.free = false;
@@ -1388,16 +1389,6 @@ pub const DEBUG = struct {
             linux.munmap(memory) catch |e| {
                 log.err("Failed to free file memory, error: {}", .{e});
             };
-        }
-    }
-
-    pub fn drawVertical(buffer: *LinuxOffscreenBuffer, x: i32, top: i32, bottom: i32, color: u32) callconv(.c) void {
-        var cursor: [*]u8 = buffer.memory.ptr + @as(usize, @intCast((x * bytes_per_pixel) + (top * buffer.pitch)));
-
-        for (@intCast(top)..@intCast(bottom + 1)) |_| {
-            const pixel: *u32 = @ptrCast(@alignCast(cursor));
-            pixel.* = color;
-            cursor += @intCast(buffer.pitch);
         }
     }
 
@@ -1833,7 +1824,9 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
     if (new_pixel_count > max_pixel_count) {
         wld.max_width = width;
         wld.max_height = height;
-        wld.should_resize_shm = true;
+
+        // TODO: Create new shm pool, delete old when all buffers are released
+        // wld.should_resize_shm = true;
     }
 }
 
@@ -2107,8 +2100,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
 
     if (aquireFreeBuffer()) |wl_buffer| {
         const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
-        const wl_buffer_pitch: usize = @intCast(wl_buffer.width * bytes_per_pixel);
-        const wl_buffer_mem: []u8 = wl_buffer_ptr[0 .. wl_buffer_pitch * @as(usize, @intCast(wl_buffer.height))];
+        const wl_buffer_mem: []u8 = wl_buffer_ptr[0..@intCast(wl_buffer.pitch * wl_buffer.height)];
 
         // TODO: Clear gutters in release?
         if (options.internal_build) {
@@ -2126,9 +2118,9 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
                 const source_line: []u32 = @ptrCast(@alignCast(buffer.memory[source_offset .. source_offset + source_line_length]));
 
                 const dst_y = src_y * 2;
-                const dest_offset1 = dst_y * wl_buffer_pitch;
+                const dest_offset1 = dst_y * @as(usize, @intCast(wl_buffer.pitch));
                 const dest_line1: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset1 .. dest_offset1 + dest_line_length]));
-                const dest_offset2 = dest_offset1 + wl_buffer_pitch;
+                const dest_offset2 = dest_offset1 + @as(usize, @intCast(wl_buffer.pitch));
                 const dest_line2: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset2 .. dest_offset2 + dest_line_length]));
 
                 for (0..source_line.len) |src_x| {
@@ -2159,7 +2151,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
             const y_off: usize = @intCast(y_offset);
             const x_off: usize = @intCast(x_offset);
             for (y_off..y_off + row_count, 0..row_count) |dst_y, src_y| {
-                const dest_offset = (dst_y * wl_buffer_pitch) + (x_off * bytes_per_pixel);
+                const dest_offset = (dst_y * @as(usize, @intCast(wl_buffer.pitch))) + (x_off * bytes_per_pixel);
                 const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
 
                 const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
