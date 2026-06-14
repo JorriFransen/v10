@@ -63,10 +63,9 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             \\const Fixed = client.Fixed;
             \\const RegisteredListener = client.RegisteredListener;
             \\
-            \\pub inline fn dispatch(display: *Display, message: *const Message, object: *Object) void {
-            \\    const event = &object.interface.events[message.header.op];
+            \\pub inline fn dispatch(object: *Object, opcode: u16) void {
             \\
-            \\    const first_listener_node = object.listeners.first;
+            \\    const event = &object.interface.events[opcode];
             \\
             \\
         );
@@ -84,7 +83,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
         var sig_it = context.signatures.iterator();
         while (sig_it.next()) |entry| {
             const trampoline_name_raw = try std.mem.concat(tmp, u8, &.{ "trampoline_", entry.key_ptr.* });
-            try writer.appendif(2, ".{f} => {f}(display, object, first_listener_node, message", .{
+            try writer.appendif(2, ".{f} => {f}(object, opcode", .{
                 std.zig.fmtId(entry.key_ptr.*),
                 std.zig.fmtId(trampoline_name_raw),
             });
@@ -103,7 +102,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
                 \\
                 \\client.verbose("     {s}.{s}(id = {}) listeners = {}", .{
                 \\    object.interface.name,
-                \\    object.interface.events[message.header.op].name,
+                \\    object.interface.events[opcode].name,
                 \\    object.id,
                 \\    listener_count,
                 \\});
@@ -120,8 +119,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
 
             const trampoline_name_raw = try std.mem.concat(tmp, u8, &.{ "trampoline_", sig });
 
-            try writer.appendf("\ninline fn {f}(display: *Display, object: *Object, first_listener_node: ?*const std.SinglyLinkedList.Node, message: *const Message) u32 {{\n", .{std.zig.fmtId(trampoline_name_raw)});
-            try writer.appendi(1, "_ = .{display};\n");
+            try writer.appendf("\ninline fn {f}(object: *Object, opcode: u16) u32 {{\n", .{std.zig.fmtId(trampoline_name_raw)});
             try writer.appendi(1, "const HandlerType = *const fn (?*anyopaque, *Object");
 
             var regular_arg_count: usize = 0;
@@ -140,33 +138,32 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
                     else => regular_arg_count += 1,
                 }
             }
-            try writer.append(") void;\n\n");
+            try writer.append(") void;\n");
+            try writer.appendi(1, "const first_listener_node = object.listeners.first;\n\n");
 
             if (!options.verbose_wayland and (fd_arg_count + newid_arg_count == 0)) {
                 try writer.appendi(1, "if (object.zombie or first_listener_node == null) return 0;\n\n");
             }
 
-            if (regular_arg_count + newid_arg_count > 0) try writer.appendi(1, "var arg_offset: usize = 0;\n\n");
-
             var object_index: u32 = 0;
 
             for (types, 1..) |t, n| {
                 switch (t.tag) {
-                    .i => try writer.appendif(1, "const arg{} = message.getIntArg(&arg_offset)", .{n}),
-                    .u => try writer.appendif(1, "const arg{} = message.getUIntArg(&arg_offset)", .{n}),
-                    .f => try writer.appendif(1, "const arg{} = message.getFixedArg(&arg_offset)", .{n}),
-                    .s => try writer.appendif(1, "const arg{} = message.getStringArg(&arg_offset)", .{n}),
-                    .a => try writer.appendif(1, "const arg{} = message.getArrayArg(&arg_offset)", .{n}),
+                    .i => try writer.appendif(1, "const arg{} = client.dispatchIntArg()", .{n}),
+                    .u => try writer.appendif(1, "const arg{} = client.dispatchUIntArg()", .{n}),
+                    .f => try writer.appendif(1, "const arg{} = client.dispatchFixedArg()", .{n}),
+                    .s => try writer.appendif(1, "const arg{} = client.dispatchStringArg()", .{n}),
+                    .a => try writer.appendif(1, "const arg{} = client.dispatchArrayArg()", .{n}),
                     .o => {
                         object_index += 1;
-                        try writer.appendif(1, "const arg{} = message.getObjectArg(&arg_offset, display)", .{n});
+                        try writer.appendif(1, "const arg{} = client.dispatchObjectArg()", .{n});
                     },
                     .n => {
-                        try writer.appendif(1, "const arg{}_interface = object.interface.events[message.header.op].object_types[{}];\n", .{ n, object_index });
+                        try writer.appendif(1, "const arg{}_interface = object.interface.events[opcode].object_types[{}];\n", .{ n, object_index });
                         object_index += 1;
-                        try writer.appendif(1, "const arg{} = message.getNewIdArg(&arg_offset, display, arg{}_interface, object.version)", .{ n, n });
+                        try writer.appendif(1, "const arg{} = client.dispatchNewIdArg(arg{}_interface, object.version)", .{ n, n });
                     },
-                    .h => try writer.appendif(1, "const arg{} = message.getFDArg(display)", .{n}),
+                    .h => try writer.appendif(1, "const arg{} = client.dispatchFDArg()", .{n}),
                 }
                 try writer.append(";\n");
             }
@@ -203,7 +200,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
 
                 try writer.appendi(2,
                     \\object.interface.name,
-                    \\object.interface.events[message.header.op].name,
+                    \\object.interface.events[opcode].name,
                     \\object.id,
                     \\
                 );
@@ -228,8 +225,8 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
                 \\while (cnode) |node| {
                 \\    const next = node.next;
                 \\    const listener: *const RegisteredListener = @fieldParentPtr("node", node);
-                \\    assert(message.header.op < listener.implementation.len);
-                \\    const handler: HandlerType = @ptrCast(listener.implementation[message.header.op]);
+                \\    assert(opcode < listener.implementation.len);
+                \\    const handler: HandlerType = @ptrCast(listener.implementation[opcode]);
                 \\
                 \\    listener_count += 1;
                 \\    handler(listener.user_data, @ptrCast(object)
@@ -348,6 +345,8 @@ const Writer = struct {
                 \\
                 \\receive_payload_used: usize = 0,
                 \\receive_payload_buf: [4096]u8 = undefined,
+                \\current_receive_payload: []u32 = undefined,
+                \\current_payload_offset: usize = 0,
                 \\receive_fds_used: usize = 0,
                 \\receive_fds_buf: [32]linux.fd_t = undefined,
                 \\fd_dispatch_index: usize = 0,

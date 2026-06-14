@@ -19,6 +19,8 @@ comptime {
     }
 }
 
+const message_max_fd_count: usize = 16;
+
 var glob_connected = false;
 var glob_display: Display = undefined;
 
@@ -82,139 +84,10 @@ pub const Argument = union(enum) {
     h: linux.fd_t,
 };
 
-pub const Message = struct {
-    const max_fd_count: usize = 16;
-    const Header = extern struct {
-        id: u32,
-        op: u16,
-        size: u16 = undefined,
-    };
-
-    header: *Header,
-    payload: []u32,
-
-    pub fn addArg(this: *Message, offset: *usize, arg: u32) void {
-        assert(offset.* < this.payload.len);
-        this.payload[offset.*] = arg;
-        offset.* += 1;
-    }
-
-    pub fn getIntArg(this: *const Message, arg_offset: *usize) i32 {
-        return @bitCast(this.getUIntArg(arg_offset));
-    }
-
-    pub fn getUIntArg(this: *const Message, arg_offset: *usize) u32 {
-        assert(arg_offset.* < this.payload.len);
-        const result = this.payload[arg_offset.*];
-        arg_offset.* += 1;
-        return result;
-    }
-
-    pub fn getObjectArg(this: *const Message, arg_offset: *usize, display: *Display) ?*Object {
-        assert(display == &glob_display);
-
-        const id = this.getUIntArg(arg_offset);
-        if (id < 1) return null;
-        return getObject(display, id);
-    }
-
-    pub fn getNewIdArg(this: *const Message, arg_offset: *usize, display: *Display, interface: *const Interface, version: u32) *Object {
-        assert(display == &glob_display);
-
-        const server_id = this.getUIntArg(arg_offset);
-        var result: ?*Object = null;
-
-        // Check for matching zombie
-        for (&glob_display.server_objects) |*obj| {
-            if (obj.id == server_id) {
-                if (obj.zombie) {
-                    result = obj;
-                    break;
-                } else @panic("Server managed id collision");
-            }
-        }
-
-        if (result == null) {
-            // Check for unused object
-            for (&glob_display.server_objects) |*obj| {
-                if (obj.id == 0) {
-                    result = obj;
-                    break;
-                }
-            }
-
-            if (result == null) {
-                // Reuse zombie object
-                for (&glob_display.server_objects) |*obj| {
-                    if (obj.zombie) {
-                        result = obj;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (result) |obj| {
-            obj.* = .{
-                .id = server_id,
-                .version = version,
-                .interface = interface,
-                .freelist_node = .{},
-                .listeners = .{},
-                .zombie = false,
-            };
-            return obj;
-        }
-
-        log.err("Out of server objects", .{});
-        @panic("Out of server objects");
-    }
-
-    pub fn getFixedArg(this: *const Message, arg_offset: *usize) Fixed {
-        return .{ .value = @bitCast(this.getUIntArg(arg_offset)) };
-    }
-
-    pub fn getStringArg(this: *const Message, arg_offset: *usize) []const u8 {
-        const length = this.getUIntArg(arg_offset);
-
-        const arg_size = @sizeOf(@TypeOf(this.payload[0]));
-        const arg_count = (length + arg_size - 1) / arg_size;
-        assert(arg_offset.* < this.payload.len);
-        assert(arg_offset.* + arg_count <= this.payload.len);
-
-        const result = @as([]const u8, @ptrCast(this.payload[arg_offset.*..]))[0 .. length - 1];
-
-        arg_offset.* += arg_count;
-
-        return result;
-    }
-
-    pub fn getArrayArg(this: *const Message, arg_offset: *usize) []u32 {
-        const length = this.getUIntArg(arg_offset);
-        assert(length % @sizeOf(u32) == 0);
-
-        const arg_size = @sizeOf(@TypeOf(this.payload[0]));
-        const arg_count = length / arg_size;
-        assert(arg_offset.* < this.payload.len);
-        assert(arg_offset.* + length <= this.payload.len);
-
-        const result: []u32 = this.payload[arg_offset.* .. arg_offset.* + arg_count];
-
-        arg_offset.* += arg_count;
-
-        return result;
-    }
-
-    pub fn getFDArg(this: *const Message, display: *Display) linux.fd_t {
-        _ = this;
-        assert(display == &glob_display);
-
-        assert(display.fd_dispatch_index < display.receive_fds_used);
-
-        const result = display.receive_fds_buf[display.fd_dispatch_index];
-        display.fd_dispatch_index += 1;
-        return result;
-    }
+const MessageHeader = extern struct {
+    id: u32,
+    op: u16,
+    size: u16 = undefined,
 };
 
 pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process.Environ) ?*Display {
@@ -368,7 +241,7 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
         if (pollfd.revents & linux.POLL.IN != 0) {
             const receive_buf_available = display.receive_payload_buf[display.receive_payload_used..];
 
-            var control_buf: [linux.CMSG_SPACE(Message.max_fd_count * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
+            var control_buf: [linux.CMSG_SPACE(message_max_fd_count * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
             _ = &control_buf;
 
             var iov: linux.iovec = .{ .base = receive_buf_available.ptr, .len = receive_buf_available.len };
@@ -410,21 +283,17 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
                 while (true) {
                     const receive_remaining = display.receive_payload_buf[current_offset..display.receive_payload_used];
 
-                    if (receive_remaining.len >= @sizeOf(Message.Header)) {
-                        const header: *Message.Header = @ptrCast(@alignCast(receive_remaining.ptr));
+                    if (receive_remaining.len >= @sizeOf(MessageHeader)) {
+                        const header: *MessageHeader = @ptrCast(@alignCast(receive_remaining.ptr));
                         if (receive_remaining.len >= header.size) {
-                            const payload_ptr: [*]u32 = @ptrCast(@as([*]Message.Header, @ptrCast(header)) + 1);
-                            const payload: []u32 = payload_ptr[0 .. header.size - @sizeOf(Message.Header)];
+                            const payload_ptr: [*]u32 = @ptrCast(@as([*]MessageHeader, @ptrCast(header)) + 1);
+                            display.current_receive_payload = payload_ptr[0 .. header.size - @sizeOf(MessageHeader)];
+                            display.current_payload_offset = 0;
 
                             const object = getObject(display, header.id);
                             assert(object.id == header.id);
 
-                            const message: Message = .{
-                                .header = header,
-                                .payload = payload,
-                            };
-
-                            trampolines.dispatch(display, &message, object);
+                            trampolines.dispatch(object, header.op);
                             result += 1;
 
                             current_offset += header.size;
@@ -456,6 +325,116 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
 
     verbose("display_dispatch(id = {}) -> dispatched = {}", .{ display.object.id, result });
 
+    return result;
+}
+
+pub fn dispatchIntArg() i32 {
+    return @bitCast(dispatchUIntArg());
+}
+
+pub fn dispatchUIntArg() u32 {
+    assert(glob_display.current_payload_offset < glob_display.current_receive_payload.len);
+    const result = glob_display.current_receive_payload[glob_display.current_payload_offset];
+    glob_display.current_payload_offset += 1;
+    return result;
+}
+
+pub fn dispatchObjectArg() ?*Object {
+    const id = dispatchUIntArg();
+    if (id < 1) return null;
+    return getObject(&glob_display, id);
+}
+
+pub fn dispatchNewIdArg(interface: *const Interface, version: u32) *Object {
+    const server_id = dispatchUIntArg();
+    var result: ?*Object = null;
+
+    // Check for matching zombie
+    for (&glob_display.server_objects) |*obj| {
+        if (obj.id == server_id) {
+            if (obj.zombie) {
+                result = obj;
+                break;
+            } else @panic("Server managed id collision");
+        }
+    }
+
+    if (result == null) {
+        // Check for unused object
+        for (&glob_display.server_objects) |*obj| {
+            if (obj.id == 0) {
+                result = obj;
+                break;
+            }
+        }
+
+        if (result == null) {
+            // Reuse zombie object
+            for (&glob_display.server_objects) |*obj| {
+                if (obj.zombie) {
+                    result = obj;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (result) |obj| {
+        obj.* = .{
+            .id = server_id,
+            .version = version,
+            .interface = interface,
+            .freelist_node = .{},
+            .listeners = .{},
+            .zombie = false,
+        };
+        return obj;
+    }
+
+    log.err("Out of server objects", .{});
+    @panic("Out of server objects");
+}
+
+pub fn dispatchFixedArg() Fixed {
+    return .{ .value = @bitCast(dispatchUIntArg()) };
+}
+
+pub fn dispatchStringArg() []const u8 {
+    const length = dispatchUIntArg();
+
+    const arg_size = @sizeOf(@TypeOf(glob_display.current_receive_payload[0]));
+    const arg_count = (length + arg_size - 1) / arg_size;
+    assert(glob_display.current_payload_offset < glob_display.current_receive_payload.len);
+    assert(glob_display.current_payload_offset + arg_count <= glob_display.current_receive_payload.len);
+
+    const result = @as([]const u8, @ptrCast(glob_display.current_receive_payload[glob_display.current_payload_offset..]))[0 .. length - 1];
+
+    glob_display.current_payload_offset += arg_count;
+
+    return result;
+}
+
+pub fn dispatchArrayArg() []u32 {
+    const length = dispatchUIntArg();
+    assert(length % @sizeOf(u32) == 0);
+
+    const arg_size = @sizeOf(@TypeOf(glob_display.current_receive_payload[0]));
+    const arg_count = length / arg_size;
+    assert(glob_display.current_payload_offset < glob_display.current_receive_payload.len);
+    assert(glob_display.current_payload_offset + length <= glob_display.current_receive_payload.len);
+
+    const result: []u32 = glob_display.current_receive_payload[glob_display.current_payload_offset .. glob_display.current_payload_offset + arg_count];
+
+    glob_display.current_payload_offset += arg_count;
+
+    return result;
+}
+
+pub fn dispatchFDArg() linux.fd_t {
+    assert(glob_display.fd_dispatch_index < glob_display.receive_fds_used);
+
+    const result = glob_display.receive_fds_buf[glob_display.fd_dispatch_index];
+    glob_display.fd_dispatch_index += 1;
     return result;
 }
 
@@ -563,17 +542,15 @@ pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
 
     assert(object.interface.requests.len > op);
 
-    var msg_buf: [128 + (@sizeOf(Message.Header) / @sizeOf(u32))]u32 align(@alignOf(Message.Header)) = undefined;
-    const header: *Message.Header = @ptrCast(&msg_buf);
-    const payload_buf: []u32 = @ptrCast(@as([]Message.Header, @ptrCast(&msg_buf))[1..]);
-    var fd_buf: [Message.max_fd_count]linux.fd_t = undefined;
+    var msg_buf: [128 + (@sizeOf(MessageHeader) / @sizeOf(u32))]u32 align(@alignOf(MessageHeader)) = undefined;
+    const header: *MessageHeader = @ptrCast(&msg_buf);
+    const payload_buf: []u32 = @ptrCast(@as([]MessageHeader, @ptrCast(&msg_buf))[1..]);
+    var fd_buf: [message_max_fd_count]linux.fd_t = undefined;
 
     header.* = .{
         .id = object.id,
         .op = @intCast(op),
     };
-
-    var message: Message = .{ .header = header, .payload = payload_buf };
 
     var payload_used: usize = 0;
     var fds_used: usize = 0;
@@ -581,14 +558,15 @@ pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
     // TODO: Check arg types (emit more types in interfaces?)
     for (args) |arg| {
         arg_type_switch_blk: switch (arg) {
-            .i => |i| message.addArg(&payload_used, @bitCast(i)),
-            .u => |u| message.addArg(&payload_used, u),
-            .f => |f| message.addArg(&payload_used, @bitCast(f)),
+            .i => |i| marshalArg(payload_buf, &payload_used, @bitCast(i)),
+            .u => |u| marshalArg(payload_buf, &payload_used, u),
+            .f => |f| marshalArg(payload_buf, &payload_used, @bitCast(f)),
             .s => |s| {
-                message.addArg(&payload_used, @intCast(s.len + 1));
+                marshalArg(payload_buf, &payload_used, @intCast(s.len + 1));
                 var remaining = s.len;
                 while (remaining >= 4) : (remaining -= 4) {
-                    message.addArg(
+                    marshalArg(
+                        payload_buf,
                         &payload_used,
                         std.mem.bytesAsValue(u32, s[s.len - remaining .. s.len - remaining + 4]).*,
                     );
@@ -598,24 +576,25 @@ pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
                 for (s[s.len - remaining ..], 0..) |c, ci| {
                     last_u32 |= @as(u32, c) << @as(u5, @intCast((ci) * 8));
                 }
-                message.addArg(&payload_used, last_u32);
+                marshalArg(payload_buf, &payload_used, last_u32);
             },
             .@"?s" => |s_opt| {
                 if (s_opt) |s| {
                     continue :arg_type_switch_blk .{ .s = s };
                 } else {
-                    message.addArg(&payload_used, 0);
+                    marshalArg(payload_buf, &payload_used, 0);
                 }
             },
             .o => |o| continue :arg_type_switch_blk .{ .u = o.id },
             .@"?o" => |o_opt| continue :arg_type_switch_blk .{ .u = if (o_opt) |o| o.id else 0 },
             .n => |n| continue :arg_type_switch_blk .{ .u = n },
             .a => |a| {
-                message.addArg(&payload_used, @intCast(a.len));
+                marshalArg(payload_buf, &payload_used, @intCast(a.len));
 
                 var remaining = a.len;
                 while (remaining >= 4) : (remaining -= 4) {
-                    message.addArg(
+                    marshalArg(
+                        payload_buf,
                         &payload_used,
                         std.mem.bytesAsValue(u32, a[a.len - remaining .. a.len - remaining + 4]).*,
                     );
@@ -626,7 +605,7 @@ pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
                     for (a[a.len - remaining ..], 0..) |b, bi| {
                         last_u32 |= @as(u32, b) << @as(u5, @intCast((bi * 8)));
                     }
-                    message.addArg(&payload_used, last_u32);
+                    marshalArg(payload_buf, &payload_used, last_u32);
                 }
             },
             .h => {
@@ -676,7 +655,7 @@ pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
         verbose("{s}", .{print_buf[0..used]});
     }
 
-    const header_size = @sizeOf(Message.Header);
+    const header_size = @sizeOf(MessageHeader);
     const total_size = header_size + (payload_used * @sizeOf(@TypeOf(payload_buf[0])));
     header.size = @intCast(total_size);
     const payload = std.mem.asBytes(&msg_buf)[0..total_size];
@@ -701,6 +680,12 @@ pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
 
         displayFlush(&glob_display);
     }
+}
+
+pub fn marshalArg(buf: []u32, offset: *usize, arg: u32) void {
+    assert(offset.* < buf.len);
+    buf[offset.*] = arg;
+    offset.* += 1;
 }
 
 pub fn proxyAddListener(object: *Object, implementation: []const *const fn () void, user_data: ?*anyopaque) void {

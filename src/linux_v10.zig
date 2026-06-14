@@ -37,6 +37,7 @@ const Abs = input.Abs;
 
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
 // TODO: Query initial state of controller
+// TODO: Debug repeated controller plug in/out cycles, the disconnect seems to be missed sometimes
 
 const assert = std.debug.assert;
 
