@@ -33,7 +33,7 @@ pub const AudioBuffer = extern struct {
 
     frames: [*]Frame,
     frames_len: usize,
-    frames_per_second: i32,
+    frames_per_second: u32,
 };
 
 pub const ButtonState = extern struct {

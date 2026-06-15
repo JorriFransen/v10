@@ -193,8 +193,8 @@ pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP
     return @as([*]align(page_size) u8, @ptrFromInt(@as(usize, @bitCast(rc))))[0..length];
 }
 
-pub fn mprotect(addr: [*]align(page_size) u8, size: usize, prot: PROT) Error!void {
-    const rc = abi.syscall3(.mprotect, @intFromPtr(addr), size, @as(u32, @bitCast(prot)));
+pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) Error!void {
+    const rc = abi.syscall3(.mprotect, @intFromPtr(slice.ptr), slice.len, @as(u32, @bitCast(prot)));
     if (check_errno(rc)) |e| return switch (e) {
         .INVAL => error.InvalidArg,
         else => blk: {

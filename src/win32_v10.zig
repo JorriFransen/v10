@@ -464,7 +464,7 @@ pub fn windowsEntry(
                 .frames_per_second = audio_fps,
                 .buffer_byte_size = audio_buffer_byte_size,
                 .running_frame_index = 0,
-                .safety_frame_bytes = @intFromFloat((audio_fps / game_update_hz * @sizeOf(AudioOutput.Frame)) / 3),
+                .safety_frame_bytes = @as(u32, @intFromFloat((audio_fps / game_update_hz) / 3)) * @sizeOf(AudioOutput.Frame),
             };
 
             clearAudioBuffer(&audio_output);
@@ -745,11 +745,12 @@ pub fn windowsEntry(
                                 audio_valid = true;
                             }
 
-                            const byte_to_lock: u32 = (audio_output.running_frame_index * @sizeOf(AudioOutput.Frame)) % audio_output.buffer_byte_size;
+                            const byte_to_lock: u32 = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % audio_output.buffer_byte_size;
 
                             const expected_audio_bytes_per_frame: win32.DWORD = @intFromFloat(audio_fps / game_update_hz * @sizeOf(AudioOutput.Frame));
                             const seconds_left_until_flip = target_seconds_per_frame - from_begin_to_audio_seconds;
                             const expected_bytes_until_flip: win32.DWORD = @max(0, @as(i32, @intFromFloat((seconds_left_until_flip / target_seconds_per_frame) * @as(f32, @floatFromInt(expected_audio_bytes_per_frame)))));
+                            assert(expected_bytes_until_flip % @sizeOf(AudioOutput.Frame) == 0);
                             const expected_frame_boundary_byte: win32.DWORD = play_cursor + expected_bytes_until_flip;
 
                             var safe_write_cursor: win32.DWORD = write_cursor;
@@ -803,16 +804,16 @@ pub fn windowsEntry(
                                 audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(AudioBuffer.Frame)) /
                                     @as(f32, @floatFromInt(audio_output.frames_per_second));
 
-                                // log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
-                                //     byte_to_lock,
-                                //     target_cursor,
-                                //     bytes_to_write,
-                                //     play_cursor,
-                                //     write_cursor,
-                                //     audio_latency_bytes,
-                                //     audio_latency_seconds,
-                                //     audio_card_is_low_latency,
-                                // });
+                                log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
+                                    byte_to_lock,
+                                    target_cursor,
+                                    bytes_to_write,
+                                    play_cursor,
+                                    write_cursor,
+                                    audio_latency_bytes,
+                                    audio_latency_seconds,
+                                    audio_card_is_low_latency,
+                                });
                             }
                         } else {
                             audio_valid = false;
