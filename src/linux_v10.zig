@@ -52,11 +52,6 @@ var running: bool = false;
 var pause: bool = false;
 var wld: WlData = .{};
 
-var pa_ctx: ?*pa.Context = null;
-var pa_ml: ?*pa.ThreadedMainLoop = null;
-var pa_stream: ?*pa.Stream = null;
-var pa_sample_spec: pa.SampleSpec = undefined;
-
 var joysticks: [PollFdSlot.joystick_count]Joystick = @splat(.{ .fd = -1, .kind = undefined });
 
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
@@ -275,7 +270,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     log.debug("monitor hz: {}", .{monitor_hz});
 
-    const game_update_hz: f32 = monitor_hz; // / 2;
+    const game_update_hz: f32 = monitor_hz / 2;
     log.debug("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
@@ -352,29 +347,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
-    const audio_fps = 48000;
-    const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
-
-    const audio_buffer = linux.mmap(null, audio_buffer_byte_size, .{}, .{
-        .TYPE = .PRIVATE,
-        .ANONYMOUS = true,
-    }, -1, 0) catch |e| {
-        log.err("mmap for audio buffer failed: {}", .{e});
-        return e;
-    };
-    linux.mprotect(audio_buffer, .{ .READ = true, .WRITE = true }) catch |e| {
-        log.err("mprotect for audio buffer failed: {}", .{e});
-        return e;
-    };
-
-    var audio_output: AudioOutput = .{ .buffer = audio_buffer };
-    audio_output.frames_per_second = audio_fps;
-    audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
-    audio_output.safety_frame_bytes = 1024;
-    log.debug("sfb: {}", .{audio_output.safety_frame_bytes});
-
-    try initPulse(&audio_output);
-
     udev.load();
     var udev_monitor: *udev.Monitor = undefined;
 
@@ -427,6 +399,30 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
+    const audio_fps = 48000;
+    const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
+
+    const audio_buffer = linux.mmap(null, audio_buffer_byte_size, .{}, .{
+        .TYPE = .PRIVATE,
+        .ANONYMOUS = true,
+    }, -1, 0) catch |e| {
+        log.err("mmap for audio buffer failed: {}", .{e});
+        return e;
+    };
+    linux.mprotect(audio_buffer, .{ .READ = true, .WRITE = true }) catch |e| {
+        log.err("mprotect for audio buffer failed: {}", .{e});
+        return e;
+    };
+
+    var audio_output: AudioOutput = .{ .pulse = .{ .buffer = audio_buffer } };
+    audio_output.frames_per_second = audio_fps;
+    audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
+    audio_output.safety_frame_bytes = 1024;
+    const pulse = &audio_output.pulse;
+    log.debug("sfb: {}", .{audio_output.safety_frame_bytes});
+
+    try pulse.init(audio_output.frames_per_second, "v10");
+
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
@@ -437,19 +433,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var game_code = GameCode.load(io, game_lib_name);
     if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
-    pa.threaded_mainloop_lock(pa_ml);
-    _ = pa.stream_cork(pa_stream, 0, null, null);
-    const writable = pa.stream_writable_size(pa_stream);
-    assert(audio_output.buffer.len >= writable);
-    log.debug("pulse prime: {}", .{writable});
-    _ = pa.stream_write(pa_stream, audio_output.buffer[0..writable].ptr, writable, null, 0, .relative);
-
-    // Wait for the first write callback to fire
-    while (!audio_output.pulse_callbacks_started) {
-        pa.threaded_mainloop_wait(pa_ml);
-    }
-
-    pa.threaded_mainloop_unlock(pa_ml);
+    pulse.start();
 
     var last_counter = getWallClock(io);
     var flip_wall_clock = getWallClock(io);
@@ -647,31 +631,31 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const from_begin_to_audio_seconds = getSecondsElapsed(flip_wall_clock, audio_wall_clock);
 
             var pa_latency_usec: pa.USec = undefined;
-            pa.threaded_mainloop_lock(pa_ml);
-            _ = pa.stream_get_latency(pa_stream, &pa_latency_usec, null);
-            const callback_cursor = audio_output.read_cursor;
+            pa.threaded_mainloop_lock(pulse.main_loop);
+            _ = pa.stream_get_latency(pulse.stream, &pa_latency_usec, null);
+            const callback_cursor = pulse.read_cursor;
             assert(callback_cursor % @sizeOf(AudioOutput.Frame) == 0);
-            log.debug("callbacks sizes: {any}", .{pa_write_sizes[0..pa_write_size_index]});
-            pa_write_size_index = 0;
-            pa.threaded_mainloop_unlock(pa_ml);
+            log.debug("callbacks sizes: {any}", .{pulse.write_sizes[0..pulse.write_size_index]});
+            pulse.write_size_index = 0;
+            pa.threaded_mainloop_unlock(pulse.main_loop);
 
             const pa_latency_frames = (pa_latency_usec * audio_output.frames_per_second) / std.time.us_per_s;
             const pa_latency_bytes = pa_latency_frames * @sizeOf(AudioOutput.Frame);
 
-            const play_cursor = (callback_cursor + audio_output.buffer.len - (pa_latency_bytes % audio_output.buffer.len)) % audio_output.buffer.len;
+            const play_cursor = (callback_cursor + pulse.buffer.len - (pa_latency_bytes % pulse.buffer.len)) % pulse.buffer.len;
 
             const write_cursor = callback_cursor;
 
-            var byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % audio_output.buffer.len;
+            var byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % pulse.buffer.len;
 
-            const valid_bytes = (byte_to_lock + audio_output.buffer.len - write_cursor) % audio_output.buffer.len;
+            const valid_bytes = (byte_to_lock + pulse.buffer.len - write_cursor) % pulse.buffer.len;
 
-            if (valid_bytes > audio_output.buffer.len / 2) {
-                log.warn("Audio ringbuffer underflow!", .{});
+            if (valid_bytes > pulse.buffer.len / 2) {
+                log.warn("Audio ringbuffer underflow! (btl:{} - wc: {})", .{ byte_to_lock, write_cursor });
 
                 audio_output.running_frame_index = (write_cursor + audio_output.safety_frame_bytes) / @sizeOf(AudioOutput.Frame);
 
-                byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % audio_output.buffer.len;
+                byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % pulse.buffer.len;
             }
 
             const expected_audio_bytes_per_video_frame = audio_output.frames_per_game_frame * @sizeOf(AudioOutput.Frame);
@@ -682,7 +666,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             var safe_write_cursor = write_cursor;
             if (safe_write_cursor < play_cursor) {
-                safe_write_cursor += audio_output.buffer.len;
+                safe_write_cursor += pulse.buffer.len;
             }
             safe_write_cursor += audio_output.safety_frame_bytes;
 
@@ -695,20 +679,20 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 target_cursor = write_cursor + expected_audio_bytes_per_video_frame + audio_output.safety_frame_bytes;
             }
 
-            target_cursor = target_cursor % audio_output.buffer.len;
+            target_cursor = target_cursor % pulse.buffer.len;
 
             const bytes_to_write =
                 if (byte_to_lock > target_cursor)
-                    (audio_output.buffer.len - byte_to_lock) + target_cursor
+                    (pulse.buffer.len - byte_to_lock) + target_cursor
                 else
                     target_cursor - byte_to_lock;
 
             if (bytes_to_write > 0) {
                 if (game_code.getAudioFrames) |getAudioFrames| {
-                    const bytes_to_end = audio_output.buffer.len - byte_to_lock;
+                    const bytes_to_end = pulse.buffer.len - byte_to_lock;
 
                     if (bytes_to_write <= bytes_to_end) {
-                        const frames: []AudioOutput.Frame = @ptrCast(@alignCast(audio_output.buffer[byte_to_lock .. byte_to_lock + bytes_to_write]));
+                        const frames: []AudioOutput.Frame = @ptrCast(@alignCast(pulse.buffer[byte_to_lock .. byte_to_lock + bytes_to_write]));
 
                         var game_sound_output_buffer: AudioBuffer = .{
                             .frames = frames.ptr,
@@ -718,7 +702,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                         getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
                     } else {
-                        var frames: []AudioOutput.Frame = @ptrCast(@alignCast(audio_output.buffer[byte_to_lock..]));
+                        var frames: []AudioOutput.Frame = @ptrCast(@alignCast(pulse.buffer[byte_to_lock..]));
 
                         var game_sound_output_buffer: AudioBuffer = .{
                             .frames = frames.ptr,
@@ -728,7 +712,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                         getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
 
-                        frames = @ptrCast(@alignCast(audio_output.buffer[0 .. bytes_to_write - bytes_to_end]));
+                        frames = @ptrCast(@alignCast(pulse.buffer[0 .. bytes_to_write - bytes_to_end]));
                         game_sound_output_buffer.frames = frames.ptr;
                         game_sound_output_buffer.frames_len = frames.len;
 
@@ -742,7 +726,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             if (options.internal_build) {
                 var unwraped_write_cursor = write_cursor;
                 if (unwraped_write_cursor < play_cursor) {
-                    unwraped_write_cursor += audio_output.buffer.len;
+                    unwraped_write_cursor += pulse.buffer.len;
                 }
                 const audio_latency_bytes = unwraped_write_cursor - play_cursor;
                 const audio_latency_seconds = @as(f32, @floatFromInt(audio_latency_bytes / @sizeOf(AudioBuffer.Frame))) / @as(f32, @floatFromInt(audio_output.frames_per_second));
@@ -2041,224 +2025,274 @@ const AudioOutput = struct {
     frames_per_second: u32 = 0,
     frames_per_game_frame: u32 = 0,
 
-    buffer: []u8,
-    read_cursor: usize = 0,
     running_frame_index: usize = 0,
     safety_frame_bytes: u32 = 0,
 
-    pulse_callbacks_started: bool = false,
+    pulse: PulseContext,
 
     const Sample = AudioBuffer.Sample;
     const Frame = AudioBuffer.Frame;
 };
 
-fn firstPulseWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {
-    const audio_output: *AudioOutput = @ptrCast(@alignCast(userdata));
+const PulseContext = struct {
+    context: *pa.Context = undefined,
+    main_loop: *pa.ThreadedMainLoop = undefined,
+    stream: *pa.Stream = undefined,
 
-    assert(!audio_output.pulse_callbacks_started);
-    assert(nbytes < audio_output.buffer.len);
+    context_state: pa.ContextState = .unconnected,
+    stream_state: pa.StreamState = .unconnected,
+    callbacks_started: bool = false,
 
-    log.debug("first write callback: {}", .{nbytes});
+    read_cursor: usize = 0,
+    buffer: []u8,
 
-    _ = pa.stream_write(stream, audio_output.buffer[0..nbytes].ptr, nbytes, null, 0, .relative);
+    write_size_index: usize = 0,
+    write_sizes: [32]usize = undefined,
 
-    _ = pa.stream_set_write_callback(stream, &pulseWriteCallback, audio_output);
+    const InitCallbacks = struct {
+        context: *PulseContext,
 
-    audio_output.pulse_callbacks_started = true;
+        fn contextStateCallback(context: ?*pa.Context, userdata: ?*anyopaque) callconv(.c) void {
+            const pulse_context: *PulseContext = @ptrCast(@alignCast(userdata));
 
-    pa.threaded_mainloop_signal(pa_ml, 0);
-}
+            pulse_context.context_state = pa.context_get_state(context);
+            pa.log.debug("context state: {}", .{pulse_context.context_state});
+            pa.threaded_mainloop_signal(pulse_context.main_loop, 0);
+        }
 
-var pa_write_sizes: [32]usize = undefined;
-var pa_write_size_index: usize = 0;
+        fn streamStateCallback(stream: ?*pa.Stream, userdata: ?*anyopaque) callconv(.c) void {
+            const pulse_context: *PulseContext = @ptrCast(@alignCast(userdata));
 
-fn pulseWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {
-    // log.debug("wcb: {}", .{nbytes});
-    const audio_output: *AudioOutput = @ptrCast(@alignCast(userdata));
-
-    if (pa_write_size_index < pa_write_sizes.len) {
-        pa_write_sizes[pa_write_size_index] = nbytes;
-        pa_write_size_index += 1;
-    }
-
-    var buffer_ptr: ?*anyopaque = null;
-    var buffer_size: usize = nbytes;
-    const rc = pa.stream_begin_write(stream, &buffer_ptr, &buffer_size);
-
-    if (rc != 0 or buffer_ptr == null) {
-        log.warn("pulseWriteCallback: pa_stream_begin_write failed (rc={})", .{rc});
-        return;
-    }
-
-    const buffer = @as([*]u8, @ptrCast(buffer_ptr))[0..buffer_size];
-
-    const bytes_to_end = audio_output.buffer.len - audio_output.read_cursor;
-
-    if (buffer.len <= bytes_to_end) {
-        @memcpy(buffer, audio_output.buffer[audio_output.read_cursor .. audio_output.read_cursor + buffer.len]);
-    } else {
-        @memcpy(buffer[0..bytes_to_end], audio_output.buffer[audio_output.read_cursor..]);
-        @memcpy(buffer[bytes_to_end..], audio_output.buffer[0 .. buffer.len - bytes_to_end]);
-    }
-
-    audio_output.read_cursor = @intCast((audio_output.read_cursor + buffer.len) % audio_output.buffer.len);
-
-    _ = pa.stream_write(
-        stream,
-        buffer.ptr,
-        buffer.len,
-        null,
-        0,
-        .relative,
-    );
-}
-
-// TODO: signal invalid pa_* variables on failure
-fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
-    pa.load();
-
-    pa_ml = pa.threaded_mainloop_new() orelse {
-        log.err("Pulse failed to create main loop", .{});
-        return error.PulseInitFailed;
-    };
-    errdefer pa.threaded_mainloop_free(pa_ml);
-
-    const ml_api = pa.threaded_mainloop_get_api(pa_ml) orelse {
-        log.err("Pulse failed to get mainloop api", .{});
-        return error.PulseInitFailed;
+            pulse_context.stream_state = pa.stream_get_state(stream);
+            pa.log.debug("stream state: {}", .{pulse_context.stream_state});
+            pa.threaded_mainloop_signal(pulse_context.main_loop, 0);
+        }
     };
 
-    pa_ctx = pa.context_new(ml_api, "v10") orelse {
-        log.err("Pulse failed to create context", .{});
-        return error.PulseInitFailed;
-    };
-    errdefer pa.context_unref(pa_ctx);
+    pub fn init(this: *@This(), sample_rate: u32, application_name: [:0]const u8) error{PulseInitFailed}!void {
+        pa.load();
 
-    if (pa.context_connect(pa_ctx, null, .{}, null) < 0) {
-        log.err("Pulse failed to connect context", .{});
-        return error.PulseInitFailed;
-    }
-    errdefer pa.context_disconnect(pa_ctx);
+        const sample_spec = pa.SampleSpec{
+            .format = .s16le,
+            .rate = sample_rate,
+            .channels = 2,
+        };
 
-    if (pa.threaded_mainloop_start(pa_ml) < 0) {
-        log.err("Pulse failed to start mainloop", .{});
-        return error.PulseInitFailed;
-    }
-    log.debug("Pulse main loop started", .{});
+        this.main_loop = pa.threaded_mainloop_new() orelse {
+            pa.log.err("pa_threaded_mainloop_new failed", .{});
+            return error.PulseInitFailed;
+        };
+        errdefer pa.threaded_mainloop_free(this.main_loop);
+        pa.log.debug("threaded mainloop created", .{});
 
-    pa.threaded_mainloop_lock(pa_ml);
-    var cstate = pa.context_get_state(pa_ctx);
-    pa.threaded_mainloop_unlock(pa_ml);
-    while (cstate != .ready) {
-        if (cstate == .failed or cstate == .terminated) {
-            log.err("Pulse context failed to reach ready state!", .{});
+        const api = pa.threaded_mainloop_get_api(this.main_loop) orelse {
+            pa.log.err("pa_threaded_mainloop_get_api failed", .{});
+            return error.PulseInitFailed;
+        };
+        pa.log.debug("threaded mainloop api retrieved", .{});
+
+        this.context = pa.context_new(api, application_name) orelse {
+            pa.log.err("pa_context_new failed", .{});
+            return error.PulseInitFailed;
+        };
+        errdefer pa.context_unref(this.context);
+        pa.log.debug("context created", .{});
+
+        if (pa.threaded_mainloop_start(this.main_loop) < 0) {
+            pa.log.err("pa_threaded_mainloop_start failed", .{});
+            return error.PulseInitFailed;
+        }
+        pa.log.debug("starting threaded mainloop", .{});
+
+        pa.threaded_mainloop_lock(this.main_loop);
+        defer pa.threaded_mainloop_unlock(this.main_loop);
+
+        if (pa.context_connect(this.context, null, .{}, null) < 0) {
+            pa.log.err("pa_context_connect failed", .{});
+            return error.PulseInitFailed;
+        }
+        errdefer pa.context_disconnect(this.context);
+        pa.log.debug("start context connection", .{});
+
+        pa.context_set_state_callback(this.context, InitCallbacks.contextStateCallback, this);
+        while (this.context_state != .ready) {
+            switch (this.context_state) {
+                else => {},
+                .ready, .connecting, .authorizing, .setting_name => {},
+                .failed, .terminated => {
+                    pa.log.err("invalid context state: {}", .{this.context_state});
+                    return error.PulseInitFailed;
+                },
+            }
+            pa.threaded_mainloop_wait(this.main_loop);
+        }
+        pa.log.debug("context ready", .{});
+
+        this.stream = pa.stream_new(this.context, application_name, &sample_spec, null) orelse {
+            pa.log.err("failed to create stream", .{});
+            return error.PulseInitFailed;
+        };
+        errdefer pa.stream_unref(this.stream);
+        pa.log.debug("stream created", .{});
+
+        const min_req_frames = 8;
+        const min_req_bytes = min_req_frames * @sizeOf(AudioOutput.Frame);
+        const aggressive_buffer_attr = pa.BufferAttr{
+            .max_length = std.math.maxInt(u32),
+            .t_length = (min_req_bytes * 2) + 4,
+            .pre_buf = 0,
+            .min_req = min_req_bytes,
+            .frag_size = std.math.maxInt(u32),
+        };
+        pa.log.debug("initial buffer attributes: {}", .{aggressive_buffer_attr});
+
+        if (pa.stream_connect_playback(this.stream, null, &aggressive_buffer_attr, .{
+            .adjust_latency = true,
+            .interpolate_timing = true,
+            .auto_timing_update = true,
+            .start_corked = true,
+        }, null, null) < 0) {
+            pa.log.err("pa_stream_connect_playback failed", .{});
+            return error.PulseInitFailed;
+        }
+        pa.stream_set_state_callback(this.stream, InitCallbacks.streamStateCallback, this);
+        pa.log.debug("stream connected", .{});
+
+        while (this.stream_state != .ready) {
+            switch (this.stream_state) {
+                else => {},
+                .ready, .creating => {},
+                .failed, .terminated => {
+                    pa.log.err("Invalid stream state: {}", .{this.stream_state});
+                    return error.PulseInitFailed;
+                },
+            }
+            pa.threaded_mainloop_wait(this.main_loop);
+        }
+
+        const suggested_buffer_attr = pa.stream_get_buffer_attr(this.stream).?;
+        pa.log.debug("suggested buffer attributes: {}", .{suggested_buffer_attr});
+
+        const t_length = (suggested_buffer_attr.min_req * 2) + 4;
+        const modified_buffer_attr = pa.BufferAttr{
+            .max_length = t_length,
+            .t_length = t_length,
+            .pre_buf = suggested_buffer_attr.min_req,
+            .min_req = suggested_buffer_attr.min_req,
+            .frag_size = suggested_buffer_attr.frag_size,
+        };
+
+        pa.log.debug("modified buffer attributes: {}", .{modified_buffer_attr});
+
+        const op = pa.stream_set_buffer_attr(this.stream, &modified_buffer_attr, &PulseContext.successCallback, this).?;
+        defer pa.operation_unref(op);
+
+        while (pa.operation_get_state(op) == .running) {
+            pa.threaded_mainloop_wait(this.main_loop);
+        }
+
+        if (pa.operation_get_state(op) == .cancelled) {
+            pa.log.err("pa_stream_set_buffer_attr cancelled", .{});
             return error.PulseInitFailed;
         }
 
-        // pa.threaded_mainloop_wait(pa_ml);
+        const final_buffer_attr = pa.stream_get_buffer_attr(this.stream).?;
+        assert(final_buffer_attr.max_length == modified_buffer_attr.max_length);
+        assert(final_buffer_attr.t_length == modified_buffer_attr.t_length);
+        assert(final_buffer_attr.pre_buf == modified_buffer_attr.pre_buf);
+        assert(final_buffer_attr.min_req == modified_buffer_attr.min_req);
+        assert(final_buffer_attr.frag_size == modified_buffer_attr.frag_size);
+        pa.log.debug("final buffer attributes applied: {}", .{final_buffer_attr});
 
-        pa.threaded_mainloop_lock(pa_ml);
-        cstate = pa.context_get_state(pa_ctx);
-        pa.threaded_mainloop_unlock(pa_ml);
+        pa.context_set_state_callback(this.context, null, null); // TODO: Set to runtime version
+        pa.stream_set_state_callback(this.stream, null, null); // TODO: Set to runtime version
     }
-    // log.debug("Pulse context reached ready state", .{});
 
-    pa_sample_spec = .{
-        .format = .s16le,
-        .rate = @intCast(audio_output.frames_per_second),
-        .channels = 2,
-    };
+    /// Blocks until the first write callback is fired
+    pub fn start(this: *@This()) void {
+        pa.threaded_mainloop_lock(this.main_loop);
 
-    pa_stream = pa.stream_new(pa_ctx, "v10", &pa_sample_spec, null) orelse {
-        log.err("Pulse failed to create stream!", .{});
-        return error.PulseInitFailed;
-    };
-    errdefer pa.stream_unref(pa_stream);
-    // log.debug("Pulse stream created", .{});
+        _ = pa.stream_set_write_callback(this.stream, &firstWriteCallback, this);
+        _ = pa.stream_cork(this.stream, 0, null, null);
 
-    // const target_callback_frames = audio_output.frames_per_second * 3 / 1000; //240
-    // const target_callback_frames = 192;
-    // const target_callback_bytes = target_callback_frames * @sizeOf(AudioOutput.Frame);
-    // const target_total_bytes = 2049;
+        const writable = pa.stream_writable_size(this.stream);
+        assert(this.buffer.len >= writable);
+        pa.log.debug("prime: {}", .{writable});
+        _ = pa.stream_write(this.stream, this.buffer[0..writable].ptr, writable, null, 0, .relative);
 
-    const min_req_frames = 1;
-    const min_req = min_req_frames * @sizeOf(AudioOutput.Frame);
-    const ideal_latency_bytes = (min_req * 2) + 4;
-
-    const init_attr = pa.BufferAttr{
-        .max_length = std.math.maxInt(u32),
-        .t_length = ideal_latency_bytes,
-        .pre_buf = 0,
-        .min_req = min_req,
-        .frag_size = std.math.maxInt(u32),
-    };
-
-    log.debug("Pulse requested playback attributes: {}", .{init_attr});
-
-    pa.threaded_mainloop_lock(pa_ml);
-    if (pa.stream_connect_playback(pa_stream, null, &init_attr, .{
-        .adjust_latency = true,
-        .interpolate_timing = true,
-        .auto_timing_update = true,
-        .start_corked = true,
-    }, null, null) < 0) {
-        pa.threaded_mainloop_unlock(pa_ml);
-        log.err("Pulse failed connect playback!", .{});
-        return error.PulseInitFailed;
-    }
-    // log.debug("Pulse stream connected", .{});
-
-    var sstate = pa.stream_get_state(pa_stream);
-    pa.threaded_mainloop_unlock(pa_ml);
-
-    while (sstate != .ready) {
-        if (sstate == .failed or sstate == .terminated) {
-            log.err("Pulse stream failed or terminated", .{});
-            return error.PulseInitFailed;
+        while (!this.callbacks_started) {
+            pa.threaded_mainloop_wait(this.main_loop);
         }
 
-        pa.threaded_mainloop_lock(pa_ml);
-        sstate = pa.stream_get_state(pa_stream);
-        pa.threaded_mainloop_unlock(pa_ml);
+        pa.threaded_mainloop_unlock(this.main_loop);
     }
-    log.debug("Pulse stream ready", .{});
 
-    pa.threaded_mainloop_lock(pa_ml);
+    pub fn successCallback(stream: ?*pa.Stream, success: c_int, userdata: ?*anyopaque) callconv(.c) void {
+        _ = stream;
+        _ = success;
 
-    _ = pa.stream_set_write_callback(pa_stream, &firstPulseWriteCallback, audio_output);
+        const context: *@This() = @ptrCast(@alignCast(userdata));
 
-    const actual_attr = pa.stream_get_buffer_attr(pa_stream).?;
-    log.debug("Pulse actual playback attributes: {}", .{actual_attr});
-
-    const t_length = (actual_attr.min_req * 2) + 4;
-    const final_init_attr = pa.BufferAttr{
-        .max_length = t_length,
-        .t_length = t_length,
-        .pre_buf = actual_attr.min_req,
-        .min_req = actual_attr.min_req,
-        .frag_size = actual_attr.frag_size,
-    };
-    log.debug("Pulse modified requested playback attributes: {}", .{final_init_attr});
-
-    const op = pa.stream_set_buffer_attr(pa_stream, &final_init_attr, &pulseDefaultSuccessCallback, null).?;
-    while (pa.operation_get_state(op) == .running) {
-        pa.threaded_mainloop_wait(pa_ml);
+        pa.threaded_mainloop_signal(context.main_loop, 0);
     }
-    pa.operation_unref(op);
-    pa.threaded_mainloop_unlock(pa_ml);
 
-    pa.threaded_mainloop_lock(pa_ml);
-    const final_attrib = pa.stream_get_buffer_attr(pa_stream).?.*;
-    log.debug("Pulse final playback attributes: {}", .{final_attrib});
-    pa.threaded_mainloop_unlock(pa_ml);
-}
+    pub fn firstWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {
+        const context: *@This() = @ptrCast(@alignCast(userdata));
 
-fn pulseDefaultSuccessCallback(stream: ?*pa.Stream, success: c_int, userdata: ?*anyopaque) callconv(.c) void {
-    _ = stream;
-    _ = success;
-    _ = userdata;
-    pa.threaded_mainloop_signal(pa_ml, 0);
-}
+        assert(!context.callbacks_started);
+        assert(nbytes < context.buffer.len);
+
+        log.debug("first write callback: {}", .{nbytes});
+
+        _ = pa.stream_write(stream, context.buffer[0..nbytes].ptr, nbytes, null, 0, .relative);
+
+        _ = pa.stream_set_write_callback(stream, &writeCallback, context);
+
+        context.callbacks_started = true;
+
+        pa.threaded_mainloop_signal(context.main_loop, 0);
+    }
+
+    fn writeCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {
+        const context: *@This() = @ptrCast(@alignCast(userdata));
+
+        if (context.write_size_index < context.write_sizes.len) {
+            context.write_sizes[context.write_size_index] = nbytes;
+            context.write_size_index += 1;
+        }
+
+        var buffer_ptr: ?*anyopaque = null;
+        var buffer_size: usize = nbytes;
+        const rc = pa.stream_begin_write(stream, &buffer_ptr, &buffer_size);
+
+        if (rc != 0 or buffer_ptr == null) {
+            log.warn("pulseWriteCallback: pa_stream_begin_write failed (rc={})", .{rc});
+            return;
+        }
+
+        const buffer = @as([*]u8, @ptrCast(buffer_ptr))[0..buffer_size];
+
+        const bytes_to_end = context.buffer.len - context.read_cursor;
+
+        if (buffer.len <= bytes_to_end) {
+            @memcpy(buffer, context.buffer[context.read_cursor .. context.read_cursor + buffer.len]);
+        } else {
+            @memcpy(buffer[0..bytes_to_end], context.buffer[context.read_cursor..]);
+            @memcpy(buffer[bytes_to_end..], context.buffer[0 .. buffer.len - bytes_to_end]);
+        }
+
+        context.read_cursor = @intCast((context.read_cursor + buffer.len) % context.buffer.len);
+
+        _ = pa.stream_write(
+            stream,
+            buffer.ptr,
+            buffer.len,
+            null,
+            0,
+            .relative,
+        );
+    }
+};
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
 fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
