@@ -367,12 +367,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return e;
     };
 
-    var audio_output: AudioOutput = .{ .buffer = audio_buffer, .read_cursor = .init(0) };
+    var audio_output: AudioOutput = .{ .buffer = audio_buffer };
     audio_output.frames_per_second = audio_fps;
     audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
-    // audio_output.safety_frames = audio_output.frames_per_game_frame;
-    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 4);
-    audio_output.safety_frame_bytes = @as(u32, @intFromFloat((audio_fps / game_update_hz) / 4)) * @sizeOf(AudioOutput.Frame);
+    audio_output.safety_frame_bytes = 1024;
+    log.debug("sfb: {}", .{audio_output.safety_frame_bytes});
 
     try initPulse(&audio_output);
 
@@ -440,11 +439,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     pa.threaded_mainloop_lock(pa_ml);
     _ = pa.stream_cork(pa_stream, 0, null, null);
-    const prime_count = @min(pa.stream_writable_size(pa_stream), audio_output.buffer_attributes.t_length);
-    assert(prime_count >= audio_output.buffer_attributes.pre_buf);
-    pulseWriteCallback(pa_stream, prime_count, &audio_output);
-    audio_output.running_frame_index = prime_count / @sizeOf(AudioBuffer.Frame);
-    log.debug("pulse prime: {}", .{prime_count});
+    const writable = pa.stream_writable_size(pa_stream);
+    assert(audio_output.buffer.len >= writable);
+    log.debug("pulse prime: {}", .{writable});
+    _ = pa.stream_write(pa_stream, audio_output.buffer[0..writable].ptr, writable, null, 0, .relative);
+
+    // Wait for the first write callback to fire
+    while (!audio_output.pulse_callbacks_started) {
+        pa.threaded_mainloop_wait(pa_ml);
+    }
+
     pa.threaded_mainloop_unlock(pa_ml);
 
     var last_counter = getWallClock(io);
@@ -645,7 +649,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             var pa_latency_usec: pa.USec = undefined;
             pa.threaded_mainloop_lock(pa_ml);
             _ = pa.stream_get_latency(pa_stream, &pa_latency_usec, null);
-            const callback_cursor = audio_output.read_cursor.load(.acquire);
+            const callback_cursor = audio_output.read_cursor;
             assert(callback_cursor % @sizeOf(AudioOutput.Frame) == 0);
             log.debug("callbacks sizes: {any}", .{pa_write_sizes[0..pa_write_size_index]});
             pa_write_size_index = 0;
@@ -654,9 +658,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const pa_latency_frames = (pa_latency_usec * audio_output.frames_per_second) / std.time.us_per_s;
             const pa_latency_bytes = pa_latency_frames * @sizeOf(AudioOutput.Frame);
 
-            const play_cursor: u32 = @intCast((callback_cursor + audio_output.buffer.len - (pa_latency_bytes % audio_output.buffer.len)) % audio_output.buffer.len);
+            const play_cursor = (callback_cursor + audio_output.buffer.len - (pa_latency_bytes % audio_output.buffer.len)) % audio_output.buffer.len;
 
-            const write_cursor: usize = callback_cursor;
+            const write_cursor = callback_cursor;
 
             var byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % audio_output.buffer.len;
 
@@ -665,17 +669,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
             if (valid_bytes > audio_output.buffer.len / 2) {
                 log.warn("Audio ringbuffer underflow!", .{});
 
-                audio_output.running_frame_index = @intCast((write_cursor + audio_output.safety_frame_bytes) / @sizeOf(AudioOutput.Frame));
+                audio_output.running_frame_index = (write_cursor + audio_output.safety_frame_bytes) / @sizeOf(AudioOutput.Frame);
 
                 byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % audio_output.buffer.len;
             }
 
-            const expected_audio_frames_per_video_frame: u32 = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
-            const expected_audio_bytes_per_video_frame: u32 = expected_audio_frames_per_video_frame * @sizeOf(AudioOutput.Frame);
+            const expected_audio_bytes_per_video_frame = audio_output.frames_per_game_frame * @sizeOf(AudioOutput.Frame);
             const seconds_left_until_flip = target_seconds_per_frame - from_begin_to_audio_seconds;
-            const expected_frames_until_flip: u32 = @intFromFloat(@max(0, seconds_left_until_flip * @as(f32, @floatFromInt(audio_output.frames_per_second))));
-            const expected_bytes_until_flip: u32 = expected_frames_until_flip * @sizeOf(AudioOutput.Frame);
-            const expected_frame_boundary_byte: u32 = play_cursor + expected_bytes_until_flip;
+            const expected_frames_until_flip: usize = @intFromFloat(@max(0, seconds_left_until_flip * @as(f32, @floatFromInt(audio_output.frames_per_second))));
+            const expected_bytes_until_flip = expected_frames_until_flip * @sizeOf(AudioOutput.Frame);
+            const expected_frame_boundary_byte = play_cursor + expected_bytes_until_flip;
 
             var safe_write_cursor = write_cursor;
             if (safe_write_cursor < play_cursor) {
@@ -694,15 +697,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             target_cursor = target_cursor % audio_output.buffer.len;
 
-            const bytes_to_write: usize =
+            const bytes_to_write =
                 if (byte_to_lock > target_cursor)
                     (audio_output.buffer.len - byte_to_lock) + target_cursor
                 else
                     target_cursor - byte_to_lock;
-
-            // if (bytes_to_write > audio_output.buffer.len / 2) {
-            //     bytes_to_write = 0;
-            // }
 
             if (bytes_to_write > 0) {
                 if (game_code.getAudioFrames) |getAudioFrames| {
@@ -737,7 +736,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     }
                 }
 
-                audio_output.running_frame_index +%= @as(u32, @intCast(bytes_to_write / @sizeOf(AudioBuffer.Frame)));
+                audio_output.running_frame_index +%= bytes_to_write / @sizeOf(AudioBuffer.Frame);
             }
 
             if (options.internal_build) {
@@ -2041,20 +2040,34 @@ fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8
 const AudioOutput = struct {
     frames_per_second: u32 = 0,
     frames_per_game_frame: u32 = 0,
-    safety_frames: u32 = 0,
-
-    last_underflow_index: i64 = -1,
 
     buffer: []u8,
-    read_cursor: std.atomic.Value(u32),
-    running_frame_index: u32 = 0,
+    read_cursor: usize = 0,
+    running_frame_index: usize = 0,
     safety_frame_bytes: u32 = 0,
 
-    buffer_attributes: pa.BufferAttr = undefined,
+    pulse_callbacks_started: bool = false,
 
     const Sample = AudioBuffer.Sample;
     const Frame = AudioBuffer.Frame;
 };
+
+fn firstPulseWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {
+    const audio_output: *AudioOutput = @ptrCast(@alignCast(userdata));
+
+    assert(!audio_output.pulse_callbacks_started);
+    assert(nbytes < audio_output.buffer.len);
+
+    log.debug("first write callback: {}", .{nbytes});
+
+    _ = pa.stream_write(stream, audio_output.buffer[0..nbytes].ptr, nbytes, null, 0, .relative);
+
+    _ = pa.stream_set_write_callback(stream, &pulseWriteCallback, audio_output);
+
+    audio_output.pulse_callbacks_started = true;
+
+    pa.threaded_mainloop_signal(pa_ml, 0);
+}
 
 var pa_write_sizes: [32]usize = undefined;
 var pa_write_size_index: usize = 0;
@@ -2079,18 +2092,16 @@ fn pulseWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque)
 
     const buffer = @as([*]u8, @ptrCast(buffer_ptr))[0..buffer_size];
 
-    const read_cursor = audio_output.read_cursor.load(.monotonic);
-    const bytes_to_end = audio_output.buffer.len - read_cursor;
+    const bytes_to_end = audio_output.buffer.len - audio_output.read_cursor;
 
     if (buffer.len <= bytes_to_end) {
-        @memcpy(buffer, audio_output.buffer[read_cursor .. read_cursor + buffer.len]);
+        @memcpy(buffer, audio_output.buffer[audio_output.read_cursor .. audio_output.read_cursor + buffer.len]);
     } else {
-        @memcpy(buffer[0..bytes_to_end], audio_output.buffer[read_cursor..]);
+        @memcpy(buffer[0..bytes_to_end], audio_output.buffer[audio_output.read_cursor..]);
         @memcpy(buffer[bytes_to_end..], audio_output.buffer[0 .. buffer.len - bytes_to_end]);
     }
 
-    const new_read_cursor: u32 = @intCast((read_cursor + buffer.len) % audio_output.buffer.len);
-    audio_output.read_cursor.store(new_read_cursor, .release);
+    audio_output.read_cursor = @intCast((audio_output.read_cursor + buffer.len) % audio_output.buffer.len);
 
     _ = pa.stream_write(
         stream,
@@ -2154,7 +2165,7 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
 
     pa_sample_spec = .{
         .format = .s16le,
-        .rate = audio_output.frames_per_second,
+        .rate = @intCast(audio_output.frames_per_second),
         .channels = 2,
     };
 
@@ -2214,14 +2225,15 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
 
     pa.threaded_mainloop_lock(pa_ml);
 
-    _ = pa.stream_set_write_callback(pa_stream, &pulseWriteCallback, audio_output);
+    _ = pa.stream_set_write_callback(pa_stream, &firstPulseWriteCallback, audio_output);
 
     const actual_attr = pa.stream_get_buffer_attr(pa_stream).?;
     log.debug("Pulse actual playback attributes: {}", .{actual_attr});
 
+    const t_length = (actual_attr.min_req * 2) + 4;
     const final_init_attr = pa.BufferAttr{
-        .max_length = actual_attr.max_length,
-        .t_length = (actual_attr.min_req * 2) + 4,
+        .max_length = t_length,
+        .t_length = t_length,
         .pre_buf = actual_attr.min_req,
         .min_req = actual_attr.min_req,
         .frag_size = actual_attr.frag_size,
@@ -2236,8 +2248,8 @@ fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
     pa.threaded_mainloop_unlock(pa_ml);
 
     pa.threaded_mainloop_lock(pa_ml);
-    audio_output.buffer_attributes = pa.stream_get_buffer_attr(pa_stream).?.*;
-    log.debug("Pulse final playback attributes: {}", .{audio_output.buffer_attributes});
+    const final_attrib = pa.stream_get_buffer_attr(pa_stream).?.*;
+    log.debug("Pulse final playback attributes: {}", .{final_attrib});
     pa.threaded_mainloop_unlock(pa_ml);
 }
 
