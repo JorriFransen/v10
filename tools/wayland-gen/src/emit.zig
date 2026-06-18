@@ -335,7 +335,7 @@ const Writer = struct {
                 \\
                 \\server_objects: [16]Object = undefined,
                 \\
-                \\listeners: [32]RegisteredListener = std.mem.zeroes([32]RegisteredListener),
+                \\listeners: [32]RegisteredListener = @splat(std.mem.zeroes(RegisteredListener)),
                 \\free_listeners: std.SinglyLinkedList = .{},
                 \\
                 \\send_payload_used: usize = 0,

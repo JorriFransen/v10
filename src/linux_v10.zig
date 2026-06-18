@@ -2282,7 +2282,7 @@ const PulseContext = struct {
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
 fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
-    // if (!wld.should_draw) return false;
+    if (!wld.should_draw) return false;
 
     if (aquireFreeBuffer()) |wl_buffer| {
         const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
