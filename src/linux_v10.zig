@@ -419,6 +419,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
     audio_output.safety_frame_bytes = 1024;
     const pulse = &audio_output.pulse;
+    var audio_valid = false;
     log.debug("sfb: {}", .{audio_output.safety_frame_bytes});
 
     try pulse.init(audio_output.frames_per_second, "v10");
@@ -646,6 +647,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             const write_cursor = callback_cursor;
 
+            if (!audio_valid) {
+                audio_output.running_frame_index = write_cursor / @sizeOf(AudioOutput.Frame);
+                audio_valid = true;
+            }
+
             var byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % pulse.buffer.len;
 
             const valid_bytes = (byte_to_lock + pulse.buffer.len - write_cursor) % pulse.buffer.len;
@@ -764,7 +770,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
                 }
             } else {
-                log.debug("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
+                log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
             }
 
             const end_counter = getWallClock(io);
@@ -2175,7 +2181,7 @@ const PulseContext = struct {
 
         const t_length = (suggested_buffer_attr.min_req * 2) + 4;
         const modified_buffer_attr = pa.BufferAttr{
-            .max_length = t_length,
+            .max_length = t_length * 2,
             .t_length = t_length,
             .pre_buf = suggested_buffer_attr.min_req,
             .min_req = suggested_buffer_attr.min_req,
@@ -2197,11 +2203,9 @@ const PulseContext = struct {
         }
 
         const final_buffer_attr = pa.stream_get_buffer_attr(this.stream).?;
-        assert(final_buffer_attr.max_length == modified_buffer_attr.max_length);
-        assert(final_buffer_attr.t_length == modified_buffer_attr.t_length);
-        assert(final_buffer_attr.pre_buf == modified_buffer_attr.pre_buf);
-        assert(final_buffer_attr.min_req == modified_buffer_attr.min_req);
-        assert(final_buffer_attr.frag_size == modified_buffer_attr.frag_size);
+        if (!std.mem.eql(u8, std.mem.asBytes(&modified_buffer_attr), std.mem.asBytes(final_buffer_attr))) {
+            pa.log.warn("modified buffer attributes not accepted", .{});
+        }
         pa.log.debug("final buffer attributes applied: {}", .{final_buffer_attr});
 
         pa.context_set_state_callback(this.context, null, null); // TODO: Set to runtime version
