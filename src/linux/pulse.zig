@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.pulse);
+pub const log = std.log.scoped(.pulse);
 const options = @import("options");
 
 pub const Context = opaque {};
@@ -185,6 +185,12 @@ pub const StreamState = enum(c_int) {
     }
 };
 
+pub const OperationState = enum(c_int) {
+    running,
+    done,
+    cancelled,
+};
+
 pub const SeekMode = enum(c_int) {
     relative = 0,
     absolute = 1,
@@ -231,6 +237,7 @@ pub const FreeCb = *const fn (p: ?*anyopaque) callconv(.c) void;
 pub const StreamSuccessCb = *const fn (s: ?*Stream, success: c_int, userdata: ?*anyopaque) callconv(.c) void;
 pub const StreamRequestCb = *const fn (p: ?*Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void;
 pub const StreamNotifyCb = *const fn (p: ?*Stream, userdata: ?*anyopaque) callconv(.c) void;
+pub const ContextNotifyCb = *const fn (c: ?*Context, userdata: ?*anyopaque) callconv(.c) void;
 
 pub var threaded_mainloop_new: *const @TypeOf(threaded_mainloop_new_stub) = undefined;
 fn threaded_mainloop_new_stub() callconv(.c) ?*ThreadedMainLoop {
@@ -267,6 +274,11 @@ fn threaded_mainloop_unlock_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
 pub var threaded_mainloop_wait: *const @TypeOf(threaded_mainloop_wait_stub) = undefined;
 fn threaded_mainloop_wait_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
     _ = .{m};
+}
+
+pub var threaded_mainloop_signal: *const @TypeOf(threaded_mainloop_signal_stub) = undefined;
+fn threaded_mainloop_signal_stub(m: ?*ThreadedMainLoop, wait_for_accept: c_int) callconv(.c) void {
+    _ = .{ m, wait_for_accept };
 }
 
 pub var mainloop_new: *const @TypeOf(mainloop_new_stub) = undefined;
@@ -335,6 +347,11 @@ pub var context_get_state: *const @TypeOf(context_get_state_stub) = undefined;
 fn context_get_state_stub(context: ?*Context) callconv(.c) ContextState {
     _ = .{context};
     return .failed;
+}
+
+pub var context_set_state_callback: *const @TypeOf(context_set_state_callback_stub) = undefined;
+fn context_set_state_callback_stub(c: ?*Context, cb: ?ContextNotifyCb, userdata: ?*anyopaque) callconv(.c) void {
+    _ = .{ c, cb, userdata };
 }
 
 pub var stream_new: *const @TypeOf(stream_new_stub) = undefined;
@@ -416,15 +433,20 @@ fn stream_set_underflow_callback_stub(p: ?*const Stream, cb: StreamNotifyCb, use
 }
 
 pub var stream_set_state_callback: *const @TypeOf(stream_set_state_callback_stub) = undefined;
-fn stream_set_state_callback_stub(p: ?*const Stream, cb: StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+fn stream_set_state_callback_stub(p: ?*const Stream, cb: ?StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) void {
     _ = .{ p, cb, userdata };
-    return null;
 }
 
 pub var stream_get_buffer_attr: *const @TypeOf(stream_get_buffer_attr_stub) = undefined;
-fn stream_get_buffer_attr_stub(p: ?*const Stream) callconv(.c) BufferAttr {
+fn stream_get_buffer_attr_stub(p: ?*const Stream) callconv(.c) ?*BufferAttr {
     _ = .{p};
-    return .{};
+    return null;
+}
+
+pub var stream_set_buffer_attr: *const @TypeOf(stream_set_buffer_attr_stub) = undefined;
+fn stream_set_buffer_attr_stub(p: ?*Stream, attr: *const BufferAttr, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+    _ = .{ p, attr, cb, userdata };
+    return null;
 }
 
 pub var stream_trigger: *const @TypeOf(stream_trigger_stub) = undefined;
@@ -439,6 +461,17 @@ fn stream_flush_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopa
     return null;
 }
 
+pub var operation_unref: *const @TypeOf(operation_unref_stub) = undefined;
+fn operation_unref_stub(o: *Operation) callconv(.c) void {
+    _ = o;
+}
+
+pub var operation_get_state: *const @TypeOf(operation_get_state_stub) = undefined;
+fn operation_get_state_stub(o: *const Operation) callconv(.c) OperationState {
+    _ = o;
+    return .cancelled;
+}
+//
 pub var usec_to_bytes: *const @TypeOf(usec_to_bytes_stub) = undefined;
 fn usec_to_bytes_stub(t: USec, spec: *const SampleSpec) callconv(.c) usize {
     _ = .{ t, spec };

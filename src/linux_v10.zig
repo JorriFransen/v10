@@ -52,11 +52,6 @@ var running: bool = false;
 var pause: bool = false;
 var wld: WlData = .{};
 
-var pa_ctx: ?*pa.Context = null;
-var pa_ml: ?*pa.ThreadedMainLoop = null;
-var pa_stream: ?*pa.Stream = null;
-var pa_sample_spec: pa.SampleSpec = undefined;
-
 var joysticks: [PollFdSlot.joystick_count]Joystick = @splat(.{ .fd = -1, .kind = undefined });
 
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
@@ -98,6 +93,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
+    var thread_context: ThreadContext = .{
+        .io = &io,
+    };
+
     const prng_seed = std.Io.Timestamp.now(io, .real).toNanoseconds();
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
@@ -135,9 +134,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
         0,
     )) |mapped| {
         global_back_buffer.memory = mapped;
-        linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true }) catch {
+        linux.mprotect(mapped, .{ .READ = true, .WRITE = true }) catch |e| {
             log.err("mprotect call failed during back buffer resize", .{});
-            return error.MProtectFailed;
+            return e;
         };
     } else |_| {
         log.err("mmap call failed during back buffer resize", .{});
@@ -313,9 +312,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
         -1,
         0,
     )) |all_memory| {
-        linux.mprotect(all_memory.ptr, all_memory.len, .{ .READ = true, .WRITE = true }) catch {
+        linux.mprotect(all_memory, .{ .READ = true, .WRITE = true }) catch |e| {
             log.err("mprotect call for game memory storage failed", .{});
-            return error.MProtectFailed;
+            return e;
         };
 
         game_memory.permanent = all_memory.ptr;
@@ -349,38 +348,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
             } else |_| {
                 log.warn("open for input recording file failed", .{});
             }
-        }
-    }
-
-    var audio_output: AudioOutput = .{};
-    audio_output.frames_per_second = 48000;
-    audio_output.frames_per_game_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
-    // audio_output.safety_frames = audio_output.frames_per_game_frame;
-    audio_output.safety_frames = audio_output.frames_per_game_frame + (audio_output.frames_per_game_frame / 4);
-
-    try initPulse(&audio_output);
-
-    {
-        const prefill_frame_count = audio_output.frames_per_game_frame + audio_output.safety_frames;
-        var buffer_ptr: ?*anyopaque = null;
-        var buffer_size: usize = prefill_frame_count * @sizeOf(AudioOutput.Frame);
-        const begin_write_rc = pa.stream_begin_write(pa_stream, &buffer_ptr, &buffer_size);
-
-        const actual_frame_count = buffer_size / @sizeOf(AudioOutput.Frame);
-
-        if (begin_write_rc == 0 and buffer_ptr != null) {
-            const frames = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(buffer_ptr)))[0..actual_frame_count];
-
-            @memset(frames, .{});
-
-            _ = pa.stream_write(
-                pa_stream,
-                frames.ptr,
-                buffer_size,
-                null,
-                0,
-                .relative,
-            );
         }
     }
 
@@ -436,19 +403,41 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
+    const audio_fps = 48000;
+    const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
+
+    const audio_buffer = linux.mmap(null, audio_buffer_byte_size, .{}, .{
+        .TYPE = .PRIVATE,
+        .ANONYMOUS = true,
+    }, -1, 0) catch |e| {
+        log.err("mmap for audio buffer failed: {}", .{e});
+        return e;
+    };
+    linux.mprotect(audio_buffer, .{ .READ = true, .WRITE = true }) catch |e| {
+        log.err("mprotect for audio buffer failed: {}", .{e});
+        return e;
+    };
+
+    var audio_output: AudioOutput = .{ .pulse = .{ .buffer = audio_buffer } };
+    audio_output.frames_per_second = audio_fps;
+    audio_output.frames_per_video_frame = @intFromFloat(@as(f32, @floatFromInt(audio_output.frames_per_second)) / game_update_hz);
+    audio_output.bytes_per_video_frame = audio_output.frames_per_video_frame * @sizeOf(AudioOutput.Frame);
+    audio_output.safety_frame_bytes = @max(1024, @as(u32, @intFromFloat((audio_fps / game_update_hz) / 4)) * @sizeOf(AudioOutput.Frame));
+    const pulse = &audio_output.pulse;
+    var audio_valid = false;
+
+    try pulse.init(audio_output.frames_per_second, "v10");
+
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
-
-    var thread_context: ThreadContext = .{
-        .io = &io,
-    };
 
     var game_code = GameCode.load(io, game_lib_name);
     if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
-    _ = pa.stream_cork(pa_stream, 0, null, null);
+    pulse.start();
 
     var last_counter = getWallClock(io);
+    var flip_wall_clock = getWallClock(io);
 
     var last_cycle_count = arch.rdtsc();
 
@@ -639,71 +628,115 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer) else true;
             if (!keep_running) running = false;
 
-            pa.threaded_mainloop_lock(pa_ml);
-            {
-                if (pa.stream_get_state(pa_stream) != .ready) {
-                    log.warn("Pulse stream not ready!", .{});
-                    @panic("Unexpected pulse stream state");
-                }
+            const audio_wall_clock = getWallClock(io);
+            const from_begin_to_audio_seconds = getSecondsElapsed(flip_wall_clock, audio_wall_clock);
 
-                const underflow_index = pa.stream_get_underflow_index(pa_stream);
-                if (underflow_index != audio_output.last_underflow_index) {
-                    audio_output.last_underflow_index = underflow_index;
-                    log.debug("Pulse stream underflow!", .{});
-                    _ = pa.stream_flush(pa_stream, null, null);
-                }
+            const cursor = pulse.getCurrentPosition(audio_output.frames_per_second);
 
-                var usec: pa.USec = undefined;
-                _ = pa.stream_get_latency(pa_stream, &usec, null);
-                const latency_frames_f = @as(f32, @floatFromInt(usec)) *
-                    @as(f32, @floatFromInt(audio_output.frames_per_second)) / @as(f32, @floatFromInt(std.time.us_per_s));
-                const latency_frames: u64 = @intFromFloat(latency_frames_f);
+            if (!audio_valid) {
+                audio_output.running_frame_index = cursor.write / @sizeOf(AudioOutput.Frame);
+                audio_valid = true;
+            }
 
-                const writable_frames = pa.stream_writable_size(pa_stream) / @sizeOf(AudioOutput.Frame);
+            var byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % pulse.buffer.len;
 
-                const latency_error: i64 = @as(i64, @intCast(audio_output.safety_frames)) - @as(i64, @intCast(latency_frames));
-                const latency_correction: i64 = @divTrunc(latency_error, 3);
+            const valid_bytes = (byte_to_lock + pulse.buffer.len - cursor.write) % pulse.buffer.len;
 
-                const target_frames: usize = @intCast(@max(audio_output.frames_per_game_frame + latency_correction, 0));
-                const frames_to_write: usize = @min(target_frames, writable_frames);
+            if (valid_bytes > pulse.buffer.len / 2) {
+                log.warn("Audio ringbuffer underflow! (btl:{} - wc: {})", .{ byte_to_lock, cursor.write });
 
-                if (frames_to_write > 0) {
-                    var buffer_ptr: ?*anyopaque = null;
-                    var buffer_size: usize = frames_to_write * @sizeOf(AudioOutput.Frame);
-                    const begin_write_rc = pa.stream_begin_write(pa_stream, &buffer_ptr, &buffer_size);
+                audio_output.running_frame_index = (cursor.write + audio_output.safety_frame_bytes) / @sizeOf(AudioOutput.Frame);
 
-                    // log.debug("FPGF: {} - SF: {} - FTW: {} - LF: {} - WRITABLE: {} - LS: {d:.3}", .{
-                    //     audio_output.frames_per_game_frame,
-                    //     audio_output.safety_frames,
-                    //     frames_to_write,
-                    //     latency_frames,
-                    //     writable_frames,
-                    //     @as(f64, @floatFromInt(usec)) / std.time.us_per_s,
-                    // });
+                byte_to_lock = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % pulse.buffer.len;
+            }
 
-                    if (begin_write_rc == 0 and buffer_ptr != null) {
+            const seconds_left_until_flip = target_seconds_per_frame - from_begin_to_audio_seconds;
+            const expected_frames_until_flip: usize = @intFromFloat(@max(0, seconds_left_until_flip * @as(f32, @floatFromInt(audio_output.frames_per_second))));
+            const expected_bytes_until_flip = expected_frames_until_flip * @sizeOf(AudioOutput.Frame);
+            const expected_frame_boundary_byte = cursor.play + expected_bytes_until_flip;
+
+            var safe_write_cursor: usize = cursor.write;
+            if (safe_write_cursor < cursor.play) {
+                safe_write_cursor += pulse.buffer.len;
+            }
+            safe_write_cursor += audio_output.safety_frame_bytes;
+
+            const audio_card_is_low_latency = safe_write_cursor < expected_frame_boundary_byte;
+
+            var target_cursor: usize = 0;
+            if (audio_card_is_low_latency) {
+                target_cursor = expected_frame_boundary_byte + audio_output.bytes_per_video_frame;
+            } else {
+                target_cursor = safe_write_cursor + audio_output.bytes_per_video_frame;
+            }
+
+            target_cursor = target_cursor % pulse.buffer.len;
+
+            const bytes_to_write =
+                if (byte_to_lock > target_cursor)
+                    (pulse.buffer.len - byte_to_lock) + target_cursor
+                else
+                    target_cursor - byte_to_lock;
+
+            if (bytes_to_write > 0) {
+                if (game_code.getAudioFrames) |getAudioFrames| {
+                    const bytes_to_end = pulse.buffer.len - byte_to_lock;
+
+                    if (bytes_to_write <= bytes_to_end) {
+                        const frames: []AudioOutput.Frame = @ptrCast(@alignCast(pulse.buffer[byte_to_lock .. byte_to_lock + bytes_to_write]));
+
                         var game_sound_output_buffer: AudioBuffer = .{
-                            .frames = @ptrCast(@alignCast(buffer_ptr)),
-                            .frames_len = frames_to_write,
+                            .frames = frames.ptr,
+                            .frames_len = frames.len,
                             .frames_per_second = @intCast(audio_output.frames_per_second),
                         };
 
-                        if (game_code.getAudioFrames) |getAudioFrames| getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
-
-                        _ = pa.stream_write(
-                            pa_stream,
-                            game_sound_output_buffer.frames,
-                            buffer_size,
-                            null,
-                            0,
-                            .relative,
-                        );
+                        getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
                     } else {
-                        log.warn("pa_stream_begin_write_failed", .{});
+                        var frames: []AudioOutput.Frame = @ptrCast(@alignCast(pulse.buffer[byte_to_lock..]));
+
+                        var game_sound_output_buffer: AudioBuffer = .{
+                            .frames = frames.ptr,
+                            .frames_len = frames.len,
+                            .frames_per_second = @intCast(audio_output.frames_per_second),
+                        };
+
+                        getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
+
+                        frames = @ptrCast(@alignCast(pulse.buffer[0 .. bytes_to_write - bytes_to_end]));
+                        game_sound_output_buffer.frames = frames.ptr;
+                        game_sound_output_buffer.frames_len = frames.len;
+
+                        getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
                     }
                 }
+
+                audio_output.running_frame_index +%= bytes_to_write / @sizeOf(AudioBuffer.Frame);
             }
-            pa.threaded_mainloop_unlock(pa_ml);
+
+            if (options.internal_build) {
+                var unwraped_write_cursor: usize = cursor.write;
+                if (unwraped_write_cursor < cursor.play) {
+                    unwraped_write_cursor += pulse.buffer.len;
+                }
+                const audio_latency_bytes = unwraped_write_cursor - cursor.play;
+                const audio_latency_seconds = @as(f32, @floatFromInt(audio_latency_bytes / @sizeOf(AudioBuffer.Frame))) / @as(f32, @floatFromInt(audio_output.frames_per_second));
+
+                // log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} SWC:{} EFBB:{} -  DELTA:{} ({d:.3}) LL:{}", .{
+                //     byte_to_lock,
+                //     target_cursor,
+                //     bytes_to_write,
+                //     cursor.play,
+                //     cursor.write,
+                //     safe_write_cursor,
+                //     expected_frame_boundary_byte,
+                //     audio_latency_bytes,
+                //     audio_latency_seconds,
+                //     audio_card_is_low_latency,
+                // });
+
+                _ = .{audio_latency_seconds};
+            }
 
             const wayland_blit = displayBufferInWindow(global_back_buffer);
 
@@ -726,7 +759,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
                 }
             } else {
-                log.debug("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
+                log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
             }
 
             const end_counter = getWallClock(io);
@@ -740,6 +773,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const end_cycle_count = arch.rdtsc();
             const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
             last_cycle_count = end_cycle_count;
+
+            flip_wall_clock = getWallClock(io);
 
             const fps = std.time.ms_per_s / ms_per_frame;
             const mcpf = cycles_elapsed / (1000 * 1000);
@@ -1328,7 +1363,7 @@ pub const DEBUG = struct {
                 const file_size: usize = @intCast(stat.st_size);
 
                 if (linux.mmap(null, file_size, .{}, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0)) |mapped| {
-                    if (linux.mprotect(mapped.ptr, mapped.len, .{ .READ = true, .WRITE = true })) {
+                    if (linux.mprotect(mapped, .{ .READ = true, .WRITE = true })) {
                         if (linux.read(fd, mapped)) |read| {
                             assert(read.len == file_size);
                             result.size = read.len;
@@ -1983,117 +2018,270 @@ fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8
 
 const AudioOutput = struct {
     frames_per_second: u32 = 0,
-    frames_per_game_frame: u32 = 0,
-    safety_frames: u32 = 0,
+    frames_per_video_frame: u32 = 0,
+    bytes_per_video_frame: u32 = 0,
 
-    last_underflow_index: i64 = -1,
+    running_frame_index: usize = 0,
+    safety_frame_bytes: u32 = 0,
+
+    pulse: PulseContext,
 
     const Sample = AudioBuffer.Sample;
     const Frame = AudioBuffer.Frame;
 };
 
-// TODO: signal invalid pa_* variables on failure
-fn initPulse(audio_output: *AudioOutput) error{PulseInitFailed}!void {
-    pa.load();
+const PulseContext = struct {
+    context: *pa.Context = undefined,
+    main_loop: *pa.ThreadedMainLoop = undefined,
+    stream: *pa.Stream = undefined,
 
-    pa_ml = pa.threaded_mainloop_new() orelse {
-        log.err("Pulse failed to create main loop", .{});
-        return error.PulseInitFailed;
+    context_state: pa.ContextState = .unconnected,
+    stream_state: pa.StreamState = .unconnected,
+    callbacks_started: bool = false,
+
+    read_cursor: usize = 0,
+    buffer: []u8,
+
+    const InitCallbacks = struct {
+        context: *PulseContext,
+
+        fn contextStateCallback(context: ?*pa.Context, userdata: ?*anyopaque) callconv(.c) void {
+            const pulse_context: *PulseContext = @ptrCast(@alignCast(userdata));
+
+            pulse_context.context_state = pa.context_get_state(context);
+            pa.log.debug("context state: {}", .{pulse_context.context_state});
+            pa.threaded_mainloop_signal(pulse_context.main_loop, 0);
+        }
+
+        fn streamStateCallback(stream: ?*pa.Stream, userdata: ?*anyopaque) callconv(.c) void {
+            const pulse_context: *PulseContext = @ptrCast(@alignCast(userdata));
+
+            pulse_context.stream_state = pa.stream_get_state(stream);
+            pa.log.debug("stream state: {}", .{pulse_context.stream_state});
+            pa.threaded_mainloop_signal(pulse_context.main_loop, 0);
+        }
     };
-    errdefer pa.threaded_mainloop_free(pa_ml);
 
-    const ml_api = pa.threaded_mainloop_get_api(pa_ml) orelse {
-        log.err("Pulse failed to get mainloop api", .{});
-        return error.PulseInitFailed;
-    };
+    pub fn init(this: *@This(), sample_rate: u32, application_name: [:0]const u8) error{PulseInitFailed}!void {
+        pa.load();
 
-    pa_ctx = pa.context_new(ml_api, "v10") orelse {
-        log.err("Pulse failed to create context", .{});
-        return error.PulseInitFailed;
-    };
-    errdefer pa.context_unref(pa_ctx);
+        const sample_spec = pa.SampleSpec{
+            .format = .s16le,
+            .rate = sample_rate,
+            .channels = 2,
+        };
 
-    if (pa.context_connect(pa_ctx, null, .{}, null) < 0) {
-        log.err("Pulse failed to connect context", .{});
-        return error.PulseInitFailed;
-    }
-    errdefer pa.context_disconnect(pa_ctx);
+        this.main_loop = pa.threaded_mainloop_new() orelse {
+            pa.log.err("pa_threaded_mainloop_new failed", .{});
+            return error.PulseInitFailed;
+        };
+        errdefer pa.threaded_mainloop_free(this.main_loop);
+        pa.log.debug("threaded mainloop created", .{});
 
-    if (pa.threaded_mainloop_start(pa_ml) < 0) {
-        log.err("Pulse failed to start mainloop", .{});
-        return error.PulseInitFailed;
-    }
-    log.debug("Pulse main loop started", .{});
+        const api = pa.threaded_mainloop_get_api(this.main_loop) orelse {
+            pa.log.err("pa_threaded_mainloop_get_api failed", .{});
+            return error.PulseInitFailed;
+        };
+        pa.log.debug("threaded mainloop api retrieved", .{});
 
-    pa.threaded_mainloop_lock(pa_ml);
-    var cstate = pa.context_get_state(pa_ctx);
-    pa.threaded_mainloop_unlock(pa_ml);
-    while (cstate != .ready) {
-        if (cstate == .failed or cstate == .terminated) {
-            log.err("Pulse context failed to reach ready state!", .{});
+        this.context = pa.context_new(api, application_name) orelse {
+            pa.log.err("pa_context_new failed", .{});
+            return error.PulseInitFailed;
+        };
+        errdefer pa.context_unref(this.context);
+        pa.log.debug("context created", .{});
+
+        if (pa.threaded_mainloop_start(this.main_loop) < 0) {
+            pa.log.err("pa_threaded_mainloop_start failed", .{});
+            return error.PulseInitFailed;
+        }
+        pa.log.debug("starting threaded mainloop", .{});
+
+        pa.threaded_mainloop_lock(this.main_loop);
+        defer pa.threaded_mainloop_unlock(this.main_loop);
+
+        if (pa.context_connect(this.context, null, .{}, null) < 0) {
+            pa.log.err("pa_context_connect failed", .{});
+            return error.PulseInitFailed;
+        }
+        errdefer pa.context_disconnect(this.context);
+        pa.log.debug("start context connection", .{});
+
+        pa.context_set_state_callback(this.context, InitCallbacks.contextStateCallback, this);
+        while (this.context_state != .ready) {
+            switch (this.context_state) {
+                else => {},
+                .ready, .connecting, .authorizing, .setting_name => {},
+                .failed, .terminated => {
+                    pa.log.err("invalid context state: {}", .{this.context_state});
+                    return error.PulseInitFailed;
+                },
+            }
+            pa.threaded_mainloop_wait(this.main_loop);
+        }
+        pa.log.debug("context ready", .{});
+
+        this.stream = pa.stream_new(this.context, application_name, &sample_spec, null) orelse {
+            pa.log.err("failed to create stream", .{});
+            return error.PulseInitFailed;
+        };
+        errdefer pa.stream_unref(this.stream);
+        pa.log.debug("stream created", .{});
+
+        const min_req_frames = 8;
+        const min_req_bytes = min_req_frames * @sizeOf(AudioOutput.Frame);
+        const aggressive_buffer_attr = pa.BufferAttr{
+            .max_length = std.math.maxInt(u32),
+            .t_length = (min_req_bytes * 2) + 4,
+            .pre_buf = 0,
+            .min_req = min_req_bytes,
+            .frag_size = std.math.maxInt(u32),
+        };
+        pa.log.debug("initial buffer attributes: {}", .{aggressive_buffer_attr});
+
+        if (pa.stream_connect_playback(this.stream, null, &aggressive_buffer_attr, .{
+            .adjust_latency = true,
+            .interpolate_timing = true,
+            .auto_timing_update = true,
+            .start_corked = true,
+        }, null, null) < 0) {
+            pa.log.err("pa_stream_connect_playback failed", .{});
+            return error.PulseInitFailed;
+        }
+        pa.stream_set_state_callback(this.stream, InitCallbacks.streamStateCallback, this);
+        pa.log.debug("stream connected", .{});
+
+        while (this.stream_state != .ready) {
+            switch (this.stream_state) {
+                else => {},
+                .ready, .creating => {},
+                .failed, .terminated => {
+                    pa.log.err("Invalid stream state: {}", .{this.stream_state});
+                    return error.PulseInitFailed;
+                },
+            }
+            pa.threaded_mainloop_wait(this.main_loop);
+        }
+
+        const suggested_buffer_attr = pa.stream_get_buffer_attr(this.stream).?;
+        pa.log.debug("suggested buffer attributes: {}", .{suggested_buffer_attr});
+
+        const t_length = (suggested_buffer_attr.min_req * 2) + 4;
+        const modified_buffer_attr = pa.BufferAttr{
+            .max_length = t_length * 2,
+            .t_length = t_length,
+            .pre_buf = suggested_buffer_attr.min_req,
+            .min_req = suggested_buffer_attr.min_req,
+            .frag_size = suggested_buffer_attr.frag_size,
+        };
+
+        pa.log.debug("modified buffer attributes: {}", .{modified_buffer_attr});
+
+        const op = pa.stream_set_buffer_attr(this.stream, &modified_buffer_attr, &PulseContext.successCallback, this).?;
+        defer pa.operation_unref(op);
+
+        while (pa.operation_get_state(op) == .running) {
+            pa.threaded_mainloop_wait(this.main_loop);
+        }
+
+        if (pa.operation_get_state(op) == .cancelled) {
+            pa.log.err("pa_stream_set_buffer_attr cancelled", .{});
             return error.PulseInitFailed;
         }
 
-        pa.threaded_mainloop_wait(pa_ml);
+        const final_buffer_attr = pa.stream_get_buffer_attr(this.stream).?;
+        if (!std.mem.eql(u8, std.mem.asBytes(&modified_buffer_attr), std.mem.asBytes(final_buffer_attr))) {
+            pa.log.warn("modified buffer attributes not accepted", .{});
+        }
+        pa.log.debug("final buffer attributes applied: {}", .{final_buffer_attr});
 
-        pa.threaded_mainloop_lock(pa_ml);
-        cstate = pa.context_get_state(pa_ctx);
-        pa.threaded_mainloop_unlock(pa_ml);
+        pa.context_set_state_callback(this.context, null, null); // TODO: Set to runtime version
+        pa.stream_set_state_callback(this.stream, null, null); // TODO: Set to runtime version
     }
-    // log.debug("Pulse context reached ready state", .{});
 
-    pa_sample_spec = .{
-        .format = .s16le,
-        .rate = audio_output.frames_per_second,
-        .channels = 2,
-    };
+    /// Blocks until the first write callback is fired
+    pub fn start(this: *@This()) void {
+        pa.threaded_mainloop_lock(this.main_loop);
 
-    pa_stream = pa.stream_new(pa_ctx, "v10", &pa_sample_spec, null) orelse {
-        log.err("Pulse failed to create stream!", .{});
-        return error.PulseInitFailed;
-    };
-    errdefer pa.stream_unref(pa_stream);
-    // log.debug("Pulse stream created", .{});
+        _ = pa.stream_set_write_callback(this.stream, &firstWriteCallback, this);
+        _ = pa.stream_cork(this.stream, 0, null, null);
 
-    const attr = pa.BufferAttr{
-        .max_length = std.math.maxInt(u32),
-        .t_length = (audio_output.frames_per_game_frame + audio_output.safety_frames) * @sizeOf(AudioOutput.Frame),
-        .pre_buf = 0,
-        .min_req = (audio_output.frames_per_game_frame) * @sizeOf(AudioOutput.Frame),
-        .frag_size = audio_output.frames_per_game_frame * @sizeOf(AudioOutput.Frame),
-    };
+        const writable = pa.stream_writable_size(this.stream);
+        assert(this.buffer.len >= writable);
+        pa.log.debug("prime: {}", .{writable});
+        _ = pa.stream_write(this.stream, this.buffer[0..writable].ptr, writable, null, 0, .relative);
 
-    // log.debug("Pulse requested playback attributes: {}", .{attr});
-
-    pa.threaded_mainloop_lock(pa_ml);
-    if (pa.stream_connect_playback(pa_stream, null, &attr, .{
-        .adjust_latency = false,
-        .interpolate_timing = true,
-        .auto_timing_update = true,
-        .start_corked = true,
-    }, null, null) < 0) {
-        pa.threaded_mainloop_unlock(pa_ml);
-        log.err("Pulse failed connect playback!", .{});
-        return error.PulseInitFailed;
-    }
-    // log.debug("Pulse stream connected", .{});
-    // log.debug("Pulse actual playback attributes: {}", .{attr});
-
-    var sstate = pa.stream_get_state(pa_stream);
-    pa.threaded_mainloop_unlock(pa_ml);
-
-    while (sstate != .ready) {
-        if (sstate == .failed or sstate == .terminated) {
-            log.err("Pulse stream failed or terminated", .{});
-            return error.PulseInitFailed;
+        while (!this.callbacks_started) {
+            pa.threaded_mainloop_wait(this.main_loop);
         }
 
-        pa.threaded_mainloop_lock(pa_ml);
-        sstate = pa.stream_get_state(pa_stream);
-        pa.threaded_mainloop_unlock(pa_ml);
+        pa.threaded_mainloop_unlock(this.main_loop);
     }
-    log.debug("Pulse stream ready", .{});
-}
+
+    pub const StreamPosition = struct {
+        play: u32,
+        write: u32,
+    };
+
+    pub inline fn getCurrentPosition(this: *@This(), rate: u32) StreamPosition {
+        var pa_latency_usec: pa.USec = undefined;
+        pa.threaded_mainloop_lock(this.main_loop);
+        _ = pa.stream_get_latency(this.stream, &pa_latency_usec, null);
+        const callback_cursor: u32 = @intCast(this.read_cursor);
+        pa.threaded_mainloop_unlock(this.main_loop);
+
+        const pa_latency_frames: u32 = @intCast((pa_latency_usec * rate) / std.time.us_per_s);
+        const pa_latency_bytes: u32 = pa_latency_frames * @sizeOf(AudioOutput.Frame);
+        const buf_len: u32 = @intCast(this.buffer.len);
+
+        const play_cursor: u32 = (callback_cursor + buf_len - (pa_latency_bytes % buf_len)) % buf_len;
+        const write_cursor: u32 = callback_cursor;
+
+        return .{ .play = play_cursor, .write = write_cursor };
+    }
+
+    pub fn successCallback(stream: ?*pa.Stream, success: c_int, userdata: ?*anyopaque) callconv(.c) void {
+        _ = stream;
+        _ = success;
+
+        const context: *@This() = @ptrCast(@alignCast(userdata));
+
+        pa.threaded_mainloop_signal(context.main_loop, 0);
+    }
+
+    pub fn firstWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {
+        const context: *@This() = @ptrCast(@alignCast(userdata));
+
+        assert(!context.callbacks_started);
+        assert(nbytes < context.buffer.len);
+
+        log.debug("first write callback: {}", .{nbytes});
+
+        _ = pa.stream_write(stream, context.buffer[0..nbytes].ptr, nbytes, null, 0, .relative);
+
+        _ = pa.stream_set_write_callback(stream, &writeCallback, context);
+
+        context.callbacks_started = true;
+
+        pa.threaded_mainloop_signal(context.main_loop, 0);
+    }
+
+    fn writeCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {
+        const context: *@This() = @ptrCast(@alignCast(userdata));
+
+        const bytes_to_end = context.buffer.len - context.read_cursor;
+
+        if (nbytes <= bytes_to_end) {
+            _ = pa.stream_write(stream, &context.buffer[context.read_cursor], nbytes, null, 0, .relative);
+        } else {
+            _ = pa.stream_write(stream, &context.buffer[context.read_cursor], bytes_to_end, null, 0, .relative);
+            const rem = nbytes - bytes_to_end;
+            _ = pa.stream_write(stream, &context.buffer[0], rem, null, 0, .relative);
+        }
+
+        context.read_cursor = (context.read_cursor + nbytes) % context.buffer.len;
+    }
+};
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
 fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {

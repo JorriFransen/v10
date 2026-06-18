@@ -89,7 +89,7 @@ pub const Arena = struct {
                 };
 
                 const committed = data[0..options.initial_commit];
-                linux.mprotect(committed.ptr, committed.len, .{ .READ = true, .WRITE = true }) catch {
+                linux.mprotect(committed, .{ .READ = true, .WRITE = true }) catch {
                     return error.CommitFailed;
                 };
 
@@ -179,7 +179,7 @@ pub const Arena = struct {
             else => @compileError("missing implementation for platform for 'Arena.grow'"),
 
             .linux => {
-                linux.mprotect(new_slice.ptr, new_slice.len, .{ .READ = true, .WRITE = true }) catch |e| {
+                linux.mprotect(new_slice, .{ .READ = true, .WRITE = true }) catch |e| {
                     log.warn("arena mprotect (commit) failed: error: {}", .{e});
                     return error.CommitFailed;
                 };
