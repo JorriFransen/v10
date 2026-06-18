@@ -2208,7 +2208,6 @@ const PulseContext = struct {
 
         const writable = pa.stream_writable_size(this.stream);
         assert(this.buffer.len >= writable);
-        pa.log.debug("prime: {}", .{writable});
         _ = pa.stream_write(this.stream, this.buffer[0..writable].ptr, writable, null, 0, .relative);
 
         while (!this.callbacks_started) {
@@ -2254,8 +2253,6 @@ const PulseContext = struct {
 
         assert(!context.callbacks_started);
         assert(nbytes < context.buffer.len);
-
-        log.debug("first write callback: {}", .{nbytes});
 
         _ = pa.stream_write(stream, context.buffer[0..nbytes].ptr, nbytes, null, 0, .relative);
 
