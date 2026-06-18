@@ -58,6 +58,9 @@ pub const AudioOutput = struct {
     buffer: []Frame = &.{},
 
     frames_per_second: u32,
+    frames_per_video_frame: u32,
+    bytes_per_video_frame: u32,
+
     buffer_byte_size: u32,
     running_frame_index: u32,
     safety_frame_bytes: u32,
@@ -458,10 +461,13 @@ pub fn windowsEntry(
 
             const audio_fps = 48000;
             const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
+            const frames_per_video_frame: u32 = @intFromFloat(@as(f32, @floatFromInt(audio_fps)) / game_update_hz);
 
             var audio_output: AudioOutput = .{
                 .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size),
                 .frames_per_second = audio_fps,
+                .frames_per_video_frame = frames_per_video_frame,
+                .bytes_per_video_frame = frames_per_video_frame * @sizeOf(AudioOutput.Frame),
                 .buffer_byte_size = audio_buffer_byte_size,
                 .running_frame_index = 0,
                 .safety_frame_bytes = @as(u32, @intFromFloat((audio_fps / game_update_hz) / 3)) * @sizeOf(AudioOutput.Frame),
@@ -747,9 +753,9 @@ pub fn windowsEntry(
 
                             const byte_to_lock: u32 = (audio_output.running_frame_index *% @sizeOf(AudioOutput.Frame)) % audio_output.buffer_byte_size;
 
-                            const expected_audio_bytes_per_frame: win32.DWORD = @intFromFloat(audio_fps / game_update_hz * @sizeOf(AudioOutput.Frame));
                             const seconds_left_until_flip = target_seconds_per_frame - from_begin_to_audio_seconds;
-                            const expected_bytes_until_flip: win32.DWORD = @max(0, @as(i32, @intFromFloat((seconds_left_until_flip / target_seconds_per_frame) * @as(f32, @floatFromInt(expected_audio_bytes_per_frame)))));
+                            const expected_frames_until_flip: win32.DWORD = @intFromFloat(@max(0, seconds_left_until_flip * @as(f32, @floatFromInt(audio_output.frames_per_second))));
+                            const expected_bytes_until_flip = expected_frames_until_flip * @sizeOf(AudioOutput.Frame);
                             assert(expected_bytes_until_flip % @sizeOf(AudioOutput.Frame) == 0);
                             const expected_frame_boundary_byte: win32.DWORD = play_cursor + expected_bytes_until_flip;
 
@@ -764,9 +770,9 @@ pub fn windowsEntry(
 
                             var target_cursor: u32 = 0;
                             if (audio_card_is_low_latency) {
-                                target_cursor = expected_frame_boundary_byte + expected_audio_bytes_per_frame;
+                                target_cursor = expected_frame_boundary_byte + audio_output.bytes_per_video_frame;
                             } else {
-                                target_cursor = write_cursor + expected_audio_bytes_per_frame + audio_output.safety_frame_bytes;
+                                target_cursor = write_cursor + audio_output.bytes_per_video_frame + audio_output.safety_frame_bytes;
                             }
                             target_cursor = target_cursor % audio_output.buffer_byte_size;
 
