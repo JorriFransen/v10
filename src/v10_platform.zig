@@ -11,9 +11,9 @@ pub const ThreadContext = extern struct {
     io: *const std.Io,
 };
 
-pub const FN_init = *const fn (thread_context: *ThreadContext, memory: *Memory) callconv(.c) void;
-pub const FN_updateAndRender = *const fn (thread_context: *ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool;
-pub const FN_getAudioFrames = *const fn (thread_context: *ThreadContext, memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void;
+pub const FN_init = *const fn (thread_context: *const ThreadContext, memory: *Memory) callconv(.c) void;
+pub const FN_updateAndRender = *const fn (thread_context: *const ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool;
+pub const FN_getAudioFrames = *const fn (thread_context: *const ThreadContext, memory: *Memory, sound_buffer: *const AudioBuffer) callconv(.c) void;
 
 pub const OffscreenBuffer = extern struct {
     memory: [*]u8,

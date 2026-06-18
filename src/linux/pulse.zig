@@ -403,7 +403,7 @@ fn stream_begin_write_stub(p: ?*const Stream, data: *?*anyopaque, nbytes: *usize
 }
 
 pub var stream_write: *const @TypeOf(stream_write_stub) = undefined;
-fn stream_write_stub(p: ?*const Stream, data: *anyopaque, n_bytes: usize, free_cb: ?FreeCb, offset: i64, seek: SeekMode) callconv(.c) usize {
+fn stream_write_stub(p: ?*const Stream, data: *const anyopaque, n_bytes: usize, free_cb: ?FreeCb, offset: i64, seek: SeekMode) callconv(.c) usize {
     _ = .{ p, data, n_bytes, free_cb, offset, seek };
     return std.math.maxInt(usize);
 }

@@ -9,6 +9,7 @@ const Step = Build.Step;
 var use_llvm: bool = false;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
+var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
 
 const src_path = "src";
 
@@ -169,7 +170,19 @@ fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget,
     return exe;
 }
 
+const LinuxAudioImplementation = enum {
+    pulseEmulateDSound,
+    pulsePull,
+};
+
 fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !*Step.Compile {
+    linux_audio_impl = b.option(LinuxAudioImplementation, "linux_audio_impl", "Linux audio implementation") orelse linux_audio_impl;
+
+    var linux_options = b.addOptions();
+    linux_options.addOption(LinuxAudioImplementation, "linux_audio_impl", linux_audio_impl);
+
+    const linux_options_module = linux_options.createModule();
+
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
@@ -180,6 +193,7 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
             .{ .name = "linux", .module = modules.linux },
             .{ .name = "dynlib", .module = modules.dynlib },
             .{ .name = "wayland", .module = modules.wayland.? },
+            .{ .name = "linux_options", .module = linux_options_module },
         },
     });
 
