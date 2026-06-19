@@ -239,11 +239,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const player_height: f32 = 1.4;
     const player_width: f32 = player_height * 0.75;
 
-    for (input.controllers) |controller| if (controller.is_connected) {
+    for (input.controllers) |controller| {
+        // Note: This is a bug in the current matching hh code, physics is applied for unconnected controllers.
+        // if (!controller.is_connected) continue;
+
         const buttons = &controller.buttons.named;
-        // if (buttons.start.ended_down) {
-        //     keep_running = false;
-        // }
 
         var player_acceleration: V2 = .{};
 
@@ -357,7 +357,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         } else if (diff.xy.y < -(y_bound_offset) * tilemap.tile_size_in_meters) {
             game_state.camera_pos.abs_tile_y -%= 9;
         }
-    };
+    }
 
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
