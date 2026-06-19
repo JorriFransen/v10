@@ -239,11 +239,13 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const player_height: f32 = 1.4;
     const player_width: f32 = player_height * 0.75;
 
-    for (input.controllers) |controller| if (controller.is_connected) {
+    const old_player_pos = game_state.player_pos;
+
+    for (input.controllers) |controller| {
+        // Note: This is a bug in the current matching hh code, physics is applied for unconnected controllers.
+        // if (!controller.is_connected) continue;
+
         const buttons = &controller.buttons.named;
-        // if (buttons.start.ended_down) {
-        //     keep_running = false;
-        // }
 
         var player_acceleration: V2 = .{};
 
@@ -285,79 +287,114 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         player_acceleration = player_acceleration.add(game_state.player_velocity.mul(-1.5));
 
         var new_player_pos = game_state.player_pos;
-        new_player_pos.offset = player_acceleration.mul(0.5 * math.square(input.dt))
-            .add(game_state.player_velocity.mul(input.dt))
-            .add(new_player_pos.offset);
+        const player_delta = V2.add(
+            player_acceleration.mul(0.5 * math.square(input.dt)),
+            game_state.player_velocity.mul(input.dt),
+        );
+
+        new_player_pos.offset = new_player_pos.offset.add(player_delta);
 
         game_state.player_velocity = game_state.player_velocity.add(player_acceleration.mul(input.dt));
         new_player_pos.recanonicalize(tilemap);
 
-        var bottom_left_pos = new_player_pos;
-        bottom_left_pos.offset.x -= (player_width / 2);
-        bottom_left_pos.recanonicalize(tilemap);
+        if (true) {
+            // Old collision code
+            var bottom_left_pos = new_player_pos;
+            bottom_left_pos.offset.x -= (player_width / 2);
+            bottom_left_pos.recanonicalize(tilemap);
 
-        var bottom_right_pos = new_player_pos;
+            var bottom_right_pos = new_player_pos;
 
-        bottom_right_pos.offset.x += (player_width / 2);
-        bottom_right_pos.recanonicalize(tilemap);
+            bottom_right_pos.offset.x += (player_width / 2);
+            bottom_right_pos.recanonicalize(tilemap);
 
-        var collision_position_opt: ?TileMap.Position = null;
-        if (!tilemap.isTileEmpty(new_player_pos)) {
-            collision_position_opt = new_player_pos;
-        }
-        if (!tilemap.isTileEmpty(bottom_left_pos)) {
-            collision_position_opt = bottom_left_pos;
-        }
-        if (!tilemap.isTileEmpty(bottom_right_pos)) {
-            collision_position_opt = bottom_right_pos;
-        }
+            var collision_position_opt: ?TileMap.Position = null;
+            if (!tilemap.isTilePosEmpty(new_player_pos)) {
+                collision_position_opt = new_player_pos;
+            }
+            if (!tilemap.isTilePosEmpty(bottom_left_pos)) {
+                collision_position_opt = bottom_left_pos;
+            }
+            if (!tilemap.isTilePosEmpty(bottom_right_pos)) {
+                collision_position_opt = bottom_right_pos;
+            }
 
-        if (collision_position_opt) |col_p| {
-            var wall_normal: V2 = .{};
+            if (collision_position_opt) |col_p| {
+                var wall_normal: V2 = .{};
 
-            if (col_p.abs_tile_x < game_state.player_pos.abs_tile_x)
-                wall_normal = v2(1, 0);
-            if (col_p.abs_tile_x > game_state.player_pos.abs_tile_x)
-                wall_normal = v2(-1, 0);
-            if (col_p.abs_tile_y < game_state.player_pos.abs_tile_y)
-                wall_normal = v2(0, 1);
-            if (col_p.abs_tile_y > game_state.player_pos.abs_tile_y)
-                wall_normal = v2(0, -1);
+                if (col_p.abs_tile_x < game_state.player_pos.abs_tile_x)
+                    wall_normal = v2(1, 0);
+                if (col_p.abs_tile_x > game_state.player_pos.abs_tile_x)
+                    wall_normal = v2(-1, 0);
+                if (col_p.abs_tile_y < game_state.player_pos.abs_tile_y)
+                    wall_normal = v2(0, 1);
+                if (col_p.abs_tile_y > game_state.player_pos.abs_tile_y)
+                    wall_normal = v2(0, -1);
 
-            // game_state.player_velocity = game_state.player_velocity.sub(wall_normal.mul(1 * game_state.player_velocity.inner(wall_normal)));
-            game_state.player_velocity = V2.sub(
-                game_state.player_velocity,
-                wall_normal.mul(1 * game_state.player_velocity.inner(wall_normal)),
-            );
+                // game_state.player_velocity = game_state.player_velocity.sub(wall_normal.mul(1 * game_state.player_velocity.inner(wall_normal)));
+                game_state.player_velocity = V2.sub(
+                    game_state.player_velocity,
+                    wall_normal.mul(1 * game_state.player_velocity.inner(wall_normal)),
+                );
+            } else {
+                game_state.player_pos = new_player_pos;
+            }
+            // End Old collision code
         } else {
-            if (!TileMap.inSameTile(game_state.player_pos, new_player_pos)) {
-                const tile = tilemap.getTile(new_player_pos);
-                if (tile == 3) {
-                    new_player_pos.chunk_z += 1;
-                } else if (tile == 4) {
-                    new_player_pos.chunk_z -= 1;
+            // New collision code
+            const min_tile_y: u32 = 0;
+            const min_tile_x: u32 = 0;
+            const one_past_max_tile_x: u32 = 1;
+            const one_past_max_tile_y: u32 = 1;
+            const abs_tile_z = game_state.player_pos.chunk_z;
+
+            var best_player_p = game_state.player_pos;
+            var best_distance_sq: f32 = player_delta.lengthSquared();
+
+            var abs_tile_y = min_tile_y;
+            var abs_tile_x = min_tile_x;
+            while (abs_tile_y != one_past_max_tile_y) : (abs_tile_y +%= 1) {
+                while (abs_tile_x != one_past_max_tile_x) : (abs_tile_x +%= 1) {
+                    const tile = world.tilemap.getTileXYZ(abs_tile_x, abs_tile_y, abs_tile_z);
+                    if (TileMap.isTileEmpty(tile)) {
+                        const min_corner = V2.scalar(-(world.tilemap.tile_size_in_meters / 2));
+                        const max_corner = V2.scalar(world.tilemap.tile_size_in_meters / 2);
+
+                        const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
+                        const rel_new_player_p = world.tilemap.subtract(test_tile_pos, new_player_pos);
+                        const test_p = closestPointInRectange(min_corner, max_corner, rel_new_player_p);
+                        _ = .{ test_p, &best_player_p, &best_distance_sq };
+                    }
                 }
             }
-            game_state.player_pos = new_player_pos;
         }
-        game_state.camera_pos.chunk_z = game_state.player_pos.chunk_z;
+    }
 
-        const diff = tilemap.subtract(&game_state.player_pos, &game_state.camera_pos);
-
-        const x_bound_offset: i32 = @round(@as(f32, screen_tile_width) / 2);
-        if (diff.xy.x > (x_bound_offset) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_x +%= screen_tile_width;
-        } else if (diff.xy.x < -(x_bound_offset) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_x -%= screen_tile_width;
+    if (!TileMap.inSameTile(old_player_pos, game_state.player_pos)) {
+        const tile = tilemap.getTile(game_state.player_pos);
+        if (tile == 3) {
+            game_state.player_pos.chunk_z += 1;
+        } else if (tile == 4) {
+            game_state.player_pos.chunk_z -= 1;
         }
+    }
+    game_state.camera_pos.chunk_z = game_state.player_pos.chunk_z;
 
-        const y_bound_offset: i32 = @round(@as(f32, screen_tile_height) / 2);
-        if (diff.xy.y > (y_bound_offset) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_y +%= 9;
-        } else if (diff.xy.y < -(y_bound_offset) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_y -%= 9;
-        }
-    };
+    var diff = tilemap.subtract(&game_state.player_pos, &game_state.camera_pos);
+    const x_bound_offset: i32 = @round(@as(f32, screen_tile_width) / 2);
+    if (diff.xy.x > (x_bound_offset) * tilemap.tile_size_in_meters) {
+        game_state.camera_pos.abs_tile_x +%= screen_tile_width;
+    } else if (diff.xy.x < -(x_bound_offset) * tilemap.tile_size_in_meters) {
+        game_state.camera_pos.abs_tile_x -%= screen_tile_width;
+    }
+
+    const y_bound_offset: i32 = @round(@as(f32, screen_tile_height) / 2);
+    if (diff.xy.y > (y_bound_offset) * tilemap.tile_size_in_meters) {
+        game_state.camera_pos.abs_tile_y +%= 9;
+    } else if (diff.xy.y < -(y_bound_offset) * tilemap.tile_size_in_meters) {
+        game_state.camera_pos.abs_tile_y -%= 9;
+    }
+    diff = tilemap.subtract(&game_state.player_pos, &game_state.camera_pos);
 
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
@@ -403,13 +440,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     {
-        const player_pos = &game_state.player_pos;
-
         const player_size = v2(player_width, player_height).mul(meters_to_pixels);
 
-        const diff = tilemap.subtract(player_pos, camera_pos).xy.mul(meters_to_pixels);
+        const diff_pixels = diff.xy.mul(meters_to_pixels);
 
-        const player_ground_point = v2(screen_center.x + diff.x, screen_center.y - diff.y);
+        const player_ground_point = v2(screen_center.x + diff_pixels.x, screen_center.y - diff_pixels.y);
 
         const player_top_left = v2(
             player_ground_point.x - (player_size.x / 2),
@@ -426,6 +461,17 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     return keep_running;
+}
+
+fn closestPointInRectange(min_corner: V2, max_corner: V2, pos: TileMap.Position) V2 {
+    const p = pos.offset;
+
+    const result = V2{
+        .x = @min(@max(min_corner.x, p.x), max_corner.x),
+        .y = @min(@max(min_corner.y, p.y), max_corner.y),
+    };
+
+    return result;
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {

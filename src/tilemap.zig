@@ -147,11 +147,15 @@ pub fn setTile(map: *const TileMap, arena: *MemoryArena, abs_tile_x: u32, abs_ti
     setChunkTile(chunk, pos.rel_tile_x, pos.rel_tile_y, new_tile);
 }
 
-pub fn isTileEmpty(map: *const TileMap, can_pos: Position) bool {
+pub inline fn isTileEmpty(tile: Tile) bool {
+    return tile == 1 or tile == 3 or tile == 4;
+}
+
+pub inline fn isTilePosEmpty(map: *const TileMap, can_pos: Position) bool {
     var empty = false;
 
     const tile_value = map.getTileXYZ(can_pos.abs_tile_x, can_pos.abs_tile_y, can_pos.chunk_z);
-    empty = tile_value == 1 or tile_value == 3 or tile_value == 4;
+    empty = isTileEmpty(tile_value);
 
     return empty;
 }
@@ -191,4 +195,12 @@ pub fn recanonicalizePosition(map: *const TileMap, pos: Position) Position {
 
 pub fn inSameTile(p1: Position, p2: Position) bool {
     return p1.abs_tile_x == p2.abs_tile_x and p1.abs_tile_y == p2.abs_tile_y and p1.chunk_z == p2.chunk_z;
+}
+
+pub fn centerTilePoint(abs_tile_x: u32, abs_tile_y: u32, chunk_z: u32) Position {
+    return .{
+        .abs_tile_x = abs_tile_x,
+        .abs_tile_y = abs_tile_y,
+        .chunk_z = chunk_z,
+    };
 }
