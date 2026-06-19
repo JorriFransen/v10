@@ -66,6 +66,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     assert(@sizeOf(GameState) <= game_memory.transient_len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
+    const screen_tile_width: u32 = 17;
+    const screen_tile_height: u32 = 9;
+
     if (!game_memory.initialized) {
         game_state.* = .{};
 
@@ -100,8 +103,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         game_state.hero_bitmaps[3].alignment = v2(72, 182);
 
         game_state.camera_pos = .{
-            .abs_tile_x = 17 / 2,
-            .abs_tile_y = 9 / 2,
+            .abs_tile_x = screen_tile_width / 2,
+            .abs_tile_y = screen_tile_height / 2,
             .chunk_z = 0,
         };
         game_state.player_pos = .{
@@ -133,8 +136,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         };
 
         var next_random_number_index: usize = 0;
-        const screen_tile_width = 17;
-        const screen_tile_height = 9;
         var screen_x: u32 = 0;
         var screen_y: u32 = 0;
         var chunk_z: u32 = 0;
@@ -343,15 +344,17 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         const diff = tilemap.subtract(&game_state.player_pos, &game_state.camera_pos);
 
-        if (diff.xy.x > (17 / 2) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_x +%= 17;
-        } else if (diff.xy.x < -(17 / 2) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_x -%= 17;
+        const x_bound_offset: i32 = @round(@as(f32, screen_tile_width) / 2);
+        if (diff.xy.x > (x_bound_offset) * tilemap.tile_size_in_meters) {
+            game_state.camera_pos.abs_tile_x +%= screen_tile_width;
+        } else if (diff.xy.x < -(x_bound_offset) * tilemap.tile_size_in_meters) {
+            game_state.camera_pos.abs_tile_x -%= screen_tile_width;
         }
 
-        if (diff.xy.y > (9 / 2) * tilemap.tile_size_in_meters) {
+        const y_bound_offset: i32 = @round(@as(f32, screen_tile_height) / 2);
+        if (diff.xy.y > (y_bound_offset) * tilemap.tile_size_in_meters) {
             game_state.camera_pos.abs_tile_y +%= 9;
-        } else if (diff.xy.y < -(9 / 2) * tilemap.tile_size_in_meters) {
+        } else if (diff.xy.y < -(y_bound_offset) * tilemap.tile_size_in_meters) {
             game_state.camera_pos.abs_tile_y -%= 9;
         }
     };
