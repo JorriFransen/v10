@@ -60,8 +60,12 @@ pub const V2 = extern struct {
         return result;
     }
 
-    pub inline fn magnitude(this: V2) f32 {
-        return sqrt(this.x * this.x + this.y * this.y);
+    pub inline fn length(this: V2) f32 {
+        return sqrt(this.lengthSquared());
+    }
+
+    pub inline fn lengthSquared(this: V2) f32 {
+        return this.inner(this);
     }
 
     pub fn format(this: V2, writer: anytype) !void {
