@@ -281,29 +281,29 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const buttons = &controller.buttons.named;
 
         if (game_state.getEntity(game_state.player_index_for_controller[controller_index])) |controlling_entity| {
-            var entity_ddp: V2 = .{};
+            var move_dir: V2 = .{};
 
             if (controller.is_analog) {
                 // game_state.tone_hz = 400 + (50 * controller.stick_average_y);
 
-                entity_ddp.x += controller.stick_average_x;
-                entity_ddp.y += controller.stick_average_y;
+                move_dir.x += controller.stick_average_x;
+                move_dir.y += controller.stick_average_y;
             } else {
                 if (buttons.move_up.ended_down) {
-                    entity_ddp.y = 1;
+                    move_dir.y = 1;
                 }
                 if (buttons.move_down.ended_down) {
-                    entity_ddp.y = -1;
+                    move_dir.y = -1;
                 }
                 if (buttons.move_left.ended_down) {
-                    entity_ddp.x = -1;
+                    move_dir.x = -1;
                 }
                 if (buttons.move_right.ended_down) {
-                    entity_ddp.x = 1;
+                    move_dir.x = 1;
                 }
             }
 
-            movePlayer(game_state, controlling_entity, input.dt, entity_ddp);
+            movePlayer(game_state, controlling_entity, input.dt, move_dir);
         } else {
             if (buttons.start.ended_down) {
                 const controlling_entity_index = game_state.addEntity();
@@ -424,14 +424,14 @@ fn initPlayer(game_state: *GameState, entity_index: usize) void {
     }
 }
 
-fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, raw_ddp: V2) void {
+fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) void {
     const tilemap = game_state.world.tilemap;
 
-    var ddp = raw_ddp;
-
-    if (ddp.x != 0 and ddp.y != 0) {
-        ddp = ddp.mul(0.707106781187);
-    }
+    const ddp_length_sq = direction.lengthSquared();
+    var ddp = if (ddp_length_sq > 1)
+        direction.div(@sqrt(ddp_length_sq))
+    else
+        direction;
 
     const speed: f32 = 50; // ms/s^2
     ddp = ddp.mul(speed);
