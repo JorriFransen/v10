@@ -52,11 +52,16 @@ pub const GameState = struct {
         return result;
     }
 
-    pub fn addEntity(this: *GameState) *Entity {
-        this.entity_count += 1;
+    pub fn addEntity(this: *GameState) usize {
         assert(this.entity_count < this.entities.len);
 
-        return &this.entities[this.entity_count];
+        const entity_index = this.entity_count;
+        this.entity_count += 1;
+
+        const entity = &this.entities[entity_index];
+        entity.* = .{};
+
+        return entity_index;
     }
 };
 
@@ -70,6 +75,8 @@ pub const Entity = struct {
     exists: bool = false,
     p: TileMap.Position = std.mem.zeroes(TileMap.Position),
     dp: V2 = .{},
+
+    size: V2 = .{},
 
     facing_direction: FacingDirection = .down,
 };
@@ -93,9 +100,6 @@ pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callcon
     _ = game_memory;
 }
 
-const player_height: f32 = 1.4;
-const player_width: f32 = player_height * 0.75;
-
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool {
     assert(@sizeOf(GameState) <= game_memory.permanent_len);
 
@@ -115,6 +119,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const world_arena_size = game_memory.permanent_len - game_state_size;
 
         game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
+
+        const null_entity_index = game_state.addEntity();
+        _ = null_entity_index;
 
         const asset_prefix = "../../hh_assets";
         // const asset_prefix = "../data/";
@@ -274,43 +281,34 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const buttons = &controller.buttons.named;
 
         if (game_state.getEntity(game_state.player_index_for_controller[controller_index])) |controlling_entity| {
-            var player_acceleration: V2 = .{};
+            var entity_ddp: V2 = .{};
 
             if (controller.is_analog) {
                 // game_state.tone_hz = 400 + (50 * controller.stick_average_y);
 
-                player_acceleration.x += controller.stick_average_x;
-                player_acceleration.y += controller.stick_average_y;
+                entity_ddp.x += controller.stick_average_x;
+                entity_ddp.y += controller.stick_average_y;
             } else {
                 if (buttons.move_up.ended_down) {
-                    player_acceleration.y = 1;
+                    entity_ddp.y = 1;
                 }
                 if (buttons.move_down.ended_down) {
-                    player_acceleration.y = -1;
+                    entity_ddp.y = -1;
                 }
                 if (buttons.move_left.ended_down) {
-                    player_acceleration.x = -1;
+                    entity_ddp.x = -1;
                 }
                 if (buttons.move_right.ended_down) {
-                    player_acceleration.x = 1;
+                    entity_ddp.x = 1;
                 }
             }
 
-            var player_speed: f32 = 5 * 10; // ms/s^2
-            if (buttons.action_up.ended_down) {
-                player_speed = 5 * 50; // ms/s^2
-            }
-
-            player_acceleration = player_acceleration.mul(player_speed);
-
-            updatePlayer(world, controlling_entity, player_acceleration, input.dt);
+            movePlayer(game_state, controlling_entity, input.dt, entity_ddp);
         } else {
             if (buttons.start.ended_down) {
-                log.debug("Adding entity", .{});
-                const controlling_entity = game_state.addEntity();
-                game_state.player_index_for_controller[controller_index] = game_state.entity_count;
-                if (game_state.camera_following_entity_index == 0) game_state.camera_following_entity_index = game_state.entity_count;
-                initPlayer(controlling_entity);
+                const controlling_entity_index = game_state.addEntity();
+                game_state.player_index_for_controller[controller_index] = controlling_entity_index;
+                initPlayer(game_state, controlling_entity_index);
             }
         }
     }
@@ -377,13 +375,13 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     }
 
-    for (game_state.entities[1 .. game_state.entity_count + 1]) |*entity| {
+    for (&game_state.entities) |*entity| {
         if (entity.exists) {
             const diff = tilemap.subtract(entity.p, game_state.camera_pos);
 
             const diff_pixels = diff.xy.mul(meters_to_pixels);
 
-            const player_size = v2(player_width, player_height).mul(meters_to_pixels);
+            const player_size = entity.size.mul(meters_to_pixels);
 
             const player_ground_point = v2(screen_center.x + diff_pixels.x, screen_center.y - diff_pixels.y);
 
@@ -405,27 +403,40 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     return keep_running;
 }
 
-fn initPlayer(entity: *Entity) void {
+fn initPlayer(game_state: *GameState, entity_index: usize) void {
+    const entity = game_state.getEntity(entity_index).?;
+    const height = 1.4;
+
     entity.* = .{
         .exists = true,
         .p = .{
             .abs_tile_x = 1,
             .abs_tile_y = 3,
             .chunk_z = 0,
-            .offset = .init(5, 5),
+            .offset = V2.init(5, 5),
         },
+        .size = V2.init(height * 0.75, height),
         .dp = V2.scalar(0),
     };
+
+    if (game_state.getEntity(game_state.camera_following_entity_index) == null) {
+        game_state.camera_following_entity_index = entity_index;
+    }
 }
 
-fn updatePlayer(world: *World, entity: *Entity, acceleration: V2, dt: f32) void {
-    var ddp = acceleration;
+fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, raw_ddp: V2) void {
+    const tilemap = game_state.world.tilemap;
+
+    var ddp = raw_ddp;
 
     if (ddp.x != 0 and ddp.y != 0) {
         ddp = ddp.mul(0.707106781187);
     }
 
-    ddp = ddp.add(entity.dp.mul(-1.5 * 5));
+    const speed: f32 = 50; // ms/s^2
+    ddp = ddp.mul(speed);
+
+    ddp = ddp.add(entity.dp.mul(-8));
 
     const player_delta = V2.add(
         ddp.mul(0.5 * math.square(dt)),
@@ -437,27 +448,27 @@ fn updatePlayer(world: *World, entity: *Entity, acceleration: V2, dt: f32) void 
     new_p.offset = new_p.offset.add(player_delta);
 
     entity.dp = entity.dp.add(ddp.mul(dt));
-    new_p.recanonicalize(world.tilemap);
+    new_p.recanonicalize(tilemap);
 
     if (true) {
         // Old collision code
         var bottom_left_pos = new_p;
-        bottom_left_pos.offset.x -= (player_width / 2);
-        bottom_left_pos.recanonicalize(world.tilemap);
+        bottom_left_pos.offset.x -= (entity.size.x / 2);
+        bottom_left_pos.recanonicalize(tilemap);
 
         var bottom_right_pos = new_p;
 
-        bottom_right_pos.offset.x += (player_width / 2);
-        bottom_right_pos.recanonicalize(world.tilemap);
+        bottom_right_pos.offset.x += (entity.size.x / 2);
+        bottom_right_pos.recanonicalize(tilemap);
 
         var collision_position_opt: ?TileMap.Position = null;
-        if (!world.tilemap.isTilePosEmpty(new_p)) {
+        if (!tilemap.isTilePosEmpty(new_p)) {
             collision_position_opt = new_p;
         }
-        if (!world.tilemap.isTilePosEmpty(bottom_left_pos)) {
+        if (!tilemap.isTilePosEmpty(bottom_left_pos)) {
             collision_position_opt = bottom_left_pos;
         }
-        if (!world.tilemap.isTilePosEmpty(bottom_right_pos)) {
+        if (!tilemap.isTilePosEmpty(bottom_right_pos)) {
             collision_position_opt = bottom_right_pos;
         }
 
@@ -473,7 +484,6 @@ fn updatePlayer(world: *World, entity: *Entity, acceleration: V2, dt: f32) void 
             if (col_p.abs_tile_y > entity.p.abs_tile_y)
                 wall_normal = v2(0, -1);
 
-            // game_state.player_velocity = game_state.player_velocity.sub(wall_normal.mul(1 * game_state.player_velocity.inner(wall_normal)));
             entity.dp = V2.sub(
                 entity.dp,
                 wall_normal.mul(1 * entity.dp.inner(wall_normal)),
@@ -490,29 +500,29 @@ fn updatePlayer(world: *World, entity: *Entity, acceleration: V2, dt: f32) void 
         const one_past_max_tile_y: u32 = 1;
         const abs_tile_z = entity.p.chunk_z;
 
-        var best_player_p = entity.p;
+        var best_p = entity.p;
         var best_distance_sq: f32 = player_delta.lengthSquared();
 
         var abs_tile_y = min_tile_y;
         var abs_tile_x = min_tile_x;
         while (abs_tile_y != one_past_max_tile_y) : (abs_tile_y +%= 1) {
             while (abs_tile_x != one_past_max_tile_x) : (abs_tile_x +%= 1) {
-                const tile = world.tilemap.getTileXYZ(abs_tile_x, abs_tile_y, abs_tile_z);
+                const tile = tilemap.getTileXYZ(abs_tile_x, abs_tile_y, abs_tile_z);
                 if (TileMap.isTileEmpty(tile)) {
-                    const min_corner = V2.scalar(-(world.tilemap.tile_size_in_meters / 2));
-                    const max_corner = V2.scalar(world.tilemap.tile_size_in_meters / 2);
+                    const min_corner = V2.scalar(-(tilemap.tile_size_in_meters / 2));
+                    const max_corner = V2.scalar(tilemap.tile_size_in_meters / 2);
 
                     const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
-                    const rel_new_player_p = world.tilemap.subtract(test_tile_pos, new_p);
-                    const test_p = closestPointInRectange(min_corner, max_corner, rel_new_player_p);
-                    _ = .{ test_p, &best_player_p, &best_distance_sq };
+                    const rel_new_p = tilemap.subtract(test_tile_pos, new_p);
+                    const test_p = closestPointInRectange(min_corner, max_corner, rel_new_p);
+                    _ = .{ test_p, &best_p, &best_distance_sq };
                 }
             }
         }
     }
 
     if (!TileMap.inSameTile(old_p, entity.p)) {
-        const tile = world.tilemap.getTile(entity.p);
+        const tile = tilemap.getTile(entity.p);
         if (tile == 3) {
             entity.p.chunk_z += 1;
         } else if (tile == 4) {
@@ -520,12 +530,12 @@ fn updatePlayer(world: *World, entity: *Entity, acceleration: V2, dt: f32) void 
         }
     }
 
-    entity.facing_direction = if (@abs(entity.dp.x) > @abs(entity.dp.y))
-        if (entity.dp.x > 0) .right else .left
-    else if (@abs(entity.dp.x) < @abs(entity.dp.y))
-        if (entity.dp.y > 0) .up else .down
-    else
-        entity.facing_direction;
+    entity.facing_direction =
+        if (entity.dp.x == 0 and entity.dp.y == 0)
+            entity.facing_direction
+        else if (@abs(entity.dp.x) > @abs(entity.dp.y))
+            if (entity.dp.x > 0) .right else .left
+        else if (entity.dp.y > 0) .up else .down;
 }
 
 fn closestPointInRectange(min_corner: V2, max_corner: V2, pos: TileMap.Position) V2 {
