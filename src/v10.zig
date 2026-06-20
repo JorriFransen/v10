@@ -740,29 +740,43 @@ pub const DEBUG = struct {
             result.width = @intCast(header.width);
             result.height = @intCast(header.height);
 
-            assert(header.alpha_mask == ~(header.red_mask | header.green_mask | header.blue_mask));
-            assert(@popCount(header.red_mask) == 8);
-            assert(@popCount(header.green_mask) == 8);
-            assert(@popCount(header.blue_mask) == 8);
-            assert(@popCount(header.alpha_mask) == 8);
+            const red_mask = header.red_mask;
+            const green_mask = header.green_mask;
+            const blue_mask = header.blue_mask;
+            const alpha_mask = header.alpha_mask;
 
-            const red_shift = intrinsics.findLSBSet(header.red_mask);
-            const green_shift = intrinsics.findLSBSet(header.green_mask);
-            const blue_shift = intrinsics.findLSBSet(header.blue_mask);
-            const alpha_shift = intrinsics.findLSBSet(header.alpha_mask);
+            assert(alpha_mask == ~(red_mask | green_mask | blue_mask));
+            assert(@popCount(red_mask) == 8);
+            assert(@popCount(green_mask) == 8);
+            assert(@popCount(blue_mask) == 8);
+            assert(@popCount(alpha_mask) == 8);
 
-            // Don't need to check *_shift.found, assertions on popcount already guard this
+            const red_scan = intrinsics.findLSBSet(red_mask);
+            const green_scan = intrinsics.findLSBSet(green_mask);
+            const blue_scan = intrinsics.findLSBSet(blue_mask);
+            const alpha_scan = intrinsics.findLSBSet(alpha_mask);
 
-            if (!(header.alpha_mask == 0xff000000 and header.red_mask == 0x00ff0000 and header.green_mask == 0x0000ff00 and header.blue_mask == 0x000000ff)) {
+            assert(red_scan.found);
+            assert(green_scan.found);
+            assert(blue_scan.found);
+            assert(alpha_scan.found);
+
+            if (red_scan.index != 16 or green_scan.index != 8 or
+                blue_scan.index != 0 or alpha_scan.index != 24)
+            {
+                const red_shift = 16 - @as(i32, @intCast(red_scan.index));
+                const green_shift = 8 - @as(i32, @intCast(green_scan.index));
+                const blue_shift = 0 - @as(i32, @intCast(blue_scan.index));
+                const alpha_shift = 24 - @as(i32, @intCast(alpha_scan.index));
+
                 for (result.pixels) |*pixel| {
                     const c = pixel.*;
 
-                    pixel.* = (ColorU8ARGB{
-                        .a = @intCast((c >> @intCast(alpha_shift.index)) & 0xff),
-                        .r = @intCast((c >> @intCast(red_shift.index)) & 0xff),
-                        .g = @intCast((c >> @intCast(green_shift.index)) & 0xff),
-                        .b = @intCast((c >> @intCast(blue_shift.index)) & 0xff),
-                    }).asU32();
+                    pixel.* =
+                        intrinsics.rotateLeft(c & red_mask, @intCast(red_shift)) |
+                        intrinsics.rotateLeft(c & green_mask, @intCast(green_shift)) |
+                        intrinsics.rotateLeft(c & blue_mask, @intCast(blue_shift)) |
+                        intrinsics.rotateLeft(c & alpha_mask, @intCast(alpha_shift));
                 }
             }
         }

@@ -103,3 +103,29 @@ pub inline fn findLSBSet(x: anytype) BitScanResult(@TypeOf(x)) {
     else
         .{ .found = false };
 }
+
+pub inline fn rotateLeft(
+    v: anytype,
+    n: @Int(.signed, std.math.log2(@bitSizeOf(@TypeOf(v))) + 2),
+) @TypeOf(v) {
+    const VT = @TypeOf(v);
+    comptime {
+        const vt_info = @typeInfo(VT);
+        if (vt_info != .int and vt_info != .comptime_int)
+            @compileError("Expected unsigned integer type");
+        if (vt_info == .int and vt_info.int.signedness == .signed)
+            @compileError("Expected unsigned integer type");
+        if (vt_info == .comptime_int and v < 0)
+            @compileError("Expected unsigned integer type");
+    }
+
+    // Note: std.math.rotl does @mod(n, @typeInfo(VT).int.bits). The 'bits' member
+    //       is a u16, so if n has fewer than 16 bits, peer type resolution
+    //       chooses u16. Because n can be negative, the peer type resulution
+    //       needs to preserve the signedness. Casting to the same bit-width
+    //       enforces this.
+    const i16_n: i16 = @intCast(n);
+
+    // TODO: Replace with @rotl when added
+    return std.math.rotl(VT, v, i16_n);
+}
