@@ -275,7 +275,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     log.debug("monitor hz: {}", .{monitor_hz});
 
-    const game_update_hz: f32 = monitor_hz / 2;
+    // const game_update_hz: f32 = monitor_hz / 2;
+    const game_update_hz: f32 = 20;
     log.debug("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
