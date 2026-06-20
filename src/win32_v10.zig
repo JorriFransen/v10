@@ -237,9 +237,9 @@ fn processPendingMessages(shared_state: *platform.SharedState, keyboard_controll
                     } else if (vk_code == win32.VK_RIGHT) {
                         processKeyboardMessage(&buttons.action_right, is_down);
                     } else if (vk_code == win32.VK_ESCAPE) {
-                        processKeyboardMessage(&buttons.start, is_down);
-                    } else if (vk_code == win32.VK_SPACE) {
                         processKeyboardMessage(&buttons.back, is_down);
+                    } else if (vk_code == win32.VK_SPACE) {
+                        processKeyboardMessage(&buttons.start, is_down);
                     }
 
                     if (options.internal_build and is_down) {

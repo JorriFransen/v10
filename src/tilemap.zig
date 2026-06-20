@@ -75,7 +75,7 @@ pub const Chunk = struct {
     }
 };
 
-pub fn subtract(map: *const TileMap, a: *const Position, b: *const Position) Position.Delta {
+pub fn subtract(map: *const TileMap, a: Position, b: Position) Position.Delta {
     var result: Position.Delta = undefined;
 
     const d_tile_xy = v2(

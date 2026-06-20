@@ -275,7 +275,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     log.debug("monitor hz: {}", .{monitor_hz});
 
-    const game_update_hz: f32 = monitor_hz; // / 2;
+    const game_update_hz: f32 = monitor_hz / 2;
     log.debug("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
@@ -1775,9 +1775,9 @@ fn handleWlKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32
         } else if (key == .RIGHT) {
             processKeyEvent(&buttons.action_right, is_down);
         } else if (key == .ESC) {
-            processKeyEvent(&buttons.start, is_down);
-        } else if (key == .SPACE) {
             processKeyEvent(&buttons.back, is_down);
+        } else if (key == .SPACE) {
+            processKeyEvent(&buttons.start, is_down);
         }
 
         if (options.internal_build and is_down) {
