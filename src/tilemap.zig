@@ -182,9 +182,9 @@ pub fn setChunkTile(chunk_opt: ?*const Chunk, x: u32, y: u32, new_tile: Tile) vo
 }
 
 pub fn recanonicalizeCoord(map: *const TileMap, tile: *u32, tile_rel: *f32) void {
-    // const tile_offset: i32 = intrinsics.floorFloatToInt(i32, tile_rel.* / world.tile_size_in_meters);
     const tile_offset: i32 = intrinsics.roundFloatToInt(i32, tile_rel.* / map.tile_size_in_meters);
-    tile.* +%= @as(u32, @bitCast(tile_offset));
+    tile.* +%= @bitCast(tile_offset);
+
     tile_rel.* -= @as(f32, @floatFromInt(tile_offset)) * map.tile_size_in_meters;
 
     assert(tile_rel.* >= -(0.5 * map.tile_size_in_meters));

@@ -367,8 +367,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     screen_center.x - (meters_to_pixels * camera_pos.offset.x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels)))),
                     screen_center.y + (meters_to_pixels * camera_pos.offset.y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels)))),
                 );
-                const min = center.sub(half_tile_size.mul(0.9));
-                const max = center.add(half_tile_size.mul(0.9));
+                const min = center.sub(half_tile_size.mul(0.95));
+                const max = center.add(half_tile_size.mul(0.95));
 
                 drawRectangle(offscreen_buffer, min, max, grayscale, grayscale, grayscale);
             }
@@ -520,7 +520,6 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
 
                     testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
                     testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
-
                     testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
                     testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
                 }
@@ -531,9 +530,6 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
         new_p.offset = new_p.offset.add(player_delta.mul(t_min));
         new_p.recanonicalize(tilemap);
         entity.p = new_p;
-
-        log.debug("p: {}", .{entity.p});
-        log.debug("dp: {}", .{entity.dp});
     }
 
     if (!TileMap.inSameTile(old_p, entity.p)) {
