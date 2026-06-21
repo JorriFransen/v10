@@ -129,3 +129,15 @@ pub inline fn rotateLeft(
     // TODO: Replace with @rotl when added
     return std.math.rotl(VT, v, i16_n);
 }
+
+pub inline fn signOf(v: anytype) @TypeOf(v) {
+    const VT = @TypeOf(v);
+    comptime {
+        const vt_info = @typeInfo(VT);
+        if (vt_info != .int and vt_info != .comptime_int)
+            @compileError("Expected signed integer type");
+        if (vt_info == .int and vt_info.int.signedness == .unsigned)
+            @compileError("Expected signed integer type");
+    }
+    return if (v >= 0) 1 else -1;
+}

@@ -364,8 +364,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 const half_tile_size = V2.scalar(@floatFromInt(tile_size_in_pixels / 2));
 
                 const center = v2(
-                    screen_center.x - (meters_to_pixels * camera_pos.offset.x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels)))),
-                    screen_center.y + (meters_to_pixels * camera_pos.offset.y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels)))),
+                    screen_center.x - (meters_to_pixels * camera_pos._offset.x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels)))),
+                    screen_center.y + (meters_to_pixels * camera_pos._offset.y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels)))),
                 );
                 const min = center.sub(half_tile_size.mul(0.95));
                 const max = center.add(half_tile_size.mul(0.95));
@@ -415,11 +415,13 @@ fn initPlayer(game_state: *GameState, entity_index: usize) void {
             .abs_tile_x = 1,
             .abs_tile_y = 3,
             .chunk_z = 0,
-            .offset = V2.init(5, 5),
+            ._offset = V2.zero,
         },
         .size = V2.init(height * 0.75, height),
         .dp = V2.scalar(0),
     };
+
+    entity.p.recanonicalize(game_state.world.tilemap);
 
     if (game_state.getEntity(game_state.camera_following_entity_index) == null) {
         game_state.camera_following_entity_index = entity_index;
@@ -448,89 +450,54 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
     entity.dp = entity.dp.add(ddp.mul(dt));
 
     const old_p = entity.p;
-    var new_p = old_p;
-    new_p.offset = new_p.offset.add(player_delta);
-    new_p.recanonicalize(tilemap);
+    var new_p = old_p.offset(tilemap, player_delta);
 
-    if (false) {
+    const abs_tile_z = entity.p.chunk_z;
 
-        // Old collision code
-        var bottom_left_pos = new_p;
-        bottom_left_pos.offset.x -= (entity.size.x / 2);
-        bottom_left_pos.recanonicalize(tilemap);
+    const start_tile_x: u32 = old_p.abs_tile_x;
+    const start_tile_y: u32 = old_p.abs_tile_y;
+    const end_tile_x: u32 = new_p.abs_tile_x;
+    const end_tile_y: u32 = new_p.abs_tile_y;
+    const delta_x: i32 = intrinsics.signOf(@as(i32, @bitCast(end_tile_x)) -% @as(i32, @bitCast(start_tile_x)));
+    const delta_y: i32 = intrinsics.signOf(@as(i32, @bitCast(end_tile_y)) -% @as(i32, @bitCast(start_tile_y)));
 
-        var bottom_right_pos = new_p;
+    var t_min: f32 = 1;
 
-        bottom_right_pos.offset.x += (entity.size.x / 2);
-        bottom_right_pos.recanonicalize(tilemap);
+    var abs_tile_y = start_tile_y;
+    while (true) {
+        var abs_tile_x = start_tile_x;
+        while (true) {
+            if (!tilemap.isTileEmpty(abs_tile_x, abs_tile_y, abs_tile_z)) {
+                const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
 
-        var collision_position_opt: ?TileMap.Position = null;
-        if (!tilemap.isTilePosEmpty(new_p)) {
-            collision_position_opt = new_p;
-        }
-        if (!tilemap.isTilePosEmpty(bottom_left_pos)) {
-            collision_position_opt = bottom_left_pos;
-        }
-        if (!tilemap.isTilePosEmpty(bottom_right_pos)) {
-            collision_position_opt = bottom_right_pos;
-        }
+                const min_corner = V2.scalar(-(tilemap.tile_size_in_meters) * 0.5);
+                const max_corner = V2.scalar(tilemap.tile_size_in_meters * 0.5);
 
-        if (collision_position_opt) |col_p| {
-            var wall_normal: V2 = .{};
+                const rel_new_p = tilemap.subtract(old_p, test_tile_pos);
+                const rel = rel_new_p.xy;
 
-            if (col_p.abs_tile_x < entity.p.abs_tile_x)
-                wall_normal = v2(1, 0);
-            if (col_p.abs_tile_x > entity.p.abs_tile_x)
-                wall_normal = v2(-1, 0);
-            if (col_p.abs_tile_y < entity.p.abs_tile_y)
-                wall_normal = v2(0, 1);
-            if (col_p.abs_tile_y > entity.p.abs_tile_y)
-                wall_normal = v2(0, -1);
+                testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
+                testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
+                testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
+                testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
+            }
 
-            entity.dp = V2.sub(
-                entity.dp,
-                wall_normal.mul(1 * entity.dp.inner(wall_normal)),
-            );
-        } else {
-            entity.p = new_p;
-        }
-        // End Old collision code
-    } else {
-        // New collision code
-        const min_tile_x: u32 = @min(old_p.abs_tile_x, new_p.abs_tile_x);
-        const min_tile_y: u32 = @min(old_p.abs_tile_y, new_p.abs_tile_y);
-        const one_past_max_tile_x: u32 = @max(old_p.abs_tile_x, new_p.abs_tile_x) +% 1;
-        const one_past_max_tile_y: u32 = @max(old_p.abs_tile_y, new_p.abs_tile_y) +% 1;
-        const abs_tile_z = entity.p.chunk_z;
-
-        var t_min: f32 = 1;
-
-        var abs_tile_y = min_tile_y;
-        while (abs_tile_y != one_past_max_tile_y) : (abs_tile_y +%= 1) {
-            var abs_tile_x = min_tile_x;
-            while (abs_tile_x != one_past_max_tile_x) : (abs_tile_x +%= 1) {
-                if (!tilemap.isTileEmpty(abs_tile_x, abs_tile_y, abs_tile_z)) {
-                    const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
-
-                    const min_corner = V2.scalar(-(tilemap.tile_size_in_meters / 2));
-                    const max_corner = V2.scalar(tilemap.tile_size_in_meters / 2);
-
-                    const rel_new_p = tilemap.subtract(old_p, test_tile_pos);
-                    const rel = rel_new_p.xy;
-
-                    testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
-                    testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
-                    testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
-                    testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
-                }
+            if (abs_tile_x == end_tile_x) {
+                break;
+            } else {
+                abs_tile_x +%= @bitCast(delta_x);
             }
         }
 
-        new_p = old_p;
-        new_p.offset = new_p.offset.add(player_delta.mul(t_min));
-        new_p.recanonicalize(tilemap);
-        entity.p = new_p;
+        if (abs_tile_y == end_tile_y) {
+            break;
+        } else {
+            abs_tile_y +%= @bitCast(delta_y);
+        }
     }
+
+    new_p = old_p.offset(tilemap, player_delta.mul(t_min));
+    entity.p = new_p;
 
     if (!TileMap.inSameTile(old_p, entity.p)) {
         const tile = tilemap.getTile(entity.p);

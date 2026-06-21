@@ -4,6 +4,9 @@ pub const V2 = extern struct {
     x: f32 = 0,
     y: f32 = 0,
 
+    pub const zero = scalar(0);
+    pub const one = scalar(1);
+
     pub const V = @Vector(2, f32);
 
     pub inline fn init(x: f32, y: f32) V2 {

@@ -30,7 +30,7 @@ pub const Position = struct {
     chunk_z: u32,
 
     /// In meters, from the tile center
-    offset: V2 = .{},
+    _offset: V2 = .{},
 
     pub const Delta = struct {
         xy: V2,
@@ -38,8 +38,17 @@ pub const Position = struct {
     };
 
     pub fn recanonicalize(this: *Position, map: *const TileMap) void {
-        map.recanonicalizeCoord(&this.abs_tile_x, &this.offset.x);
-        map.recanonicalizeCoord(&this.abs_tile_y, &this.offset.y);
+        map.recanonicalizeCoord(&this.abs_tile_x, &this._offset.x);
+        map.recanonicalizeCoord(&this.abs_tile_y, &this._offset.y);
+    }
+
+    pub fn offset(this: Position, tile_map: *const TileMap, delta: V2) Position {
+        var result = this;
+
+        result._offset = result._offset.add(delta);
+        result.recanonicalize(tile_map);
+
+        return result;
     }
 };
 
@@ -84,7 +93,7 @@ pub fn subtract(map: *const TileMap, a: Position, b: Position) Position.Delta {
     );
     const d_tile_z = @as(f32, @floatFromInt(a.chunk_z)) - @as(f32, @floatFromInt(b.chunk_z));
 
-    result.xy = d_tile_xy.mul(map.tile_size_in_meters).add(a.offset.sub(b.offset));
+    result.xy = d_tile_xy.mul(map.tile_size_in_meters).add(a._offset.sub(b._offset));
 
     result.z = (map.tile_size_in_meters * d_tile_z);
 
