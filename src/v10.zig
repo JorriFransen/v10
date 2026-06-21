@@ -326,9 +326,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         const y_bound_offset: i32 = @round(@as(f32, screen_tile_height) / 2);
         if (diff.xy.y > (y_bound_offset) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_y +%= 9;
+            game_state.camera_pos.abs_tile_y +%= screen_tile_height;
         } else if (diff.xy.y < -(y_bound_offset) * tilemap.tile_size_in_meters) {
-            game_state.camera_pos.abs_tile_y -%= 9;
+            game_state.camera_pos.abs_tile_y -%= screen_tile_height;
         }
     }
 
@@ -367,8 +367,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     screen_center.x - (meters_to_pixels * camera_pos.offset.x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels)))),
                     screen_center.y + (meters_to_pixels * camera_pos.offset.y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels)))),
                 );
-                const min = center.sub(half_tile_size);
-                const max = center.add(half_tile_size);
+                const min = center.sub(half_tile_size.mul(0.9));
+                const max = center.add(half_tile_size.mul(0.9));
 
                 drawRectangle(offscreen_buffer, min, max, grayscale, grayscale, grayscale);
             }
@@ -397,6 +397,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point, hero_bitmap.alignment);
             drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point, hero_bitmap.alignment);
             drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point, hero_bitmap.alignment);
+
+            drawRectangle(offscreen_buffer, player_ground_point.sub(.init(0.5, 1)), player_ground_point.add(.init(0.5, 0)), 1, 0, 0);
         }
     }
 
@@ -443,14 +445,15 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
         entity.dp.mul(dt),
     );
 
+    entity.dp = entity.dp.add(ddp.mul(dt));
+
     const old_p = entity.p;
     var new_p = old_p;
     new_p.offset = new_p.offset.add(player_delta);
     new_p.recanonicalize(tilemap);
 
-    entity.dp = entity.dp.add(ddp.mul(dt));
-
     if (false) {
+
         // Old collision code
         var bottom_left_pos = new_p;
         bottom_left_pos.offset.x -= (entity.size.x / 2);
@@ -496,33 +499,41 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
         // New collision code
         const min_tile_x: u32 = @min(old_p.abs_tile_x, new_p.abs_tile_x);
         const min_tile_y: u32 = @min(old_p.abs_tile_y, new_p.abs_tile_y);
-        const one_past_max_tile_x: u32 = @max(old_p.abs_tile_x, new_p.abs_tile_x) + 1;
-        const one_past_max_tile_y: u32 = @max(old_p.abs_tile_y, new_p.abs_tile_y) + 1;
+        const one_past_max_tile_x: u32 = @max(old_p.abs_tile_x, new_p.abs_tile_x) +% 1;
+        const one_past_max_tile_y: u32 = @max(old_p.abs_tile_y, new_p.abs_tile_y) +% 1;
         const abs_tile_z = entity.p.chunk_z;
 
         var t_min: f32 = 1;
 
         var abs_tile_y = min_tile_y;
-        var abs_tile_x = min_tile_x;
         while (abs_tile_y != one_past_max_tile_y) : (abs_tile_y +%= 1) {
+            var abs_tile_x = min_tile_x;
             while (abs_tile_x != one_past_max_tile_x) : (abs_tile_x +%= 1) {
-                const tile = tilemap.getTileXYZ(abs_tile_x, abs_tile_y, abs_tile_z);
-                if (TileMap.isTileEmpty(tile)) {
+                if (!tilemap.isTileEmpty(abs_tile_x, abs_tile_y, abs_tile_z)) {
                     const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
 
                     const min_corner = V2.scalar(-(tilemap.tile_size_in_meters / 2));
                     const max_corner = V2.scalar(tilemap.tile_size_in_meters / 2);
 
-                    const rel_new_p = tilemap.subtract(test_tile_pos, new_p);
+                    const rel_new_p = tilemap.subtract(old_p, test_tile_pos);
                     const rel = rel_new_p.xy;
 
-                    _ = min_corner;
-                    _ = max_corner;
-                    _ = rel;
-                    _ = &t_min;
+                    testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
+                    testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
+
+                    testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
+                    testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
                 }
             }
         }
+
+        new_p = old_p;
+        new_p.offset = new_p.offset.add(player_delta.mul(t_min));
+        new_p.recanonicalize(tilemap);
+        entity.p = new_p;
+
+        log.debug("p: {}", .{entity.p});
+        log.debug("dp: {}", .{entity.dp});
     }
 
     if (!TileMap.inSameTile(old_p, entity.p)) {
@@ -540,6 +551,21 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
         else if (@abs(entity.dp.x) > @abs(entity.dp.y))
             if (entity.dp.x > 0) .right else .left
         else if (entity.dp.y > 0) .up else .down;
+}
+
+fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) void {
+    const t_epsilon: f32 = 0.0001;
+
+    if (delta_x != 0) {
+        const t_result = (wall_x - test_x) / delta_x;
+
+        if (t_result >= 0 and t_min.* > t_result) {
+            const y = test_y + (t_result * delta_y);
+            if (y >= wall_min_y and y <= wall_max_y) {
+                t_min.* = @max(0, t_result - t_epsilon);
+            }
+        }
+    }
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {

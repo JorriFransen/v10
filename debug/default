@@ -9,7 +9,10 @@ exe="$(realpath "$zig_out_dir/v10")"
 pushd "$zig_out_dir" || exit 1
 
 lldb-zig "$exe"  \
-    -o "b v10_platform.GameCode.load" 
+    -o "b v10_platform.GameCode.load" \
+    -o "r" \
+    -o "fin" \
+    -o "c"
 
 
 popd
