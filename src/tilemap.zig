@@ -147,15 +147,19 @@ pub fn setTile(map: *const TileMap, arena: *MemoryArena, abs_tile_x: u32, abs_ti
     setChunkTile(chunk, pos.rel_tile_x, pos.rel_tile_y, new_tile);
 }
 
-pub inline fn isTileEmpty(tile: Tile) bool {
+pub inline fn isTileValueEmpty(tile: Tile) bool {
     return tile == 1 or tile == 3 or tile == 4;
+}
+
+pub inline fn isTileEmpty(map: *const TileMap, abs_tile_x: u32, abs_tile_y: u32, chunk_z: u32) bool {
+    return map.isTilePosEmpty(.{ .abs_tile_x = abs_tile_x, .abs_tile_y = abs_tile_y, .chunk_z = chunk_z });
 }
 
 pub inline fn isTilePosEmpty(map: *const TileMap, can_pos: Position) bool {
     var empty = false;
 
     const tile_value = map.getTileXYZ(can_pos.abs_tile_x, can_pos.abs_tile_y, can_pos.chunk_z);
-    empty = isTileEmpty(tile_value);
+    empty = isTileValueEmpty(tile_value);
 
     return empty;
 }
@@ -178,9 +182,9 @@ pub fn setChunkTile(chunk_opt: ?*const Chunk, x: u32, y: u32, new_tile: Tile) vo
 }
 
 pub fn recanonicalizeCoord(map: *const TileMap, tile: *u32, tile_rel: *f32) void {
-    // const tile_offset: i32 = intrinsics.floorFloatToInt(i32, tile_rel.* / world.tile_size_in_meters);
     const tile_offset: i32 = intrinsics.roundFloatToInt(i32, tile_rel.* / map.tile_size_in_meters);
-    tile.* +%= @as(u32, @bitCast(tile_offset));
+    tile.* +%= @bitCast(tile_offset);
+
     tile_rel.* -= @as(f32, @floatFromInt(tile_offset)) * map.tile_size_in_meters;
 
     assert(tile_rel.* >= -(0.5 * map.tile_size_in_meters));

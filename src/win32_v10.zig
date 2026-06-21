@@ -810,16 +810,16 @@ pub fn windowsEntry(
                                 audio_latency_seconds = (@as(f32, @floatFromInt(audio_latency_bytes)) / @sizeOf(AudioBuffer.Frame)) /
                                     @as(f32, @floatFromInt(audio_output.frames_per_second));
 
-                                log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
-                                    byte_to_lock,
-                                    target_cursor,
-                                    bytes_to_write,
-                                    play_cursor,
-                                    write_cursor,
-                                    audio_latency_bytes,
-                                    audio_latency_seconds,
-                                    audio_card_is_low_latency,
-                                });
+                                // log.debug("BTL:{} TC:{} BTW:{} - PC:{} WC:{} DELTA:{} ({d:.3}) LL:{}", .{
+                                //     byte_to_lock,
+                                //     target_cursor,
+                                //     bytes_to_write,
+                                //     play_cursor,
+                                //     write_cursor,
+                                //     audio_latency_bytes,
+                                //     audio_latency_seconds,
+                                //     audio_card_is_low_latency,
+                                // });
                             }
                         } else {
                             audio_valid = false;
