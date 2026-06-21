@@ -55,6 +55,10 @@ pub const V2 = extern struct {
         return @bitCast(this.v() * @as(V, @splat(s)));
     }
 
+    pub inline fn div(this: V2, s: f32) V2 {
+        return @bitCast(this.v() / @as(V, @splat(s)));
+    }
+
     pub inline fn inner(a: V2, b: V2) f32 {
         const result = a.x * b.x + a.y * b.y;
         return result;

@@ -281,29 +281,29 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const buttons = &controller.buttons.named;
 
         if (game_state.getEntity(game_state.player_index_for_controller[controller_index])) |controlling_entity| {
-            var entity_ddp: V2 = .{};
+            var move_dir: V2 = .{};
 
             if (controller.is_analog) {
                 // game_state.tone_hz = 400 + (50 * controller.stick_average_y);
 
-                entity_ddp.x += controller.stick_average_x;
-                entity_ddp.y += controller.stick_average_y;
+                move_dir.x += controller.stick_average_x;
+                move_dir.y += controller.stick_average_y;
             } else {
                 if (buttons.move_up.ended_down) {
-                    entity_ddp.y = 1;
+                    move_dir.y = 1;
                 }
                 if (buttons.move_down.ended_down) {
-                    entity_ddp.y = -1;
+                    move_dir.y = -1;
                 }
                 if (buttons.move_left.ended_down) {
-                    entity_ddp.x = -1;
+                    move_dir.x = -1;
                 }
                 if (buttons.move_right.ended_down) {
-                    entity_ddp.x = 1;
+                    move_dir.x = 1;
                 }
             }
 
-            movePlayer(game_state, controlling_entity, input.dt, entity_ddp);
+            movePlayer(game_state, controlling_entity, input.dt, move_dir);
         } else {
             if (buttons.start.ended_down) {
                 const controlling_entity_index = game_state.addEntity();
@@ -424,14 +424,14 @@ fn initPlayer(game_state: *GameState, entity_index: usize) void {
     }
 }
 
-fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, raw_ddp: V2) void {
+fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) void {
     const tilemap = game_state.world.tilemap;
 
-    var ddp = raw_ddp;
-
-    if (ddp.x != 0 and ddp.y != 0) {
-        ddp = ddp.mul(0.707106781187);
-    }
+    const ddp_length_sq = direction.lengthSquared();
+    var ddp = if (ddp_length_sq > 1)
+        direction.mul(1 / @sqrt(ddp_length_sq))
+    else
+        direction;
 
     const speed: f32 = 50; // ms/s^2
     ddp = ddp.mul(speed);
@@ -446,11 +446,11 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, raw_ddp: V2) voi
     const old_p = entity.p;
     var new_p = old_p;
     new_p.offset = new_p.offset.add(player_delta);
-
-    entity.dp = entity.dp.add(ddp.mul(dt));
     new_p.recanonicalize(tilemap);
 
-    if (true) {
+    entity.dp = entity.dp.add(ddp.mul(dt));
+
+    if (false) {
         // Old collision code
         var bottom_left_pos = new_p;
         bottom_left_pos.offset.x -= (entity.size.x / 2);
@@ -494,14 +494,13 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, raw_ddp: V2) voi
         // End Old collision code
     } else {
         // New collision code
-        const min_tile_y: u32 = 0;
-        const min_tile_x: u32 = 0;
-        const one_past_max_tile_x: u32 = 1;
-        const one_past_max_tile_y: u32 = 1;
+        const min_tile_x: u32 = @min(old_p.abs_tile_x, new_p.abs_tile_x);
+        const min_tile_y: u32 = @min(old_p.abs_tile_y, new_p.abs_tile_y);
+        const one_past_max_tile_x: u32 = @max(old_p.abs_tile_x, new_p.abs_tile_x) + 1;
+        const one_past_max_tile_y: u32 = @max(old_p.abs_tile_y, new_p.abs_tile_y) + 1;
         const abs_tile_z = entity.p.chunk_z;
 
-        var best_p = entity.p;
-        var best_distance_sq: f32 = player_delta.lengthSquared();
+        var t_min: f32 = 1;
 
         var abs_tile_y = min_tile_y;
         var abs_tile_x = min_tile_x;
@@ -509,13 +508,18 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, raw_ddp: V2) voi
             while (abs_tile_x != one_past_max_tile_x) : (abs_tile_x +%= 1) {
                 const tile = tilemap.getTileXYZ(abs_tile_x, abs_tile_y, abs_tile_z);
                 if (TileMap.isTileEmpty(tile)) {
+                    const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
+
                     const min_corner = V2.scalar(-(tilemap.tile_size_in_meters / 2));
                     const max_corner = V2.scalar(tilemap.tile_size_in_meters / 2);
 
-                    const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
                     const rel_new_p = tilemap.subtract(test_tile_pos, new_p);
-                    const test_p = closestPointInRectange(min_corner, max_corner, rel_new_p);
-                    _ = .{ test_p, &best_p, &best_distance_sq };
+                    const rel = rel_new_p.xy;
+
+                    _ = min_corner;
+                    _ = max_corner;
+                    _ = rel;
+                    _ = &t_min;
                 }
             }
         }
@@ -536,17 +540,6 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, raw_ddp: V2) voi
         else if (@abs(entity.dp.x) > @abs(entity.dp.y))
             if (entity.dp.x > 0) .right else .left
         else if (entity.dp.y > 0) .up else .down;
-}
-
-fn closestPointInRectange(min_corner: V2, max_corner: V2, pos: TileMap.Position) V2 {
-    const p = pos.offset;
-
-    const result = V2{
-        .x = @min(@max(min_corner.x, p.x), max_corner.x),
-        .y = @min(@max(min_corner.y, p.y), max_corner.y),
-    };
-
-    return result;
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
