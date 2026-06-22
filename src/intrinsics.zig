@@ -1,59 +1,5 @@
 const std = @import("std");
 
-pub inline fn roundFloatToInt(IntType: type, float: anytype) IntType {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(float));
-        if (float_info != .float) @compileError("Expected float type");
-
-        const int_info = @typeInfo(IntType);
-        if (int_info != .int) @compileError("Expected signed integer type");
-        if (int_info.int.signedness != .signed) @compileError("Expected signed integer type");
-    }
-
-    return @intFromFloat(@round(float));
-}
-
-/// Note: negative inputs are clamped to 0!
-pub inline fn roundFloatToUInt(UIntType: type, float: anytype) UIntType {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(float));
-        if (float_info != .float) @compileError("Expected float type");
-
-        const int_info = @typeInfo(UIntType);
-        if (int_info != .int) @compileError("Expected unsigned integer type");
-        if (int_info.int.signedness != .unsigned) @compileError("Expected unsigned integer type");
-    }
-
-    return @intFromFloat(@round(@max(float, 0)));
-}
-
-pub inline fn floorFloatToInt(IntType: type, float: anytype) IntType {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(float));
-        if (float_info != .float) @compileError("Expected float type");
-
-        const int_info = @typeInfo(IntType);
-        if (int_info != .int) @compileError("Expected signed integer type");
-        if (int_info.int.signedness != .signed) @compileError("Expected signed integer type");
-    }
-
-    return @intFromFloat(@floor(float));
-}
-
-/// Note: negative inputs are clamped to 0!
-pub inline fn floorFloatToUInt(UIntType: type, float: anytype) UIntType {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(float));
-        if (float_info != .float) @compileError("Expected float type");
-
-        const int_info = @typeInfo(UIntType);
-        if (int_info != .int) @compileError("Expected unsigned integer type");
-        if (int_info.int.signedness != .unsigned) @compileError("Expected unsigned integer type");
-    }
-
-    return @intFromFloat(@floor(@max(float, 0)));
-}
-
 pub inline fn sin(angle: anytype) @TypeOf(angle) {
     comptime {
         const float_info = @typeInfo(@TypeOf(angle));

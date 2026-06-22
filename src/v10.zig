@@ -369,6 +369,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 );
                 const min = center.sub(half_tile_size.mul(0.95));
                 const max = center.add(half_tile_size.mul(0.95));
+                // const min = center.sub(half_tile_size);
+                // const max = center.add(half_tile_size);
 
                 drawRectangle(offscreen_buffer, min, max, grayscale, grayscale, grayscale);
             }
@@ -386,8 +388,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             const player_ground_point = v2(screen_center.x + diff_pixels.x, screen_center.y - diff_pixels.y);
 
             const player_top_left = v2(
-                player_ground_point.x - (player_size.x / 2),
-                player_ground_point.y - (player_size.y),
+                player_ground_point.x - (0.5 * player_size.x),
+                player_ground_point.y - (0.5 * player_size.y),
             );
             const player_bottom_right = player_top_left.add(player_size);
 
@@ -407,7 +409,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
 fn initPlayer(game_state: *GameState, entity_index: usize) void {
     const entity = game_state.getEntity(entity_index).?;
-    const height = 1.4;
 
     entity.* = .{
         .exists = true,
@@ -417,7 +418,7 @@ fn initPlayer(game_state: *GameState, entity_index: usize) void {
             .chunk_z = 0,
             ._offset = V2.zero,
         },
-        .size = V2.init(height * 0.75, height),
+        .size = v2(1, 0.5),
         .dp = V2.scalar(0),
     };
 
@@ -442,7 +443,7 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
 
     ddp = ddp.add(entity.dp.mul(-8));
 
-    const player_delta = V2.add(
+    var player_delta = V2.add(
         ddp.mul(0.5 * math.square(dt)),
         entity.dp.mul(dt),
     );
@@ -450,54 +451,66 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
     entity.dp = entity.dp.add(ddp.mul(dt));
 
     const old_p = entity.p;
-    var new_p = old_p.offset(tilemap, player_delta);
+    const new_p = entity.p.offset(tilemap, player_delta);
 
     const abs_tile_z = entity.p.chunk_z;
 
-    const start_tile_x: u32 = old_p.abs_tile_x;
-    const start_tile_y: u32 = old_p.abs_tile_y;
-    const end_tile_x: u32 = new_p.abs_tile_x;
-    const end_tile_y: u32 = new_p.abs_tile_y;
-    const delta_x: i32 = intrinsics.signOf(@as(i32, @bitCast(end_tile_x)) -% @as(i32, @bitCast(start_tile_x)));
-    const delta_y: i32 = intrinsics.signOf(@as(i32, @bitCast(end_tile_y)) -% @as(i32, @bitCast(start_tile_y)));
+    const entity_tile_width: u32 = @ceil(entity.size.x / tilemap.tile_size_in_meters);
+    const entity_tile_height: u32 = @ceil(entity.size.y / tilemap.tile_size_in_meters);
 
-    var t_min: f32 = 1;
+    const min_tile_x = @min(entity.p.abs_tile_x, new_p.abs_tile_x) - entity_tile_width;
+    const min_tile_y = @min(entity.p.abs_tile_y, new_p.abs_tile_y) - entity_tile_height;
+    const max_tile_x = @max(entity.p.abs_tile_x, new_p.abs_tile_x) + entity_tile_width;
+    const max_tile_y = @max(entity.p.abs_tile_y, new_p.abs_tile_y) + entity_tile_height;
 
-    var abs_tile_y = start_tile_y;
-    while (true) {
-        var abs_tile_x = start_tile_x;
-        while (true) {
-            if (!tilemap.isTileEmpty(abs_tile_x, abs_tile_y, abs_tile_z)) {
-                const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
+    assert(max_tile_x - min_tile_x < 32);
+    assert(max_tile_y - min_tile_y < 32);
 
-                const min_corner = V2.scalar(-(tilemap.tile_size_in_meters) * 0.5);
-                const max_corner = V2.scalar(tilemap.tile_size_in_meters * 0.5);
+    var t_remaining: f32 = 1;
+    var it_count: usize = 0;
+    while (it_count < 4 and t_remaining > 0) : (it_count += 1) {
+        var t_min: f32 = 1;
+        var wall_normal: V2 = .zero;
 
-                const rel_new_p = tilemap.subtract(old_p, test_tile_pos);
-                const rel = rel_new_p.xy;
+        for (min_tile_y..max_tile_y + 1) |abs_tile_y_| {
+            const abs_tile_y: u32 = @intCast(abs_tile_y_);
 
-                testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
-                testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y);
-                testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
-                testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x);
-            }
+            for (min_tile_x..max_tile_x + 1) |abs_tile_x_| {
+                const abs_tile_x: u32 = @intCast(abs_tile_x_);
 
-            if (abs_tile_x == end_tile_x) {
-                break;
-            } else {
-                abs_tile_x +%= @bitCast(delta_x);
+                if (!tilemap.isTileEmpty(abs_tile_x, abs_tile_y, abs_tile_z)) {
+                    const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
+
+                    const diameter_w = tilemap.tile_size_in_meters + entity.size.x;
+                    const diameter_h = tilemap.tile_size_in_meters + entity.size.y;
+                    const min_corner = v2(diameter_w, diameter_h).mul(-0.5);
+                    const max_corner = v2(diameter_w, diameter_h).mul(0.5);
+
+                    const rel_new_p = tilemap.subtract(entity.p, test_tile_pos);
+                    const rel = rel_new_p.xy;
+
+                    if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                        wall_normal = v2(-1, 0);
+                    }
+                    if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                        wall_normal = v2(1, 0);
+                    }
+                    if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                        wall_normal = v2(0, -1);
+                    }
+                    if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                        wall_normal = v2(0, 1);
+                    }
+                }
             }
         }
 
-        if (abs_tile_y == end_tile_y) {
-            break;
-        } else {
-            abs_tile_y +%= @bitCast(delta_y);
-        }
+        entity.p = entity.p.offset(tilemap, player_delta.mul(t_min));
+        entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
+        player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
+
+        t_remaining -= t_min;
     }
-
-    new_p = old_p.offset(tilemap, player_delta.mul(t_min));
-    entity.p = new_p;
 
     if (!TileMap.inSameTile(old_p, entity.p)) {
         const tile = tilemap.getTile(entity.p);
@@ -516,8 +529,10 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
         else if (entity.dp.y > 0) .up else .down;
 }
 
-fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) void {
+fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
     const t_epsilon: f32 = 0.0001;
+
+    var hit = false;
 
     if (delta_x != 0) {
         const t_result = (wall_x - test_x) / delta_x;
@@ -526,9 +541,12 @@ fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t
             const y = test_y + (t_result * delta_y);
             if (y >= wall_min_y and y <= wall_max_y) {
                 t_min.* = @max(0, t_result - t_epsilon);
+                hit = true;
             }
         }
     }
+
+    return hit;
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
@@ -589,10 +607,10 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32,
     const buffer_width_f: f32 = @floatFromInt(buffer.width);
     const buffer_height_f: f32 = @floatFromInt(buffer.height);
 
-    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(min.x, 0), buffer_width_f));
-    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(min.y, 0), buffer_height_f));
-    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(max.x, 0), buffer_width_f));
-    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(max.y, 0), buffer_height_f));
+    const minx: usize = @round(@min(@max(min.x, 0), buffer_width_f));
+    const miny: usize = @round(@min(@max(min.y, 0), buffer_height_f));
+    const maxx: usize = @round(@min(@max(max.x, 0), buffer_width_f));
+    const maxy: usize = @round(@min(@max(max.y, 0), buffer_height_f));
 
     assert(bpp == @sizeOf(u32));
 
@@ -624,10 +642,10 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, pos_: V2, alig
     const source_offset_x: usize = @intFromFloat(-@min(pos.x, 0));
     const source_offset_y: usize = @intFromFloat(-@min(pos.y, 0));
 
-    const minx = intrinsics.roundFloatToUInt(usize, @min(@max(pos.x, 0), buf_size.x));
-    const miny = intrinsics.roundFloatToUInt(usize, @min(@max(pos.y, 0), buf_size.y));
-    const maxx = intrinsics.roundFloatToUInt(usize, @min(@max(max_pos.x, 0), buf_size.x));
-    const maxy = intrinsics.roundFloatToUInt(usize, @min(@max(max_pos.y, 0), buf_size.y));
+    const minx: usize = @round(@min(@max(pos.x, 0), buf_size.x));
+    const miny: usize = @round(@min(@max(pos.y, 0), buf_size.y));
+    const maxx: usize = @round(@min(@max(max_pos.x, 0), buf_size.x));
+    const maxy: usize = @round(@min(@max(max_pos.y, 0), buf_size.y));
 
     // TEMPORARY
     if (bitmap.pixels.len == 0) return;
