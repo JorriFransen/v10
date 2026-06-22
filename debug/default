@@ -1,18 +1,22 @@
 #! /usr/bin/env bash
 
-
 script_dir="$(dirname "$(realpath "$0")")"
+common_script_path="$(realpath "$script_dir/common.py")"
 root_dir="$(realpath "$script_dir/..")"
 zig_out_dir="$(realpath "$root_dir/zig-out")"
 exe="$(realpath "$zig_out_dir/v10")"
 
 pushd "$zig_out_dir" || exit 1
 
-lldb-zig "$exe"  \
-    -o "b v10_platform.GameCode.load" \
-    -o "r" \
-    -o "fin" \
-    -o "c"
+
+lldb-zig  "$exe"  \
+    -o "command script import $common_script_path" \
+    -o "script common.register_default_aliases()" \
+    -o "script common.initial_launch()" \
 
 
 popd
+
+
+
+
