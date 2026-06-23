@@ -55,6 +55,7 @@ pub inline fn rotateLeft(
     n: @Int(.signed, std.math.log2(@bitSizeOf(@TypeOf(v))) + 2),
 ) @TypeOf(v) {
     const VT = @TypeOf(v);
+    const vt_bits = @bitSizeOf(VT);
     comptime {
         const vt_info = @typeInfo(VT);
         if (vt_info != .int and vt_info != .comptime_int)
@@ -65,15 +66,16 @@ pub inline fn rotateLeft(
             @compileError("Expected unsigned integer type");
     }
 
-    // Note: std.math.rotl does @mod(n, @typeInfo(VT).int.bits). The 'bits' member
-    //       is a u16, so if n has fewer than 16 bits, peer type resolution
-    //       chooses u16. Because n can be negative, the peer type resulution
-    //       needs to preserve the signedness. Casting to the same bit-width
-    //       enforces this.
-    const i16_n: i16 = @intCast(n);
-
     // TODO: Replace with @rotl when added
-    return std.math.rotl(VT, v, i16_n);
+    // NOTE: Integer only version of std.math.rotl
+    if (VT == u0) return 0;
+    if (comptime std.math.isPowerOfTwo(vt_bits)) {
+        const an: std.math.Log2Int(VT) = @intCast(@mod(n, vt_bits));
+        return v << an | v >> 1 +% ~an;
+    } else {
+        const an = @mod(n, vt_bits);
+        return std.math.shl(VT, v, an) | std.math.shr(VT, v, (vt_bits - an));
+    }
 }
 
 pub inline fn signOf(v: anytype) @TypeOf(v) {

@@ -35,50 +35,83 @@ pub const GameState = struct {
 
     player_index_for_controller: [@typeInfo(@FieldType(Input, "controllers")).array.len]usize = @splat(0),
     entity_count: usize = 0,
-    entities: [256]Entity = @splat(.{}),
+    entity_recidency: [256]EntityRecidence = undefined,
+    high_entities: [256]HighEntity = undefined,
+    low_entities: [256]LowEntity = undefined,
+    dormant_entities: [256]DormantEntity = undefined,
 
     backdrop: LoadedBitmap = .{},
     hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
 
-    pub fn getEntity(this: *GameState, index: usize) ?*Entity {
-        assert(index < this.entities.len);
+    pub fn getEntity(this: *GameState, index: usize, state: EntityRecidence) Entity {
+        assert(state != .nonexistent);
+        assert(index < this.high_entities.len);
 
-        var result: ?*Entity = null;
+        var entity: Entity = .{ .recidence = .nonexistent };
 
-        if (index > 0 and index < this.entities.len) {
-            result = &this.entities[index];
+        if (index > 0 and index < this.entity_count) {
+            assert(@intFromEnum(this.entity_recidency[index]) >= @intFromEnum(state));
+            entity.recidence = state;
+            entity.high = &this.high_entities[index];
+            entity.low = &this.low_entities[index];
+            entity.dormant = &this.dormant_entities[index];
         }
 
-        return result;
+        return entity;
     }
 
     pub fn addEntity(this: *GameState) usize {
-        assert(this.entity_count < this.entities.len);
-
         const entity_index = this.entity_count;
-        this.entity_count += 1;
 
-        const entity = &this.entities[entity_index];
-        entity.* = .{};
+        this.entity_count += 1;
+        assert(this.entity_count < this.high_entities.len);
+        assert(this.entity_count < this.low_entities.len);
+        assert(this.entity_count < this.dormant_entities.len);
+
+        this.entity_recidency[entity_index] = .dormant;
+        this.high_entities[entity_index] = std.mem.zeroInit(HighEntity, .{});
+        this.low_entities[entity_index] = std.mem.zeroInit(LowEntity, .{});
+        this.dormant_entities[entity_index] = std.mem.zeroInit(DormantEntity, .{});
 
         return entity_index;
     }
+
+    pub fn changeEntityRecidence(this: *GameState, entity_index: usize, state: EntityRecidence) void {
+        assert(entity_index < this.entity_count);
+
+        assert(state != .nonexistent);
+        assert(this.entity_recidency[entity_index] != .nonexistent);
+        this.entity_recidency[entity_index] = state;
+    }
 };
 
-pub const LoadedBitmap = struct {
-    width: u32 = 0,
-    height: u32 = 0,
-    pixels: []align(1) u32 = &.{},
+pub const EntityRecidence = enum(u2) {
+    nonexistent = 0,
+    dormant = 1,
+    low = 2,
+    high = 3,
 };
 
 pub const Entity = struct {
-    exists: bool = false,
-    p: TileMap.Position = std.mem.zeroes(TileMap.Position),
-    dp: V2 = .{},
+    recidence: EntityRecidence,
+    high: *HighEntity = undefined,
+    low: *LowEntity = undefined,
+    dormant: *DormantEntity = undefined,
+};
 
-    size: V2 = .{},
-
+pub const HighEntity = struct {
+    p: V2 = .zero,
+    dp: V2 = .zero,
     facing_direction: FacingDirection = .down,
+};
+
+pub const LowEntity = struct {
+    //
+};
+
+pub const DormantEntity = struct {
+    p: TileMap.Position = std.mem.zeroInit(TileMap.Position, .{}),
+    size: V2 = .zero,
 };
 
 const FacingDirection = enum(u2) {
@@ -86,6 +119,12 @@ const FacingDirection = enum(u2) {
     up,
     left,
     down,
+};
+
+pub const LoadedBitmap = struct {
+    width: u32 = 0,
+    height: u32 = 0,
+    pixels: []align(1) u32 = &.{},
 };
 
 pub const HeroBitmaps = struct {
@@ -120,8 +159,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
 
-        const null_entity_index = game_state.addEntity();
-        _ = null_entity_index;
+        // const null_entity_index = game_state.addEntity();
+        // _ = null_entity_index;
+        game_state.entity_count = 1;
+        game_state.entity_recidency[0] = .nonexistent;
 
         const asset_prefix = "../../hh_assets";
         // const asset_prefix = "../data/";
@@ -280,7 +321,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         const buttons = &controller.buttons.named;
 
-        if (game_state.getEntity(game_state.player_index_for_controller[controller_index])) |controlling_entity| {
+        const entity = game_state.getEntity(game_state.player_index_for_controller[controller_index], .high);
+        if (entity.recidence != .nonexistent) {
             var move_dir: V2 = .{};
 
             if (controller.is_analog) {
@@ -303,7 +345,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 }
             }
 
-            movePlayer(game_state, controlling_entity, input.dt, move_dir);
+            movePlayer(game_state, entity, input.dt, move_dir);
         } else {
             if (buttons.start.ended_down) {
                 const controlling_entity_index = game_state.addEntity();
@@ -313,10 +355,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     }
 
-    if (game_state.getEntity(game_state.camera_following_entity_index)) |camera_following_entity| {
-        game_state.camera_pos.chunk_z = camera_following_entity.p.chunk_z;
+    const cam_following_entity = game_state.getEntity(game_state.camera_following_entity_index, .high);
+    if (cam_following_entity.recidence != .nonexistent) {
+        game_state.camera_pos.chunk_z = cam_following_entity.dormant.p.chunk_z;
 
-        const diff = tilemap.subtract(camera_following_entity.p, game_state.camera_pos);
+        const diff = tilemap.subtract(cam_following_entity.dormant.p, game_state.camera_pos);
         const x_bound_offset: i32 = @round(@as(f32, screen_tile_width) / 2);
         if (diff.xy.x > (x_bound_offset) * tilemap.tile_size_in_meters) {
             game_state.camera_pos.abs_tile_x +%= screen_tile_width;
@@ -377,13 +420,18 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     }
 
-    for (&game_state.entities) |*entity| {
-        if (entity.exists) {
-            const diff = tilemap.subtract(entity.p, game_state.camera_pos);
+    for (1..game_state.entity_count) |entity_index| {
+        if (game_state.entity_recidency[entity_index] == .high) {
+            const high_entity: *const HighEntity = &game_state.high_entities[entity_index];
+            const low_entity: *const LowEntity = &game_state.low_entities[entity_index];
+            _ = low_entity;
+            const dormant_entity: *const DormantEntity = &game_state.dormant_entities[entity_index];
+
+            const diff = tilemap.subtract(dormant_entity.p, game_state.camera_pos);
 
             const diff_pixels = diff.xy.mul(meters_to_pixels);
 
-            const player_size = entity.size.mul(meters_to_pixels);
+            const player_size = dormant_entity.size.mul(meters_to_pixels);
 
             const player_ground_point = v2(screen_center.x + diff_pixels.x, screen_center.y - diff_pixels.y);
 
@@ -395,7 +443,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
             drawRectangle(offscreen_buffer, player_top_left, player_bottom_right, 1, 1, 0);
 
-            const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(entity.facing_direction)];
+            const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(high_entity.facing_direction)];
             drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point, hero_bitmap.alignment);
             drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point, hero_bitmap.alignment);
             drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point, hero_bitmap.alignment);
@@ -408,29 +456,29 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 }
 
 fn initPlayer(game_state: *GameState, entity_index: usize) void {
-    const entity = game_state.getEntity(entity_index).?;
+    const entity = game_state.getEntity(entity_index, .dormant);
 
-    entity.* = .{
-        .exists = true,
-        .p = .{
+    entity.dormant.* = .{
+        .p = game_state.world.tilemap.recanonicalizePosition(.{
             .abs_tile_x = 1,
             .abs_tile_y = 3,
             .chunk_z = 0,
-            ._offset = V2.zero,
-        },
+        }),
         .size = v2(1, 0.5),
-        .dp = V2.scalar(0),
     };
 
-    entity.p.recanonicalize(game_state.world.tilemap);
+    game_state.changeEntityRecidence(entity_index, .high);
 
-    if (game_state.getEntity(game_state.camera_following_entity_index) == null) {
+    entity.dormant.p.recanonicalize(game_state.world.tilemap);
+
+    if (game_state.getEntity(game_state.camera_following_entity_index, .dormant).recidence == .nonexistent) {
         game_state.camera_following_entity_index = entity_index;
     }
 }
 
-fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) void {
+fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) void {
     const tilemap = game_state.world.tilemap;
+    _ = tilemap;
 
     const ddp_length_sq = direction.lengthSquared();
     var ddp = if (ddp_length_sq > 1)
@@ -440,93 +488,93 @@ fn movePlayer(game_state: *GameState, entity: *Entity, dt: f32, direction: V2) v
 
     const speed: f32 = 50; // ms/s^2
     ddp = ddp.mul(speed);
+    ddp = ddp.add(entity.high.dp.mul(-8));
 
-    ddp = ddp.add(entity.dp.mul(-8));
-
+    const old_p = entity.high.p;
     var player_delta = V2.add(
         ddp.mul(0.5 * math.square(dt)),
-        entity.dp.mul(dt),
+        entity.high.dp.mul(dt),
     );
+    entity.high.dp = entity.high.dp.add(ddp.mul(dt));
+    const new_p = old_p.add(player_delta);
 
-    entity.dp = entity.dp.add(ddp.mul(dt));
+    _ = &player_delta;
+    _ = new_p;
 
-    const old_p = entity.p;
-    const new_p = entity.p.offset(tilemap, player_delta);
+    // const abs_tile_z = entity.dormant.p.chunk_z;
+    //
+    // const entity_tile_width: u32 = @ceil(entity.dormant.size.x / tilemap.tile_size_in_meters);
+    // const entity_tile_height: u32 = @ceil(entity.dormant.size.y / tilemap.tile_size_in_meters);
+    //
+    // const min_tile_x = @min(entity.dormant.p.abs_tile_x, new_p.abs_tile_x) - entity_tile_width;
+    // const min_tile_y = @min(entity.dormant.p.abs_tile_y, new_p.abs_tile_y) - entity_tile_height;
+    // const max_tile_x = @max(entity.dormant.p.abs_tile_x, new_p.abs_tile_x) + entity_tile_width;
+    // const max_tile_y = @max(entity.dormant.p.abs_tile_y, new_p.abs_tile_y) + entity_tile_height;
+    //
+    // assert(max_tile_x - min_tile_x < 32);
+    // assert(max_tile_y - min_tile_y < 32);
+    //
+    // var t_remaining: f32 = 1;
+    // var it_count: usize = 0;
+    // while (it_count < 4 and t_remaining > 0) : (it_count += 1) {
+    //     var t_min: f32 = 1;
+    //     var wall_normal: V2 = .zero;
+    //
+    //     for (min_tile_y..max_tile_y + 1) |abs_tile_y_| {
+    //         const abs_tile_y: u32 = @intCast(abs_tile_y_);
+    //
+    //         for (min_tile_x..max_tile_x + 1) |abs_tile_x_| {
+    //             const abs_tile_x: u32 = @intCast(abs_tile_x_);
+    //
+    //             if (!tilemap.isTileEmpty(abs_tile_x, abs_tile_y, abs_tile_z)) {
+    //                 const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
+    //
+    //                 const diameter_w = tilemap.tile_size_in_meters + entity.dormant.size.x;
+    //                 const diameter_h = tilemap.tile_size_in_meters + entity.dormant.size.y;
+    //                 const min_corner = v2(diameter_w, diameter_h).mul(-0.5);
+    //                 const max_corner = v2(diameter_w, diameter_h).mul(0.5);
+    //
+    //                 const rel_new_p = tilemap.subtract(entity.dormant.p, test_tile_pos);
+    //                 const rel = rel_new_p.xy;
+    //
+    //                 if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+    //                     wall_normal = v2(-1, 0);
+    //                 }
+    //                 if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+    //                     wall_normal = v2(1, 0);
+    //                 }
+    //                 if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+    //                     wall_normal = v2(0, -1);
+    //                 }
+    //                 if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+    //                     wall_normal = v2(0, 1);
+    //                 }
+    //             }
+    //         }
+    //     }
+    //
+    //     entity.dormant.p = entity.dormant.p.offset(tilemap, player_delta.mul(t_min));
+    //     entity.high.dp = entity.high.dp.sub(wall_normal.mul(entity.high.dp.inner(wall_normal)));
+    //     player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
+    //
+    //     t_remaining -= t_min;
+    // }
+    //
+    // if (!TileMap.inSameTile(old_p, entity.dormant.p)) {
+    //     const tile = tilemap.getTile(entity.dormant.p);
+    //     if (tile == 3) {
+    //         entity.dormant.p.chunk_z += 1;
+    //     } else if (tile == 4) {
+    //         entity.dormant.p.chunk_z -= 1;
+    //     }
+    // }
 
-    const abs_tile_z = entity.p.chunk_z;
-
-    const entity_tile_width: u32 = @ceil(entity.size.x / tilemap.tile_size_in_meters);
-    const entity_tile_height: u32 = @ceil(entity.size.y / tilemap.tile_size_in_meters);
-
-    const min_tile_x = @min(entity.p.abs_tile_x, new_p.abs_tile_x) - entity_tile_width;
-    const min_tile_y = @min(entity.p.abs_tile_y, new_p.abs_tile_y) - entity_tile_height;
-    const max_tile_x = @max(entity.p.abs_tile_x, new_p.abs_tile_x) + entity_tile_width;
-    const max_tile_y = @max(entity.p.abs_tile_y, new_p.abs_tile_y) + entity_tile_height;
-
-    assert(max_tile_x - min_tile_x < 32);
-    assert(max_tile_y - min_tile_y < 32);
-
-    var t_remaining: f32 = 1;
-    var it_count: usize = 0;
-    while (it_count < 4 and t_remaining > 0) : (it_count += 1) {
-        var t_min: f32 = 1;
-        var wall_normal: V2 = .zero;
-
-        for (min_tile_y..max_tile_y + 1) |abs_tile_y_| {
-            const abs_tile_y: u32 = @intCast(abs_tile_y_);
-
-            for (min_tile_x..max_tile_x + 1) |abs_tile_x_| {
-                const abs_tile_x: u32 = @intCast(abs_tile_x_);
-
-                if (!tilemap.isTileEmpty(abs_tile_x, abs_tile_y, abs_tile_z)) {
-                    const test_tile_pos = TileMap.centerTilePoint(abs_tile_x, abs_tile_y, abs_tile_z);
-
-                    const diameter_w = tilemap.tile_size_in_meters + entity.size.x;
-                    const diameter_h = tilemap.tile_size_in_meters + entity.size.y;
-                    const min_corner = v2(diameter_w, diameter_h).mul(-0.5);
-                    const max_corner = v2(diameter_w, diameter_h).mul(0.5);
-
-                    const rel_new_p = tilemap.subtract(entity.p, test_tile_pos);
-                    const rel = rel_new_p.xy;
-
-                    if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                        wall_normal = v2(-1, 0);
-                    }
-                    if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                        wall_normal = v2(1, 0);
-                    }
-                    if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                        wall_normal = v2(0, -1);
-                    }
-                    if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                        wall_normal = v2(0, 1);
-                    }
-                }
-            }
-        }
-
-        entity.p = entity.p.offset(tilemap, player_delta.mul(t_min));
-        entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
-        player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
-
-        t_remaining -= t_min;
-    }
-
-    if (!TileMap.inSameTile(old_p, entity.p)) {
-        const tile = tilemap.getTile(entity.p);
-        if (tile == 3) {
-            entity.p.chunk_z += 1;
-        } else if (tile == 4) {
-            entity.p.chunk_z -= 1;
-        }
-    }
-
-    entity.facing_direction =
-        if (entity.dp.x == 0 and entity.dp.y == 0)
-            entity.facing_direction
-        else if (@abs(entity.dp.x) > @abs(entity.dp.y))
-            if (entity.dp.x > 0) .right else .left
-        else if (entity.dp.y > 0) .up else .down;
+    entity.high.facing_direction =
+        if (entity.high.dp.x == 0 and entity.high.dp.y == 0)
+            entity.high.facing_direction
+        else if (@abs(entity.high.dp.x) > @abs(entity.high.dp.y))
+            if (entity.high.dp.x > 0) .right else .left
+        else if (entity.high.dp.y > 0) .up else .down;
 }
 
 fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
