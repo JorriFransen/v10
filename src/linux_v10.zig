@@ -439,7 +439,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
             .pulse = .{ .impl = switch (linux_options.linux_audio_impl) {
                 .pulseEmulateDSound => .{
-                    .safety_frame_bytes = @max(1024, @as(u32, @intFromFloat((audio_fps / game_update_hz) / 4)) * @sizeOf(AudioOutput.Frame)),
+                    .safety_frame_bytes = @max(1024, @as(u32, @intFromFloat((audio_fps / game_update_hz) / 3)) * @sizeOf(AudioOutput.Frame)),
                     .running_frame_index = 0,
                     .read_cursor = 0,
                     .buffer = audio_buffer,

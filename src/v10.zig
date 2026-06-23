@@ -41,6 +41,7 @@ pub const GameState = struct {
     dormant_entities: [256]DormantEntity = undefined,
 
     backdrop: LoadedBitmap = .{},
+    hero_shadow: LoadedBitmap = .{},
     hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
 
     pub fn getEntity(this: *GameState, index: usize, residency: EntityResidence) Entity {
@@ -91,7 +92,7 @@ pub const GameState = struct {
 
                 const diff = this.world.tilemap.subtract(dormant.p, this.camera_pos);
                 high.p = diff.xy;
-                high.dp = V2.zero;
+                high.d_p = V2.zero;
                 high.abs_tile_z = dormant.p.chunk_z;
                 high.facing_direction = .down;
             }
@@ -117,9 +118,12 @@ pub const Entity = struct {
 
 pub const HighEntity = struct {
     p: V2 = .zero,
-    dp: V2 = .zero,
+    d_p: V2 = .zero,
     abs_tile_z: u32 = 0,
     facing_direction: FacingDirection = .down,
+
+    z: f32 = 0,
+    d_z: f32 = 0,
 };
 
 pub const LowEntity = struct {
@@ -189,6 +193,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         // const asset_prefix = "../data/";
 
         game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
+        game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_shadow.bmp");
 
         game_state.hero_bitmaps[0].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_right_head.bmp");
         game_state.hero_bitmaps[0].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_right_cape.bmp");
@@ -366,6 +371,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 }
             }
 
+            if (buttons.action_up.ended_down) {
+                if (entity.high.z <= 0) {
+                    entity.high.d_z = 3;
+                }
+            }
+
             movePlayer(game_state, entity, input.dt, move_dir);
         } else {
             if (buttons.start.ended_down) {
@@ -406,7 +417,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     // drawRectangle(offscreen_buffer, 0, 0, @floatFromInt(offscreen_buffer.width), @floatFromInt(offscreen_buffer.height), 1, 0, 1);
 
-    drawBitmap(offscreen_buffer, game_state.backdrop, .{}, .{});
+    drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0, .{});
 
     const camera_pos = &game_state.camera_pos;
 
@@ -457,26 +468,41 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
             high_entity.p = high_entity.p.add(entity_offset_for_frame);
 
-            const diff_pixels = high_entity.p.mul(meters_to_pixels);
+            const ddz = -9.8;
+            high_entity.z = @max(0, high_entity.z + (0.5 * ddz * math.square(input.dt)) + (high_entity.d_z * input.dt));
+            high_entity.d_z = (ddz * input.dt) + high_entity.d_z;
 
             const player_size = dormant_entity.size.mul(meters_to_pixels);
 
-            const player_ground_point = v2(screen_center.x + diff_pixels.x, screen_center.y - diff_pixels.y);
+            const player_ground_point_x = screen_center.x + (meters_to_pixels * high_entity.p.x);
+            const player_ground_point_y = screen_center.y - (meters_to_pixels * high_entity.p.y);
+            const z = meters_to_pixels * -high_entity.z;
 
             const player_top_left = v2(
-                player_ground_point.x - (0.5 * player_size.x),
-                player_ground_point.y - (0.5 * player_size.y),
+                player_ground_point_x - (0.5 * player_size.x),
+                player_ground_point_y - (0.5 * player_size.y),
             );
             const player_bottom_right = player_top_left.add(player_size);
 
-            drawRectangle(offscreen_buffer, player_top_left, player_bottom_right, 1, 1, 0);
-
             const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(high_entity.facing_direction)];
-            drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point, hero_bitmap.alignment);
-            drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point, hero_bitmap.alignment);
-            drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point, hero_bitmap.alignment);
+            _ = player_bottom_right;
+            // drawRectangle(offscreen_buffer, player_top_left, player_bottom_right, 1, 1, 0);
+            const c_alpha = @max(0, 1 - high_entity.z);
+            drawBitmap(
+                offscreen_buffer,
+                game_state.hero_shadow,
+                player_ground_point_x,
+                player_ground_point_y,
+                .{ .center = hero_bitmap.alignment, .c_alpha = c_alpha },
+            );
 
-            drawRectangle(offscreen_buffer, player_ground_point.sub(.init(0.5, 1)), player_ground_point.add(.init(0.5, 0)), 1, 0, 0);
+            const o = DrawBitmapOptions{ .center = hero_bitmap.alignment };
+            drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point_x, player_ground_point_y + z, o);
+            drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point_x, player_ground_point_y + z, o);
+            drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point_x, player_ground_point_y + z, o);
+
+            const player_ground_point = v2(player_ground_point_x, player_ground_point_y);
+            drawRectangle(offscreen_buffer, player_ground_point.sub(v2(0.5, 1)), player_ground_point.add(v2(0.5, 0)), 1, 0, 0);
         }
     }
 
@@ -514,13 +540,13 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
 
     const speed: f32 = 50; // ms/s^2
     ddp = ddp.mul(speed);
-    ddp = ddp.add(entity.high.dp.mul(-8));
+    ddp = ddp.add(entity.high.d_p.mul(-8));
 
     var player_delta = V2.add(
         ddp.mul(0.5 * math.square(dt)),
-        entity.high.dp.mul(dt),
+        entity.high.d_p.mul(dt),
     );
-    entity.high.dp = entity.high.dp.add(ddp.mul(dt));
+    entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
 
     var t_remaining: f32 = 1;
     var it_count: usize = 0;
@@ -563,7 +589,7 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
         entity.high.p = entity.high.p.add(player_delta.mul(t_min));
 
         if (hit_entity_index > 0) {
-            entity.high.dp = entity.high.dp.sub(wall_normal.mul(entity.high.dp.inner(wall_normal)));
+            entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
             player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
             t_remaining -= t_min;
 
@@ -575,11 +601,11 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
     }
 
     entity.high.facing_direction =
-        if (entity.high.dp.x == 0 and entity.high.dp.y == 0)
+        if (entity.high.d_p.x == 0 and entity.high.d_p.y == 0)
             entity.high.facing_direction
-        else if (@abs(entity.high.dp.x) > @abs(entity.high.dp.y))
-            if (entity.high.dp.x > 0) .right else .left
-        else if (entity.high.dp.y > 0) .up else .down;
+        else if (@abs(entity.high.d_p.x) > @abs(entity.high.d_p.y))
+            if (entity.high.d_p.x > 0) .right else .left
+        else if (entity.high.d_p.y > 0) .up else .down;
 
     entity.dormant.p = game_state.camera_pos.mapIntoTileSpace(tilemap, entity.high.p);
 }
@@ -685,11 +711,16 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32,
     }
 }
 
-pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, pos_: V2, alignment: V2) void {
+const DrawBitmapOptions = struct {
+    center: V2 = V2.zero,
+    c_alpha: f32 = 1,
+};
+
+pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f32, o: DrawBitmapOptions) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
-    const pos = pos_.sub(alignment);
+    const pos = v2(px, py).sub(o.center);
     const buf_size = v2(@floatFromInt(buffer.width), @floatFromInt(buffer.height));
     const bitmap_size = v2(@floatFromInt(bitmap.width), @floatFromInt(bitmap.height));
     const max_pos = pos.add(bitmap_size);
@@ -719,7 +750,8 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, pos_: V2, alig
             const sc = ColorU8ARGB.fromU32(source[0]);
             const dc = ColorU8ARGB.fromU32(dest[0]);
 
-            const a: f32 = @as(f32, @floatFromInt(sc.a)) / 255;
+            const a: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * o.c_alpha);
+
             const sr: f32 = sc.r;
             const sg: f32 = sc.g;
             const sb: f32 = sc.b;
