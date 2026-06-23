@@ -37,20 +37,32 @@ pub const Position = struct {
         z: f32,
     };
 
-    pub fn recanonicalize(this: *Position, map: *const TileMap) void {
-        map.recanonicalizeCoord(&this.abs_tile_x, &this._offset.x);
-        map.recanonicalizeCoord(&this.abs_tile_y, &this._offset.y);
-    }
-
-    pub fn offset(this: Position, tile_map: *const TileMap, delta: V2) Position {
+    pub fn mapIntoTileSpace(this: Position, map: *const TileMap, offset: V2) Position {
         var result = this;
 
-        result._offset = result._offset.add(delta);
-        result.recanonicalize(tile_map);
+        result._offset = result._offset.add(offset);
+        result = result.recanonicalize(map);
 
         return result;
     }
+
+    pub inline fn recanonicalize(position: Position, map: *const TileMap) Position {
+        var result = position;
+        map.recanonicalizeCoord(&result.abs_tile_x, &result._offset.x);
+        map.recanonicalizeCoord(&result.abs_tile_y, &result._offset.y);
+        return result;
+    }
 };
+
+pub inline fn recanonicalizeCoord(map: *const TileMap, tile: *u32, tile_rel: *f32) void {
+    const tile_offset: i32 = @round(tile_rel.* / map.tile_size_in_meters);
+    tile.* +%= @bitCast(tile_offset);
+
+    tile_rel.* -= @as(f32, @floatFromInt(tile_offset)) * map.tile_size_in_meters;
+
+    assert(tile_rel.* >= -(0.5 * map.tile_size_in_meters));
+    assert(tile_rel.* <= (0.5 * map.tile_size_in_meters));
+}
 
 pub const TileChunkPosition = struct {
     chunk_x: u32,
@@ -188,22 +200,6 @@ pub fn setChunkTile(chunk_opt: ?*const Chunk, x: u32, y: u32, new_tile: Tile) vo
     if (chunk_opt) |chunk| {
         chunk.setTileUnchecked(x, y, new_tile);
     }
-}
-
-pub fn recanonicalizeCoord(map: *const TileMap, tile: *u32, tile_rel: *f32) void {
-    const tile_offset: i32 = @round(tile_rel.* / map.tile_size_in_meters);
-    tile.* +%= @bitCast(tile_offset);
-
-    tile_rel.* -= @as(f32, @floatFromInt(tile_offset)) * map.tile_size_in_meters;
-
-    assert(tile_rel.* >= -(0.5 * map.tile_size_in_meters));
-    assert(tile_rel.* <= (0.5 * map.tile_size_in_meters));
-}
-
-pub fn recanonicalizePosition(map: *const TileMap, pos: Position) Position {
-    var result = pos;
-    result.recanonicalize(map);
-    return result;
 }
 
 pub fn inSameTile(p1: Position, p2: Position) bool {
