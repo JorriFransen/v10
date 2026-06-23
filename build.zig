@@ -339,6 +339,7 @@ pub fn buildAssets(b: *Build, tools: *const Tools) !?*Step {
 pub fn createAspriteExportRunner(b: *Build, script_runner: *Step.Compile, name: []const u8, donefile: bool) *Step {
     const asprite_extract_files: []const []const u8 = &.{
         "data/test_background.aseprite",
+        "data/test_hero_shadow.aseprite",
     };
     const asprite_extract_layers_recursive_files: []const []const u8 = &.{
         "data/test_hero.aseprite",
