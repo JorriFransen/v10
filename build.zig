@@ -346,23 +346,31 @@ pub fn createAspriteExportRunner(b: *Build, script_runner: *Step.Compile, name: 
 
     const assets = b.step(name, "Generate assets from raw art files");
 
-    const run_extract = b.addRunArtifact(script_runner);
-    run_extract.setName("aseprite extract.lua");
-    run_extract.addPrefixedFileArg("-s", b.path("tools/aseprite/scripts/extract.lua"));
-    for (asprite_extract_files) |input_file| {
-        run_extract.addPrefixedFileArg("-i", b.path(input_file));
-    }
-    if (donefile) _ = run_extract.addPrefixedOutputFileArg("-d", "done");
-    assets.dependOn(&run_extract.step);
+    const extract_lua_path = "tools/aseprite/scripts/extract.lua";
+    const extract = b.step(b.fmt("{s}: {s}", .{ name, extract_lua_path }), "Extract bmp from aseprite file");
+    assets.dependOn(extract);
 
-    const run_extract_layers_recursive = b.addRunArtifact(script_runner);
-    run_extract_layers_recursive.setName("asprite extract_layers_recursive.lua");
-    run_extract_layers_recursive.addPrefixedFileArg("-s", b.path("tools/aseprite/scripts/extract_layers_recursive.lua"));
-    for (asprite_extract_layers_recursive_files) |input_file| {
-        run_extract_layers_recursive.addPrefixedFileArg("-i", b.path(input_file));
+    for (asprite_extract_files) |input_file| {
+        const run_extract = b.addRunArtifact(script_runner);
+        run_extract.setName(input_file);
+        run_extract.addPrefixedFileArg("-s", b.path(extract_lua_path));
+        run_extract.addPrefixedFileArg("-i", b.path(input_file));
+        if (donefile) _ = run_extract.addPrefixedOutputFileArg("-d", "done");
+        extract.dependOn(&run_extract.step);
     }
-    if (donefile) _ = run_extract_layers_recursive.addPrefixedOutputFileArg("-d", "done");
-    assets.dependOn(&run_extract_layers_recursive.step);
+
+    const extract_layers_recursive_lua_path = "tools/aseprite/scripts/extract_layers_recursive.lua";
+    const extract_layers_recursive = b.step(b.fmt("{s}: {s}", .{ name, extract_layers_recursive_lua_path }), "Extract bmps from each layer of aseprite file");
+    assets.dependOn(extract_layers_recursive);
+
+    for (asprite_extract_layers_recursive_files) |input_file| {
+        const run_extract_layers_recursive = b.addRunArtifact(script_runner);
+        run_extract_layers_recursive.setName(input_file);
+        run_extract_layers_recursive.addPrefixedFileArg("-s", b.path("tools/aseprite/scripts/extract_layers_recursive.lua"));
+        run_extract_layers_recursive.addPrefixedFileArg("-i", b.path(input_file));
+        if (donefile) _ = run_extract_layers_recursive.addPrefixedOutputFileArg("-d", "done");
+        extract_layers_recursive.dependOn(&run_extract_layers_recursive.step);
+    }
 
     return assets;
 }
