@@ -41,6 +41,7 @@ pub const GameState = struct {
     dormant_entities: [256]DormantEntity = undefined,
 
     backdrop: LoadedBitmap = .{},
+    hero_shadow: LoadedBitmap = .{},
     hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
 
     pub fn getEntity(this: *GameState, index: usize, residency: EntityResidence) Entity {
@@ -192,6 +193,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         // const asset_prefix = "../data/";
 
         game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_background.bmp");
+        game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_shadow.bmp");
 
         game_state.hero_bitmaps[0].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_right_head.bmp");
         game_state.hero_bitmaps[0].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "/test/test_hero_right_cape.bmp");
@@ -467,10 +469,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             high_entity.p = high_entity.p.add(entity_offset_for_frame);
 
             const ddz = -9.8;
-            const delta_z: f32 = (0.5 * ddz * math.square(input.dt)) + (high_entity.d_z * input.dt);
-            high_entity.z += delta_z;
+            high_entity.z = @max(0, high_entity.z + (0.5 * ddz * math.square(input.dt)) + (high_entity.d_z * input.dt));
             high_entity.d_z = (ddz * input.dt) + high_entity.d_z;
-            high_entity.z = @max(0, high_entity.z);
 
             const player_size = dormant_entity.size.mul(meters_to_pixels);
 
@@ -484,12 +484,22 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             );
             const player_bottom_right = player_top_left.add(player_size);
 
-            drawRectangle(offscreen_buffer, player_top_left, player_bottom_right, 1, 1, 0);
-
             const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(high_entity.facing_direction)];
-            drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point_x, player_ground_point_y + z, hero_bitmap.alignment);
-            drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point_x, player_ground_point_y + z, hero_bitmap.alignment);
-            drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point_x, player_ground_point_y + z, hero_bitmap.alignment);
+            _ = player_bottom_right;
+            // drawRectangle(offscreen_buffer, player_top_left, player_bottom_right, 1, 1, 0);
+            const c_alpha = @max(0, 1 - high_entity.z);
+            drawBitmap(
+                offscreen_buffer,
+                game_state.hero_shadow,
+                player_ground_point_x,
+                player_ground_point_y,
+                .{ .center = hero_bitmap.alignment, .c_alpha = c_alpha },
+            );
+
+            const o = DrawBitmapOptions{ .center = hero_bitmap.alignment };
+            drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point_x, player_ground_point_y + z, o);
+            drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point_x, player_ground_point_y + z, o);
+            drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point_x, player_ground_point_y + z, o);
 
             const player_ground_point = v2(player_ground_point_x, player_ground_point_y);
             drawRectangle(offscreen_buffer, player_ground_point.sub(v2(0.5, 1)), player_ground_point.add(v2(0.5, 0)), 1, 0, 0);
@@ -701,11 +711,16 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32,
     }
 }
 
-pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f32, alignment: V2) void {
+const DrawBitmapOptions = struct {
+    center: V2 = V2.zero,
+    c_alpha: f32 = 1,
+};
+
+pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f32, o: DrawBitmapOptions) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
-    const pos = v2(px, py).sub(alignment);
+    const pos = v2(px, py).sub(o.center);
     const buf_size = v2(@floatFromInt(buffer.width), @floatFromInt(buffer.height));
     const bitmap_size = v2(@floatFromInt(bitmap.width), @floatFromInt(bitmap.height));
     const max_pos = pos.add(bitmap_size);
@@ -735,7 +750,8 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f
             const sc = ColorU8ARGB.fromU32(source[0]);
             const dc = ColorU8ARGB.fromU32(dest[0]);
 
-            const a: f32 = @as(f32, @floatFromInt(sc.a)) / 255;
+            const a: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * o.c_alpha);
+
             const sr: f32 = sc.r;
             const sg: f32 = sc.g;
             const sb: f32 = sc.b;
