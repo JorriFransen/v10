@@ -302,9 +302,9 @@ fn buildTools(b: *Build, tools_optimize: OptimizeMode, tools_target: ResolvedTar
                 const options_module = options.createModule();
 
                 const wayland_gen_exe = b.addExecutable(.{
-                    .name = "wayland-gen",
+                    .name = "wayland_gen",
                     .root_module = b.createModule(.{
-                        .root_source_file = b.path("tools/wayland-gen/src/wayland_generator.zig"),
+                        .root_source_file = b.path("tools/wayland_gen/src/wayland_generator.zig"),
                         .target = tools_target,
                         .optimize = tools_optimize,
                         .imports = &.{
@@ -316,8 +316,8 @@ fn buildTools(b: *Build, tools_optimize: OptimizeMode, tools_target: ResolvedTar
                     }),
                     .use_llvm = use_llvm,
                 });
-                wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/client.zig") });
-                wayland_gen_exe.root_module.addAnonymousImport("lib/root_template.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/root_template.zig") });
+                wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/client.zig") });
+                wayland_gen_exe.root_module.addAnonymousImport("lib/root_template.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/root_template.zig") });
 
                 break :blk .{ .gen_exe = wayland_gen_exe, .options_module = options_module };
             },
