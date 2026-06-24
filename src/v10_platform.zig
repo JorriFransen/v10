@@ -32,8 +32,8 @@ pub const FN_getAudioFrames = *const fn (thread_context: *const ThreadContext, m
 pub const OffscreenBuffer = extern struct {
     memory: [*]u8,
     memory_len: usize,
-    width: i32,
-    height: i32,
+    width: u32,
+    height: u32,
     pitch: i32,
     bytes_per_pixel: i32,
 };

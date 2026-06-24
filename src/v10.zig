@@ -488,13 +488,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             _ = player_bottom_right;
             // drawRectangle(offscreen_buffer, player_top_left, player_bottom_right, 1, 1, 0);
             const c_alpha = @max(0, 1 - high_entity.z);
-            drawBitmap(
-                offscreen_buffer,
-                game_state.hero_shadow,
-                player_ground_point_x,
-                player_ground_point_y,
-                .{ .center = hero_bitmap.alignment, .c_alpha = c_alpha },
-            );
+            drawBitmap(offscreen_buffer, game_state.hero_shadow, player_ground_point_x, player_ground_point_y, .{
+                .center = hero_bitmap.alignment,
+                .c_alpha = c_alpha,
+            });
 
             const o = DrawBitmapOptions{ .center = hero_bitmap.alignment };
             drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point_x, player_ground_point_y + z, o);
@@ -720,18 +717,38 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
-    const pos = v2(px, py).sub(o.center);
-    const buf_size = v2(@floatFromInt(buffer.width), @floatFromInt(buffer.height));
-    const bitmap_size = v2(@floatFromInt(bitmap.width), @floatFromInt(bitmap.height));
-    const max_pos = pos.add(bitmap_size);
+    const real_x: f32 = px - o.center.x;
+    const real_y: f32 = py - o.center.y;
 
-    const source_offset_x: usize = @intFromFloat(-@min(pos.x, 0));
-    const source_offset_y: usize = @intFromFloat(-@min(pos.y, 0));
+    var min_x: i32 = @round(real_x);
+    var min_y: i32 = @round(real_y);
+    var max_x: i32 = min_x + @as(i32, @intCast(bitmap.width));
+    var max_y: i32 = min_y + @as(i32, @intCast(bitmap.height));
 
-    const minx: usize = @round(@min(@max(pos.x, 0), buf_size.x));
-    const miny: usize = @round(@min(@max(pos.y, 0), buf_size.y));
-    const maxx: usize = @round(@min(@max(max_pos.x, 0), buf_size.x));
-    const maxy: usize = @round(@min(@max(max_pos.y, 0), buf_size.y));
+    var source_offset_x: u32 = 0;
+    if (min_x < 0) {
+        source_offset_x = @intCast(-min_x);
+        min_x = 0;
+    }
+
+    var source_offset_y: u32 = 0;
+    if (min_y < 0) {
+        source_offset_y = @intCast(-min_y);
+        min_y = 0;
+    }
+
+    if (max_x > buffer.width) {
+        max_x = @intCast(buffer.width);
+    }
+
+    if (max_y > buffer.height) {
+        max_y = @intCast(buffer.height);
+    }
+
+    const minx: u32 = @intCast(min_x);
+    const miny: u32 = @intCast(min_y);
+    const maxx: u32 = @intCast(max_x);
+    const maxy: u32 = @intCast(max_y);
 
     // TEMPORARY
     if (bitmap.pixels.len == 0) return;
