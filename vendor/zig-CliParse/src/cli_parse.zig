@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.cli_parse);
+const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 
@@ -173,11 +174,15 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
 
     const OptionStruct = @Struct(.auto, null, &info.field_names, &info.field_types, &info.field_attrs);
     const ParseError = error{
-        InvalidShortOption,
+        InvalidBoolValue,
+        InvalidEnumValue,
+        InvalidFloatValue,
+        InvalidIntValue,
         InvalidOption,
+        InvalidShortOption,
+        MissingEq,
         MissingValue,
         OutOfMemory,
-        InvalidBoolValue,
     };
 
     return struct {
@@ -222,7 +227,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
 
                 const field_name: []const u8 = blk: {
                     if (tokens.eat("--")) |_| {
-                        var name = tokens.current();
+                        var name = tokens.current_token;
 
                         if (std.mem.indexOf(u8, name, "=")) |idx| {
                             name = name[0..idx];
@@ -231,9 +236,9 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
 
                         break :blk name;
                     } else if (tokens.eat("-")) |_| {
-                        const c = tokens.current();
+                        const c = tokens.current_token;
                         if (c.len < 1) {
-                            log.err("Invalid short option: '{s}'", .{c});
+                            err("Invalid short option: '{s}'", .{c});
                             return error.InvalidShortOption;
                         }
                         const short_name = c[0];
@@ -248,7 +253,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                         }
 
                         if (field_name == null) {
-                            log.err("Invalid short option: '-{c}'", .{short_name});
+                            err("Invalid short option: '-{c}'", .{short_name});
                             return error.InvalidShortOption;
                         }
 
@@ -256,7 +261,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
 
                         break :blk field_name.?;
                     } else {
-                        log.err("Expected option to start with '--' or '-' got '{s}'", .{tokens.current()});
+                        err("Expected option to start with '--' or '-' got '{s}'", .{tokens.current_token});
                         return error.InvalidOption;
                     }
                 };
@@ -266,11 +271,12 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                     if (std.mem.eql(u8, field_name, o.name)) {
                         const field_type_info = @typeInfo(o.type);
 
+                        const before_eof = tokens.eof;
                         const parsed_eq = tokens.eat("=") != null;
 
                         if (field_type_info != .bool and !parsed_eq and !used_short) {
-                            log.err("Expect '=' after option '--{s}'", .{o.name});
-                            return error.InvalidOption;
+                            err("Expect '=' after option '--{s}'", .{o.name});
+                            return error.MissingEq;
                         }
 
                         var invert_boolean = false;
@@ -278,8 +284,8 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                         if (field_type_info == .bool and
                             !parsed_eq and
                             (tokens.eof or
-                                std.mem.startsWith(u8, tokens.current(), "--") or
-                                std.mem.startsWith(u8, tokens.current(), "-")))
+                                std.mem.startsWith(u8, tokens.current_token, "--") or
+                                std.mem.startsWith(u8, tokens.current_token, "-")))
                         {
                             invert_boolean = true;
                         }
@@ -287,8 +293,11 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                         const value_token = if (!invert_boolean) tokens.next() else "";
 
                         if (!invert_boolean and value_token.len == 0) {
-                            log.err("Missing value for option '--{s}'", .{o.name});
-                            return error.MissingValue;
+                            const valid_empty = o.type_tag == .string and !before_eof;
+                            if (!valid_empty) {
+                                err("Missing value for option '--{s}'", .{o.name});
+                                return error.MissingValue;
+                            }
                         }
 
                         const value = switch (field_type_info) {
@@ -305,23 +314,23 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                             else if (std.mem.eql(u8, value_token, "FALSE"))
                                 false
                             else {
-                                log.err("Invalid boolean value: '{s}'", .{value_token});
+                                err("Invalid boolean value: '{s}'", .{value_token});
                                 return error.InvalidBoolValue;
                             },
 
                             .int => std.fmt.parseInt(o.type, value_token, 10) catch {
-                                log.err("Invalid int value: '{s}'", .{value_token});
+                                err("Invalid int value: '{s}'", .{value_token});
                                 return error.InvalidIntValue;
                             },
 
                             .float => std.fmt.parseFloat(o.type, value_token) catch {
-                                log.err("Invalid float value: '{s}'", .{value_token});
+                                err("Invalid float value: '{s}'", .{value_token});
                                 return error.InvalidFloatValue;
                             },
 
                             .@"enum" => blk: {
                                 break :blk std.meta.stringToEnum(o.type, value_token) orelse {
-                                    log.err("Invalid enum value '{s}'", .{value_token});
+                                    err("Invalid enum value '{s}'", .{value_token});
                                     return error.InvalidEnumValue;
                                 };
                             },
@@ -350,7 +359,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                 }
 
                 if (!found) {
-                    log.err("Invalid option: '{s}'", .{field_name});
+                    err("Invalid option: '{s}'", .{field_name});
                     return error.InvalidOption;
                 }
             }
@@ -385,6 +394,10 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
 
                 try writer.print("\n", .{});
             }
+        }
+
+        inline fn err(comptime fmt: []const u8, args: anytype) void {
+            if (!builtin.is_test) log.err(fmt, args);
         }
     };
 }
@@ -446,20 +459,7 @@ const Tokenizer = struct {
         return result;
     }
 
-    pub fn current(this: *Tokenizer) []const u8 {
-        if (this.current_token.len == 0) {
-            _ = this.next();
-        }
-
-        assert(!this.eof);
-        return this.current_token;
-    }
-
     pub fn eat(this: *Tokenizer, str: []const u8) ?[]const u8 {
-        if (this.current_token.len == 0) {
-            _ = this.next();
-        }
-
         if (std.mem.startsWith(u8, this.current_token, str)) {
             this.current_token = this.current_token[str.len..];
             if (this.current_token.len == 0) {
@@ -476,4 +476,185 @@ fn padRight(str: []const u8, out_buf: []u8) void {
     assert(str.len <= out_buf.len);
     @memcpy(out_buf[0..str.len], str);
     @memset(out_buf[str.len..], ' ');
+}
+
+fn testParse(comptime OP: type, args: []const []const u8, expected: OP.Options, err: ?OP.Error) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const opt_or_err = OP.parse(args, allocator);
+    if (err) |expected_err| {
+        try std.testing.expectError(expected_err, opt_or_err);
+    } else {
+        const options = try opt_or_err;
+
+        inline for (@typeInfo(OP.Options).@"struct".fields) |field| {
+            const expected_value = @field(expected, field.name);
+            const actual_value = @field(options, field.name);
+
+            switch (@typeInfo(field.type)) {
+                else => @compileError("Unsupported type " ++ @typeName(field.type)),
+
+                .bool, .int, .float, .@"enum" => {
+                    try std.testing.expectEqual(expected_value, actual_value);
+                },
+
+                .pointer => |ptr| {
+                    if (ptr.size == .slice and ptr.child == u8 and ptr.is_const) {
+                        try std.testing.expectEqualStrings(expected_value, actual_value);
+                    } else {
+                        @compileError("Unsupported pointer type (only []const u8 is supported)");
+                    }
+                },
+            }
+        }
+    }
+}
+
+test "Option parser - strings and quotes" {
+    const OP = OptionParser("optest", &.{
+        option(@as([]const u8, ""), "string", 's', "string option"),
+    });
+
+    try testParse(OP, &.{"-sabc"}, .{ .string = "abc" }, null);
+    try testParse(OP, &.{"-s abc"}, .{ .string = " abc" }, null);
+    try testParse(OP, &.{ "-s", "abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "-s", "" }, .{ .string = "" }, null);
+    try testParse(OP, &.{"-s"}, .{}, error.MissingValue);
+    try testParse(OP, &.{ "-s", "-xyz" }, .{ .string = "-xyz" }, null);
+    try testParse(OP, &.{"-s-xyz"}, .{ .string = "-xyz" }, null);
+    try testParse(OP, &.{ "-s", "foo", "-s", "bar" }, .{ .string = "bar" }, null);
+
+    try testParse(OP, &.{"--stringabc"}, .{}, error.InvalidOption);
+    try testParse(OP, &.{ "--string", "abc" }, .{}, error.MissingEq);
+    try testParse(OP, &.{ "--string", "=abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "--string=", "abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "--string =", "abc" }, .{}, error.InvalidOption);
+    try testParse(OP, &.{ "--string", "=", "abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "--string", "= abc" }, .{ .string = " abc" }, null);
+    try testParse(OP, &.{ "--string=", " abc" }, .{ .string = " abc" }, null);
+    try testParse(OP, &.{ "--string", "=", " abc" }, .{ .string = " abc" }, null);
+    try testParse(OP, &.{"--string="}, .{ .string = "" }, null);
+    try testParse(OP, &.{ "--string", "=" }, .{ .string = "" }, null);
+}
+
+test "Option parser - multiple types" {
+    const Color = enum { red, green, blue };
+
+    const OP = OptionParser("optest", &.{
+        option(@as([]const u8, ""), "string", 's', "string option"),
+        option(Color.red, "enum", 'e', "enum option"),
+        option(false, "bool", 'b', "bool option"),
+        option(true, "bool2", 'c', "bool2 option"),
+        option(@as(i32, -1), "int", 'i', "int option"),
+        option(@as(u32, 0), "uint", 'u', "uint option"),
+        option(@as(f32, 1.0), "float", 'f', "float option"),
+    });
+
+    // default values
+    try testParse(OP, &.{}, .{}, null);
+
+    // combined
+    const combined_expected = OP.Options{
+        .bool = true,
+        .bool2 = false,
+        .int = -42,
+        .uint = 42,
+        .float = 3.14,
+        .string = "hello",
+        .@"enum" = .blue,
+    };
+    try testParse(OP, &.{ "-b", "-c", "-i-42", "-u", "42", "-f", "3.14", "-s", "hello", "-e", "blue" }, combined_expected, null);
+    try testParse(OP, &.{ "--bool", "--bool2", "--int=-42", "--uint", "=", "42", "--float=", "3.14", "--string=", "hello", "--enum=", "blue" }, combined_expected, null);
+
+    // Single options
+    try testParse(OP, &.{"-b"}, .{ .bool = true }, null);
+    try testParse(OP, &.{"-btrue"}, .{ .bool = true }, null);
+    try testParse(OP, &.{ "-b", "true" }, .{ .bool = true }, null);
+    try testParse(OP, &.{"--bool"}, .{ .bool = true }, null);
+    try testParse(OP, &.{"--bool=true"}, .{ .bool = true }, null);
+    try testParse(OP, &.{ "--bool", "=", "true" }, .{ .bool = true }, null);
+    try testParse(OP, &.{"-bfalse"}, .{ .bool = false }, null);
+    try testParse(OP, &.{"--bool=false"}, .{ .bool = false }, null);
+    try testParse(OP, &.{ "--bool", "=", "false" }, .{ .bool = false }, null);
+    try testParse(OP, &.{"-bmaybe"}, .{}, error.InvalidBoolValue);
+    try testParse(OP, &.{ "-b", "maybe" }, .{}, error.InvalidBoolValue);
+    try testParse(OP, &.{"--bool=maybe"}, .{}, error.InvalidBoolValue);
+    try testParse(OP, &.{ "--bool", "=", "maybe" }, .{}, error.InvalidBoolValue);
+
+    try testParse(OP, &.{"-c"}, .{ .bool2 = false }, null);
+    try testParse(OP, &.{"-cfalse"}, .{ .bool2 = false }, null);
+    try testParse(OP, &.{ "-c", "false" }, .{ .bool2 = false }, null);
+    try testParse(OP, &.{"--bool2"}, .{ .bool2 = false }, null);
+    try testParse(OP, &.{"--bool2=false"}, .{ .bool2 = false }, null);
+    try testParse(OP, &.{ "--bool2", "=", "false" }, .{ .bool2 = false }, null);
+    try testParse(OP, &.{"-ctrue"}, .{ .bool2 = true }, null);
+    try testParse(OP, &.{"--bool2=true"}, .{ .bool2 = true }, null);
+    try testParse(OP, &.{ "--bool2", "=", "true" }, .{ .bool2 = true }, null);
+
+    try testParse(OP, &.{"-i42"}, .{ .int = 42 }, null);
+    try testParse(OP, &.{ "-i", "42" }, .{ .int = 42 }, null);
+    try testParse(OP, &.{"--int=42"}, .{ .int = 42 }, null);
+    try testParse(OP, &.{ "--int=", "42" }, .{ .int = 42 }, null);
+    try testParse(OP, &.{ "--int", "=", "42" }, .{ .int = 42 }, null);
+    try testParse(OP, &.{"-i-42"}, .{ .int = -42 }, null);
+    try testParse(OP, &.{ "-i", "-42" }, .{ .int = -42 }, null);
+    try testParse(OP, &.{"--int=-42"}, .{ .int = -42 }, null);
+    try testParse(OP, &.{ "--int=", "-42" }, .{ .int = -42 }, null);
+    try testParse(OP, &.{ "--int", "=", "-42" }, .{ .int = -42 }, null);
+    try testParse(OP, &.{"-inotint"}, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{ "-i", "notint" }, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{"--int=notint"}, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{ "--int=", "notint" }, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{ "--int", "=", "notint" }, .{}, error.InvalidIntValue);
+
+    try testParse(OP, &.{"-u42"}, .{ .uint = 42 }, null);
+    try testParse(OP, &.{ "-u", "42" }, .{ .uint = 42 }, null);
+    try testParse(OP, &.{"--uint=42"}, .{ .uint = 42 }, null);
+    try testParse(OP, &.{ "--uint=", "42" }, .{ .uint = 42 }, null);
+    try testParse(OP, &.{ "--uint", "=", "42" }, .{ .uint = 42 }, null);
+    try testParse(OP, &.{"-unotuint"}, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{ "-u", "notuint" }, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{"--uint=notuint"}, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{ "--uint=", "notuint" }, .{}, error.InvalidIntValue);
+    try testParse(OP, &.{ "--uint", "=", "notuint" }, .{}, error.InvalidIntValue);
+
+    try testParse(OP, &.{"-f3.14"}, .{ .float = 3.14 }, null);
+    try testParse(OP, &.{ "-f", "3.14" }, .{ .float = 3.14 }, null);
+    try testParse(OP, &.{"--float=3.14"}, .{ .float = 3.14 }, null);
+    try testParse(OP, &.{ "--float=", "3.14" }, .{ .float = 3.14 }, null);
+    try testParse(OP, &.{ "--float", "=", "3.14" }, .{ .float = 3.14 }, null);
+    try testParse(OP, &.{"-fnotfloat"}, .{}, error.InvalidFloatValue);
+    try testParse(OP, &.{ "-f", "notfloat" }, .{}, error.InvalidFloatValue);
+    try testParse(OP, &.{"--float=notfloat"}, .{}, error.InvalidFloatValue);
+    try testParse(OP, &.{ "--float=", "notfloat" }, .{}, error.InvalidFloatValue);
+    try testParse(OP, &.{ "--float", "=", "notfloat" }, .{}, error.InvalidFloatValue);
+
+    try testParse(OP, &.{"-egreen"}, .{ .@"enum" = .green }, null);
+    try testParse(OP, &.{ "-e", "green" }, .{ .@"enum" = .green }, null);
+    try testParse(OP, &.{"--enum=green"}, .{ .@"enum" = .green }, null);
+    try testParse(OP, &.{ "--enum=", "green" }, .{ .@"enum" = .green }, null);
+    try testParse(OP, &.{ "--enum", "=", "green" }, .{ .@"enum" = .green }, null);
+
+    try testParse(OP, &.{"-sabc"}, .{ .string = "abc" }, null);
+    try testParse(OP, &.{"-s abc"}, .{ .string = " abc" }, null);
+    try testParse(OP, &.{ "-s", "abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "-s", "" }, .{ .string = "" }, null);
+    try testParse(OP, &.{"-s"}, .{}, error.MissingValue);
+    try testParse(OP, &.{ "-s", "-xyz" }, .{ .string = "-xyz" }, null);
+    try testParse(OP, &.{"-s-xyz"}, .{ .string = "-xyz" }, null);
+    try testParse(OP, &.{ "-s", "foo", "-s", "bar" }, .{ .string = "bar" }, null);
+
+    try testParse(OP, &.{"--stringabc"}, .{}, error.InvalidOption);
+    try testParse(OP, &.{ "--string", "abc" }, .{}, error.MissingEq);
+    try testParse(OP, &.{ "--string", "=abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "--string=", "abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "--string =", "abc" }, .{}, error.InvalidOption);
+    try testParse(OP, &.{ "--string", "=", "abc" }, .{ .string = "abc" }, null);
+    try testParse(OP, &.{ "--string", "= abc" }, .{ .string = " abc" }, null);
+    try testParse(OP, &.{ "--string=", " abc" }, .{ .string = " abc" }, null);
+    try testParse(OP, &.{ "--string", "=", " abc" }, .{ .string = " abc" }, null);
+    try testParse(OP, &.{"--string="}, .{ .string = "" }, null);
+    try testParse(OP, &.{ "--string", "=" }, .{ .string = "" }, null);
 }
