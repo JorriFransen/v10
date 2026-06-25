@@ -17,7 +17,7 @@ const OptionParser = clip.OptionParser("wayland-gen", &.{
 pub const Context = struct {
     io: std.Io,
     arena: std.mem.Allocator,
-    args: std.process.Args,
+    args: []const []const u8,
 
     stderr: *std.Io.Writer,
     stdout: *std.Io.Writer,
@@ -35,6 +35,7 @@ var stdout_writer: std.Io.File.Writer = undefined;
 pub fn main(init: std.process.Init) !u8 {
     mem.init();
     defer mem.deinit();
+    const arena = init.arena.allocator();
     defer _ = init.arena.reset(.free_all);
 
     stderr_writer = std.Io.File.stderr().writer(init.io, &stderr_buf);
@@ -43,12 +44,10 @@ pub fn main(init: std.process.Init) !u8 {
     stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
     defer stdout_writer.flush() catch unreachable;
 
-    const arena = init.arena.allocator();
-
     var context = Context{
         .io = init.io,
         .arena = arena,
-        .args = init.minimal.args,
+        .args = try init.minimal.args.toSlice(arena),
         .stderr = &stderr_writer.interface,
         .stdout = &stdout_writer.interface,
         .interface_to_protocol_map = .init(arena),
@@ -63,7 +62,7 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 fn run(context: *Context) !void {
-    const cli_options = try OptionParser.parse(context.args, context.arena);
+    const cli_options = try OptionParser.parse(context.args[1..], context.arena);
 
     if (cli_options.help) {
         try OptionParser.usage(context.stdout);

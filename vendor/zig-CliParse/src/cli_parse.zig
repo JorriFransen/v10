@@ -80,7 +80,7 @@ pub fn arrayOption(comptime ElemType: type, name: [:0]const u8, short: ?u8, desc
 ///     clip.option(false, "help", 'h', "Print this help message and exit."),
 /// });
 ///
-/// const cli_options = OptionParser.parse(mem.common_arena.allocator(), tmp.allocator()) catch {
+/// const cli_options = OptionParser.parse(mem.common_arena.allocator())) catch {
 ///     try OptionParser.usage(stderr_writer);
 ///     return; // Exit
 /// };
@@ -209,16 +209,10 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
         }
 
         // TODO: Handle duplicate non array options (disallow or overwrite and free previous)
-        pub fn parse(args: std.process.Args, allocator: Allocator) Error!Options {
+        pub fn parse(args: []const []const u8, allocator: Allocator) Error!Options {
             var result: Options = .{};
 
-            var arg_it = args.iterateAllocator(allocator) catch @panic("OOM");
-            defer arg_it.deinit();
-
-            // First argument is exe path
-            _ = arg_it.skip();
-
-            var tokens = Tokenizer.init(&arg_it);
+            var tokens = Tokenizer.init(args);
 
             const opt_info = @typeInfo(Options);
             assert(opt_info == .@"struct");
@@ -422,56 +416,54 @@ fn validateType(comptime T: type) TypeTag {
 }
 
 const Tokenizer = struct {
-    arg_it: *std.process.Args.Iterator,
+    args: []const []const u8,
+    current_arg_index: usize = 0,
     current_token: []const u8,
     eof: bool,
 
-    pub fn init(arg_it: *std.process.Args.Iterator) Tokenizer {
-        var ct: []const u8 = "";
-        var eof = false;
-
-        if (arg_it.next()) |c| {
-            ct = c;
-        } else {
-            eof = true;
-        }
-
-        return .{
-            .arg_it = arg_it,
-            .current_token = ct,
-            .eof = eof,
+    pub fn init(args: []const []const u8) Tokenizer {
+        const tokenizer = Tokenizer{
+            .args = args,
+            .current_arg_index = 0,
+            .current_token = if (args.len > 0) args[0] else "",
+            .eof = args.len == 0,
         };
+
+        return tokenizer;
     }
 
-    pub fn next(it: *Tokenizer) []const u8 {
-        const result = it.current_token;
+    pub fn next(this: *Tokenizer) []const u8 {
+        const result = this.current_token;
 
-        if (it.arg_it.next()) |n| {
-            it.current_token = n;
+        this.current_arg_index += 1;
+        if (this.current_arg_index < this.args.len) {
+            this.current_token = this.args[this.current_arg_index];
         } else {
-            it.current_token = "";
-            it.eof = true;
+            this.current_token = "";
+            this.eof = true;
         }
 
         return result;
     }
 
-    pub fn current(it: *Tokenizer) []const u8 {
-        if (it.current_token.len == 0) {
-            _ = it.next();
+    pub fn current(this: *Tokenizer) []const u8 {
+        if (this.current_token.len == 0) {
+            _ = this.next();
         }
-        return it.current_token;
+
+        assert(!this.eof);
+        return this.current_token;
     }
 
-    pub fn eat(it: *Tokenizer, str: []const u8) ?[]const u8 {
-        if (it.current_token.len == 0) {
-            _ = it.next();
+    pub fn eat(this: *Tokenizer, str: []const u8) ?[]const u8 {
+        if (this.current_token.len == 0) {
+            _ = this.next();
         }
 
-        if (std.mem.startsWith(u8, it.current_token, str)) {
-            it.current_token = it.current_token[str.len..];
-            if (it.current_token.len == 0) {
-                _ = it.next();
+        if (std.mem.startsWith(u8, this.current_token, str)) {
+            this.current_token = this.current_token[str.len..];
+            if (this.current_token.len == 0) {
+                _ = this.next();
             }
             return str;
         }
