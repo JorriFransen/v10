@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const clip = @import("clip");
@@ -65,7 +66,7 @@ pub fn run(init: std.process.Init) !void {
     var scan_path: []const u8 = "";
     const scan_dir = dir: {
         if (std.fs.path.isAbsolute(args.input_scan_dir)) {
-            scan_path = copy(args.input_scan_dir);
+            scan_path = try arena.dupe(u8, args.input_scan_dir);
         } else {
             scan_path = try std.fs.path.resolve(arena, &.{ cwd, args.input_scan_dir });
         }
@@ -81,7 +82,7 @@ pub fn run(init: std.process.Init) !void {
     var output_dir_path: []const u8 = "";
     const output_dir = dir: {
         if (std.fs.path.isAbsolute(args.output_dir)) {
-            output_dir_path = copy(args.output_dir);
+            output_dir_path = try arena.dupe(u8, args.output_dir);
         } else {
             output_dir_path = try std.fs.path.resolve(arena, &.{ cwd, args.output_dir });
         }
@@ -136,8 +137,18 @@ pub fn run(init: std.process.Init) !void {
                 split_layers = true;
         }
 
-        if (!skip and !split_layers) {
+        if (!skip) {
             const output_files: []const []const u8 = if (split_layers) {
+                const layers = try asepriteLayers(gpa, input_path);
+                defer {
+                    for (layers) |l| gpa.free(l);
+                    gpa.free(layers);
+                }
+
+                for (layers) |l| {
+                    std.log.debug("layer: '{s}'", .{l});
+                }
+
                 unreachable;
             } else blk: {
                 const out_file_name = try std.fmt.allocPrint(gpa, "{s}.bmp", .{std.fs.path.stem(relative_input_path)});
@@ -151,11 +162,12 @@ pub fn run(init: std.process.Init) !void {
                 break :blk &.{output_file};
             };
 
-            for (output_files) |output_file| {
-                std.log.debug("output file: {s}", .{output_file});
-                if (!split_layers) {
-                    try asepriteExportBMP(input_path, output_file);
-                }
+            if (!split_layers) {
+                assert(output_files.len == 1);
+                std.log.debug("output file: {s}", .{output_files[0]});
+                try asepriteExportBMP(input_path, output_files[0]);
+            } else {
+                unreachable;
             }
 
             for (output_files) |of| gpa.free(of);
@@ -165,12 +177,6 @@ pub fn run(init: std.process.Init) !void {
 
     relative_input_paths.deinit(gpa);
     output_dir.close(io);
-}
-
-pub fn copy(str: []const u8) []const u8 {
-    const result = arena.alloc(u8, str.len) catch @panic("OOM");
-    @memcpy(result, str);
-    return result;
 }
 
 pub const RunResult = struct {
@@ -231,14 +237,73 @@ pub fn asepriteTags(allocator: Allocator, input_path: []const u8) ![]const []con
     }
 
     var tags: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (tags.items) |t| allocator.free(t);
+        tags.deinit(allocator);
+    }
 
     var line_it = std.mem.splitScalar(u8, tags_rr.stdout, '\n');
-    while (line_it.next()) |tag| if (tag.len > 0) {
-        const t = try allocator.dupe(u8, tag);
-        try tags.append(allocator, t);
-    };
+    while (line_it.next()) |line| {
+        const tag = std.mem.trimEnd(u8, line, "\r");
+        if (tag.len > 0) {
+            const t = try allocator.dupe(u8, tag);
+            try tags.append(allocator, t);
+        }
+    }
 
     return tags.toOwnedSlice(allocator);
+}
+
+// Flattens the hierarchy, replacing / with -
+pub fn asepriteLayers(allocator: Allocator, input_path: []const u8) ![]const []const u8 {
+    var layers_rr = try aseprite(gpa, &.{ "-b", "--all-layers", "--list-layer-hierarchy", input_path });
+    defer layers_rr.free();
+
+    if (layers_rr.exit_code != 0) {
+        std.log.err("Asprite invocation failed", .{});
+        return error.AsepriteNonZeroExitCode;
+    }
+
+    var layers: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (layers.items) |l| allocator.free(l);
+        layers.deinit(allocator);
+    }
+
+    var stack: std.ArrayList([]const u8) = .empty;
+    defer stack.deinit(gpa);
+
+    var line_it = std.mem.splitScalar(u8, layers_rr.stdout, '\n');
+    while (line_it.next()) |line| {
+        const layer_name = std.mem.trimEnd(u8, line, "\r");
+
+        if (layer_name.len > 0) {
+            var indent: usize = 0;
+            for (layer_name) |c| {
+                if (c != ' ') break;
+                indent += 1;
+            }
+            assert(indent % 2 == 0);
+            indent /= 2;
+
+            while (indent < stack.items.len) {
+                _ = stack.pop();
+            }
+
+            if (layer_name[layer_name.len - 1] == '/') {
+                try stack.append(gpa, layer_name[indent * 2 ..]);
+            } else {
+                const folder = try std.mem.concat(gpa, u8, stack.items);
+                defer gpa.free(folder);
+                std.mem.replaceScalar(u8, folder, '/', '_');
+
+                const full_layer_name = try std.mem.concat(allocator, u8, &.{ folder, layer_name[indent * 2 ..] });
+                try layers.append(allocator, full_layer_name);
+            }
+        }
+    }
+
+    return layers.toOwnedSlice(allocator);
 }
 
 pub fn asepriteExportBMP(input_path: []const u8, output_path: []const u8) !void {
