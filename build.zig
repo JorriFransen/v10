@@ -7,6 +7,7 @@ const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
 var use_llvm: bool = false;
+var tools_optimize: OptimizeMode = .ReleaseSafe;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
@@ -20,6 +21,8 @@ pub fn build(b: *Build) !void {
 
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse use_llvm;
     if (target.result.os.tag == .windows) use_llvm = true;
+
+    tools_optimize = b.option(OptimizeMode, "tools_optimize", "Optimization mode for tools") orelse tools_optimize;
 
     internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
     verbose_wayland = b.option(bool, "verbose_wayland", "Verbose wayland logging") orelse verbose_wayland;
@@ -67,6 +70,9 @@ pub fn build(b: *Build) !void {
         },
     });
 
+    const cli_parse_dep = b.dependency("zig_cli_parse", .{});
+    const clip_module = cli_parse_dep.module("CliParse");
+
     var modules = Modules{
         .options = options_module,
         .arch = arch_module,
@@ -74,6 +80,7 @@ pub fn build(b: *Build) !void {
         .win32 = win32_module,
         .memory = mem_module,
         .dynlib = dynlib_module,
+        .clip = clip_module,
         .xml = b.createModule(.{
             .optimize = optimize,
             .root_source_file = b.path(src_path ++ "/xml.zig"),
@@ -83,16 +90,22 @@ pub fn build(b: *Build) !void {
         }),
     };
 
-    const tools_optimize: OptimizeMode = .ReleaseSafe;
-    const tools = try buildTools(b, tools_optimize, native_target, target, &modules);
+    const tools = try Tools.build(b, native_target, target, &modules);
 
     const engine = try buildEngine(b, optimize, target, &modules, &tools);
     const game = try buildGameLib(b, optimize, target, &engine);
     engine.run.step.dependOn(&game.install.step);
 
     const assets = try buildAssets(b);
+
+    // temporary
+    assets.dependOn(&tools.asset_compiler.exe.step);
+    b.installArtifact(tools.asset_compiler.exe);
+
     engine.run.step.dependOn(assets);
     game.build.step.dependOn(assets);
+
+    try buildTests(b, &modules);
 }
 
 const Modules = struct {
@@ -103,6 +116,7 @@ const Modules = struct {
     memory: *Build.Module,
     dynlib: *Build.Module,
     xml: *Build.Module,
+    clip: *Build.Module,
 };
 
 const Engine = struct {
@@ -261,6 +275,32 @@ const Tools = struct {
         gen_exe: *Step.Compile,
         options_module: *Build.Module,
 
+        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?WaylandGen {
+            const options = b.addOptions();
+            options.addOption(bool, "verbose_wayland", verbose_wayland);
+            const options_module = options.createModule();
+
+            const wayland_gen_exe = b.addExecutable(.{
+                .name = "wayland_gen",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("tools/wayland_gen/src/wayland_generator.zig"),
+                    .target = tools_target,
+                    .optimize = tools_optimize,
+                    .imports = &.{
+                        .{ .name = "xml", .module = modules.xml },
+                        .{ .name = "mem", .module = modules.memory },
+                        .{ .name = "clip", .module = modules.clip },
+                        .{ .name = "options", .module = options_module },
+                    },
+                }),
+                .use_llvm = use_llvm,
+            });
+            wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/client.zig") });
+            wayland_gen_exe.root_module.addAnonymousImport("lib/root_template.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/root_template.zig") });
+
+            return .{ .gen_exe = wayland_gen_exe, .options_module = options_module };
+        }
+
         pub fn module(this: *const WaylandGen, b: *Build, optimize: OptimizeMode, modules: *const Modules, core_xml_path: []const u8, protocol_xml_paths: []const []const u8) *Build.Module {
             const run_wayland_gen_exe = b.addRunArtifact(this.gen_exe);
 
@@ -284,51 +324,56 @@ const Tools = struct {
         }
     };
 
-    wayland_gen: ?WaylandGen,
-};
+    pub const AssetCompiler = struct {
+        exe: *Step.Compile,
 
-fn buildTools(b: *Build, tools_optimize: OptimizeMode, tools_target: ResolvedTarget, target: ResolvedTarget, modules: *Modules) !Tools {
-    const os = target.result.os.tag;
+        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) AssetCompiler {
+            const asset_compiler_exe = b.addExecutable(.{
+                .name = "asset_compiler",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("tools/asset_compiler/asset_compiler.zig"),
+                    .target = tools_target,
+                    .optimize = tools_optimize,
+                    .imports = &.{
+                        .{ .name = "clip", .module = modules.clip },
+                    },
+                }),
+                .use_llvm = use_llvm,
+            });
 
-    const result: Tools = .{
-        .wayland_gen = switch (os) {
-            else => return error.PlatformNotSupported,
-            .windows => null,
-            .linux => blk: {
-                const cli_parse_dep = b.dependency("zig_cli_parse", .{});
-
-                const options = b.addOptions();
-                options.addOption(bool, "verbose_wayland", verbose_wayland);
-                const options_module = options.createModule();
-
-                const wayland_gen_exe = b.addExecutable(.{
-                    .name = "wayland_gen",
-                    .root_module = b.createModule(.{
-                        .root_source_file = b.path("tools/wayland_gen/src/wayland_generator.zig"),
-                        .target = tools_target,
-                        .optimize = tools_optimize,
-                        .imports = &.{
-                            .{ .name = "xml", .module = modules.xml },
-                            .{ .name = "mem", .module = modules.memory },
-                            .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
-                            .{ .name = "options", .module = options_module },
-                        },
-                    }),
-                    .use_llvm = use_llvm,
-                });
-                wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/client.zig") });
-                wayland_gen_exe.root_module.addAnonymousImport("lib/root_template.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/root_template.zig") });
-
-                break :blk .{ .gen_exe = wayland_gen_exe, .options_module = options_module };
-            },
-        },
+            return .{ .exe = asset_compiler_exe };
+        }
     };
 
-    return result;
-}
+    wayland_gen: ?WaylandGen,
+    asset_compiler: AssetCompiler,
+
+    fn build(b: *Build, tools_target: ResolvedTarget, target: ResolvedTarget, modules: *Modules) !Tools {
+        const result: Tools = .{
+            .wayland_gen = if (target.result.os.tag == .linux)
+                WaylandGen.build(b, tools_target, modules)
+            else
+                null,
+
+            .asset_compiler = AssetCompiler.build(b, tools_target, modules),
+        };
+
+        return result;
+    }
+};
 
 pub fn buildAssets(b: *Build) !*Step {
     const asset_step = b.step("assets", "compile assets");
 
     return asset_step;
+}
+
+pub fn buildTests(b: *Build, modules: *const Modules) !void {
+    const test_step = b.step("test", "run all tests");
+
+    const clip_test_exe = b.addTest(.{ .root_module = modules.clip, .name = "clip_test" });
+    b.installArtifact(clip_test_exe);
+    const clip_test_run = b.addRunArtifact(clip_test_exe);
+
+    test_step.dependOn(&clip_test_run.step);
 }
