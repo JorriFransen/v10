@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+const options = @import("options");
 const clip = @import("clip");
 
 var gpa: Allocator = undefined;
@@ -138,18 +139,27 @@ pub fn run(init: std.process.Init) !void {
         }
 
         if (!skip) {
-            const output_files: []const []const u8 = if (split_layers) {
+            const output_files: []const []const u8 = if (split_layers) blk: {
                 const layers = try asepriteLayers(gpa, input_path);
                 defer {
                     for (layers) |l| gpa.free(l);
                     gpa.free(layers);
                 }
 
+                var output_files_: std.ArrayList([]const u8) = .empty;
+                errdefer output_files_.deinit(gpa);
+
+                const output_prefix = std.fs.path.stem(relative_input_path);
+
                 for (layers) |l| {
-                    std.log.debug("layer: '{s}'", .{l});
+                    const output_file_name = try std.fmt.allocPrint(gpa, "{s}_{s}.bmp", .{ output_prefix, l });
+                    defer gpa.free(output_file_name);
+
+                    const output_file_path = try std.fs.path.join(gpa, &.{ output_dir_path, output_file_name });
+                    try output_files_.append(gpa, output_file_path);
                 }
 
-                unreachable;
+                break :blk try output_files_.toOwnedSlice(gpa);
             } else blk: {
                 const out_file_name = try std.fmt.allocPrint(gpa, "{s}.bmp", .{std.fs.path.stem(relative_input_path)});
                 defer gpa.free(out_file_name);
@@ -167,7 +177,10 @@ pub fn run(init: std.process.Init) !void {
                 std.log.debug("output file: {s}", .{output_files[0]});
                 try asepriteExportBMP(input_path, output_files[0]);
             } else {
-                unreachable;
+                for (output_files) |of| {
+                    std.log.debug("output file: {s}", .{of});
+                }
+                try asepriteExportSplitLayerBMP(input_path, output_dir_path);
             }
 
             for (output_files) |of| gpa.free(of);
@@ -195,7 +208,7 @@ pub fn aseprite(allocator: Allocator, args: []const []const u8) !RunResult {
     const argv = try allocator.alloc([]const u8, args.len + 1);
     defer allocator.free(argv);
 
-    argv[0] = "aseprite";
+    argv[0] = options.aseprite_exe_path;
     @memcpy(argv[1..], args);
 
     for (argv, 0..) |a, i| {
@@ -308,6 +321,29 @@ pub fn asepriteLayers(allocator: Allocator, input_path: []const u8) ![]const []c
 
 pub fn asepriteExportBMP(input_path: []const u8, output_path: []const u8) !void {
     var export_rr = try aseprite(gpa, &.{ "-b", input_path, "--save-as", output_path });
+    defer export_rr.free();
+
+    if (export_rr.exit_code != 0) {
+        std.log.err("Asprite invocation failed", .{});
+        return error.AsepriteNonZeroExitCode;
+    }
+}
+
+pub fn asepriteExportSplitLayerBMP(input_path: []const u8, output_dir: []const u8) !void {
+    const out_dir_param = try std.fmt.allocPrint(gpa, "out_dir={s}", .{output_dir});
+    defer gpa.free(out_dir_param);
+
+    const script_path = try std.fs.path.join(gpa, &.{ options.aseprite_script_path, "extract_layers_recursive.lua" });
+    defer gpa.free(script_path);
+
+    var export_rr = try aseprite(gpa, &.{
+        "-b",
+        input_path,
+        "--script-param",
+        out_dir_param,
+        "--script",
+        script_path,
+    });
     defer export_rr.free();
 
     if (export_rr.exit_code != 0) {

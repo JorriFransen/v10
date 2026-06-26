@@ -327,7 +327,15 @@ const Tools = struct {
     pub const AssetCompiler = struct {
         exe: *Step.Compile,
 
-        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) AssetCompiler {
+        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) !AssetCompiler {
+            const aseprite_exe = try b.findProgram(&.{"aseprite"}, &.{});
+
+            const options = b.addOptions();
+            options.addOption([]const u8, "aseprite_exe_path", aseprite_exe);
+            options.addOptionPath("aseprite_script_path", b.path("tools/aseprite/"));
+
+            const option_module = options.createModule();
+
             const asset_compiler_exe = b.addExecutable(.{
                 .name = "asset_compiler",
                 .root_module = b.createModule(.{
@@ -336,6 +344,7 @@ const Tools = struct {
                     .optimize = tools_optimize,
                     .imports = &.{
                         .{ .name = "clip", .module = modules.clip },
+                        .{ .name = "options", .module = option_module },
                     },
                 }),
                 .use_llvm = use_llvm,
@@ -355,7 +364,7 @@ const Tools = struct {
             else
                 null,
 
-            .asset_compiler = AssetCompiler.build(b, tools_target, modules),
+            .asset_compiler = try AssetCompiler.build(b, tools_target, modules),
         };
 
         return result;
