@@ -214,7 +214,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
         }
 
         // TODO: Handle duplicate non array options (disallow or overwrite and free previous)
-        pub fn parse(args: []const []const u8, allocator: Allocator) Error!Options {
+        pub fn parse(args: []const []const u8, allocator: Allocator, stderr_writer: *std.Io.Writer) Error!Options {
             var result: Options = .{};
 
             var tokens = Tokenizer.init(args);
@@ -238,7 +238,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                     } else if (tokens.eat("-")) |_| {
                         const c = tokens.current_token;
                         if (c.len < 1) {
-                            err("Invalid short option: '{s}'", .{c});
+                            err(stderr_writer, "Invalid short option: '{s}'", .{c});
                             return error.InvalidShortOption;
                         }
                         const short_name = c[0];
@@ -253,7 +253,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                         }
 
                         if (field_name == null) {
-                            err("Invalid short option: '-{c}'", .{short_name});
+                            err(stderr_writer, "Invalid short option: '-{c}'", .{short_name});
                             return error.InvalidShortOption;
                         }
 
@@ -261,7 +261,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
 
                         break :blk field_name.?;
                     } else {
-                        err("Expected option to start with '--' or '-' got '{s}'", .{tokens.current_token});
+                        err(stderr_writer, "Expected option to start with '--' or '-' got '{s}'", .{tokens.current_token});
                         return error.InvalidOption;
                     }
                 };
@@ -275,7 +275,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                         const parsed_eq = tokens.eat("=") != null;
 
                         if (field_type_info != .bool and !parsed_eq and !used_short) {
-                            err("Expect '=' after option '--{s}'", .{o.name});
+                            err(stderr_writer, "Expect '=' after option '--{s}'", .{o.name});
                             return error.MissingEq;
                         }
 
@@ -295,7 +295,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                         if (!invert_boolean and value_token.len == 0) {
                             const valid_empty = o.type_tag == .string and !before_eof;
                             if (!valid_empty) {
-                                err("Missing value for option '--{s}'", .{o.name});
+                                err(stderr_writer, "Missing value for option '--{s}'", .{o.name});
                                 return error.MissingValue;
                             }
                         }
@@ -314,23 +314,23 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                             else if (std.mem.eql(u8, value_token, "FALSE"))
                                 false
                             else {
-                                err("Invalid boolean value: '{s}'", .{value_token});
+                                err(stderr_writer, "Invalid boolean value: '{s}'", .{value_token});
                                 return error.InvalidBoolValue;
                             },
 
                             .int => std.fmt.parseInt(o.type, value_token, 10) catch {
-                                err("Invalid int value: '{s}'", .{value_token});
+                                err(stderr_writer, "Invalid int value: '{s}'", .{value_token});
                                 return error.InvalidIntValue;
                             },
 
                             .float => std.fmt.parseFloat(o.type, value_token) catch {
-                                err("Invalid float value: '{s}'", .{value_token});
+                                err(stderr_writer, "Invalid float value: '{s}'", .{value_token});
                                 return error.InvalidFloatValue;
                             },
 
                             .@"enum" => blk: {
                                 break :blk std.meta.stringToEnum(o.type, value_token) orelse {
-                                    err("Invalid enum value '{s}'", .{value_token});
+                                    err(stderr_writer, "Invalid enum value '{s}'", .{value_token});
                                     return error.InvalidEnumValue;
                                 };
                             },
@@ -359,7 +359,7 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                 }
 
                 if (!found) {
-                    err("Invalid option: '{s}'", .{field_name});
+                    err(stderr_writer, "Invalid option: '{s}'", .{field_name});
                     return error.InvalidOption;
                 }
             }
@@ -396,8 +396,11 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
             }
         }
 
-        inline fn err(comptime fmt: []const u8, args: anytype) void {
-            if (!builtin.is_test) log.err(fmt, args);
+        inline fn err(writer: *std.Io.Writer, comptime fmt: []const u8, args: anytype) void {
+            if (!builtin.is_test) {
+                writer.print(fmt, args) catch @panic("stdout write failed");
+                writer.writeByte('\n') catch @panic("stdout write failed");
+            }
         }
     };
 }
@@ -483,7 +486,7 @@ fn testParse(comptime OP: type, args: []const []const u8, expected: OP.Options, 
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const opt_or_err = OP.parse(args, allocator);
+    const opt_or_err = OP.parse(args, allocator, undefined);
     if (err) |expected_err| {
         try std.testing.expectError(expected_err, opt_or_err);
     } else {

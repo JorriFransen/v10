@@ -62,7 +62,7 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 fn run(context: *Context) !void {
-    const cli_options = try OptionParser.parse(context.args[1..], context.arena);
+    const cli_options = try OptionParser.parse(context.args[1..], context.arena, context.stdout);
 
     if (cli_options.help) {
         try OptionParser.usage(context.stdout);
