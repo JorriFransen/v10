@@ -2,6 +2,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+const builtin = @import("builtin");
+
 const options = @import("options");
 const clip = @import("clip");
 
@@ -102,13 +104,17 @@ pub fn run(init: std.process.Init) !void {
 
     // Relative to scan_path
     var relative_input_paths: std.ArrayList([]const u8) = .empty;
+    var input_timestamps: std.ArrayList(std.Io.Timestamp) = .empty;
 
     var walker = try scan_dir.walk(gpa);
     while (try walker.next(io)) |entry| {
         if (entry.kind == .file) {
             if (std.mem.eql(u8, ".aseprite", std.fs.path.extension(entry.basename))) {
                 const input_path = try arena.dupe(u8, entry.path);
-                try relative_input_paths.append(gpa, input_path);
+                try relative_input_paths.append(arena, input_path);
+
+                const stat = try scan_dir.statFile(io, entry.path, .{});
+                try input_timestamps.append(arena, stat.mtime);
             }
         }
     }
@@ -116,80 +122,114 @@ pub fn run(init: std.process.Init) !void {
 
     scan_dir.close(io);
 
-    for (relative_input_paths.items) |relative_input_path| {
+    for (relative_input_paths.items, input_timestamps.items) |relative_input_path, input_timestamp| {
         std.log.debug("", .{});
-        std.log.debug("input file: {s}", .{relative_input_path});
+        std.log.debug("classify input file: {s}", .{relative_input_path});
 
-        const input_path = try std.fs.path.join(gpa, &.{ scan_path, relative_input_path });
-        defer gpa.free(input_path);
+        const abs_input_path = try std.fs.path.join(gpa, &.{ scan_path, relative_input_path });
+        defer gpa.free(abs_input_path);
 
-        const tags = try asepriteTags(gpa, input_path);
+        const tags = try asepriteTags(gpa, abs_input_path);
         defer {
             for (tags) |t| gpa.free(t);
             gpa.free(tags);
         }
 
-        var skip = false;
-        var split_layers = false;
+        var tag_skip = false;
+        var tag_split_layers = false;
         for (tags) |t| {
             if (std.mem.eql(u8, "skip", t))
-                skip = true
+                tag_skip = true
             else if (std.mem.eql(u8, "split_layers", t))
-                split_layers = true;
+                tag_split_layers = true;
         }
 
-        if (!skip) {
-            const output_files: []const []const u8 = if (split_layers) blk: {
-                const layers = try asepriteLayers(gpa, input_path);
+        std.log.debug("classification: skip:{} split_layers:{}", .{ tag_skip, tag_split_layers });
+
+        if (!tag_skip) {
+            const rel_dir_path = std.fs.path.dirname(relative_input_path) orelse "";
+
+            const abs_output_file_path_opt: ?[]const u8 = if (tag_split_layers) blk: {
+                const layers = try asepriteLayers(gpa, abs_input_path);
                 defer {
                     for (layers) |l| gpa.free(l);
                     gpa.free(layers);
                 }
 
-                var output_files_: std.ArrayList([]const u8) = .empty;
-                errdefer output_files_.deinit(gpa);
-
                 const output_prefix = std.fs.path.stem(relative_input_path);
 
                 for (layers) |l| {
-                    const output_file_name = try std.fmt.allocPrint(gpa, "{s}_{s}.bmp", .{ output_prefix, l });
-                    defer gpa.free(output_file_name);
+                    const out_file_name = try std.fmt.allocPrint(gpa, "{s}_{s}.bmp", .{ output_prefix, l });
+                    defer gpa.free(out_file_name);
 
-                    const output_file_path = try std.fs.path.join(gpa, &.{ output_dir_path, output_file_name });
-                    try output_files_.append(gpa, output_file_path);
+                    const abs_file_path = try std.fs.path.join(gpa, &.{ output_dir_path, rel_dir_path, out_file_name });
+                    errdefer gpa.free(abs_file_path);
+
+                    const status = try outputFileStatus(abs_file_path, input_timestamp);
+                    switch (status) {
+                        .missing, .outOfDate => break :blk abs_file_path,
+                        .upToDate => gpa.free(abs_file_path),
+                    }
                 }
 
-                break :blk try output_files_.toOwnedSlice(gpa);
+                break :blk null;
             } else blk: {
                 const out_file_name = try std.fmt.allocPrint(gpa, "{s}.bmp", .{std.fs.path.stem(relative_input_path)});
                 defer gpa.free(out_file_name);
 
-                const output_file = try std.fs.path.join(gpa, &.{
-                    output_dir_path,
-                    std.fs.path.dirname(relative_input_path) orelse "",
-                    out_file_name,
-                });
-                break :blk &.{output_file};
+                const abs_file_path = try std.fs.path.join(gpa, &.{ output_dir_path, rel_dir_path, out_file_name });
+                errdefer gpa.free(abs_file_path);
+
+                const status = try outputFileStatus(abs_file_path, input_timestamp);
+
+                switch (status) {
+                    .missing, .outOfDate => break :blk abs_file_path,
+                    .upToDate => {
+                        gpa.free(abs_file_path);
+                        break :blk null;
+                    },
+                }
             };
 
-            if (!split_layers) {
-                assert(output_files.len == 1);
-                std.log.debug("output file: {s}", .{output_files[0]});
-                try asepriteExportBMP(input_path, output_files[0]);
-            } else {
-                for (output_files) |of| {
-                    std.log.debug("output file: {s}", .{of});
+            if (abs_output_file_path_opt) |abs_output_path| {
+                std.log.debug("emit for: {s}", .{abs_input_path});
+                if (!tag_split_layers) {
+                    try asepriteExportBMP(abs_input_path, abs_output_path);
+                } else {
+                    try asepriteExportSplitLayerBMP(abs_input_path, output_dir_path);
                 }
-                try asepriteExportSplitLayerBMP(input_path, output_dir_path);
-            }
 
-            for (output_files) |of| gpa.free(of);
-            if (split_layers) gpa.free(output_files);
+                gpa.free(abs_output_path);
+            } else {
+                std.log.debug("skip emit for: {s}", .{abs_input_path});
+            }
         }
     }
 
-    relative_input_paths.deinit(gpa);
     output_dir.close(io);
+}
+
+pub const OutputFileStatus = enum(u2) {
+    missing,
+    outOfDate,
+    upToDate,
+};
+
+pub fn outputFileStatus(abs_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
+    assert(std.fs.path.isAbsolute(abs_path));
+
+    std.log.debug("checking output file: {s}{s}", .{abs_path});
+
+    const result: OutputFileStatus = if (std.Io.Dir.statFile(undefined, io, abs_path, .{})) |stat|
+        if (stat.mtime.nanoseconds <= input_timestamp.nanoseconds)
+            .outOfDate
+        else
+            .upToDate
+    else |_|
+        .missing;
+
+    std.log.debug("status: {s}", .{@tagName(result)});
+    return result;
 }
 
 pub const RunResult = struct {
@@ -240,8 +280,10 @@ pub fn aseprite(allocator: Allocator, args: []const []const u8) !RunResult {
     }
 }
 
-pub fn asepriteTags(allocator: Allocator, input_path: []const u8) ![]const []const u8 {
-    var tags_rr = try aseprite(gpa, &.{ "-b", "--list-tags", input_path });
+pub fn asepriteTags(allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
+    assert(std.fs.path.isAbsolute(abs_input_path));
+
+    var tags_rr = try aseprite(gpa, &.{ "-b", "--list-tags", abs_input_path });
     defer tags_rr.free();
 
     if (tags_rr.exit_code != 0) {
@@ -268,8 +310,10 @@ pub fn asepriteTags(allocator: Allocator, input_path: []const u8) ![]const []con
 }
 
 // Flattens the hierarchy, replacing / with -
-pub fn asepriteLayers(allocator: Allocator, input_path: []const u8) ![]const []const u8 {
-    var layers_rr = try aseprite(gpa, &.{ "-b", "--all-layers", "--list-layer-hierarchy", input_path });
+pub fn asepriteLayers(allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
+    assert(std.fs.path.isAbsolute(abs_input_path));
+
+    var layers_rr = try aseprite(gpa, &.{ "-b", "--all-layers", "--list-layer-hierarchy", abs_input_path });
     defer layers_rr.free();
 
     if (layers_rr.exit_code != 0) {
@@ -319,8 +363,11 @@ pub fn asepriteLayers(allocator: Allocator, input_path: []const u8) ![]const []c
     return layers.toOwnedSlice(allocator);
 }
 
-pub fn asepriteExportBMP(input_path: []const u8, output_path: []const u8) !void {
-    var export_rr = try aseprite(gpa, &.{ "-b", input_path, "--save-as", output_path });
+pub fn asepriteExportBMP(abs_input_path: []const u8, abs_output_path: []const u8) !void {
+    assert(std.fs.path.isAbsolute(abs_input_path));
+    assert(std.fs.path.isAbsolute(abs_output_path));
+
+    var export_rr = try aseprite(gpa, &.{ "-b", abs_input_path, "--save-as", abs_output_path });
     defer export_rr.free();
 
     if (export_rr.exit_code != 0) {
@@ -329,8 +376,11 @@ pub fn asepriteExportBMP(input_path: []const u8, output_path: []const u8) !void 
     }
 }
 
-pub fn asepriteExportSplitLayerBMP(input_path: []const u8, output_dir: []const u8) !void {
-    const out_dir_param = try std.fmt.allocPrint(gpa, "out_dir={s}", .{output_dir});
+pub fn asepriteExportSplitLayerBMP(abs_input_path: []const u8, abs_output_dir_path: []const u8) !void {
+    assert(std.fs.path.isAbsolute(abs_input_path));
+    assert(std.fs.path.isAbsolute(abs_output_dir_path));
+
+    const out_dir_param = try std.fmt.allocPrint(gpa, "out_dir={s}", .{abs_output_dir_path});
     defer gpa.free(out_dir_param);
 
     const script_path = try std.fs.path.join(gpa, &.{ options.aseprite_script_path, "extract_layers_recursive.lua" });
@@ -338,7 +388,7 @@ pub fn asepriteExportSplitLayerBMP(input_path: []const u8, output_dir: []const u
 
     var export_rr = try aseprite(gpa, &.{
         "-b",
-        input_path,
+        abs_input_path,
         "--script-param",
         out_dir_param,
         "--script",
