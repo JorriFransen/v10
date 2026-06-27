@@ -280,8 +280,6 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
 
 pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
     if (options.internal_build and !options.cross_compile) {
-        const begin = std.Io.Timestamp.now(io, .real);
-
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
 
@@ -294,8 +292,5 @@ pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Write
             .verbose = true,
         };
         try asset_compiler.run(&context, .{ .input_scan_dir = ".", .output_dir = "./test" });
-
-        const end = std.Io.Timestamp.now(io, .real);
-        log.info("asset compiler time: {}ms", .{begin.durationTo(end).toMilliseconds()});
     }
 }
