@@ -431,7 +431,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     var game_code = GameCode.load(io, game_lib_name);
-    if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
     const audio_fps = 48000;
     const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
@@ -675,8 +674,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 playbackInput(wld.shared_state, io, wld.new_input);
             }
 
-            const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer) else true;
-            if (!keep_running) running = false;
+            if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer);
 
             if (linux_options.linux_audio_impl == .pulseEmulateDSound) {
                 const audio_wall_clock = getWallClock(io);
