@@ -25,6 +25,8 @@ pub const Context = struct {
     verbose: bool = false,
 };
 
+var total_aseprite_time: std.Io.Duration = .zero;
+
 pub fn main(init: std.process.Init) !u8 {
     var stderr_buf: [2048]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(init.io, &stderr_buf);
@@ -77,6 +79,8 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 pub fn run(context: *const Context, options: OptionParser.Options) !void {
+    const start_time = std.Io.Timestamp.now(context.io, .real);
+
     const cwd = try std.process.currentPathAlloc(context.io, context.arena);
 
     var scan_path: []const u8 = "";
@@ -112,8 +116,8 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
     };
     errdefer output_dir.close(context.io);
 
-    debug("input_scan_dir: '{s}'", .{scan_path});
-    debug("output_dir: '{s}'", .{output_dir_path});
+    log.debug("input_scan_dir: '{s}'", .{scan_path});
+    log.debug("output_dir: '{s}'", .{output_dir_path});
 
     // Relative to scan_path
     var relative_input_paths: std.ArrayList([]const u8) = .empty;
@@ -136,8 +140,8 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
     scan_dir.close(context.io);
 
     for (relative_input_paths.items, input_timestamps.items) |relative_input_path, input_timestamp| {
-        debug("", .{});
-        debug("classify input file: {s}", .{relative_input_path});
+        log.debug("", .{});
+        log.debug("classify input file: {s}", .{relative_input_path});
 
         const abs_input_path = try std.fs.path.join(context.gpa, &.{ scan_path, relative_input_path });
         defer context.gpa.free(abs_input_path);
@@ -157,7 +161,7 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
                 tag_split_layers = true;
         }
 
-        debug("classification: skip:{} split_layers:{}", .{ tag_skip, tag_split_layers });
+        log.debug("classification: skip:{} split_layers:{}", .{ tag_skip, tag_split_layers });
 
         if (!tag_skip) {
             const rel_dir_path = std.fs.path.dirname(relative_input_path) orelse "";
@@ -205,7 +209,7 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
             };
 
             if (abs_output_file_path_opt) |abs_output_path| {
-                debug("emit for: {s}", .{abs_input_path});
+                log.debug("emit for: {s}", .{abs_input_path});
                 if (!tag_split_layers) {
                     try asepriteExportBMP(context, abs_input_path, abs_output_path);
                 } else {
@@ -214,12 +218,16 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
 
                 context.gpa.free(abs_output_path);
             } else {
-                debug("skip emit for: {s}", .{abs_input_path});
+                log.debug("skip emit for: {s}", .{abs_input_path});
             }
         }
     }
 
     output_dir.close(context.io);
+
+    const total_time = start_time.untilNow(context.io, .real);
+    log.info("aseprite time: {f}", .{total_aseprite_time});
+    log.info("total time   : {f}", .{total_time});
 }
 
 pub const OutputFileStatus = enum(u2) {
@@ -231,7 +239,7 @@ pub const OutputFileStatus = enum(u2) {
 pub fn outputFileStatus(context: *const Context, abs_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
     assert(std.fs.path.isAbsolute(abs_path));
 
-    debug("checking output file: {s}", .{abs_path});
+    log.debug("checking output file: {s}", .{abs_path});
 
     const result: OutputFileStatus = if (std.Io.Dir.statFile(undefined, context.io, abs_path, .{})) |stat|
         if (stat.mtime.nanoseconds <= input_timestamp.nanoseconds)
@@ -241,7 +249,7 @@ pub fn outputFileStatus(context: *const Context, abs_path: []const u8, input_tim
     else |_|
         .missing;
 
-    debug("status: {s}", .{@tagName(result)});
+    log.debug("status: {s}", .{@tagName(result)});
     return result;
 }
 
@@ -269,25 +277,34 @@ pub fn aseprite(context: *const Context, allocator: Allocator, args: []const []c
             if (i > 0) try context.stdout.writeByte(' ');
             try context.stdout.writeAll(a);
         }
-        try context.stdout.writeByte('\n');
+    }
+
+    const start_time = std.Io.Timestamp.now(context.io, .real);
+    const result_or_err = std.process.run(allocator, context.io, .{ .argv = argv });
+    const duration = start_time.untilNow(context.io, .real);
+    total_aseprite_time.nanoseconds += duration.nanoseconds;
+
+    if (context.verbose) {
+        try context.stdout.print(" ({f})\n", .{duration});
         try context.stdout.flush();
     }
 
-    const rr = try std.process.run(allocator, context.io, .{ .argv = argv });
-    defer allocator.free(rr.stderr);
+    const result = try result_or_err;
 
-    switch (rr.term) {
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
         .exited => |ec| {
             var exit_code = ec;
-            if (std.mem.startsWith(u8, rr.stdout, "File not found:")) {
+            if (std.mem.startsWith(u8, result.stdout, "File not found:")) {
                 exit_code = 1;
             }
 
             if (exit_code != 0) {
-                std.log.err("asprite stdout:\n{s}", .{rr.stdout});
-                std.log.err("asprite stderr:\n{s}", .{rr.stderr});
+                std.log.err("asprite stdout:\n{s}", .{result.stdout});
+                std.log.err("asprite stderr:\n{s}", .{result.stderr});
             }
-            return .{ .allocator = allocator, .exit_code = exit_code, .stdout = rr.stdout };
+            return .{ .allocator = allocator, .exit_code = exit_code, .stdout = result.stdout };
         },
         .signal => return error.UnexpectedRunSignal,
         .stopped => return error.RunStopped,
@@ -415,8 +432,4 @@ pub fn asepriteExportSplitLayerBMP(context: *const Context, abs_input_path: []co
         std.log.err("Asprite invocation failed", .{});
         return error.AsepriteNonZeroExitCode;
     }
-}
-
-inline fn debug(comptime fmt: []const u8, args: anytype) void {
-    log.debug(fmt, args);
 }
