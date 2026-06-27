@@ -1,5 +1,13 @@
 const std = @import("std");
 
+pub inline fn square(x: f32) f32 {
+    return x * x;
+}
+
+pub inline fn sqrt(x: f32) f32 {
+    return @sqrt(x);
+}
+
 pub const V2 = extern struct {
     x: f32 = 0,
     y: f32 = 0,
@@ -80,10 +88,45 @@ pub const V2 = extern struct {
     }
 };
 
-pub inline fn square(x: f32) f32 {
-    return x * x;
+pub fn isInRectangle(rect: Rect, p: V2) bool {
+    const result: bool =
+        (p.x >= rect.min.x) and
+        (p.y >= rect.min.y) and
+        (p.x < rect.max.x) and
+        (p.y < rect.max.y);
+
+    return result;
 }
 
-pub inline fn sqrt(x: f32) f32 {
-    return @sqrt(x);
-}
+pub const Rect = struct {
+    min: V2,
+    max: V2,
+
+    pub fn minMax(min: V2, max: V2) Rect {
+        const result = Rect{ .min = min, .max = max };
+        return result;
+    }
+
+    pub fn minDim(min: V2, dim: V2) Rect {
+        const result = Rect{ .min = min, .max = min.add(dim) };
+        return result;
+    }
+
+    pub fn centerHalfDim(center: V2, half_dim: V2) Rect {
+        const result = Rect{
+            .min = center.sub(half_dim),
+            .max = center.add(half_dim),
+        };
+        return result;
+    }
+
+    pub fn centerDim(center: V2, dim: V2) Rect {
+        const result = centerHalfDim(center, dim.mul(0.5));
+        return result;
+    }
+
+    pub inline fn containsPoint(this: Rect, p: V2) bool {
+        const result = isInRectangle(this, p);
+        return result;
+    }
+};

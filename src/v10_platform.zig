@@ -25,8 +25,7 @@ pub const ThreadContext = extern struct {
     io: *const std.Io,
 };
 
-pub const FN_init = *const fn (thread_context: *const ThreadContext, memory: *Memory) callconv(.c) void;
-pub const FN_updateAndRender = *const fn (thread_context: *const ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) bool;
+pub const FN_updateAndRender = *const fn (thread_context: *const ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void;
 pub const FN_getAudioFrames = *const fn (thread_context: *const ThreadContext, memory: *Memory, sound_buffer: *const AudioBuffer) callconv(.c) void;
 
 pub const OffscreenBuffer = extern struct {
@@ -213,7 +212,6 @@ pub const GameCode = struct {
     dll: ?DynLib = null,
     last_write_time: i128 = 0,
 
-    init: ?FN_init = null,
     updateAndRender: ?FN_updateAndRender = null,
     getAudioFrames: ?FN_getAudioFrames = null,
 
@@ -225,12 +223,10 @@ pub const GameCode = struct {
             return .{};
         };
 
-        const init = lib.lookup(FN_init, "init");
         const update_and_render = lib.lookup(FN_updateAndRender, "updateAndRender");
         const get_audio_frames = lib.lookup(FN_getAudioFrames, "getAudioFrames");
 
         const valid =
-            init != null and
             update_and_render != null and
             get_audio_frames != null;
 
@@ -240,7 +236,6 @@ pub const GameCode = struct {
                 .valid = true,
                 .dll = lib,
                 .last_write_time = last_write_time,
-                .init = init.?,
                 .updateAndRender = update_and_render.?,
                 .getAudioFrames = get_audio_frames.?,
             };
