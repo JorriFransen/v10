@@ -102,6 +102,149 @@ pub const GameState = struct {
     }
 };
 
+pub const ColorU8ARGB = packed struct(u32) {
+    b: u8,
+    g: u8,
+    r: u8,
+    a: u8,
+
+    pub inline fn asU32(this: ColorU8ARGB) u32 {
+        return @bitCast(this);
+    }
+
+    pub inline fn fromU32(int: u32) ColorU8ARGB {
+        return @bitCast(int);
+    }
+
+    pub inline fn fromF32RGB(rf: f32, gf: f32, bf: f32) ColorU8ARGB {
+        return .{
+            .r = @intFromFloat(rf * 255),
+            .g = @intFromFloat(gf * 255),
+            .b = @intFromFloat(bf * 255),
+            .a = 255,
+        };
+    }
+};
+
+pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32, b: f32) void {
+    const pitch: usize = @intCast(buffer.pitch);
+    const bpp: usize = @intCast(buffer.bytes_per_pixel);
+
+    const buffer_width_f: f32 = @floatFromInt(buffer.width);
+    const buffer_height_f: f32 = @floatFromInt(buffer.height);
+
+    const minx: usize = @round(@min(@max(min.x, 0), buffer_width_f));
+    const miny: usize = @round(@min(@max(min.y, 0), buffer_height_f));
+    const maxx: usize = @round(@min(@max(max.x, 0), buffer_width_f));
+    const maxy: usize = @round(@min(@max(max.y, 0), buffer_height_f));
+
+    assert(bpp == @sizeOf(u32));
+
+    const color = ColorU8ARGB.fromF32RGB(r, g, b);
+
+    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
+    var y: usize = @intCast(miny);
+    while (y < maxy) : (y += 1) {
+        var pixel: [*]u32 = @ptrCast(@alignCast(row));
+        var x: usize = @intCast(minx);
+        while (x < maxx) : (x += 1) {
+            pixel[0] = color.asU32();
+            pixel += 1;
+        }
+
+        row += pitch;
+    }
+}
+
+const DrawBitmapOptions = struct {
+    center: V2 = V2.zero,
+    c_alpha: f32 = 1,
+};
+
+pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f32, o: DrawBitmapOptions) void {
+    const pitch: usize = @intCast(buffer.pitch);
+    const bpp: usize = @intCast(buffer.bytes_per_pixel);
+
+    const real_x: f32 = px - o.center.x;
+    const real_y: f32 = py - o.center.y;
+
+    var min_x: i32 = @round(real_x);
+    var min_y: i32 = @round(real_y);
+    var max_x: i32 = min_x + @as(i32, @intCast(bitmap.width));
+    var max_y: i32 = min_y + @as(i32, @intCast(bitmap.height));
+
+    var source_offset_x: u32 = 0;
+    if (min_x < 0) {
+        source_offset_x = @intCast(-min_x);
+        min_x = 0;
+    }
+
+    var source_offset_y: u32 = 0;
+    if (min_y < 0) {
+        source_offset_y = @intCast(-min_y);
+        min_y = 0;
+    }
+
+    if (max_x > buffer.width) {
+        max_x = @intCast(buffer.width);
+    }
+
+    if (max_y > buffer.height) {
+        max_y = @intCast(buffer.height);
+    }
+
+    const minx: u32 = @intCast(min_x);
+    const miny: u32 = @intCast(min_y);
+    const maxx: u32 = @intCast(max_x);
+    const maxy: u32 = @intCast(max_y);
+
+    // TEMPORARY
+    if (bitmap.pixels.len == 0) return;
+    // TEMPORARY
+
+    var source_row: [*]align(1) u32 = bitmap.pixels.ptr + (bitmap.width * (bitmap.height - 1)) + source_offset_x - (bitmap.width * source_offset_y);
+    var dest_row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
+
+    var y: usize = @intCast(miny);
+    while (y < maxy) : (y += 1) {
+        var source: [*]align(1) u32 = source_row;
+        var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
+
+        var x: usize = @intCast(minx);
+        while (x < maxx) : (x += 1) {
+            const sc = ColorU8ARGB.fromU32(source[0]);
+            const dc = ColorU8ARGB.fromU32(dest[0]);
+
+            const a: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * o.c_alpha);
+
+            const sr: f32 = sc.r;
+            const sg: f32 = sc.g;
+            const sb: f32 = sc.b;
+
+            const dr: f32 = dc.r;
+            const dg: f32 = dc.g;
+            const db: f32 = dc.b;
+
+            const r: f32 = (1 - a) * dr + a * sr;
+            const g: f32 = (1 - a) * dg + a * sg;
+            const b: f32 = (1 - a) * db + a * sb;
+
+            dest[0] = (ColorU8ARGB{
+                .r = @intFromFloat(r + 0.5),
+                .g = @intFromFloat(g + 0.5),
+                .b = @intFromFloat(b + 0.5),
+                .a = 255,
+            }).asU32();
+
+            source += 1;
+            dest += 1;
+        }
+
+        dest_row += @intCast(buffer.pitch);
+        source_row -= bitmap.width;
+    }
+}
+
 pub const EntityResidence = enum(u2) {
     nonexistent = 0,
     dormant = 1,
@@ -158,6 +301,148 @@ pub const HeroBitmaps = struct {
     cape: LoadedBitmap = .{},
     torso: LoadedBitmap = .{},
 };
+
+fn initPlayer(game_state: *GameState, entity_index: usize) void {
+    const entity = game_state.getEntity(entity_index, .dormant);
+
+    entity.dormant.* = .{
+        .p = .{
+            .abs_tile_x = 1,
+            .abs_tile_y = 3,
+            .chunk_z = 0,
+        },
+        .size = v2(1, 0.5),
+        .collides = true,
+    };
+
+    game_state.changeEntityResidence(entity_index, .high);
+
+    if (game_state.getEntity(game_state.camera_following_entity_index, .dormant).residence == .nonexistent) {
+        game_state.camera_following_entity_index = entity_index;
+    }
+}
+
+fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) void {
+    const tilemap = game_state.world.tilemap;
+
+    const ddp_length_sq = direction.lengthSquared();
+    var ddp = if (ddp_length_sq > 1)
+        direction.mul(1 / @sqrt(ddp_length_sq))
+    else
+        direction;
+
+    const speed: f32 = 50; // ms/s^2
+    ddp = ddp.mul(speed);
+    ddp = ddp.add(entity.high.d_p.mul(-8));
+
+    var player_delta = V2.add(
+        ddp.mul(0.5 * math.square(dt)),
+        entity.high.d_p.mul(dt),
+    );
+    entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
+
+    var t_remaining: f32 = 1;
+    var it_count: usize = 0;
+    var hit_entity_index: usize = 0;
+
+    while (it_count < 4 and t_remaining > 0) : (it_count += 1) {
+        var t_min: f32 = 1;
+        var wall_normal: V2 = .zero;
+
+        for (1..game_state.entity_count) |entity_index| {
+            const test_entity = game_state.getEntity(entity_index, .high);
+            if (test_entity.high == entity.high) continue;
+
+            if (test_entity.dormant.collides) {
+                const diameter = test_entity.dormant.size.add(entity.dormant.size);
+                const min_corner = diameter.mul(-0.5);
+                const max_corner = diameter.mul(0.5);
+
+                const rel = entity.high.p.sub(test_entity.high.p);
+
+                if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                    wall_normal = v2(-1, 0);
+                    hit_entity_index = entity_index;
+                }
+                if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                    wall_normal = v2(1, 0);
+                    hit_entity_index = entity_index;
+                }
+                if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                    wall_normal = v2(0, -1);
+                    hit_entity_index = entity_index;
+                }
+                if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                    wall_normal = v2(0, 1);
+                    hit_entity_index = entity_index;
+                }
+            }
+        }
+
+        entity.high.p = entity.high.p.add(player_delta.mul(t_min));
+
+        if (hit_entity_index > 0) {
+            entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
+            player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
+            t_remaining -= t_min;
+
+            const hit_entity = game_state.getEntity(hit_entity_index, .high);
+            entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_entity.dormant.d_abs_tile_z);
+        } else {
+            break;
+        }
+    }
+
+    entity.high.facing_direction =
+        if (entity.high.d_p.x == 0 and entity.high.d_p.y == 0)
+            entity.high.facing_direction
+        else if (@abs(entity.high.d_p.x) > @abs(entity.high.d_p.y))
+            if (entity.high.d_p.x > 0) .right else .left
+        else if (entity.high.d_p.y > 0) .up else .down;
+
+    entity.dormant.p = game_state.camera_pos.mapIntoTileSpace(tilemap, entity.high.p);
+}
+
+fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
+    const t_epsilon: f32 = 0.0001;
+
+    var hit = false;
+
+    if (delta_x != 0) {
+        const t_result = (wall_x - test_x) / delta_x;
+
+        if (t_result >= 0 and t_min.* > t_result) {
+            const y = test_y + (t_result * delta_y);
+            if (y >= wall_min_y and y <= wall_max_y) {
+                t_min.* = @max(0, t_result - t_epsilon);
+                hit = true;
+            }
+        }
+    }
+
+    return hit;
+}
+
+pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
+    _ = game_state;
+    // _ = tone_hz;
+    // const tone_volume = 4000;
+    // const wave_period = @as(f32, @floatFromInt(buffer.frames_per_second)) / game_state.tone_hz;
+
+    assert(buffer.frames_len >= 0);
+
+    for (buffer.frames[0..buffer.frames_len]) |*frame| {
+        // const sine_value: f32 = intrinsics.sin(game_state.t_sine);
+        // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
+        // sample_value = 0;
+        const sample_value: i16 = 0;
+
+        frame.* = .{ .left = sample_value, .right = sample_value };
+
+        // game_state.t_sine += std.math.tau / wave_period;
+        // if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
+    }
+}
 
 pub export fn init(thread_context: *ThreadContext, game_memory: *Memory) callconv(.c) void {
     _ = thread_context;
@@ -253,7 +538,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         var door_up = false;
         var door_down = false;
 
-        for (0..100) |_| {
+        for (0..1) |_| {
             const random_number = Random.random_number_table[next_random_number_index];
             next_random_number_index += 1;
 
@@ -449,8 +734,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     screen_center.x - (meters_to_pixels * camera_pos._offset.x) + @as(f32, @floatFromInt(rel_column * @as(i32, @intCast(tile_size_in_pixels)))),
                     screen_center.y + (meters_to_pixels * camera_pos._offset.y) - @as(f32, @floatFromInt(rel_row * @as(i32, @intCast(tile_size_in_pixels)))),
                 );
-                const min = center.sub(half_tile_size.mul(0.95));
-                const max = center.add(half_tile_size.mul(0.95));
+                const min = center.sub(half_tile_size.mul(0.9));
+                const max = center.add(half_tile_size.mul(0.9));
                 // const min = center.sub(half_tile_size);
                 // const max = center.add(half_tile_size);
 
@@ -506,295 +791,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     return keep_running;
 }
 
-fn initPlayer(game_state: *GameState, entity_index: usize) void {
-    const entity = game_state.getEntity(entity_index, .dormant);
-
-    entity.dormant.* = .{
-        .p = .{
-            .abs_tile_x = 1,
-            .abs_tile_y = 3,
-            .chunk_z = 0,
-        },
-        .size = v2(1, 0.5),
-        .collides = true,
-    };
-
-    game_state.changeEntityResidence(entity_index, .high);
-
-    if (game_state.getEntity(game_state.camera_following_entity_index, .dormant).residence == .nonexistent) {
-        game_state.camera_following_entity_index = entity_index;
-    }
-}
-
-fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) void {
-    const tilemap = game_state.world.tilemap;
-
-    const ddp_length_sq = direction.lengthSquared();
-    var ddp = if (ddp_length_sq > 1)
-        direction.mul(1 / @sqrt(ddp_length_sq))
-    else
-        direction;
-
-    const speed: f32 = 50; // ms/s^2
-    ddp = ddp.mul(speed);
-    ddp = ddp.add(entity.high.d_p.mul(-8));
-
-    var player_delta = V2.add(
-        ddp.mul(0.5 * math.square(dt)),
-        entity.high.d_p.mul(dt),
-    );
-    entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
-
-    var t_remaining: f32 = 1;
-    var it_count: usize = 0;
-    var hit_entity_index: usize = 0;
-
-    while (it_count < 4 and t_remaining > 0) : (it_count += 1) {
-        var t_min: f32 = 1;
-        var wall_normal: V2 = .zero;
-
-        for (1..game_state.entity_count) |entity_index| {
-            const test_entity = game_state.getEntity(entity_index, .high);
-            if (test_entity.high == entity.high) continue;
-
-            if (test_entity.dormant.collides) {
-                const diameter = test_entity.dormant.size.add(entity.dormant.size);
-                const min_corner = diameter.mul(-0.5);
-                const max_corner = diameter.mul(0.5);
-
-                const rel = entity.high.p.sub(test_entity.high.p);
-
-                if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                    wall_normal = v2(-1, 0);
-                    hit_entity_index = entity_index;
-                }
-                if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                    wall_normal = v2(1, 0);
-                    hit_entity_index = entity_index;
-                }
-                if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                    wall_normal = v2(0, -1);
-                    hit_entity_index = entity_index;
-                }
-                if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                    wall_normal = v2(0, 1);
-                    hit_entity_index = entity_index;
-                }
-            }
-        }
-
-        entity.high.p = entity.high.p.add(player_delta.mul(t_min));
-
-        if (hit_entity_index > 0) {
-            entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
-            player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
-            t_remaining -= t_min;
-
-            const hit_entity = game_state.getEntity(hit_entity_index, .high);
-            entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_entity.dormant.d_abs_tile_z);
-        } else {
-            break;
-        }
-    }
-
-    entity.high.facing_direction =
-        if (entity.high.d_p.x == 0 and entity.high.d_p.y == 0)
-            entity.high.facing_direction
-        else if (@abs(entity.high.d_p.x) > @abs(entity.high.d_p.y))
-            if (entity.high.d_p.x > 0) .right else .left
-        else if (entity.high.d_p.y > 0) .up else .down;
-
-    entity.dormant.p = game_state.camera_pos.mapIntoTileSpace(tilemap, entity.high.p);
-}
-
-fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
-    const t_epsilon: f32 = 0.0001;
-
-    var hit = false;
-
-    if (delta_x != 0) {
-        const t_result = (wall_x - test_x) / delta_x;
-
-        if (t_result >= 0 and t_min.* > t_result) {
-            const y = test_y + (t_result * delta_y);
-            if (y >= wall_min_y and y <= wall_max_y) {
-                t_min.* = @max(0, t_result - t_epsilon);
-                hit = true;
-            }
-        }
-    }
-
-    return hit;
-}
-
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
     _ = thread_context;
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
     outputSound(game_state, sound_buffer);
-}
-
-pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
-    _ = game_state;
-    // _ = tone_hz;
-    // const tone_volume = 4000;
-    // const wave_period = @as(f32, @floatFromInt(buffer.frames_per_second)) / game_state.tone_hz;
-
-    assert(buffer.frames_len >= 0);
-
-    for (buffer.frames[0..buffer.frames_len]) |*frame| {
-        // const sine_value: f32 = intrinsics.sin(game_state.t_sine);
-        // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
-        // sample_value = 0;
-        const sample_value: i16 = 0;
-
-        frame.* = .{ .left = sample_value, .right = sample_value };
-
-        // game_state.t_sine += std.math.tau / wave_period;
-        // if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
-    }
-}
-
-pub const ColorU8ARGB = packed struct(u32) {
-    b: u8,
-    g: u8,
-    r: u8,
-    a: u8,
-
-    pub inline fn asU32(this: ColorU8ARGB) u32 {
-        return @bitCast(this);
-    }
-
-    pub inline fn fromU32(int: u32) ColorU8ARGB {
-        return @bitCast(int);
-    }
-
-    pub inline fn fromF32RGB(rf: f32, gf: f32, bf: f32) ColorU8ARGB {
-        return .{
-            .r = @intFromFloat(rf * 255),
-            .g = @intFromFloat(gf * 255),
-            .b = @intFromFloat(bf * 255),
-            .a = 255,
-        };
-    }
-};
-
-pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32, b: f32) void {
-    const pitch: usize = @intCast(buffer.pitch);
-    const bpp: usize = @intCast(buffer.bytes_per_pixel);
-
-    const buffer_width_f: f32 = @floatFromInt(buffer.width);
-    const buffer_height_f: f32 = @floatFromInt(buffer.height);
-
-    const minx: usize = @round(@min(@max(min.x, 0), buffer_width_f));
-    const miny: usize = @round(@min(@max(min.y, 0), buffer_height_f));
-    const maxx: usize = @round(@min(@max(max.x, 0), buffer_width_f));
-    const maxy: usize = @round(@min(@max(max.y, 0), buffer_height_f));
-
-    assert(bpp == @sizeOf(u32));
-
-    const color = ColorU8ARGB.fromF32RGB(r, g, b);
-
-    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
-    var y: usize = @intCast(miny);
-    while (y < maxy) : (y += 1) {
-        var pixel: [*]u32 = @ptrCast(@alignCast(row));
-        var x: usize = @intCast(minx);
-        while (x < maxx) : (x += 1) {
-            pixel[0] = color.asU32();
-            pixel += 1;
-        }
-
-        row += pitch;
-    }
-}
-
-const DrawBitmapOptions = struct {
-    center: V2 = V2.zero,
-    c_alpha: f32 = 1,
-};
-
-pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f32, o: DrawBitmapOptions) void {
-    const pitch: usize = @intCast(buffer.pitch);
-    const bpp: usize = @intCast(buffer.bytes_per_pixel);
-
-    const real_x: f32 = px - o.center.x;
-    const real_y: f32 = py - o.center.y;
-
-    var min_x: i32 = @round(real_x);
-    var min_y: i32 = @round(real_y);
-    var max_x: i32 = min_x + @as(i32, @intCast(bitmap.width));
-    var max_y: i32 = min_y + @as(i32, @intCast(bitmap.height));
-
-    var source_offset_x: u32 = 0;
-    if (min_x < 0) {
-        source_offset_x = @intCast(-min_x);
-        min_x = 0;
-    }
-
-    var source_offset_y: u32 = 0;
-    if (min_y < 0) {
-        source_offset_y = @intCast(-min_y);
-        min_y = 0;
-    }
-
-    if (max_x > buffer.width) {
-        max_x = @intCast(buffer.width);
-    }
-
-    if (max_y > buffer.height) {
-        max_y = @intCast(buffer.height);
-    }
-
-    const minx: u32 = @intCast(min_x);
-    const miny: u32 = @intCast(min_y);
-    const maxx: u32 = @intCast(max_x);
-    const maxy: u32 = @intCast(max_y);
-
-    // TEMPORARY
-    if (bitmap.pixels.len == 0) return;
-    // TEMPORARY
-
-    var source_row: [*]align(1) u32 = bitmap.pixels.ptr + (bitmap.width * (bitmap.height - 1)) + source_offset_x - (bitmap.width * source_offset_y);
-    var dest_row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
-
-    var y: usize = @intCast(miny);
-    while (y < maxy) : (y += 1) {
-        var source: [*]align(1) u32 = source_row;
-        var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
-
-        var x: usize = @intCast(minx);
-        while (x < maxx) : (x += 1) {
-            const sc = ColorU8ARGB.fromU32(source[0]);
-            const dc = ColorU8ARGB.fromU32(dest[0]);
-
-            const a: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * o.c_alpha);
-
-            const sr: f32 = sc.r;
-            const sg: f32 = sc.g;
-            const sb: f32 = sc.b;
-
-            const dr: f32 = dc.r;
-            const dg: f32 = dc.g;
-            const db: f32 = dc.b;
-
-            const r: f32 = (1 - a) * dr + a * sr;
-            const g: f32 = (1 - a) * dg + a * sg;
-            const b: f32 = (1 - a) * db + a * sb;
-
-            dest[0] = (ColorU8ARGB{
-                .r = @intFromFloat(r + 0.5),
-                .g = @intFromFloat(g + 0.5),
-                .b = @intFromFloat(b + 0.5),
-                .a = 255,
-            }).asU32();
-
-            source += 1;
-            dest += 1;
-        }
-
-        dest_row += @intCast(buffer.pitch);
-        source_row -= bitmap.width;
-    }
 }
 
 pub const DEBUG = struct {
