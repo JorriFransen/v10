@@ -7,9 +7,12 @@ const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
 var use_llvm: bool = false;
+var tools_optimize: OptimizeMode = .ReleaseSafe;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
+var cross_compile = false;
+var compile_assets_from_engine = true;
 
 const src_path = "src";
 
@@ -17,16 +20,25 @@ pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
     const native_target = b.resolveTargetQuery(.{});
+    cross_compile = !target.query.eql(native_target.query);
 
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse use_llvm;
     if (target.result.os.tag == .windows) use_llvm = true;
 
     internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
+    tools_optimize = b.option(OptimizeMode, "tools_optimize", "Optimization mode for tools") orelse tools_optimize;
+
     verbose_wayland = b.option(bool, "verbose_wayland", "Verbose wayland logging") orelse verbose_wayland;
+
+    compile_assets_from_engine = internal_build and !cross_compile;
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
+    if (internal_build) {
+        options.addOption(bool, "cross_compile", cross_compile);
+    }
     options.addOption(bool, "debug", optimize == .Debug);
+    options.addOption(OptimizeMode, "tools_optimize", tools_optimize);
 
     const options_module = options.createModule();
 
@@ -67,6 +79,9 @@ pub fn build(b: *Build) !void {
         },
     });
 
+    const cli_parse_dep = b.dependency("zig_cli_parse", .{});
+    const clip_module = cli_parse_dep.module("CliParse");
+
     var modules = Modules{
         .options = options_module,
         .arch = arch_module,
@@ -74,6 +89,7 @@ pub fn build(b: *Build) !void {
         .win32 = win32_module,
         .memory = mem_module,
         .dynlib = dynlib_module,
+        .clip = clip_module,
         .xml = b.createModule(.{
             .optimize = optimize,
             .root_source_file = b.path(src_path ++ "/xml.zig"),
@@ -83,17 +99,17 @@ pub fn build(b: *Build) !void {
         }),
     };
 
-    const tools_optimize: OptimizeMode = .ReleaseSafe;
-    const tools = try buildTools(b, optimize, tools_optimize, native_target, &modules);
+    const tools = try Tools.build(b, native_target, target, &modules);
 
-    const engine = try buildEngine(b, optimize, target, &modules);
-    const game = try buildGameLib(b, optimize, target, &modules);
-    engine.run.step.dependOn(&game.install.step);
+    const engine = try buildEngine(b, optimize, target, &modules, &tools);
+    const game = try buildGameLib(b, optimize, target, &engine);
 
-    if (try buildAssets(b, &tools)) |assets| {
-        engine.run.step.dependOn(assets);
-        game.install.step.dependOn(assets);
-    }
+    const assets = try buildAssets(b, &engine, &tools);
+
+    _ = game;
+    _ = assets;
+
+    try buildTests(b, &modules);
 }
 
 const Modules = struct {
@@ -104,22 +120,25 @@ const Modules = struct {
     memory: *Build.Module,
     dynlib: *Build.Module,
     xml: *Build.Module,
-    wayland: ?*Build.Module = null,
+    clip: *Build.Module,
 };
 
 const Engine = struct {
     build: *Step.Compile,
     install: *Step.InstallArtifact,
     run: *Step.Run,
+
+    modules: *const Modules,
+    tools: *const Tools,
 };
 
-fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !Engine {
+fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !Engine {
     const os = target.result.os.tag;
 
     const exe = switch (os) {
         else => return error.PlatformNotSupported,
         .windows => try buildEngineWindows(b, optimize, target, modules),
-        .linux => try buildEngineLinux(b, optimize, target, modules),
+        .linux => try buildEngineLinux(b, optimize, target, modules, tools),
     };
     exe.root_module.addImport("mem", modules.memory);
     exe.root_module.addImport("options", modules.options);
@@ -128,18 +147,21 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     b.getInstallStep().dependOn(&exe_install.step);
 
     const run_exe = b.addRunArtifact(exe);
-    run_exe.step.dependOn(&exe_install.step);
+    run_exe.step.dependOn(b.getInstallStep()); // To ensure we run the installed exe, not the one in cache
+
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
     // run_exe.setCwd(b.graph.path(.install_prefix, ""));
     // run_exe.addPassthruArgs();
-    run_exe.setCwd(std.Build.LazyPath{ .cwd_relative = b.install_prefix });
+    run_exe.setCwd(b.path("data/"));
     if (b.args) |a| run_exe.addArgs(a);
 
     return .{
         .build = exe,
         .install = exe_install,
         .run = run_exe,
+        .modules = modules,
+        .tools = tools,
     };
 }
 
@@ -175,13 +197,23 @@ const LinuxAudioImplementation = enum {
     pulsePull,
 };
 
-fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !*Step.Compile {
+fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
     linux_audio_impl = b.option(LinuxAudioImplementation, "linux_audio_impl", "Linux audio implementation") orelse linux_audio_impl;
 
     var linux_options = b.addOptions();
     linux_options.addOption(LinuxAudioImplementation, "linux_audio_impl", linux_audio_impl);
-
     const linux_options_module = linux_options.createModule();
+
+    const wayland_module = tools.wayland_gen.?.module(
+        b,
+        optimize,
+        modules,
+        "vendor/wayland/wayland.xml",
+        &.{
+            "vendor/wayland/xdg_shell.xml",
+            "vendor/wayland/xdg-decoration-unstable-v1.xml",
+        },
+    );
 
     const root_module = b.addModule("main", .{
         .optimize = optimize,
@@ -192,7 +224,7 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
             .{ .name = "arch", .module = modules.arch },
             .{ .name = "linux", .module = modules.linux },
             .{ .name = "dynlib", .module = modules.dynlib },
-            .{ .name = "wayland", .module = modules.wayland.? },
+            .{ .name = "wayland", .module = wayland_module },
             .{ .name = "linux_options", .module = linux_options_module },
         },
     });
@@ -211,13 +243,13 @@ const Game = struct {
     install: *Step.InstallArtifact,
 };
 
-fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !Game {
+fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engine: *const Engine) !Game {
     const game_root_module = b.addModule("gamelib", .{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/v10.zig"),
         .imports = &.{
-            .{ .module = modules.options, .name = "options" },
+            .{ .module = engine.modules.options, .name = "options" },
         },
     });
 
@@ -232,6 +264,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
         .override = .prefix,
     } });
     b.getInstallStep().dependOn(&lib_install.step);
+    engine.run.step.dependOn(&lib_install.step);
 
     if (lib_install.implib_dir) |_| {
         lib_install.implib_dir = null;
@@ -243,135 +276,146 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modul
     };
 }
 
-// TODO: Maybe merge this with 'Modules'?
 const Tools = struct {
-    aseprite_script_runner: ?*Step.Compile,
-};
+    pub const WaylandGen = struct {
+        gen_exe: *Step.Compile,
+        options_module: *Build.Module,
 
-fn buildTools(b: *Build, optimize: OptimizeMode, tools_optimize: OptimizeMode, native_target: ResolvedTarget, modules: *Modules) !Tools {
-    const cli_parse_dep = b.dependency("zig_cli_parse", .{});
+        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?WaylandGen {
+            const options = b.addOptions();
+            options.addOption(bool, "verbose_wayland", verbose_wayland);
+            const options_module = options.createModule();
 
-    const options = b.addOptions();
-    options.addOption(bool, "verbose_wayland", verbose_wayland);
-    const options_module = options.createModule();
+            const wayland_gen_exe = b.addExecutable(.{
+                .name = "wayland_gen",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("tools/wayland_gen/src/wayland_generator.zig"),
+                    .target = tools_target,
+                    .optimize = tools_optimize,
+                    .imports = &.{
+                        .{ .name = "xml", .module = modules.xml },
+                        .{ .name = "mem", .module = modules.memory },
+                        .{ .name = "clip", .module = modules.clip },
+                        .{ .name = "options", .module = options_module },
+                    },
+                }),
+                .use_llvm = use_llvm,
+            });
+            wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/client.zig") });
+            wayland_gen_exe.root_module.addAnonymousImport("lib/root_template.zig", .{ .root_source_file = b.path("tools/wayland_gen/lib/root_template.zig") });
 
-    const wayland_gen_exe = b.addExecutable(.{
-        .name = "wayland-gen",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/wayland-gen/src/wayland_generator.zig"),
-            .target = native_target,
-            .optimize = tools_optimize,
-            .imports = &.{
-                .{ .name = "xml", .module = modules.xml },
-                .{ .name = "mem", .module = modules.memory },
-                .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
-                .{ .name = "options", .module = options_module },
-            },
-        }),
-        .use_llvm = use_llvm,
-    });
-    wayland_gen_exe.root_module.addAnonymousImport("lib/client.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/client.zig") });
-    wayland_gen_exe.root_module.addAnonymousImport("lib/root_template.zig", .{ .root_source_file = b.path("tools/wayland-gen/lib/root_template.zig") });
+            return .{ .gen_exe = wayland_gen_exe, .options_module = options_module };
+        }
 
-    // b.installArtifact(exe);
+        pub fn module(this: *const WaylandGen, b: *Build, optimize: OptimizeMode, modules: *const Modules, core_xml_path: []const u8, protocol_xml_paths: []const []const u8) *Build.Module {
+            const run_wayland_gen_exe = b.addRunArtifact(this.gen_exe);
 
-    const run_wayland_gen_exe = b.addRunArtifact(wayland_gen_exe);
-    const run_wayland_gen_exe_step = b.step("wayland-gen", "Generate wayland bindings");
-    run_wayland_gen_exe_step.dependOn(&run_wayland_gen_exe.step);
-    run_wayland_gen_exe.setCwd(b.path("."));
+            _ = run_wayland_gen_exe.addPrefixedFileArg("--wayland=", b.path(core_xml_path));
+            for (protocol_xml_paths) |protocol_xml_path| {
+                _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path(protocol_xml_path));
+            }
 
-    _ = run_wayland_gen_exe.addPrefixedFileArg("--wayland=", b.path("vendor/wayland/wayland.xml"));
-    _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg_shell.xml"));
-    _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path("vendor/wayland/xdg-decoration-unstable-v1.xml"));
+            const wayland_source_dir = run_wayland_gen_exe.addPrefixedOutputDirectoryArg("--out=", "wayland");
 
-    const wayland_source_dir = run_wayland_gen_exe.addPrefixedOutputDirectoryArg("--out=", "wayland");
-    assert(modules.wayland == null);
+            const result = b.createModule(.{
+                .optimize = optimize,
+                .root_source_file = wayland_source_dir.path(b, "root.zig"),
+                .imports = &.{
+                    .{ .name = "linux", .module = modules.linux },
+                    .{ .name = "options", .module = this.options_module },
+                },
+            });
 
-    assert(modules.wayland == null);
+            return result;
+        }
+    };
 
-    modules.wayland = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = wayland_source_dir.path(b, "root.zig"),
-        .imports = &.{
-            .{ .name = "linux", .module = modules.linux },
-            .{ .name = "options", .module = options_module },
-        },
-    });
+    pub const AssetCompiler = struct {
+        exe: *Step.Compile,
+        module: *Build.Module,
 
-    // TODO: Pass the result of findprogram to the runner
-    // const aseprite_script_runner_exe = if (b.findProgram(.{ .names = &.{"aseprite"} })) |_|
-    const aseprite_script_runner_exe = if (b.findProgram(&.{"aseprite"}, &.{})) |_|
-        b.addExecutable(.{
-            .name = "aseprite-script-runner",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("tools/aseprite/script_runner.zig"),
-                .target = native_target,
+        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) !AssetCompiler {
+            const aseprite_exe = try b.findProgram(&.{"aseprite"}, &.{});
+
+            const options = b.addOptions();
+            options.addOption([]const u8, "aseprite_exe_path", aseprite_exe);
+            options.addOptionPath("aseprite_script_path", b.path("tools/aseprite/"));
+
+            const option_module = options.createModule();
+
+            const root_module = b.createModule(.{
+                .root_source_file = b.path("tools/asset_compiler/asset_compiler.zig"),
+                .target = tools_target,
                 .optimize = tools_optimize,
                 .imports = &.{
-                    .{ .name = "mem", .module = modules.memory },
-                    .{ .name = "clip", .module = cli_parse_dep.module("CliParse") },
+                    .{ .name = "clip", .module = modules.clip },
+                    .{ .name = "options", .module = option_module },
                 },
-            }),
-            .use_llvm = use_llvm,
-        })
-    else |_|
-        null;
+            });
 
-    return .{
-        .aseprite_script_runner = aseprite_script_runner_exe,
+            const asset_compiler_exe = b.addExecutable(.{
+                .name = "asset_compiler",
+                .root_module = root_module,
+                .use_llvm = use_llvm,
+            });
+
+            b.installArtifact(asset_compiler_exe);
+
+            return .{
+                .exe = asset_compiler_exe,
+                .module = root_module,
+            };
+        }
     };
+
+    wayland_gen: ?WaylandGen,
+    asset_compiler: AssetCompiler,
+
+    fn build(b: *Build, tools_target: ResolvedTarget, target: ResolvedTarget, modules: *Modules) !Tools {
+        const result: Tools = .{
+            .wayland_gen = if (target.result.os.tag == .linux)
+                WaylandGen.build(b, tools_target, modules)
+            else
+                null,
+
+            .asset_compiler = try AssetCompiler.build(b, tools_target, modules),
+        };
+
+        return result;
+    }
+};
+
+pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools) !*Step {
+    const asset_step = b.step("assets", "compile assets");
+
+    if (compile_assets_from_engine) {
+        engine.build.root_module.addImport("asset_compiler", tools.asset_compiler.module);
+    } else {
+        const asset_compiler_run = b.addRunArtifact(tools.asset_compiler.exe);
+        asset_step.dependOn(&asset_compiler_run.step);
+
+        if (b.verbose) {
+            asset_compiler_run.addArg("-v");
+        }
+
+        asset_compiler_run.addPrefixedDirectoryArg("-i", b.path("data"));
+        asset_compiler_run.addPrefixedDirectoryArg("-o", b.path("data/test"));
+    }
+
+    b.getInstallStep().dependOn(asset_step);
+    engine.run.step.dependOn(asset_step);
+
+    return asset_step;
 }
 
-pub fn buildAssets(b: *Build, tools: *const Tools) !?*Step {
-    // TODO: Check for asprite availability
+pub fn buildTests(b: *Build, modules: *const Modules) !void {
+    const test_step = b.step("test", "run all tests");
+    const test_install_step = b.step("test_install", "install tests");
 
-    var assets: ?*Step = null;
+    const clip_test_exe = b.addTest(.{ .root_module = modules.clip, .name = "clip_test" });
+    const clip_test_run = b.addRunArtifact(clip_test_exe);
+    const clip_test_install = b.addInstallArtifact(clip_test_exe, .{ .dest_dir = .{ .override = .{ .custom = "test" } } });
 
-    if (tools.aseprite_script_runner) |script_runner| {
-        assets = createAspriteExportRunner(b, script_runner, "assets", true);
-
-        _ = createAspriteExportRunner(b, script_runner, "force-assets", false);
-    }
-
-    return assets;
-}
-
-pub fn createAspriteExportRunner(b: *Build, script_runner: *Step.Compile, name: []const u8, donefile: bool) *Step {
-    const asprite_extract_files: []const []const u8 = &.{
-        "data/test_background.aseprite",
-        "data/test_hero_shadow.aseprite",
-    };
-    const asprite_extract_layers_recursive_files: []const []const u8 = &.{
-        "data/test_hero.aseprite",
-    };
-
-    const assets = b.step(name, "Generate assets from raw art files");
-
-    const extract_lua_path = "tools/aseprite/scripts/extract.lua";
-    const extract = b.step(b.fmt("{s}: {s}", .{ name, extract_lua_path }), "Extract bmp from aseprite file");
-    assets.dependOn(extract);
-
-    for (asprite_extract_files) |input_file| {
-        const run_extract = b.addRunArtifact(script_runner);
-        run_extract.setName(input_file);
-        run_extract.addPrefixedFileArg("-s", b.path(extract_lua_path));
-        run_extract.addPrefixedFileArg("-i", b.path(input_file));
-        if (donefile) _ = run_extract.addPrefixedOutputFileArg("-d", "done");
-        extract.dependOn(&run_extract.step);
-    }
-
-    const extract_layers_recursive_lua_path = "tools/aseprite/scripts/extract_layers_recursive.lua";
-    const extract_layers_recursive = b.step(b.fmt("{s}: {s}", .{ name, extract_layers_recursive_lua_path }), "Extract bmps from each layer of aseprite file");
-    assets.dependOn(extract_layers_recursive);
-
-    for (asprite_extract_layers_recursive_files) |input_file| {
-        const run_extract_layers_recursive = b.addRunArtifact(script_runner);
-        run_extract_layers_recursive.setName(input_file);
-        run_extract_layers_recursive.addPrefixedFileArg("-s", b.path("tools/aseprite/scripts/extract_layers_recursive.lua"));
-        run_extract_layers_recursive.addPrefixedFileArg("-i", b.path(input_file));
-        if (donefile) _ = run_extract_layers_recursive.addPrefixedOutputFileArg("-d", "done");
-        extract_layers_recursive.dependOn(&run_extract_layers_recursive.step);
-    }
-
-    return assets;
+    test_step.dependOn(&clip_test_run.step);
+    test_install_step.dependOn(&clip_test_install.step);
 }

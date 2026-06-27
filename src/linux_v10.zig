@@ -5,6 +5,7 @@ const options = @import("options");
 const linux_options = @import("linux_options");
 const builtin = @import("builtin");
 const DynLib = @import("dynlib");
+const asset_compiler = @import("asset_compiler");
 
 const platform = @import("v10_platform.zig");
 
@@ -69,6 +70,13 @@ const use_debug_allocator = switch (builtin.mode) {
 };
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
+var stderr_buf: [2048]u8 = undefined;
+var stderr: *std.Io.Writer = undefined;
+var stdout_buf: [2048]u8 = undefined;
+var stdout: *std.Io.Writer = undefined;
+
+pub const std_options = platform.std_options;
+
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = if (use_debug_allocator)
         debug_allocator.allocator()
@@ -87,6 +95,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     const io = threaded.io();
 
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
+    stderr = &stderr_writer.interface;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    stdout = &stdout_writer.interface;
+    defer {
+        stderr.flush() catch {};
+        stdout.flush() catch {};
+    }
+
     defer {
         if (use_debug_allocator) {
             _ = debug_allocator.detectLeaks();
@@ -98,17 +115,25 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .io = &io,
     };
 
+    try platform.runAssetCompiler(io, gpa, stderr, stdout);
+
     const prng_seed = std.Io.Timestamp.now(io, .real).toNanoseconds();
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
 
     var shared_state: platform.SharedState = .{};
 
+    const cwd_len = try std.process.currentPath(io, &shared_state.cwd_buf);
+    shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
+    log.debug("cwd: '{s}'", .{shared_state.cwd});
+
     const exe_dir_path_len = try std.process.executableDirPath(io, &shared_state.exe_dir_path_buf);
     shared_state.exe_dir_path = shared_state.exe_dir_path_buf[0..exe_dir_path_len];
+    log.debug("exe_dir_path: {s}", .{shared_state.exe_dir_path});
 
-    var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
+    log.debug("game_lib_name: {s}", .{game_lib_name});
 
     const display = wlc.displayConnect(null, &init.environ) orelse {
         log.err("wl_display_connect failed", .{});
