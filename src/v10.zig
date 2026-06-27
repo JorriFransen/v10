@@ -416,13 +416,14 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
     );
     entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
 
-    var t_remaining: f32 = 1;
     var it_count: usize = 0;
     var hit_entity_index: usize = 0;
 
-    while (it_count < 4 and t_remaining > 0) : (it_count += 1) {
+    while (it_count < 4) : (it_count += 1) {
         var t_min: f32 = 1;
         var wall_normal: V2 = .zero;
+
+        const desired_position = entity.high.p.add(player_delta);
 
         for (1..game_state.entity_count) |entity_index| {
             const test_entity = game_state.getEntity(entity_index, .high);
@@ -457,8 +458,8 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
 
         if (hit_entity_index > 0) {
             entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
+            player_delta = desired_position.sub(entity.high.p);
             player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
-            t_remaining -= t_min;
 
             const hit_entity = game_state.getEntity(hit_entity_index, .high);
             entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_entity.dormant.d_abs_tile_z);
@@ -761,31 +762,31 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         const entity_p = cam_following_entity.high.p;
 
-        // const x_bound_offset: i32 = @round(@as(f32, screen_tile_width) / 2);
-        // if (entity_p.x > (x_bound_offset) * tilemap.tile_size_in_meters) {
-        //     new_cam_p.abs_tile_x += screen_tile_width;
-        // } else if (entity_p.x < -(x_bound_offset) * tilemap.tile_size_in_meters) {
-        //     new_cam_p.abs_tile_x -= screen_tile_width;
+        const x_bound_offset: i32 = @round(@as(f32, screen_tile_width) / 2);
+        if (entity_p.x > (x_bound_offset) * tilemap.tile_size_in_meters) {
+            new_cam_p.abs_tile_x += screen_tile_width;
+        } else if (entity_p.x < -(x_bound_offset) * tilemap.tile_size_in_meters) {
+            new_cam_p.abs_tile_x -= screen_tile_width;
+        }
+
+        const y_bound_offset: i32 = @round(@as(f32, screen_tile_height) / 2);
+        if (entity_p.y > (y_bound_offset) * tilemap.tile_size_in_meters) {
+            new_cam_p.abs_tile_y += screen_tile_height;
+        } else if (entity_p.y < -(y_bound_offset) * tilemap.tile_size_in_meters) {
+            new_cam_p.abs_tile_y -= screen_tile_height;
+        }
+
+        // if (entity_p.x > (1) * tilemap.tile_size_in_meters) {
+        //     new_cam_p.abs_tile_x += 1;
+        // } else if (entity_p.x < -(1) * tilemap.tile_size_in_meters) {
+        //     new_cam_p.abs_tile_x -= 1;
         // }
         //
-        // const y_bound_offset: i32 = @round(@as(f32, screen_tile_height) / 2);
-        // if (entity_p.y > (y_bound_offset) * tilemap.tile_size_in_meters) {
-        //     new_cam_p.abs_tile_y += screen_tile_height;
-        // } else if (entity_p.y < -(y_bound_offset) * tilemap.tile_size_in_meters) {
-        //     new_cam_p.abs_tile_y -= screen_tile_height;
+        // if (entity_p.y > (1) * tilemap.tile_size_in_meters) {
+        //     new_cam_p.abs_tile_y += 1;
+        // } else if (entity_p.y < -(1) * tilemap.tile_size_in_meters) {
+        //     new_cam_p.abs_tile_y -= 1;
         // }
-
-        if (entity_p.x > (1) * tilemap.tile_size_in_meters) {
-            new_cam_p.abs_tile_x += 1;
-        } else if (entity_p.x < -(1) * tilemap.tile_size_in_meters) {
-            new_cam_p.abs_tile_x -= 1;
-        }
-
-        if (entity_p.y > (1) * tilemap.tile_size_in_meters) {
-            new_cam_p.abs_tile_y += 1;
-        } else if (entity_p.y < -(1) * tilemap.tile_size_in_meters) {
-            new_cam_p.abs_tile_y -= 1;
-        }
 
         game_state.setCamera(new_cam_p);
     }
