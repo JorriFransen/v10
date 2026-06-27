@@ -4,9 +4,10 @@ script_dir="$(dirname "$(realpath "$0")")"
 common_script_path="$(realpath "$script_dir/common.py")"
 root_dir="$(realpath "$script_dir/..")"
 zig_out_dir="$(realpath "$root_dir/zig-out")"
+data_dir="$(realpath "$root_dir/data")"
 exe="$(realpath "$zig_out_dir/v10")"
 
-pushd "$zig_out_dir" || exit 1
+pushd "$data_dir" || exit 1
 
 
 lldb-zig  "$exe"  \

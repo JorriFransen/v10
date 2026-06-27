@@ -11,6 +11,8 @@ var tools_optimize: OptimizeMode = .ReleaseSafe;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
+var cross_compile = false;
+var compile_assets_from_engine = true;
 
 const src_path = "src";
 
@@ -18,18 +20,25 @@ pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
     const native_target = b.resolveTargetQuery(.{});
+    cross_compile = !target.query.eql(native_target.query);
 
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse use_llvm;
     if (target.result.os.tag == .windows) use_llvm = true;
 
+    internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
     tools_optimize = b.option(OptimizeMode, "tools_optimize", "Optimization mode for tools") orelse tools_optimize;
 
-    internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
     verbose_wayland = b.option(bool, "verbose_wayland", "Verbose wayland logging") orelse verbose_wayland;
+
+    compile_assets_from_engine = internal_build and !cross_compile;
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
+    if (internal_build) {
+        options.addOption(bool, "cross_compile", cross_compile);
+    }
     options.addOption(bool, "debug", optimize == .Debug);
+    options.addOption(OptimizeMode, "tools_optimize", tools_optimize);
 
     const options_module = options.createModule();
 
@@ -94,16 +103,11 @@ pub fn build(b: *Build) !void {
 
     const engine = try buildEngine(b, optimize, target, &modules, &tools);
     const game = try buildGameLib(b, optimize, target, &engine);
-    engine.run.step.dependOn(&game.install.step);
 
-    const assets = try buildAssets(b);
+    const assets = try buildAssets(b, &engine, &tools);
 
-    // temporary
-    assets.dependOn(&tools.asset_compiler.exe.step);
-    b.installArtifact(tools.asset_compiler.exe);
-
-    engine.run.step.dependOn(assets);
-    game.build.step.dependOn(assets);
+    _ = game;
+    _ = assets;
 
     try buildTests(b, &modules);
 }
@@ -143,12 +147,13 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     b.getInstallStep().dependOn(&exe_install.step);
 
     const run_exe = b.addRunArtifact(exe);
-    run_exe.step.dependOn(&exe_install.step);
+    run_exe.step.dependOn(b.getInstallStep()); // To ensure we run the installed exe, not the one in cache
+
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
     // run_exe.setCwd(b.graph.path(.install_prefix, ""));
     // run_exe.addPassthruArgs();
-    run_exe.setCwd(std.Build.LazyPath{ .cwd_relative = b.install_prefix });
+    run_exe.setCwd(b.path("data/"));
     if (b.args) |a| run_exe.addArgs(a);
 
     return .{
@@ -259,6 +264,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
         .override = .prefix,
     } });
     b.getInstallStep().dependOn(&lib_install.step);
+    engine.run.step.dependOn(&lib_install.step);
 
     if (lib_install.implib_dir) |_| {
         lib_install.implib_dir = null;
@@ -326,6 +332,7 @@ const Tools = struct {
 
     pub const AssetCompiler = struct {
         exe: *Step.Compile,
+        module: *Build.Module,
 
         fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) !AssetCompiler {
             const aseprite_exe = try b.findProgram(&.{"aseprite"}, &.{});
@@ -336,21 +343,28 @@ const Tools = struct {
 
             const option_module = options.createModule();
 
+            const root_module = b.createModule(.{
+                .root_source_file = b.path("tools/asset_compiler/asset_compiler.zig"),
+                .target = tools_target,
+                .optimize = tools_optimize,
+                .imports = &.{
+                    .{ .name = "clip", .module = modules.clip },
+                    .{ .name = "options", .module = option_module },
+                },
+            });
+
             const asset_compiler_exe = b.addExecutable(.{
                 .name = "asset_compiler",
-                .root_module = b.createModule(.{
-                    .root_source_file = b.path("tools/asset_compiler/asset_compiler.zig"),
-                    .target = tools_target,
-                    .optimize = tools_optimize,
-                    .imports = &.{
-                        .{ .name = "clip", .module = modules.clip },
-                        .{ .name = "options", .module = option_module },
-                    },
-                }),
+                .root_module = root_module,
                 .use_llvm = use_llvm,
             });
 
-            return .{ .exe = asset_compiler_exe };
+            b.installArtifact(asset_compiler_exe);
+
+            return .{
+                .exe = asset_compiler_exe,
+                .module = root_module,
+            };
         }
     };
 
@@ -371,18 +385,37 @@ const Tools = struct {
     }
 };
 
-pub fn buildAssets(b: *Build) !*Step {
+pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools) !*Step {
     const asset_step = b.step("assets", "compile assets");
+
+    if (compile_assets_from_engine) {
+        engine.build.root_module.addImport("asset_compiler", tools.asset_compiler.module);
+    } else {
+        const asset_compiler_run = b.addRunArtifact(tools.asset_compiler.exe);
+        asset_step.dependOn(&asset_compiler_run.step);
+
+        if (b.verbose) {
+            asset_compiler_run.addArg("-v");
+        }
+
+        asset_compiler_run.addPrefixedDirectoryArg("-i", b.path("data"));
+        asset_compiler_run.addPrefixedDirectoryArg("-o", b.path("data/test"));
+    }
+
+    b.getInstallStep().dependOn(asset_step);
+    engine.run.step.dependOn(asset_step);
 
     return asset_step;
 }
 
 pub fn buildTests(b: *Build, modules: *const Modules) !void {
     const test_step = b.step("test", "run all tests");
+    const test_install_step = b.step("test_install", "install tests");
 
     const clip_test_exe = b.addTest(.{ .root_module = modules.clip, .name = "clip_test" });
-    b.installArtifact(clip_test_exe);
     const clip_test_run = b.addRunArtifact(clip_test_exe);
+    const clip_test_install = b.addInstallArtifact(clip_test_exe, .{ .dest_dir = .{ .override = .{ .custom = "test" } } });
 
     test_step.dependOn(&clip_test_run.step);
+    test_install_step.dependOn(&clip_test_install.step);
 }

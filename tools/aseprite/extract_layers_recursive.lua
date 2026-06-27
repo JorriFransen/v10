@@ -3,11 +3,6 @@ if not sprite then
     return app.alert("No active sprite")
 end
 
--- local out_dir = app.fs.joinPath(app.fs.filePath(sprite.filename), "ttest")
--- if out_dir == "" then
---     out_dir = app.fs.currentPath
--- end
-
 local out_dir = app.params["out_dir"]
 
 local function recursiveExport(name_prefix, layer)

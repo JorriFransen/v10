@@ -1,16 +1,19 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const log = std.log.scoped(.win32_v10);
+const Allocator = std.mem.Allocator;
+
+const builtin = @import("builtin");
+
 const options = @import("options");
 const mem = @import("mem");
 const win32 = @import("win32");
 const xinput = win32.xinput;
 const dsound = win32.direct_sound;
+
 const arch = @import("arch").arch;
-const builtin = @import("builtin");
 
 const platform = @import("v10_platform.zig");
-
-const assert = std.debug.assert;
 
 const GameCode = platform.GameCode;
 const Memory = platform.Memory;
@@ -20,6 +23,13 @@ const ControllerInput = platform.ControllerInput;
 const ButtonState = platform.ButtonState;
 const ThreadContext = platform.ThreadContext;
 const AudioBuffer = platform.AudioBuffer;
+
+var stderr_buf: [2048]u8 = undefined;
+var stderr: *std.Io.Writer = undefined;
+var stdout_buf: [2048]u8 = undefined;
+var stdout: *std.Io.Writer = undefined;
+
+pub const std_options = platform.std_options;
 
 var global_running = false;
 var global_pause = false;
@@ -334,14 +344,23 @@ pub fn main(init: std.process.Init.Minimal) u8 {
     });
     defer threaded.deinit();
 
+    const io = threaded.io();
+
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
+    stderr = &stderr_writer.interface;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    stdout = &stdout_writer.interface;
+    defer {
+        stderr.flush() catch {};
+        stdout.flush() catch {};
+    }
+
     defer {
         if (use_debug_allocator) {
             _ = debug_allocator.detectLeaks();
             _ = debug_allocator.deinit();
         }
     }
-
-    const io = threaded.io();
 
     if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS).toBool() == false) {
         // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
@@ -363,16 +382,24 @@ pub fn main(init: std.process.Init.Minimal) u8 {
     // var startup_info: win32.STARTUPINFOA = undefined;
     // win32.GetStartupInfoA(&startup_info);
 
-    const ret_code = windowsEntry(io, instance) catch 1;
+    const ret_code = windowsEntry(io, gpa, instance) catch 1;
     assert(ret_code >= 0);
     return @intCast(ret_code);
 }
 
 pub fn windowsEntry(
     io: std.Io,
+    gpa: Allocator,
     instance: win32.HINSTANCE,
 ) !c_int {
     var shared_state: platform.SharedState = .{};
+    var thread_context: ThreadContext = .{ .io = &io };
+
+    try platform.runAssetCompiler(io, gpa, stderr, stdout);
+
+    const cwd_len = win32.GetCurrentDirectoryA(shared_state.cwd_buf.len, @ptrCast(&shared_state.cwd_buf));
+    shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
+    log.debug("cwd: '{s}'", .{shared_state.cwd});
 
     _ = win32.GetModuleFileNameA(null, @ptrCast(&shared_state.exe_dir_path_buf), shared_state.exe_dir_path_buf.len);
     const exe_name: [*:0]u8 = @ptrCast(&shared_state.exe_dir_path_buf);
@@ -380,9 +407,9 @@ pub fn windowsEntry(
     shared_state.exe_dir_path = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
     log.debug("exe dir: '{s}'", .{shared_state.exe_dir_path});
 
-    var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    var gamecode_lock_file_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
+    var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
+    var gamecode_lock_file_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
 
     const source_dll_name = try shared_state.buildExePathFilename(&source_dll_name_buf, "v10_game.dll");
     const temp_dll_name = try shared_state.buildExePathFilename(&temp_dll_name_buf, "v10_temp.dll");
@@ -561,8 +588,6 @@ pub fn windowsEntry(
                 var audio_latency_bytes: win32.DWORD = 0;
                 var audio_latency_seconds: f32 = 0;
                 var audio_valid = false;
-
-                var thread_context: ThreadContext = .{ .io = &io };
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
                 var game_code = GameCode.load(io, temp_dll_name);

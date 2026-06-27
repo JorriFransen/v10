@@ -4,7 +4,7 @@ import threading
 def __lldb_init_module(debugger, internal_dict):
    pass
 
-def register_aliases():
+def register_default_aliases():
     lldb.debugger.HandleCommand("command script add -f common.reload_and_launch_alias r")
     lldb.debugger.HandleCommand("command script add -f common.reload_and_launch_alias run")
     lldb.debugger.HandleCommand("command script add -f common.launch_alias launch")

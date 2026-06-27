@@ -1,138 +1,151 @@
 const std = @import("std");
+const log = std.log.scoped(.asset_compiler);
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
 
-const options = @import("options");
+const compile_options = @import("options");
 const clip = @import("clip");
-
-var gpa: Allocator = undefined;
-var arena: Allocator = undefined;
-var io: std.Io = undefined;
 
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
     clip.option(@as([]const u8, ""), "output_dir", 'o', "Output directory"),
+    clip.option(false, "verbose", 'v', "Verbose outout"),
 });
 
-var stderr_buf: [2048]u8 = undefined;
-var stderr_writer: std.Io.File.Writer = undefined;
+pub const Context = struct {
+    io: std.Io,
+    gpa: Allocator,
+    arena: Allocator,
 
-var stdout_buf: [2048]u8 = undefined;
-var stdout_writer: std.Io.File.Writer = undefined;
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+
+    verbose: bool = false,
+};
 
 pub fn main(init: std.process.Init) !u8 {
-    io = init.io;
-    gpa = init.gpa;
-    arena = init.arena.allocator();
-    defer _ = init.arena.reset(.free_all);
+    var stderr_buf: [2048]u8 = undefined;
+    var stderr_writer = std.Io.File.stderr().writer(init.io, &stderr_buf);
 
-    stderr_writer = std.Io.File.stderr().writer(init.io, &stderr_buf);
-    defer stderr_writer.flush() catch unreachable;
+    var stdout_buf: [2048]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
+    defer {
+        stderr_writer.flush() catch {};
+        stdout_writer.flush() catch {};
+    }
 
-    stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
-    defer stdout_writer.flush() catch unreachable;
+    var arg_arena = std.heap.ArenaAllocator.init(init.gpa);
+    defer arg_arena.deinit();
 
-    run(init) catch return 1;
-    return 0;
-}
+    const raw_args = try init.minimal.args.toSlice(arg_arena.allocator());
 
-pub fn run(init: std.process.Init) !void {
-    const cwd = try std.process.currentPathAlloc(io, arena);
+    const context_arena = init.arena.allocator();
 
-    var raw_arg_arena = std.heap.ArenaAllocator.init(gpa);
-    const raw_args = try init.minimal.args.toSlice(raw_arg_arena.allocator());
-
-    const args = OptionParser.parse(raw_args[1..], arena, &stderr_writer.interface) catch |e| switch (e) {
+    const args = OptionParser.parse(raw_args[1..], context_arena, &stderr_writer.interface) catch |e| switch (e) {
         error.OutOfMemory => @panic("OOM"),
         else => {
             try OptionParser.usage(&stderr_writer.interface);
-            _ = raw_arg_arena.reset(.free_all);
             return error.ArgParseError;
         },
     };
-    _ = raw_arg_arena.deinit();
 
     if (args.input_scan_dir.len == 0) {
-        try stdout_writer.interface.print("error: missing argument 'input_scan_dir'\n", .{});
-        try OptionParser.usage(&stdout_writer.interface);
+        try stderr_writer.interface.print("error: missing argument 'input_scan_dir'\n", .{});
+        try OptionParser.usage(&stderr_writer.interface);
         return error.MissingInputScanDir;
     }
 
     if (args.output_dir.len == 0) {
-        try stdout_writer.interface.print("error: missing argument 'output_dir'\n", .{});
-        try OptionParser.usage(&stdout_writer.interface);
+        try stderr_writer.interface.print("error: missing argument 'output_dir'\n", .{});
+        try OptionParser.usage(&stderr_writer.interface);
         return error.MissingOutputDir;
     }
 
+    const context = Context{
+        .io = init.io,
+        .gpa = init.gpa,
+        .arena = init.arena.allocator(),
+        .stdout = &stdout_writer.interface,
+        .stderr = &stderr_writer.interface,
+        .verbose = args.verbose,
+    };
+
+    run(&context, args) catch return 1;
+    return 0;
+}
+
+pub fn run(context: *const Context, options: OptionParser.Options) !void {
+    const cwd = try std.process.currentPathAlloc(context.io, context.arena);
+
     var scan_path: []const u8 = "";
     const scan_dir = dir: {
-        if (std.fs.path.isAbsolute(args.input_scan_dir)) {
-            scan_path = try arena.dupe(u8, args.input_scan_dir);
+        if (std.fs.path.isAbsolute(options.input_scan_dir)) {
+            scan_path = try context.arena.dupe(u8, options.input_scan_dir);
         } else {
-            scan_path = try std.fs.path.resolve(arena, &.{ cwd, args.input_scan_dir });
+            scan_path = try std.fs.path.resolve(context.arena, &.{ cwd, options.input_scan_dir });
         }
 
-        break :dir std.Io.Dir.cwd().openDir(io, args.input_scan_dir, .{ .iterate = true }) catch |e| {
+        break :dir std.Io.Dir.cwd().openDir(context.io, options.input_scan_dir, .{ .iterate = true }) catch |e| {
             std.log.err("Unable to open input dir '{s}'", .{scan_path});
             std.log.err("{s}", .{@errorName(e)});
             return error.InvalidInputScanDir;
         };
     };
-    errdefer scan_dir.close(io);
+    errdefer scan_dir.close(context.io);
 
     var output_dir_path: []const u8 = "";
     const output_dir = dir: {
-        if (std.fs.path.isAbsolute(args.output_dir)) {
-            output_dir_path = try arena.dupe(u8, args.output_dir);
+        if (std.fs.path.isAbsolute(options.output_dir)) {
+            output_dir_path = try context.arena.dupe(u8, options.output_dir);
         } else {
-            output_dir_path = try std.fs.path.resolve(arena, &.{ cwd, args.output_dir });
+            output_dir_path = try std.fs.path.resolve(context.arena, &.{ cwd, options.output_dir });
         }
 
         // TODO: Consider creating the directory if it does not exist
-        break :dir std.Io.Dir.cwd().openDir(io, args.output_dir, .{ .iterate = true }) catch |e| {
+        break :dir std.Io.Dir.cwd().openDir(context.io, options.output_dir, .{ .iterate = true }) catch |e| {
             std.log.err("Unable to open input dir '{s}'", .{output_dir_path});
             std.log.err("{s}", .{@errorName(e)});
             return error.InvalidOutputDir;
         };
     };
-    errdefer output_dir.close(io);
+    errdefer output_dir.close(context.io);
 
-    std.log.debug("input_scan_dir: '{s}'", .{scan_path});
-    std.log.debug("output_dir: '{s}'", .{args.output_dir});
+    debug("input_scan_dir: '{s}'", .{scan_path});
+    debug("output_dir: '{s}'", .{output_dir_path});
 
     // Relative to scan_path
     var relative_input_paths: std.ArrayList([]const u8) = .empty;
     var input_timestamps: std.ArrayList(std.Io.Timestamp) = .empty;
 
-    var walker = try scan_dir.walk(gpa);
-    while (try walker.next(io)) |entry| {
+    var walker = try scan_dir.walk(context.gpa);
+    while (try walker.next(context.io)) |entry| {
         if (entry.kind == .file) {
             if (std.mem.eql(u8, ".aseprite", std.fs.path.extension(entry.basename))) {
-                const input_path = try arena.dupe(u8, entry.path);
-                try relative_input_paths.append(arena, input_path);
+                const input_path = try context.arena.dupe(u8, entry.path);
+                try relative_input_paths.append(context.arena, input_path);
 
-                const stat = try scan_dir.statFile(io, entry.path, .{});
-                try input_timestamps.append(arena, stat.mtime);
+                const stat = try scan_dir.statFile(context.io, entry.path, .{});
+                try input_timestamps.append(context.arena, stat.mtime);
             }
         }
     }
     walker.deinit();
 
-    scan_dir.close(io);
+    scan_dir.close(context.io);
 
     for (relative_input_paths.items, input_timestamps.items) |relative_input_path, input_timestamp| {
-        std.log.debug("", .{});
-        std.log.debug("classify input file: {s}", .{relative_input_path});
+        debug("", .{});
+        debug("classify input file: {s}", .{relative_input_path});
 
-        const abs_input_path = try std.fs.path.join(gpa, &.{ scan_path, relative_input_path });
-        defer gpa.free(abs_input_path);
+        const abs_input_path = try std.fs.path.join(context.gpa, &.{ scan_path, relative_input_path });
+        defer context.gpa.free(abs_input_path);
 
-        const tags = try asepriteTags(gpa, abs_input_path);
+        const tags = try asepriteTags(context, context.gpa, abs_input_path);
         defer {
-            for (tags) |t| gpa.free(t);
-            gpa.free(tags);
+            for (tags) |t| context.gpa.free(t);
+            context.gpa.free(tags);
         }
 
         var tag_skip = false;
@@ -144,69 +157,69 @@ pub fn run(init: std.process.Init) !void {
                 tag_split_layers = true;
         }
 
-        std.log.debug("classification: skip:{} split_layers:{}", .{ tag_skip, tag_split_layers });
+        debug("classification: skip:{} split_layers:{}", .{ tag_skip, tag_split_layers });
 
         if (!tag_skip) {
             const rel_dir_path = std.fs.path.dirname(relative_input_path) orelse "";
 
             const abs_output_file_path_opt: ?[]const u8 = if (tag_split_layers) blk: {
-                const layers = try asepriteLayers(gpa, abs_input_path);
+                const layers = try asepriteLayers(context, context.gpa, abs_input_path);
                 defer {
-                    for (layers) |l| gpa.free(l);
-                    gpa.free(layers);
+                    for (layers) |l| context.gpa.free(l);
+                    context.gpa.free(layers);
                 }
 
                 const output_prefix = std.fs.path.stem(relative_input_path);
 
                 for (layers) |l| {
-                    const out_file_name = try std.fmt.allocPrint(gpa, "{s}_{s}.bmp", .{ output_prefix, l });
-                    defer gpa.free(out_file_name);
+                    const out_file_name = try std.fmt.allocPrint(context.gpa, "{s}_{s}.bmp", .{ output_prefix, l });
+                    defer context.gpa.free(out_file_name);
 
-                    const abs_file_path = try std.fs.path.join(gpa, &.{ output_dir_path, rel_dir_path, out_file_name });
-                    errdefer gpa.free(abs_file_path);
+                    const abs_file_path = try std.fs.path.join(context.gpa, &.{ output_dir_path, rel_dir_path, out_file_name });
+                    errdefer context.gpa.free(abs_file_path);
 
-                    const status = try outputFileStatus(abs_file_path, input_timestamp);
+                    const status = try outputFileStatus(context, abs_file_path, input_timestamp);
                     switch (status) {
                         .missing, .outOfDate => break :blk abs_file_path,
-                        .upToDate => gpa.free(abs_file_path),
+                        .upToDate => context.gpa.free(abs_file_path),
                     }
                 }
 
                 break :blk null;
             } else blk: {
-                const out_file_name = try std.fmt.allocPrint(gpa, "{s}.bmp", .{std.fs.path.stem(relative_input_path)});
-                defer gpa.free(out_file_name);
+                const out_file_name = try std.fmt.allocPrint(context.gpa, "{s}.bmp", .{std.fs.path.stem(relative_input_path)});
+                defer context.gpa.free(out_file_name);
 
-                const abs_file_path = try std.fs.path.join(gpa, &.{ output_dir_path, rel_dir_path, out_file_name });
-                errdefer gpa.free(abs_file_path);
+                const abs_file_path = try std.fs.path.join(context.gpa, &.{ output_dir_path, rel_dir_path, out_file_name });
+                errdefer context.gpa.free(abs_file_path);
 
-                const status = try outputFileStatus(abs_file_path, input_timestamp);
+                const status = try outputFileStatus(context, abs_file_path, input_timestamp);
 
                 switch (status) {
                     .missing, .outOfDate => break :blk abs_file_path,
                     .upToDate => {
-                        gpa.free(abs_file_path);
+                        context.gpa.free(abs_file_path);
                         break :blk null;
                     },
                 }
             };
 
             if (abs_output_file_path_opt) |abs_output_path| {
-                std.log.debug("emit for: {s}", .{abs_input_path});
+                debug("emit for: {s}", .{abs_input_path});
                 if (!tag_split_layers) {
-                    try asepriteExportBMP(abs_input_path, abs_output_path);
+                    try asepriteExportBMP(context, abs_input_path, abs_output_path);
                 } else {
-                    try asepriteExportSplitLayerBMP(abs_input_path, output_dir_path);
+                    try asepriteExportSplitLayerBMP(context, abs_input_path, output_dir_path);
                 }
 
-                gpa.free(abs_output_path);
+                context.gpa.free(abs_output_path);
             } else {
-                std.log.debug("skip emit for: {s}", .{abs_input_path});
+                debug("skip emit for: {s}", .{abs_input_path});
             }
         }
     }
 
-    output_dir.close(io);
+    output_dir.close(context.io);
 }
 
 pub const OutputFileStatus = enum(u2) {
@@ -215,12 +228,12 @@ pub const OutputFileStatus = enum(u2) {
     upToDate,
 };
 
-pub fn outputFileStatus(abs_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
+pub fn outputFileStatus(context: *const Context, abs_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
     assert(std.fs.path.isAbsolute(abs_path));
 
-    std.log.debug("checking output file: {s}{s}", .{abs_path});
+    debug("checking output file: {s}", .{abs_path});
 
-    const result: OutputFileStatus = if (std.Io.Dir.statFile(undefined, io, abs_path, .{})) |stat|
+    const result: OutputFileStatus = if (std.Io.Dir.statFile(undefined, context.io, abs_path, .{})) |stat|
         if (stat.mtime.nanoseconds <= input_timestamp.nanoseconds)
             .outOfDate
         else
@@ -228,7 +241,7 @@ pub fn outputFileStatus(abs_path: []const u8, input_timestamp: std.Io.Timestamp)
     else |_|
         .missing;
 
-    std.log.debug("status: {s}", .{@tagName(result)});
+    debug("status: {s}", .{@tagName(result)});
     return result;
 }
 
@@ -244,21 +257,23 @@ pub const RunResult = struct {
 
 pub const RunError = std.process.RunError || error{};
 
-pub fn aseprite(allocator: Allocator, args: []const []const u8) !RunResult {
+pub fn aseprite(context: *const Context, allocator: Allocator, args: []const []const u8) !RunResult {
     const argv = try allocator.alloc([]const u8, args.len + 1);
     defer allocator.free(argv);
 
-    argv[0] = options.aseprite_exe_path;
+    argv[0] = compile_options.aseprite_exe_path;
     @memcpy(argv[1..], args);
 
-    for (argv, 0..) |a, i| {
-        if (i > 0) try stdout_writer.interface.writeByte(' ');
-        try stdout_writer.interface.writeAll(a);
+    if (context.verbose) {
+        for (argv, 0..) |a, i| {
+            if (i > 0) try context.stdout.writeByte(' ');
+            try context.stdout.writeAll(a);
+        }
+        try context.stdout.writeByte('\n');
+        try context.stdout.flush();
     }
-    try stdout_writer.interface.writeByte('\n');
-    try stdout_writer.flush();
 
-    const rr = try std.process.run(allocator, io, .{ .argv = argv });
+    const rr = try std.process.run(allocator, context.io, .{ .argv = argv });
     defer allocator.free(rr.stderr);
 
     switch (rr.term) {
@@ -280,10 +295,10 @@ pub fn aseprite(allocator: Allocator, args: []const []const u8) !RunResult {
     }
 }
 
-pub fn asepriteTags(allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
+pub fn asepriteTags(context: *const Context, allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
     assert(std.fs.path.isAbsolute(abs_input_path));
 
-    var tags_rr = try aseprite(gpa, &.{ "-b", "--list-tags", abs_input_path });
+    var tags_rr = try aseprite(context, context.gpa, &.{ "-b", "--list-tags", abs_input_path });
     defer tags_rr.free();
 
     if (tags_rr.exit_code != 0) {
@@ -310,10 +325,10 @@ pub fn asepriteTags(allocator: Allocator, abs_input_path: []const u8) ![]const [
 }
 
 // Flattens the hierarchy, replacing / with -
-pub fn asepriteLayers(allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
+pub fn asepriteLayers(context: *const Context, allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
     assert(std.fs.path.isAbsolute(abs_input_path));
 
-    var layers_rr = try aseprite(gpa, &.{ "-b", "--all-layers", "--list-layer-hierarchy", abs_input_path });
+    var layers_rr = try aseprite(context, context.gpa, &.{ "-b", "--all-layers", "--list-layer-hierarchy", abs_input_path });
     defer layers_rr.free();
 
     if (layers_rr.exit_code != 0) {
@@ -328,7 +343,7 @@ pub fn asepriteLayers(allocator: Allocator, abs_input_path: []const u8) ![]const
     }
 
     var stack: std.ArrayList([]const u8) = .empty;
-    defer stack.deinit(gpa);
+    defer stack.deinit(context.gpa);
 
     var line_it = std.mem.splitScalar(u8, layers_rr.stdout, '\n');
     while (line_it.next()) |line| {
@@ -348,10 +363,10 @@ pub fn asepriteLayers(allocator: Allocator, abs_input_path: []const u8) ![]const
             }
 
             if (layer_name[layer_name.len - 1] == '/') {
-                try stack.append(gpa, layer_name[indent * 2 ..]);
+                try stack.append(context.gpa, layer_name[indent * 2 ..]);
             } else {
-                const folder = try std.mem.concat(gpa, u8, stack.items);
-                defer gpa.free(folder);
+                const folder = try std.mem.concat(context.gpa, u8, stack.items);
+                defer context.gpa.free(folder);
                 std.mem.replaceScalar(u8, folder, '/', '_');
 
                 const full_layer_name = try std.mem.concat(allocator, u8, &.{ folder, layer_name[indent * 2 ..] });
@@ -363,11 +378,11 @@ pub fn asepriteLayers(allocator: Allocator, abs_input_path: []const u8) ![]const
     return layers.toOwnedSlice(allocator);
 }
 
-pub fn asepriteExportBMP(abs_input_path: []const u8, abs_output_path: []const u8) !void {
+pub fn asepriteExportBMP(context: *const Context, abs_input_path: []const u8, abs_output_path: []const u8) !void {
     assert(std.fs.path.isAbsolute(abs_input_path));
     assert(std.fs.path.isAbsolute(abs_output_path));
 
-    var export_rr = try aseprite(gpa, &.{ "-b", abs_input_path, "--save-as", abs_output_path });
+    var export_rr = try aseprite(context, context.gpa, &.{ "-b", abs_input_path, "--save-as", abs_output_path });
     defer export_rr.free();
 
     if (export_rr.exit_code != 0) {
@@ -376,17 +391,17 @@ pub fn asepriteExportBMP(abs_input_path: []const u8, abs_output_path: []const u8
     }
 }
 
-pub fn asepriteExportSplitLayerBMP(abs_input_path: []const u8, abs_output_dir_path: []const u8) !void {
+pub fn asepriteExportSplitLayerBMP(context: *const Context, abs_input_path: []const u8, abs_output_dir_path: []const u8) !void {
     assert(std.fs.path.isAbsolute(abs_input_path));
     assert(std.fs.path.isAbsolute(abs_output_dir_path));
 
-    const out_dir_param = try std.fmt.allocPrint(gpa, "out_dir={s}", .{abs_output_dir_path});
-    defer gpa.free(out_dir_param);
+    const out_dir_param = try std.fmt.allocPrint(context.gpa, "out_dir={s}", .{abs_output_dir_path});
+    defer context.gpa.free(out_dir_param);
 
-    const script_path = try std.fs.path.join(gpa, &.{ options.aseprite_script_path, "extract_layers_recursive.lua" });
-    defer gpa.free(script_path);
+    const script_path = try std.fs.path.join(context.gpa, &.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" });
+    defer context.gpa.free(script_path);
 
-    var export_rr = try aseprite(gpa, &.{
+    var export_rr = try aseprite(context, context.gpa, &.{
         "-b",
         abs_input_path,
         "--script-param",
@@ -400,4 +415,8 @@ pub fn asepriteExportSplitLayerBMP(abs_input_path: []const u8, abs_output_dir_pa
         std.log.err("Asprite invocation failed", .{});
         return error.AsepriteNonZeroExitCode;
     }
+}
+
+inline fn debug(comptime fmt: []const u8, args: anytype) void {
+    log.debug(fmt, args);
 }

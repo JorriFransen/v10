@@ -1,11 +1,25 @@
 const std = @import("std");
 const log = std.log.scoped(.v10_shared);
+const Allocator = std.mem.Allocator;
+
+const builtin = @import("builtin");
+
+const asset_compiler = @import("asset_compiler");
 const options = @import("options");
 const v10 = @import("v10.zig");
-const builtin = @import("builtin");
 const DynLib = @import("dynlib");
 
 const assert = std.debug.assert;
+
+pub const std_options: std.Options = .{
+    .log_level = std.log.default_level,
+    .log_scope_levels = &.{
+        .{
+            .scope = .asset_compiler,
+            .level = if (options.tools_optimize == .Debug) .debug else .info,
+        },
+    },
+};
 
 pub const ThreadContext = extern struct {
     io: *const std.Io,
@@ -156,7 +170,9 @@ pub const SharedState = struct {
     playback_handle: std.Io.File = undefined,
     input_playing_index: usize = 0,
 
-    exe_dir_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined,
+    cwd_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
+    cwd: []const u8 = &.{},
+    exe_dir_path_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
     exe_dir_path: []const u8 = &.{},
 
     pub fn buildExePathFilename(shared_state: *const SharedState, buffer: []u8, sub_path: []const u8) ![:0]const u8 {
@@ -260,4 +276,26 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
         },
     }
     return result;
+}
+
+pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
+    if (options.internal_build and !options.cross_compile) {
+        const begin = std.Io.Timestamp.now(io, .real);
+
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+
+        const context = asset_compiler.Context{
+            .io = io,
+            .gpa = gpa,
+            .arena = arena.allocator(),
+            .stderr = stderr,
+            .stdout = stdout,
+            .verbose = true,
+        };
+        try asset_compiler.run(&context, .{ .input_scan_dir = ".", .output_dir = "./test" });
+
+        const end = std.Io.Timestamp.now(io, .real);
+        log.info("asset compiler time: {}ms", .{begin.durationTo(end).toMilliseconds()});
+    }
 }
