@@ -9,15 +9,17 @@ def register_default_aliases():
     lldb.debugger.HandleCommand("command script add -f common.reload_and_launch_alias run")
     lldb.debugger.HandleCommand("command script add -f common.launch_alias launch")
 
-def initial_launch():
-    threading.Thread(target=lambda: launch(lldb.debugger)).start()
+cwd = "data"
+def initial_launch(new_cwd):
+    cwd = new_cwd
+    threading.Thread(target=lambda: launch(lldb.debugger, cwd)).start()
 
-def launch(debugger):
+def launch(debugger, in_cwd):
     debugger.SetAsync(True)
-    debugger.HandleCommand("process launch")
+    debugger.HandleCommand(f"process launch -w {in_cwd}")
 
 def launch_alias(debugger, command, result, internal_dict):
-    launch(debugger);
+    launch(debugger, cwd);
 
 
 def reload_and_launch(debugger):
@@ -26,7 +28,7 @@ def reload_and_launch(debugger):
         exe_path = target.executable.fullpath
         debugger.HandleCommand(f"target create '{exe_path}'")
 
-    launch(debugger)
+    launch(debugger, cwd)
 
 def reload_and_launch_alias(debugger, command, result, internal_dict):
     reload_and_launch(debugger)

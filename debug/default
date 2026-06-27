@@ -7,16 +7,16 @@ zig_out_dir="$(realpath "$root_dir/zig-out")"
 data_dir="$(realpath "$root_dir/data")"
 exe="$(realpath "$zig_out_dir/v10")"
 
-pushd "$data_dir" || exit 1
+# pushd "$data_dir" || exit 1
 
 
 lldb-zig  "$exe"  \
     -o "command script import $common_script_path" \
     -o "script common.register_default_aliases()" \
-    -o "script common.initial_launch()" \
+    -o "script common.initial_launch('data')" \
 
 
-popd
+# popd
 
 
 
