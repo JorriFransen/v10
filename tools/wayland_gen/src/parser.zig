@@ -7,16 +7,20 @@ pub const mem = @import("mem");
 
 pub const Context = @import("wayland_generator.zig").Context;
 
-pub const Error = error{} || Parser.Error;
+pub const Error = error{} || Parser.Error || mem.Arena.Error;
 
 /// xml_temp_arena is used by the xml parser.
 /// It will be reset for each node, so don't use it for anything else!
-pub fn parse(context: *const Context, xml_temp_arena: *mem.Arena, err_writer: *std.Io.Writer, xml_path: []const u8) Error!AST.Protocol {
+pub fn parse(context: *const Context, err_writer: *std.Io.Writer, xml_path: []const u8) Error!AST.Protocol {
     var parser: Parser = undefined;
-    try parser.init(context, xml_temp_arena, err_writer, xml_path);
+
+    var xml_tmp_arena = try mem.Arena.init(.{ .virtual = .{} });
+    try parser.init(context, &xml_tmp_arena, err_writer, xml_path);
 
     var result = try parser.parse();
+
     parser.deinit();
+    try xml_tmp_arena.deinit();
 
     result.xml_path = xml_path;
 
@@ -653,12 +657,12 @@ const Parser = struct {
     }
 
     fn skipElement(this: *Parser) Parser.Error!void {
-        var tmp = mem.getTemp();
+        var tmp = mem.getScratch(this.context.arena);
         defer tmp.release();
 
         const first_node = this.xml_reader.current_node.tag_open;
 
-        const start_name = try copyStringAlloc(tmp.allocator(), first_node.name);
+        const start_name = try copyStringAlloc(tmp.a, first_node.name);
 
         var node = try this.nextNode();
         while (true) {

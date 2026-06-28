@@ -148,7 +148,7 @@ pub const Reader = struct {
                             const attr_value = try this.parseString();
 
                             try attributes.append(
-                                this.node_tmp.allocator(),
+                                this.node_tmp.a,
                                 .{ .name = attr_name, .value = attr_value },
                             );
 
@@ -243,7 +243,7 @@ pub const Reader = struct {
             this.printFatalError("Invalid character in identifier: '{c}'", .{first});
             return error.MalformedXml;
         }
-        try buffer.append(this.node_tmp.allocator(), first);
+        try buffer.append(this.node_tmp.a, first);
         this.toss(1);
 
         while (true) {
@@ -256,7 +256,7 @@ pub const Reader = struct {
                 c == '-' or
                 c == ':' or
                 c == '.')) break;
-            try buffer.append(this.node_tmp.allocator(), c);
+            try buffer.append(this.node_tmp.a, c);
             this.toss(1);
         }
 
@@ -274,7 +274,7 @@ pub const Reader = struct {
 
         while (true) {
             const r = try this.takeDelimiterInclusive('-');
-            try buf.appendSlice(this.node_tmp.allocator(), r);
+            try buf.appendSlice(this.node_tmp.a, r);
 
             if (try this.match("->")) break;
         }
@@ -329,13 +329,13 @@ pub const Reader = struct {
                 error.EndOfStream => return error.MalformedXml,
                 error.ReadFailed => return error.ReadFailed,
                 error.StreamTooLong => {
-                    try buf.appendSlice(this.node_tmp.allocator(), this.reader.buffered());
+                    try buf.appendSlice(this.node_tmp.a, this.reader.buffered());
                     this.tossBuffered();
                     break :flushed;
                 },
             };
         }
-        try buf.appendSlice(this.node_tmp.allocator(), rest);
+        try buf.appendSlice(this.node_tmp.a, rest);
         this.toss(rest.len);
 
         return buf.items;
@@ -386,5 +386,5 @@ pub const Reader = struct {
 };
 
 inline fn tmpPrint(tmp: *mem.TempArena, comptime fmt: []const u8, args: anytype) []const u8 {
-    return std.fmt.allocPrint(tmp.allocator(), fmt, args) catch @panic("OOM");
+    return std.fmt.allocPrint(tmp.a, fmt, args) catch @panic("OOM");
 }

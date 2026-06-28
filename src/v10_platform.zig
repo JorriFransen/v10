@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
 
+const mem = @import("mem");
 const asset_compiler = @import("asset_compiler");
 const options = @import("options");
 const v10 = @import("v10.zig");
@@ -273,19 +274,22 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
     return result;
 }
 
-pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
+pub inline fn runAssetCompiler(io: std.Io, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
     if (options.internal_build and !options.cross_compile) {
-        var arena = std.heap.ArenaAllocator.init(gpa);
-        defer arena.deinit();
+        const init_mem = !mem.temp_initialized;
+        if (init_mem) mem.init();
+        defer if (init_mem) mem.deinit();
+
+        var arena = try mem.Arena.init(.{ .virtual = .{} });
+        defer arena.deinit() catch {};
 
         const context = asset_compiler.Context{
             .io = io,
-            .gpa = gpa,
             .arena = arena.allocator(),
             .stderr = stderr,
             .stdout = stdout,
             .verbose = true,
         };
-        try asset_compiler.run(&context, .{ .input_scan_dir = ".", .output_dir = "./test" });
+        try asset_compiler.run(&context, .{ .input_scan_dir = ".", .output_dir = "./test", .verbose = true });
     }
 }

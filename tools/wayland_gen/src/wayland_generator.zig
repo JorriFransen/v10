@@ -35,6 +35,7 @@ var stdout_writer: std.Io.File.Writer = undefined;
 pub fn main(init: std.process.Init) !u8 {
     mem.init();
     defer mem.deinit();
+
     const arena = init.arena.allocator();
     defer _ = init.arena.reset(.free_all);
 
@@ -62,7 +63,12 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 fn run(context: *Context) !void {
-    const cli_options = try OptionParser.parse(context.args[1..], context.arena, context.stdout);
+    const cli_options = blk: {
+        var arena = std.heap.ArenaAllocator.init(context.arena);
+        defer arena.deinit();
+
+        break :blk try OptionParser.parse(context.args[1..], context.arena, arena.allocator(), context.stdout);
+    };
 
     if (cli_options.help) {
         try OptionParser.usage(context.stdout);
@@ -91,7 +97,6 @@ fn run(context: *Context) !void {
     };
     defer output_dir.close(context.io);
 
-    var xml_tmp_arena = try mem.Arena.init(.{ .virtual = .{} });
     var output_buffer: [mem.KiB * 8]u8 = undefined;
 
     const client_source = @embedFile("lib/client.zig");
@@ -106,7 +111,7 @@ fn run(context: *Context) !void {
     var core_protocol: AST.Protocol = undefined;
 
     if (std.Io.Dir.openFileAbsolute(context.io, cli_options.wayland, .{})) |core_xml_file| {
-        if (parser.parse(context, &xml_tmp_arena, &stderr_writer.interface, cli_options.wayland)) |prot| {
+        if (parser.parse(context, &stderr_writer.interface, cli_options.wayland)) |prot| {
             core_protocol = prot;
         } else |e| {
             core_xml_file.close(context.io);
@@ -138,7 +143,7 @@ fn run(context: *Context) !void {
 
     for (cli_options.protocol.items) |protocol_path| {
         if (std.Io.Dir.openFileAbsolute(context.io, protocol_path, .{})) |protocol_xml_file| {
-            if (parser.parse(context, &xml_tmp_arena, &stderr_writer.interface, protocol_path)) |prot| {
+            if (parser.parse(context, &stderr_writer.interface, protocol_path)) |prot| {
                 protocol_xml_file.close(context.io);
 
                 try protocols.append(context.arena, prot);

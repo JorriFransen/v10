@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const arena = @import("arena.zig");
 
 const assert = std.debug.assert;
@@ -11,10 +12,12 @@ pub const MiB = 1024 * KiB;
 pub const GiB = 1024 * MiB;
 pub const TiB = 1024 * GiB;
 
-threadlocal var temp_initialized = false;
+pub threadlocal var temp_initialized = false;
 threadlocal var temp_arena_a: Arena = undefined;
 threadlocal var temp_arena_b: Arena = undefined;
 threadlocal var temp_arena_next: *Arena = undefined;
+
+const Allocator = std.mem.Allocator;
 
 pub fn init() void {
     initTemp();
@@ -63,8 +66,10 @@ pub fn getTemp() TempArena {
     return TempArena.init(use);
 }
 
-pub fn getScratch(conflict: *Arena) TempArena {
+pub fn getScratch(conflict_allocator: Allocator) TempArena {
     assert(temp_initialized);
+
+    const conflict: *const Arena = @ptrCast(@alignCast(conflict_allocator.ptr));
 
     var use: *Arena = temp_arena_next;
 

@@ -132,11 +132,21 @@ pub const Arena = struct {
         }
     }
 
-    pub fn deinit(this: *Arena) !void {
+    pub fn deinit(this: *Arena) Error!void {
         if (this.data.len != 0 and this.flags.rvas) {
             switch (builtin.os.tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
-                .linux => try linux.munmap(@alignCast(this.data)),
+                .linux => linux.munmap(@alignCast(this.data)) catch |e| return switch (e) {
+                    error.PermissionDenied,
+                    error.ReadOnly,
+                    => error.AccessDenied,
+
+                    error.NoSpaceLeft,
+                    error.NoMemory,
+                    => error.OutOfMemory,
+
+                    else => error.Unexpected,
+                },
                 .windows => win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
             }
         }
@@ -227,7 +237,7 @@ pub const Arena = struct {
 
         this.used += total_size;
         this.last_allocation = result;
-        this.last_size = total_size;
+        this.last_size = size;
         return result;
     }
 
@@ -263,6 +273,7 @@ pub const Arena = struct {
         if (@as(?[*]u8, @ptrCast(this.last_allocation)) == memory.ptr) {
             assert(std.mem.Alignment.check(alignment, @intFromPtr(memory.ptr)));
 
+            // Note:  This "leaks" the alignment padding
             this.used -= memory.len;
             this.last_allocation = null;
             this.last_size = 0;
@@ -299,18 +310,19 @@ fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, _: usize) void {
 pub const TempArena = struct {
     arena: *Arena,
     reset_to: usize,
+    a: Allocator,
 
     pub fn init(arena: *Arena) TempArena {
-        return .{ .arena = arena, .reset_to = arena.used };
+        return .{
+            .arena = arena,
+            .reset_to = arena.used,
+            .a = arena.allocator(),
+        };
     }
 
     pub fn release(this: *TempArena) void {
         assert(this.arena.used >= this.reset_to);
         this.arena.used = this.reset_to;
-    }
-
-    pub fn allocator(this: *TempArena) Allocator {
-        return this.arena.allocator();
     }
 };
 
