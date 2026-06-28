@@ -12,6 +12,8 @@ pub const Error = error{} || Parser.Error || mem.Arena.Error;
 /// xml_temp_arena is used by the xml parser.
 /// It will be reset for each node, so don't use it for anything else!
 pub fn parse(context: *const Context, err_writer: *std.Io.Writer, xml_path: []const u8) Error!AST.Protocol {
+    assert(mem.temp_initialized);
+
     var parser: Parser = undefined;
 
     var xml_tmp_arena = try mem.Arena.init(.{ .virtual = .{} });
@@ -662,7 +664,7 @@ const Parser = struct {
 
         const first_node = this.xml_reader.current_node.tag_open;
 
-        const start_name = try copyStringAlloc(tmp.a, first_node.name);
+        const start_name = try tmp.a.dupe(u8, first_node.name);
 
         var node = try this.nextNode();
         while (true) {
@@ -693,7 +695,10 @@ const Parser = struct {
     }
 
     fn xmlErr(this: *Parser, comptime fmt: []const u8, args: anytype) void {
-        const msg = std.fmt.allocPrint(this.context.arena, fmt, args) catch @panic("OOM");
+        var tmp = mem.getScratch(this.context.arena);
+        defer tmp.release();
+
+        const msg = std.fmt.allocPrint(tmp.a, fmt, args) catch @panic("OOM");
 
         const loc = this.xml_reader.location;
         this.printErr("{s}:{}:{}: error: {s}\n", .{ this.xml_file_path, loc.line, loc.column, msg });
@@ -705,13 +710,8 @@ const Parser = struct {
     }
 
     fn copyString(this: *Parser, str: []const u8) ![]const u8 {
-        return copyStringAlloc(this.context.arena, str);
-    }
-
-    fn copyStringAlloc(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
-        const buf = try allocator.alloc(u8, str.len);
-        @memcpy(buf, str);
-        return buf;
+        const result = try this.context.arena.dupe(u8, str);
+        return result;
     }
 };
 

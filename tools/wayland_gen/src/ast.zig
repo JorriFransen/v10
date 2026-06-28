@@ -52,8 +52,6 @@ pub const Arg = struct {
     summary: []const u8,
 
     /// valid after resolving
-    zig_name: []const u8 = "XXX_UNRESOLVED_ARG_NAME__X_X_X_",
-    /// valid after resolving
     enum_type: ?*const Enum = null,
     /// valid after resolving
     zig_interface_name: ?[]const u8 = null,

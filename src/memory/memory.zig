@@ -1,11 +1,11 @@
 const std = @import("std");
 
-const arena = @import("arena.zig");
-
 const assert = std.debug.assert;
 
+const arena = @import("arena.zig");
 pub const Arena = arena.Arena;
-pub const TempArena = arena.TempArena;
+pub const TempArena = @import("temp_arena.zig");
+pub const TempStringBuilder = TempArena.StringBuilder;
 
 pub const KiB = 1024;
 pub const MiB = 1024 * KiB;
@@ -89,10 +89,27 @@ pub fn getScratch(conflict_allocator: Allocator) TempArena {
     return TempArena.init(use);
 }
 
+pub fn getScratchStringBuilder(conflict_allocator: Allocator) TempStringBuilder {
+    const tmp = getScratch(conflict_allocator);
+    const result = TempStringBuilder.init(tmp);
+
+    return result;
+}
+
 /// Resets all temp/scratch arenas
 pub fn resetTemp() void {
     assert(temp_initialized);
 
     temp_arena_a.reset();
     temp_arena_b.reset();
+}
+
+pub inline fn arenaAllocPrint(allocator: Allocator, comptime fmt: []const u8, args: anytype) ![]const u8 {
+    var tmp = getScratch(allocator);
+    defer tmp.release();
+
+    const tmp_res = try std.fmt.allocPrint(tmp.a, fmt, args);
+    const result = allocator.dupe(u8, tmp_res);
+
+    return result;
 }

@@ -373,18 +373,14 @@ pub const Reader = struct {
             defer tmp.release();
 
             _ = w.write(
-                tmpPrint(tmp, "{s}:{}:{}: ", .{
+                std.fmt.allocPrint(tmp.a, "{s}:{}:{}: ", .{
                     this.location.path,
                     this.location.line,
                     this.location.column,
-                }),
+                }) catch @panic("AllocPrint failed"),
             ) catch @panic("Write failed");
-            _ = w.write(tmpPrint(tmp, fmt, args)) catch @panic("Write failed");
+            _ = w.write(std.fmt.allocPrint(tmp.a, fmt, args) catch @panic("AllocPrint Failed")) catch @panic("Write failed");
             w.flush() catch @panic("Flush failed");
         }
     }
 };
-
-inline fn tmpPrint(tmp: *mem.TempArena, comptime fmt: []const u8, args: anytype) []const u8 {
-    return std.fmt.allocPrint(tmp.a, fmt, args) catch @panic("OOM");
-}

@@ -14,7 +14,7 @@ const page_size_min = std.heap.page_size_min;
 pub const max_cap: usize = mem.GiB * 4;
 
 pub const Arena = struct {
-    data: []const u8,
+    data: []u8,
     used: usize,
     reserved_capacity: usize,
 
@@ -170,7 +170,7 @@ pub const Arena = struct {
         };
     }
 
-    fn grow(this: *Arena, min_cap: usize) Error!void {
+    pub fn grow(this: *Arena, min_cap: usize) Error!void {
         if (!this.flags.rvas) return error.CantGrow;
 
         var new_cap = this.data.len * 2;
@@ -179,7 +179,7 @@ pub const Arena = struct {
         if (new_cap > max_cap or new_cap > this.reserved_capacity) return error.ReachedReservedCapacity;
 
         const old_cap = this.data.len;
-        const base_ptr: [*]const u8 = this.data.ptr;
+        const base_ptr: [*]u8 = this.data.ptr;
 
         assert(this.data.len % page_size_min == 0); // Newly committed blocks must start on page boundaries
 
@@ -306,25 +306,6 @@ fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, _: usize) void {
     const this: *Arena = @ptrCast(@alignCast(ctx));
     return this.rawFree(memory, alignment);
 }
-
-pub const TempArena = struct {
-    arena: *Arena,
-    reset_to: usize,
-    a: Allocator,
-
-    pub fn init(arena: *Arena) TempArena {
-        return .{
-            .arena = arena,
-            .reset_to = arena.used,
-            .a = arena.allocator(),
-        };
-    }
-
-    pub fn release(this: *TempArena) void {
-        assert(this.arena.used >= this.reset_to);
-        this.arena.used = this.reset_to;
-    }
-};
 
 test "Arena from slice" {
     var buf: [70]u8 align(8) = @splat(1); // Needs to be bigger to account for alignment

@@ -483,7 +483,7 @@ const Writer = struct {
         // signature args
         for (request.args) |*arg| {
             if (arg.type.tag != .n) {
-                try this.appendf(", {s}: {f}", .{ arg.zig_name, fmtArgTypeToZigType(this, arg, interface, true) });
+                try this.appendf(", {s}: {f}", .{ arg.name, fmtArgTypeToZigType(this, arg, interface, true) });
             } else {
                 if (arg.interface_name == null) {
                     assert(request.is_anonymous_constructor);
@@ -553,20 +553,20 @@ const Writer = struct {
                         try this.append("result.id");
                     }
                 },
-                .o => try this.appendf("@ptrCast({s})", .{arg.zig_name}),
+                .o => try this.appendf("@ptrCast({s})", .{arg.name}),
                 .i, .u => {
                     if (arg.enum_type) |enum_type| {
                         if (enum_type.is_bitfield) {
-                            try this.appendf("@bitCast({s})", .{arg.zig_name});
+                            try this.appendf("@bitCast({s})", .{arg.name});
                         } else {
-                            try this.appendf("@intFromEnum({s})", .{arg.zig_name});
+                            try this.appendf("@intFromEnum({s})", .{arg.name});
                         }
                     } else {
-                        try this.appendf("{s}", .{arg.zig_name});
+                        try this.appendf("{s}", .{arg.name});
                     }
                 },
                 else => {
-                    try this.appendf("{s}", .{arg.zig_name});
+                    try this.appendf("{s}", .{arg.name});
                 },
             }
 
@@ -607,7 +607,7 @@ const Writer = struct {
 
             for (event.args) |arg| {
                 try this.appendf(", {s}: {f}", .{
-                    arg.zig_name,
+                    arg.name,
                     fmtArgTypeToZigType(this, &arg, interface, true),
                 });
             }
