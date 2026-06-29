@@ -3,20 +3,19 @@ const Allocator = std.mem.Allocator;
 
 pub const Protocol = struct {
     name: []const u8,
-    interfaces: std.array_hash_map.String(Interface),
+
+    interfaces: []Interface,
+    interface_names: std.StringHashMapUnmanaged(*const Interface),
 
     /// valid after parsing
     xml_path: []const u8 = "XXX_UNINITIALIZED_XML_PATH__X_X_X_",
     /// valid after resolving
-    protocol_imports: std.array_hash_map.String(*const Protocol),
+    protocol_imports: std.StringArrayHashMapUnmanaged(*const Protocol),
 
     pub fn deinit(this: *Protocol, allocator: Allocator) void {
-        var interface_it = this.interfaces.iterator();
-        while (interface_it.next()) |entry| {
-            entry.value_ptr.deinit(allocator);
-        }
+        for (this.interfaces) |*interface| interface.deinit(allocator);
 
-        this.interfaces.deinit(allocator);
+        this.interface_names.deinit(allocator);
         this.protocol_imports.deinit(allocator);
     }
 };
@@ -27,7 +26,7 @@ pub const Interface = struct {
     description: Description,
     requests: []Message,
     events: []Message,
-    enums: std.array_hash_map.String(Enum),
+    enums: std.StringArrayHashMapUnmanaged(Enum),
 
     /// valid after resolving
     zig_name: []const u8 = "XXX_UNRESOLVED_INTERFACE_NAME__X_X_X_",

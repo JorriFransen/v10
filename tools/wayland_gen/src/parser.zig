@@ -92,7 +92,10 @@ const Parser = struct {
 
         const protocol_name = try this.copyString(attr.value);
 
-        var interfaces: std.array_hash_map.String(AST.Interface) = .empty;
+        var tmp = mem.getScratch(this.context.arena);
+        defer tmp.release();
+
+        var tmp_interfaces: std.ArrayList(AST.Interface) = .empty;
 
         while (true) {
             const node = try this.nextNode();
@@ -114,7 +117,7 @@ const Parser = struct {
                         try this.skipElement();
                     } else if (std.mem.eql(u8, tag.name, "interface")) {
                         const interface = try this.parseInterface();
-                        try interfaces.putNoClobber(this.context.gpa, interface.name, interface);
+                        try tmp_interfaces.append(tmp.a, interface);
                     } else if (std.mem.eql(u8, tag.name, "description")) {
                         assert(false);
                     } else {
@@ -133,9 +136,17 @@ const Parser = struct {
             }
         }
 
+        const interfaces = try this.context.arena.dupe(AST.Interface, tmp_interfaces.items);
+        var interface_names: std.StringHashMapUnmanaged(*const AST.Interface) = .empty;
+
+        for (interfaces) |*interface| {
+            try interface_names.putNoClobber(this.context.gpa, interface.name, interface);
+        }
+
         return .{
             .name = protocol_name,
             .interfaces = interfaces,
+            .interface_names = interface_names,
             .protocol_imports = .empty,
         };
     }
@@ -150,7 +161,7 @@ const Parser = struct {
 
         var requests: std.ArrayList(AST.Message) = .empty;
         var events: std.ArrayList(AST.Message) = .empty;
-        var enums: std.array_hash_map.String(AST.Enum) = .empty;
+        var enums: std.StringArrayHashMapUnmanaged(AST.Enum) = .empty;
 
         const interface_tag = this.xml_reader.current_node.tag_open;
 

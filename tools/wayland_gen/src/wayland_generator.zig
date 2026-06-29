@@ -25,8 +25,8 @@ pub const Context = struct {
     stderr: *std.Io.Writer,
     stdout: *std.Io.Writer,
 
-    interface_to_protocol_map: std.StringHashMap(*const AST.Protocol),
-    signatures: std.StringHashMap([]AST.Type),
+    interface_to_protocol_map: std.StringHashMapUnmanaged(*const AST.Protocol),
+    signatures: std.StringArrayHashMapUnmanaged([]AST.Type),
 };
 
 var stderr_buf: [2048]u8 = undefined;
@@ -74,12 +74,12 @@ pub fn main(init: std.process.Init) !u8 {
         .args = args,
         .stderr = &stderr_writer.interface,
         .stdout = &stdout_writer.interface,
-        .interface_to_protocol_map = .init(init.gpa),
-        .signatures = .init(init.gpa),
+        .interface_to_protocol_map = .empty,
+        .signatures = .empty,
     };
     defer {
-        context.interface_to_protocol_map.deinit();
-        context.signatures.deinit();
+        context.interface_to_protocol_map.deinit(context.gpa);
+        context.signatures.deinit(context.gpa);
     }
 
     run(&context) catch |e| {
@@ -145,9 +145,8 @@ fn run(context: *Context) !void {
         // This could be in the parser, if it returned a Protocol by pointer!
         // As long as Protocol is returned by value this needs to be done here,
         //  to ensure the protocol pointer is stable.
-        var interface_it = core_protocol.interfaces.iterator();
-        while (interface_it.next()) |entry| {
-            try context.interface_to_protocol_map.putNoClobber(entry.value_ptr.name, &core_protocol);
+        for (core_protocol.interfaces) |*interface| {
+            try context.interface_to_protocol_map.putNoClobber(context.gpa, interface.name, &core_protocol);
         }
 
         resolve.resolveProtocol(context, &core_protocol, true) catch |e| {
@@ -187,9 +186,8 @@ fn run(context: *Context) !void {
     // As long as Protocol is returned by value this needs to be done here,
     //  to ensure the protocol pointer is stable.
     for (protocols.items) |*protocol| {
-        var interface_it = protocol.interfaces.iterator();
-        while (interface_it.next()) |entry| {
-            try context.interface_to_protocol_map.putNoClobber(entry.value_ptr.name, protocol);
+        for (protocol.interfaces) |*interface| {
+            try context.interface_to_protocol_map.putNoClobber(context.gpa, interface.name, protocol);
         }
     }
 

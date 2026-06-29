@@ -117,7 +117,11 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
         try writer.append("}\n");
 
         sig_it = context.signatures.iterator();
+        var sig_count: usize = 0;
+
         while (sig_it.next()) |entry| {
+            sig_count += 1;
+
             const sig = entry.key_ptr.*;
             const types = entry.value_ptr.*;
 
@@ -259,8 +263,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             try writer.append("}\n");
         }
 
-        const unique_signature_count = context.signatures.count();
-        const signature_enum_bits = std.math.round(0.5 + std.math.log2(@as(f32, @floatFromInt(unique_signature_count))));
+        const signature_enum_bits = std.math.round(0.5 + std.math.log2(@as(f32, @floatFromInt(sig_count))));
 
         try writer.appendf("\npub const Signature = enum(u{}) {{\n", .{signature_enum_bits});
 
@@ -313,13 +316,9 @@ const Writer = struct {
             try this.append("\n");
         }
 
-        var interface_it = this.protocol.interfaces.iterator();
-        var interface_idx: usize = 0;
-        while (interface_it.next()) |entry| : (interface_idx += 1) {
-            try this.emitInterface(entry.value_ptr);
-            if (interface_idx < this.protocol.interfaces.count() - 1) {
-                try this.append("\n");
-            }
+        for (this.protocol.interfaces, 0..) |*interface, i| {
+            if (i > 0) try this.append("\n");
+            try this.emitInterface(interface);
         }
     }
 

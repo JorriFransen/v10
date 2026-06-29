@@ -19,9 +19,8 @@ pub const Error = error{
     mem.TempStringBuilder.Error;
 
 pub fn resolveProtocol(context: *Context, protocol: *AST.Protocol, core: bool) Error!void {
-    var interface_it = protocol.interfaces.iterator();
-    while (interface_it.next()) |entry| {
-        try resolveInterface(context, protocol, entry.value_ptr, core);
+    for (protocol.interfaces) |*interface| {
+        try resolveInterface(context, protocol, interface, core);
     }
 }
 
@@ -93,7 +92,7 @@ fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.In
         sig = "_";
     }
 
-    const sig_entry = try context.signatures.getOrPut(sig);
+    const sig_entry = try context.signatures.getOrPut(context.gpa, sig);
     if (sig_entry.found_existing) {
         message.signature = sig_entry.key_ptr.*;
     } else {
@@ -131,7 +130,7 @@ fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *cons
                 return error.UnresolvedInterfaceName;
             };
 
-            const enum_interface = enum_protocol.interfaces.getPtr(interface_name) orelse {
+            const enum_interface = enum_protocol.interface_names.get(interface_name) orelse {
                 try context.stderr.print("Unable to resolve interface_name: '{s}'\n", .{interface_name});
                 return error.UnresolvedInterfaceName;
             };
@@ -156,7 +155,7 @@ fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *cons
 
     if (!core and (arg.type.tag == .n or arg.type.tag == .o)) {
         if (arg.interface_name) |interface_name| {
-            if (!protocol.interfaces.contains(interface_name)) {
+            if (!protocol.interface_names.contains(interface_name)) {
                 if (context.interface_to_protocol_map.get(interface_name)) |in_prot| {
                     if (protocol.protocol_imports.get(in_prot.name) == null) {
                         try protocol.protocol_imports.put(context.gpa, in_prot.name, in_prot);
