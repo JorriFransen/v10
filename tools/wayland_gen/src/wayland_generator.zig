@@ -39,8 +39,8 @@ pub fn main(init: std.process.Init) !u8 {
     mem.init();
     defer mem.deinit();
 
-    const arena = init.arena.allocator();
-    defer _ = init.arena.reset(.free_all);
+    var arena_ = try mem.Arena.init(.{ .virtual = .{} });
+    const arena = arena_.allocator();
 
     stderr_writer = std.Io.File.stderr().writer(init.io, &stderr_buf);
     defer stderr_writer.flush() catch unreachable;
@@ -164,6 +164,7 @@ fn run(context: *Context) !void {
     defer core_protocol.deinit(context.gpa);
 
     var protocols: std.ArrayList(AST.Protocol) = .empty;
+    defer protocols.deinit(context.gpa);
 
     for (context.args.protocol.items) |protocol_path| {
         if (std.Io.Dir.openFileAbsolute(context.io, protocol_path, .{})) |protocol_xml_file| {
@@ -176,7 +177,7 @@ fn run(context: *Context) !void {
             protocol_xml_file.close(context.io);
 
             errdefer protocol.deinit(context.gpa);
-            try protocols.append(context.arena, protocol);
+            try protocols.append(context.gpa, protocol);
         } else |e| return e;
     }
 

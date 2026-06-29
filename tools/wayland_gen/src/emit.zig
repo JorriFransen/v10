@@ -16,7 +16,11 @@ pub const Error = error{} ||
     std.Io.Writer.Error;
 
 pub fn emitProtocol(context: *const generator.Context, dir: std.Io.Dir, prot: *const AST.Protocol, core: bool) Error!void {
-    const file_name = try std.fmt.allocPrint(context.arena, "{s}.zig", .{prot.name});
+    var tmp = mem.getScratch(context.arena);
+    defer tmp.release();
+
+    const file_name = try mem.arenaAllocPrint(tmp.a, "{s}.zig", .{prot.name});
+
     if (dir.createFile(context.io, file_name, .{ .truncate = true })) |file| {
         defer file.close(context.io);
 
@@ -76,13 +80,13 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             try writer.appendi(1, "_ = switch (event.signature) {\n");
         }
 
-        var tmp_arena = std.heap.ArenaAllocator.init(context.arena);
-        defer tmp_arena.deinit();
-        const tmp = tmp_arena.allocator();
+        var tmp = mem.getScratch(context.arena);
+        defer tmp.release();
 
         var sig_it = context.signatures.iterator();
         while (sig_it.next()) |entry| {
-            const trampoline_name_raw = try std.mem.concat(tmp, u8, &.{ "trampoline_", entry.key_ptr.* });
+            tmp.release();
+            const trampoline_name_raw = try std.mem.concat(tmp.a, u8, &.{ "trampoline_", entry.key_ptr.* });
             try writer.appendif(2, ".{f} => {f}(object, opcode", .{
                 std.zig.fmtId(entry.key_ptr.*),
                 std.zig.fmtId(trampoline_name_raw),
@@ -117,7 +121,8 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             const sig = entry.key_ptr.*;
             const types = entry.value_ptr.*;
 
-            const trampoline_name_raw = try std.mem.concat(tmp, u8, &.{ "trampoline_", sig });
+            tmp.release();
+            const trampoline_name_raw = try std.mem.concat(tmp.a, u8, &.{ "trampoline_", sig });
 
             try writer.appendf("\ninline fn {f}(object: *Object, opcode: u16) u32 {{\n", .{std.zig.fmtId(trampoline_name_raw)});
             try writer.appendi(1, "const HandlerType = *const fn (?*anyopaque, *Object");

@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+const mem = @import("memory.zig");
 const Arena = @import("arena.zig").Arena;
 const TempArena = @This();
 
@@ -55,5 +56,14 @@ pub const StringBuilder = struct {
 
     pub fn writeByte(this: *StringBuilder, byte: u8) Error!void {
         try this.write(&.{byte});
+    }
+
+    pub fn print(this: *StringBuilder, comptime fmt: []const u8, args: anytype) Error!void {
+        var tmp = mem.getScratch(this.tmp.a);
+        defer tmp.release();
+
+        const str = try std.fmt.allocPrint(tmp.a, fmt, args);
+
+        try this.write(str);
     }
 };

@@ -16,7 +16,7 @@ const pathJoin = std.fs.path.join;
 const extension = std.fs.path.extension;
 const dirname = std.fs.path.dirname;
 const stem = std.fs.path.stem;
-const isAbsolute = std.fs.path.isAbsolute;
+const pathIsAbsolute = std.fs.path.isAbsolute;
 
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
@@ -51,7 +51,6 @@ pub fn main(init: std.process.Init) !u8 {
     }
 
     var arena_data = try mem.Arena.init(.{ .virtual = .{} });
-    errdefer arena_data.deinit() catch {};
     const arena = arena_data.allocator();
 
     const args: OptionParser.Options = blk: {
@@ -103,7 +102,7 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
 
     var scan_path: []const u8 = "";
     const scan_dir = dir: {
-        if (std.fs.path.isAbsolute(options.input_scan_dir)) {
+        if (pathIsAbsolute(options.input_scan_dir)) {
             scan_path = try context.arena.dupe(u8, options.input_scan_dir);
         } else {
             scan_path = try pathResolve(context.arena, &.{ cwd, options.input_scan_dir });
@@ -119,7 +118,7 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
 
     var output_dir_path: []const u8 = "";
     const output_dir = dir: {
-        if (std.fs.path.isAbsolute(options.output_dir)) {
+        if (pathIsAbsolute(options.output_dir)) {
             output_dir_path = try context.arena.dupe(u8, options.output_dir);
         } else {
             output_dir_path = try pathResolve(context.arena, &.{ cwd, options.output_dir });
@@ -267,7 +266,7 @@ const OutputFileStatus = enum(u2) {
 };
 
 fn outputFileStatus(context: *const Context, abs_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
-    assert(std.fs.path.isAbsolute(abs_path));
+    assert(pathIsAbsolute(abs_path));
 
     log.debug("checking output file: {s}", .{abs_path});
 
@@ -347,7 +346,7 @@ fn aseprite(context: *const Context, allocator: Allocator, args: []const []const
 }
 
 fn asepriteTags(context: *const Context, allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
-    assert(std.fs.path.isAbsolute(abs_input_path));
+    assert(pathIsAbsolute(abs_input_path));
 
     var tmp = mem.getScratch(allocator);
     defer tmp.release();
@@ -375,7 +374,7 @@ fn asepriteTags(context: *const Context, allocator: Allocator, abs_input_path: [
 
 // Flattens the hierarchy, replacing / with -
 fn asepriteLayers(context: *const Context, allocator: Allocator, abs_input_path: []const u8) ![]const []const u8 {
-    assert(std.fs.path.isAbsolute(abs_input_path));
+    assert(pathIsAbsolute(abs_input_path));
 
     var tmp = mem.getScratch(allocator);
     defer tmp.release();
@@ -423,8 +422,8 @@ fn asepriteLayers(context: *const Context, allocator: Allocator, abs_input_path:
 }
 
 fn asepriteExportBMP(context: *const Context, abs_input_path: []const u8, abs_output_path: []const u8) !void {
-    assert(std.fs.path.isAbsolute(abs_input_path));
-    assert(std.fs.path.isAbsolute(abs_output_path));
+    assert(pathIsAbsolute(abs_input_path));
+    assert(pathIsAbsolute(abs_output_path));
 
     var tmp = mem.getScratch(context.arena);
     defer tmp.release();
@@ -438,8 +437,8 @@ fn asepriteExportBMP(context: *const Context, abs_input_path: []const u8, abs_ou
 }
 
 fn asepriteExportSplitLayerBMP(context: *const Context, abs_input_path: []const u8, abs_output_dir_path: []const u8) !void {
-    assert(std.fs.path.isAbsolute(abs_input_path));
-    assert(std.fs.path.isAbsolute(abs_output_dir_path));
+    assert(pathIsAbsolute(abs_input_path));
+    assert(pathIsAbsolute(abs_output_dir_path));
 
     var tmp = mem.getScratch(context.arena);
     defer tmp.release();
