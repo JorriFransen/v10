@@ -277,7 +277,7 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
     return result;
 }
 
-pub inline fn runAssetCompiler(io: std.Io, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
+pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
     if (options.internal_build and !options.cross_compile) {
         const init_mem = !mem.temp_initialized;
         if (init_mem) mem.init();
@@ -286,9 +286,10 @@ pub inline fn runAssetCompiler(io: std.Io, stderr: *std.Io.Writer, stdout: *std.
         var arena = try mem.Arena.init(.{ .virtual = .{} });
         defer arena.deinit() catch {};
 
-        const context = asset_compiler.Context{
+        var context = asset_compiler.Context{
             .io = io,
             .arena = arena.allocator(),
+            .gpa = gpa,
             .stderr = stderr,
             .stdout = stdout,
             .verbose = true,

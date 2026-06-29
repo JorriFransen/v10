@@ -391,19 +391,20 @@ pub fn main(init: std.process.Init.Minimal) u8 {
     // var startup_info: win32.STARTUPINFOA = undefined;
     // win32.GetStartupInfoA(&startup_info);
 
-    const ret_code = windowsEntry(io, instance) catch 1;
+    const ret_code = windowsEntry(io, gpa, instance) catch 1;
     assert(ret_code >= 0);
     return @intCast(ret_code);
 }
 
 pub fn windowsEntry(
     io: std.Io,
+    gpa: Allocator,
     instance: win32.HINSTANCE,
 ) !c_int {
     var shared_state: platform.SharedState = .{};
     var thread_context: ThreadContext = .{ .io = &io };
 
-    try platform.runAssetCompiler(io, stderr, stdout);
+    try platform.runAssetCompiler(io, gpa, stderr, stdout);
 
     const cwd_len = win32.GetCurrentDirectoryA(shared_state.cwd_buf.len, @ptrCast(&shared_state.cwd_buf));
     shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
