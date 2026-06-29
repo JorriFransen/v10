@@ -382,14 +382,13 @@ pub fn main(init: std.process.Init.Minimal) u8 {
     // var startup_info: win32.STARTUPINFOA = undefined;
     // win32.GetStartupInfoA(&startup_info);
 
-    const ret_code = windowsEntry(io, gpa, instance) catch 1;
+    const ret_code = windowsEntry(io, instance) catch 1;
     assert(ret_code >= 0);
     return @intCast(ret_code);
 }
 
 pub fn windowsEntry(
     io: std.Io,
-    gpa: Allocator,
     instance: win32.HINSTANCE,
 ) !c_int {
     var shared_state: platform.SharedState = .{};
@@ -591,7 +590,6 @@ pub fn windowsEntry(
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
                 var game_code = GameCode.load(io, temp_dll_name);
-                if (game_code.init) |gameCodeInit| gameCodeInit(&thread_context, &game_memory);
 
                 var last_cycle_count = arch.rdtsc();
 
@@ -748,8 +746,8 @@ pub fn windowsEntry(
                         var game_offscreen_buffer: OffscreenBuffer = .{
                             .memory = global_back_buffer.memory.ptr,
                             .memory_len = global_back_buffer.memory.len,
-                            .width = global_back_buffer.width,
-                            .height = global_back_buffer.height,
+                            .width = @intCast(global_back_buffer.width),
+                            .height = @intCast(global_back_buffer.height),
                             .pitch = global_back_buffer.pitch,
                             .bytes_per_pixel = global_back_buffer.bytes_per_pixel,
                         };
@@ -762,8 +760,8 @@ pub fn windowsEntry(
                             playbackInput(&shared_state, new_input);
                         }
 
-                        const keep_running = if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, new_input, &game_offscreen_buffer) else true;
-                        if (!keep_running) global_running = false;
+                        if (game_code.updateAndRender) |updateAndRender|
+                            updateAndRender(&thread_context, &game_memory, new_input, &game_offscreen_buffer);
 
                         const audio_wall_clock = getWallClock();
                         const from_begin_to_audio_seconds = getSecondsElapsed(flip_wall_clock, audio_wall_clock);

@@ -674,7 +674,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 playbackInput(wld.shared_state, io, wld.new_input);
             }
 
-            if (game_code.updateAndRender) |updateAndRender| updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer);
+            if (game_code.updateAndRender) |updateAndRender|
+                updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer);
 
             if (linux_options.linux_audio_impl == .pulseEmulateDSound) {
                 const audio_wall_clock = getWallClock(io);
