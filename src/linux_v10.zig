@@ -115,7 +115,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .io = &io,
     };
 
-    try platform.runAssetCompiler(io, gpa, stderr, stdout);
+    try platform.runAssetCompiler(io, stderr, stdout);
 
     const prng_seed = std.Io.Timestamp.now(io, .real).toNanoseconds();
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));

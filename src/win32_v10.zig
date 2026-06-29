@@ -395,7 +395,7 @@ pub fn windowsEntry(
     var shared_state: platform.SharedState = .{};
     var thread_context: ThreadContext = .{ .io = &io };
 
-    try platform.runAssetCompiler(io, gpa, stderr, stdout);
+    try platform.runAssetCompiler(io, stderr, stdout);
 
     const cwd_len = win32.GetCurrentDirectoryA(shared_state.cwd_buf.len, @ptrCast(&shared_state.cwd_buf));
     shared_state.cwd = shared_state.cwd_buf[0..cwd_len];

@@ -14,7 +14,7 @@ const page_size_min = std.heap.page_size_min;
 pub const max_cap: usize = mem.GiB * 4;
 
 pub const Arena = struct {
-    data: []const u8,
+    data: []u8,
     used: usize,
     reserved_capacity: usize,
 
@@ -132,11 +132,21 @@ pub const Arena = struct {
         }
     }
 
-    pub fn deinit(this: *Arena) !void {
+    pub fn deinit(this: *Arena) Error!void {
         if (this.data.len != 0 and this.flags.rvas) {
             switch (builtin.os.tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
-                .linux => try linux.munmap(@alignCast(this.data)),
+                .linux => linux.munmap(@alignCast(this.data)) catch |e| return switch (e) {
+                    error.PermissionDenied,
+                    error.ReadOnly,
+                    => error.AccessDenied,
+
+                    error.NoSpaceLeft,
+                    error.NoMemory,
+                    => error.OutOfMemory,
+
+                    else => error.Unexpected,
+                },
                 .windows => win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
             }
         }
@@ -160,7 +170,7 @@ pub const Arena = struct {
         };
     }
 
-    fn grow(this: *Arena, min_cap: usize) Error!void {
+    pub fn grow(this: *Arena, min_cap: usize) Error!void {
         if (!this.flags.rvas) return error.CantGrow;
 
         var new_cap = this.data.len * 2;
@@ -169,7 +179,7 @@ pub const Arena = struct {
         if (new_cap > max_cap or new_cap > this.reserved_capacity) return error.ReachedReservedCapacity;
 
         const old_cap = this.data.len;
-        const base_ptr: [*]const u8 = this.data.ptr;
+        const base_ptr: [*]u8 = this.data.ptr;
 
         assert(this.data.len % page_size_min == 0); // Newly committed blocks must start on page boundaries
 
@@ -227,7 +237,7 @@ pub const Arena = struct {
 
         this.used += total_size;
         this.last_allocation = result;
-        this.last_size = total_size;
+        this.last_size = size;
         return result;
     }
 
@@ -263,6 +273,7 @@ pub const Arena = struct {
         if (@as(?[*]u8, @ptrCast(this.last_allocation)) == memory.ptr) {
             assert(std.mem.Alignment.check(alignment, @intFromPtr(memory.ptr)));
 
+            // Note:  This "leaks" the alignment padding
             this.used -= memory.len;
             this.last_allocation = null;
             this.last_size = 0;
@@ -295,24 +306,6 @@ fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, _: usize) void {
     const this: *Arena = @ptrCast(@alignCast(ctx));
     return this.rawFree(memory, alignment);
 }
-
-pub const TempArena = struct {
-    arena: *Arena,
-    reset_to: usize,
-
-    pub fn init(arena: *Arena) TempArena {
-        return .{ .arena = arena, .reset_to = arena.used };
-    }
-
-    pub fn release(this: *TempArena) void {
-        assert(this.arena.used >= this.reset_to);
-        this.arena.used = this.reset_to;
-    }
-
-    pub fn allocator(this: *TempArena) Allocator {
-        return this.arena.allocator();
-    }
-};
 
 test "Arena from slice" {
     var buf: [70]u8 align(8) = @splat(1); // Needs to be bigger to account for alignment

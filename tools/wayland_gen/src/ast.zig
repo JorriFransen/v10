@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 pub const Protocol = struct {
     name: []const u8,
@@ -8,6 +9,16 @@ pub const Protocol = struct {
     xml_path: []const u8 = "XXX_UNINITIALIZED_XML_PATH__X_X_X_",
     /// valid after resolving
     protocol_imports: std.array_hash_map.String(*const Protocol),
+
+    pub fn deinit(this: *Protocol, allocator: Allocator) void {
+        var interface_it = this.interfaces.iterator();
+        while (interface_it.next()) |entry| {
+            entry.value_ptr.deinit(allocator);
+        }
+
+        this.interfaces.deinit(allocator);
+        this.protocol_imports.deinit(allocator);
+    }
 };
 
 pub const Interface = struct {
@@ -22,6 +33,10 @@ pub const Interface = struct {
     zig_name: []const u8 = "XXX_UNRESOLVED_INTERFACE_NAME__X_X_X_",
     /// valid after resolving
     has_destructor: bool = false,
+
+    pub fn deinit(this: *Interface, allocator: Allocator) void {
+        this.enums.deinit(allocator);
+    }
 };
 
 pub const Message = struct {
@@ -51,8 +66,6 @@ pub const Arg = struct {
     interface_name: ?[]const u8,
     summary: []const u8,
 
-    /// valid after resolving
-    zig_name: []const u8 = "XXX_UNRESOLVED_ARG_NAME__X_X_X_",
     /// valid after resolving
     enum_type: ?*const Enum = null,
     /// valid after resolving

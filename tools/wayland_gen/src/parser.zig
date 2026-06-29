@@ -7,16 +7,22 @@ pub const mem = @import("mem");
 
 pub const Context = @import("wayland_generator.zig").Context;
 
-pub const Error = error{} || Parser.Error;
+pub const Error = error{} || Parser.Error || mem.Arena.Error;
 
 /// xml_temp_arena is used by the xml parser.
 /// It will be reset for each node, so don't use it for anything else!
-pub fn parse(context: *const Context, xml_temp_arena: *mem.Arena, err_writer: *std.Io.Writer, xml_path: []const u8) Error!AST.Protocol {
+pub fn parse(context: *const Context, err_writer: *std.Io.Writer, xml_path: []const u8) Error!AST.Protocol {
+    assert(mem.temp_initialized);
+
     var parser: Parser = undefined;
-    try parser.init(context, xml_temp_arena, err_writer, xml_path);
+
+    var xml_tmp_arena = try mem.Arena.init(.{ .virtual = .{} });
+    try parser.init(context, &xml_tmp_arena, err_writer, xml_path);
 
     var result = try parser.parse();
+
     parser.deinit();
+    try xml_tmp_arena.deinit();
 
     result.xml_path = xml_path;
 
@@ -84,13 +90,9 @@ const Parser = struct {
             this.xmlErr("Expected 'name' attribute, got '{s}'", .{attr.name});
         }
 
-        const InterfaceEntry = struct {
-            name: []const u8,
-            interface: AST.Interface,
-        };
-
         const protocol_name = try this.copyString(attr.value);
-        var interfaces: std.MultiArrayList(InterfaceEntry) = .empty;
+
+        var interfaces: std.array_hash_map.String(AST.Interface) = .empty;
 
         while (true) {
             const node = try this.nextNode();
@@ -112,10 +114,7 @@ const Parser = struct {
                         try this.skipElement();
                     } else if (std.mem.eql(u8, tag.name, "interface")) {
                         const interface = try this.parseInterface();
-                        try interfaces.append(this.context.arena, .{
-                            .interface = interface,
-                            .name = interface.name,
-                        });
+                        try interfaces.putNoClobber(this.context.gpa, interface.name, interface);
                     } else if (std.mem.eql(u8, tag.name, "description")) {
                         assert(false);
                     } else {
@@ -134,15 +133,9 @@ const Parser = struct {
             }
         }
 
-        const ifa_slice = interfaces.toOwnedSlice();
-
         return .{
             .name = protocol_name,
-            .interfaces = try .init(
-                this.context.arena,
-                ifa_slice.items(.name),
-                ifa_slice.items(.interface),
-            ),
+            .interfaces = interfaces,
             .protocol_imports = .empty,
         };
     }
@@ -151,6 +144,10 @@ const Parser = struct {
         var name_opt: ?[]const u8 = null;
         var version: u32 = 0;
         var description: AST.Description = .{};
+
+        var tmp = mem.getScratch(this.context.arena);
+        defer tmp.release();
+
         var requests: std.ArrayList(AST.Message) = .empty;
         var events: std.ArrayList(AST.Message) = .empty;
         var enums: std.array_hash_map.String(AST.Enum) = .empty;
@@ -196,12 +193,12 @@ const Parser = struct {
                         description = try this.parseDescription();
                     } else if (std.mem.eql(u8, tag.name, "request")) {
                         const request = try this.parseRequest();
-                        try requests.append(this.context.arena, request);
+                        try requests.append(tmp.a, request);
                     } else if (std.mem.eql(u8, tag.name, "event")) {
-                        try events.append(this.context.arena, try this.parseEvent());
+                        try events.append(tmp.a, try this.parseEvent());
                     } else if (std.mem.eql(u8, tag.name, "enum")) {
                         const e = try this.parseEnum();
-                        try enums.putNoClobber(this.context.arena, e.name, e);
+                        try enums.putNoClobber(this.context.gpa, e.name, e);
                     } else {
                         this.xmlErr("Unexpected element in interface: '{s}'", .{tag.name});
                         return error.MalformedXml;
@@ -222,8 +219,8 @@ const Parser = struct {
             .name = name,
             .version = version,
             .description = description,
-            .requests = try requests.toOwnedSlice(this.context.arena),
-            .events = try events.toOwnedSlice(this.context.arena),
+            .requests = try this.context.arena.dupe(AST.Message, requests.items),
+            .events = try this.context.arena.dupe(AST.Message, events.items),
             .enums = enums,
         };
     }
@@ -234,6 +231,10 @@ const Parser = struct {
         var since: u32 = 0;
         var deprecated_since: ?u32 = null;
         var description = AST.Description{};
+
+        var tmp = mem.getScratch(this.context.arena);
+        defer tmp.release();
+
         var args = std.ArrayList(AST.Arg).empty;
 
         const req_tag = this.xml_reader.current_node.tag_open;
@@ -274,7 +275,7 @@ const Parser = struct {
                     if (std.mem.eql(u8, tag.name, "description")) {
                         description = try this.parseDescription();
                     } else if (std.mem.eql(u8, tag.name, "arg")) {
-                        try args.append(this.context.arena, try this.parseArg());
+                        try args.append(tmp.a, try this.parseArg());
                     } else {
                         this.xmlErr("Unexpected element in request: '{s}'", .{tag.name});
                         return error.MalformedXml;
@@ -297,7 +298,7 @@ const Parser = struct {
             .since = since,
             .deprecated_since = deprecated_since,
             .description = description,
-            .args = try args.toOwnedSlice(this.context.arena),
+            .args = try this.context.arena.dupe(AST.Arg, args.items),
         };
     }
 
@@ -307,6 +308,10 @@ const Parser = struct {
         var since: u32 = 0;
         var deprecated_since: ?u32 = null;
         var description = AST.Description{};
+
+        var tmp = mem.getScratch(this.context.arena);
+        defer tmp.release();
+
         var args = std.ArrayList(AST.Arg).empty;
 
         const event_tag = this.xml_reader.current_node.tag_open;
@@ -353,7 +358,7 @@ const Parser = struct {
                     if (std.mem.eql(u8, tag.name, "description")) {
                         description = try this.parseDescription();
                     } else if (std.mem.eql(u8, tag.name, "arg")) {
-                        try args.append(this.context.arena, try this.parseArg());
+                        try args.append(tmp.a, try this.parseArg());
                     } else {
                         this.xmlErr("Unexpected element in request: '{s}'", .{tag.name});
                         return error.MalformedXml;
@@ -376,7 +381,7 @@ const Parser = struct {
             .since = since,
             .deprecated_since = deprecated_since,
             .description = description,
-            .args = try args.toOwnedSlice(this.context.arena),
+            .args = try this.context.arena.dupe(AST.Arg, args.items),
         };
     }
 
@@ -467,6 +472,10 @@ const Parser = struct {
         var since: u32 = 0;
         var deprecated_since: ?u32 = null;
         var description = AST.Description{};
+
+        var tmp = mem.getScratch(this.context.arena);
+        defer tmp.release();
+
         var entries = std.ArrayList(AST.Enum.Entry).empty;
 
         const enum_tag = this.xml_reader.current_node.tag_open;
@@ -507,7 +516,7 @@ const Parser = struct {
                     if (std.mem.eql(u8, tag.name, "description")) {
                         description = try this.parseDescription();
                     } else if (std.mem.eql(u8, tag.name, "entry")) {
-                        try entries.append(this.context.arena, try this.parseEnumEntry());
+                        try entries.append(tmp.a, try this.parseEnumEntry());
                     } else {
                         this.xmlErr("Unexpected element in request: '{s}'", .{tag.name});
                         return error.MalformedXml;
@@ -530,7 +539,7 @@ const Parser = struct {
             .since = since,
             .deprecated_since = deprecated_since,
             .description = description,
-            .entries = try entries.toOwnedSlice(this.context.arena),
+            .entries = try this.context.arena.dupe(AST.Enum.Entry, entries.items),
         };
     }
 
@@ -653,12 +662,12 @@ const Parser = struct {
     }
 
     fn skipElement(this: *Parser) Parser.Error!void {
-        var tmp = mem.getTemp();
+        var tmp = mem.getScratch(this.context.arena);
         defer tmp.release();
 
         const first_node = this.xml_reader.current_node.tag_open;
 
-        const start_name = try copyStringAlloc(tmp.allocator(), first_node.name);
+        const start_name = try tmp.a.dupe(u8, first_node.name);
 
         var node = try this.nextNode();
         while (true) {
@@ -689,7 +698,10 @@ const Parser = struct {
     }
 
     fn xmlErr(this: *Parser, comptime fmt: []const u8, args: anytype) void {
-        const msg = std.fmt.allocPrint(this.context.arena, fmt, args) catch @panic("OOM");
+        var tmp = mem.getScratch(this.context.arena);
+        defer tmp.release();
+
+        const msg = std.fmt.allocPrint(tmp.a, fmt, args) catch @panic("OOM");
 
         const loc = this.xml_reader.location;
         this.printErr("{s}:{}:{}: error: {s}\n", .{ this.xml_file_path, loc.line, loc.column, msg });
@@ -701,13 +713,8 @@ const Parser = struct {
     }
 
     fn copyString(this: *Parser, str: []const u8) ![]const u8 {
-        return copyStringAlloc(this.context.arena, str);
-    }
-
-    fn copyStringAlloc(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
-        const buf = try allocator.alloc(u8, str.len);
-        @memcpy(buf, str);
-        return buf;
+        const result = try this.context.arena.dupe(u8, str);
+        return result;
     }
 };
 

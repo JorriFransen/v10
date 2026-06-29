@@ -194,8 +194,6 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
         pub const from_options = info.options;
 
         pub fn freeOptions(o: *Options, allocator: Allocator) void {
-            _ = .{ o, allocator };
-
             const o_info = @typeInfo(Options);
             assert(o_info == .@"struct");
             assert(o_info.@"struct".fields.len == from_options.len);
@@ -214,7 +212,11 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
         }
 
         // TODO: Handle duplicate non array options (disallow or overwrite and free previous)
-        pub fn parse(args: []const []const u8, allocator: Allocator, stderr_writer: *std.Io.Writer) Error!Options {
+        /// Strings and arrays in the result are allocated via 'allocator',
+        ///  'tmp_allocator' is used for temporaries like ArrayList, which are
+        ///  copied to the final result via 'allocator'. This function does not
+        ///  free anything allocated by 'tmp_allocator', and does not reset 'tmp_allocator'.
+        pub fn parse(args: []const []const u8, allocator: Allocator, tmp_allocator: Allocator, stderr_writer: *std.Io.Writer) Error!Options {
             var result: Options = .{};
 
             var tokens = Tokenizer.init(args);
@@ -340,15 +342,12 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                                 assert(ptr.child == u8);
                                 assert(ptr.is_const);
 
-                                const string = try allocator.alloc(u8, value_token.len);
-                                @memcpy(string, value_token);
-
-                                break :blk string;
+                                break :blk try allocator.dupe(u8, value_token);
                             },
                         };
 
                         if (o.is_array) {
-                            try @field(result, o.name).append(allocator, value);
+                            try @field(result, o.name).append(tmp_allocator, value);
                         } else {
                             @field(result, o.name) = value;
                         }
@@ -361,6 +360,15 @@ pub fn OptionParser(program_name: []const u8, comptime options: []const Option) 
                 if (!found) {
                     err(stderr_writer, "Invalid option: '{s}'", .{field_name});
                     return error.InvalidOption;
+                }
+            }
+
+            inline for (from_options) |o| {
+                if (o.is_array) {
+                    const slice_ptr = &@field(result, o.name).items;
+                    if (slice_ptr.len > 0) {
+                        slice_ptr.* = try allocator.dupe(o.type, slice_ptr.*);
+                    }
                 }
             }
 

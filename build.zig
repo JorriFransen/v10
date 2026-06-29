@@ -348,6 +348,7 @@ const Tools = struct {
                 .target = tools_target,
                 .optimize = tools_optimize,
                 .imports = &.{
+                    .{ .name = "mem", .module = modules.memory },
                     .{ .name = "clip", .module = modules.clip },
                     .{ .name = "options", .module = option_module },
                 },
