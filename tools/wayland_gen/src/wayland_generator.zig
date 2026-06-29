@@ -1,4 +1,6 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
 const clip = @import("clip");
 const mem = @import("mem");
 
@@ -16,8 +18,9 @@ const OptionParser = clip.OptionParser("wayland-gen", &.{
 
 pub const Context = struct {
     io: std.Io,
-    arena: std.mem.Allocator,
-    args: []const []const u8,
+    arena: Allocator,
+    gpa: Allocator,
+    args: OptionParser.Options,
 
     stderr: *std.Io.Writer,
     stdout: *std.Io.Writer,
@@ -45,15 +48,39 @@ pub fn main(init: std.process.Init) !u8 {
     stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
     defer stdout_writer.flush() catch unreachable;
 
+    const args: OptionParser.Options = blk: {
+        var arg_tmp = mem.getScratch(arena);
+        defer arg_tmp.release();
+
+        const raw_args = try init.minimal.args.toSlice(arg_tmp.a);
+        break :blk OptionParser.parse(
+            raw_args[1..],
+            arena,
+            arg_tmp.a,
+            &stdout_writer.interface,
+        ) catch |e| switch (e) {
+            error.OutOfMemory => @panic("OOM"),
+            else => {
+                try OptionParser.usage(&stderr_writer.interface);
+                return error.ArgParseError;
+            },
+        };
+    };
+
     var context = Context{
         .io = init.io,
         .arena = arena,
-        .args = try init.minimal.args.toSlice(arena),
+        .gpa = init.gpa,
+        .args = args,
         .stderr = &stderr_writer.interface,
         .stdout = &stdout_writer.interface,
-        .interface_to_protocol_map = .init(arena),
-        .signatures = .init(arena),
+        .interface_to_protocol_map = .init(init.gpa),
+        .signatures = .init(init.gpa),
     };
+    defer {
+        context.interface_to_protocol_map.deinit();
+        context.signatures.deinit();
+    }
 
     run(&context) catch |e| {
         try context.stderr.print("{}", .{e});
@@ -63,25 +90,18 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 fn run(context: *Context) !void {
-    const cli_options = blk: {
-        var arena = std.heap.ArenaAllocator.init(context.arena);
-        defer arena.deinit();
-
-        break :blk try OptionParser.parse(context.args[1..], context.arena, arena.allocator(), context.stdout);
-    };
-
-    if (cli_options.help) {
+    if (context.args.help) {
         try OptionParser.usage(context.stdout);
         return;
     }
 
     var args_valid = true;
-    if (cli_options.wayland.len == 0) {
+    if (context.args.wayland.len == 0) {
         try context.stderr.print("Missing --wayland option", .{});
         args_valid = false;
     }
 
-    if (cli_options.out.len == 0) {
+    if (context.args.out.len == 0) {
         try context.stderr.print("Missing --out option", .{});
         args_valid = false;
     }
@@ -91,8 +111,8 @@ fn run(context: *Context) !void {
         return error.InvalidArgs;
     }
 
-    const output_dir = std.Io.Dir.openDirAbsolute(context.io, cli_options.out, .{}) catch {
-        try context.stderr.print("Invalid output directory: {s}", .{cli_options.out});
+    const output_dir = std.Io.Dir.openDirAbsolute(context.io, context.args.out, .{}) catch {
+        try context.stderr.print("Invalid output directory: {s}", .{context.args.out});
         return error.OutputDirDoesNotExist;
     };
     defer output_dir.close(context.io);
@@ -110,15 +130,17 @@ fn run(context: *Context) !void {
 
     var core_protocol: AST.Protocol = undefined;
 
-    if (std.Io.Dir.openFileAbsolute(context.io, cli_options.wayland, .{})) |core_xml_file| {
-        if (parser.parse(context, &stderr_writer.interface, cli_options.wayland)) |prot| {
+    if (std.Io.Dir.openFileAbsolute(context.io, context.args.wayland, .{})) |core_xml_file| {
+        if (parser.parse(context, &stderr_writer.interface, context.args.wayland)) |prot| {
             core_protocol = prot;
         } else |e| {
             core_xml_file.close(context.io);
-            try context.stderr.print("Core protocol parse failed: '{s}'\n", .{cli_options.wayland});
+            try context.stderr.print("Core protocol parse failed: '{s}'\n", .{context.args.wayland});
             return e;
         }
         core_xml_file.close(context.io);
+
+        errdefer core_protocol.deinit(context.gpa);
 
         // This could be in the parser, if it returned a Protocol by pointer!
         // As long as Protocol is returned by value this needs to be done here,
@@ -129,31 +151,36 @@ fn run(context: *Context) !void {
         }
 
         resolve.resolveProtocol(context, &core_protocol, true) catch |e| {
-            try context.stderr.print("Core protocol resolve failed: '{s}'\n", .{cli_options.wayland});
+            try context.stderr.print("Core protocol resolve failed: '{s}'\n", .{context.args.wayland});
             return e;
         };
 
         emit.emitProtocol(context, output_dir, &core_protocol, true) catch |e| {
-            try context.stderr.print("Core protocol emit failed: '{s}'\n", .{cli_options.wayland});
+            try context.stderr.print("Core protocol emit failed: '{s}'\n", .{context.args.wayland});
             return e;
         };
     } else |e| return e;
 
+    defer core_protocol.deinit(context.gpa);
+
     var protocols: std.ArrayList(AST.Protocol) = .empty;
 
-    for (cli_options.protocol.items) |protocol_path| {
+    for (context.args.protocol.items) |protocol_path| {
         if (std.Io.Dir.openFileAbsolute(context.io, protocol_path, .{})) |protocol_xml_file| {
-            if (parser.parse(context, &stderr_writer.interface, protocol_path)) |prot| {
-                protocol_xml_file.close(context.io);
-
-                try protocols.append(context.arena, prot);
-            } else |e| {
+            var protocol = parser.parse(context, &stderr_writer.interface, protocol_path) catch |e| {
                 protocol_xml_file.close(context.io);
                 try context.stderr.print("Protocol parse failed: '{s}'\n", .{protocol_path});
                 return e;
-            }
+            };
+
+            protocol_xml_file.close(context.io);
+
+            errdefer protocol.deinit(context.gpa);
+            try protocols.append(context.arena, protocol);
         } else |e| return e;
     }
+
+    defer for (protocols.items) |*p| p.deinit(context.gpa);
 
     // This could be in the parser, if it returned a Protocol by pointer!
     // As long as Protocol is returned by value this needs to be done here,

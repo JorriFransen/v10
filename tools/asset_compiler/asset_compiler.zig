@@ -54,7 +54,7 @@ pub fn main(init: std.process.Init) !u8 {
     errdefer arena_data.deinit() catch {};
     const arena = arena_data.allocator();
 
-    const args = blk: {
+    const args: OptionParser.Options = blk: {
         var arg_tmp = mem.getScratch(arena);
         defer arg_tmp.release();
 
@@ -73,18 +73,6 @@ pub fn main(init: std.process.Init) !u8 {
         };
     };
 
-    if (args.input_scan_dir.len == 0) {
-        try stderr_writer.interface.print("error: missing argument 'input_scan_dir'\n", .{});
-        try OptionParser.usage(&stderr_writer.interface);
-        return error.MissingInputScanDir;
-    }
-
-    if (args.output_dir.len == 0) {
-        try stderr_writer.interface.print("error: missing argument 'output_dir'\n", .{});
-        try OptionParser.usage(&stderr_writer.interface);
-        return error.MissingOutputDir;
-    }
-
     const context = Context{
         .io = init.io,
         .arena = arena,
@@ -98,6 +86,17 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 pub fn run(context: *const Context, options: OptionParser.Options) !void {
+    if (options.input_scan_dir.len == 0) {
+        try context.stderr.print("error: missing argument 'input_scan_dir'\n", .{});
+        try OptionParser.usage(context.stderr);
+        return error.MissingInputScanDir;
+    }
+
+    if (options.output_dir.len == 0) {
+        try context.stderr.print("error: missing argument 'output_dir'\n", .{});
+        try OptionParser.usage(context.stderr);
+        return error.MissingOutputDir;
+    }
     const start_time = std.Io.Timestamp.now(context.io, .real);
 
     const cwd = try std.process.currentPathAlloc(context.io, context.arena);

@@ -72,8 +72,8 @@ fn resolveEvent(context: *Context, protocol: *AST.Protocol, interface: *AST.Inte
 fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, message: *AST.Message, core: bool) Error!void {
     message.zig_name = try toCamelCase(context.arena, message.name);
 
-    var signature: std.ArrayList(u8) = .empty;
-    defer signature.deinit(context.arena);
+    var sig_sb = mem.getScratchStringBuilder(context.arena);
+    defer sig_sb.deinit();
 
     for (message.args) |*arg| {
         try resolveArg(context, protocol, interface, message, arg, core);
@@ -82,20 +82,19 @@ fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.In
             message.fd_count += 1;
         }
 
-        if (arg.type.allow_null) try signature.append(context.arena, '?');
+        if (arg.type.allow_null) try sig_sb.writeByte('?');
         const tag_str = @tagName(arg.type.tag);
         assert(tag_str.len == 1);
-        try signature.append(context.arena, tag_str[0]);
+        try sig_sb.writeByte(tag_str[0]);
     }
 
-    const sig = if (signature.items.len > 0)
-        try signature.toOwnedSlice(context.arena)
-    else
-        "_";
+    var sig = sig_sb.currentString();
+    if (sig.len == 0) {
+        sig = "_";
+    }
 
     const sig_entry = try context.signatures.getOrPut(sig);
     if (sig_entry.found_existing) {
-        if (!std.mem.eql(u8, "_", sig)) context.arena.free(sig);
         message.signature = sig_entry.key_ptr.*;
     } else {
         const types = try context.arena.alloc(AST.Type, message.args.len);
@@ -103,10 +102,11 @@ fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.In
             t.* = arg.type;
         }
 
-        sig_entry.key_ptr.* = sig;
+        const new_sig = try context.arena.dupe(u8, sig);
+        sig_entry.key_ptr.* = new_sig;
         sig_entry.value_ptr.* = types;
 
-        message.signature = sig;
+        message.signature = new_sig;
     }
 
     if (message.is_destructor) {
@@ -159,7 +159,7 @@ fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *cons
             if (!protocol.interfaces.contains(interface_name)) {
                 if (context.interface_to_protocol_map.get(interface_name)) |in_prot| {
                     if (protocol.protocol_imports.get(in_prot.name) == null) {
-                        try protocol.protocol_imports.put(context.arena, in_prot.name, in_prot);
+                        try protocol.protocol_imports.put(context.gpa, in_prot.name, in_prot);
                     }
                     arg.import_name = in_prot.name;
                 } else {

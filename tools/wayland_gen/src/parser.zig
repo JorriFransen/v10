@@ -145,7 +145,7 @@ const Parser = struct {
         return .{
             .name = protocol_name,
             .interfaces = try .init(
-                this.context.arena,
+                this.context.gpa,
                 ifa_slice.items(.name),
                 ifa_slice.items(.interface),
             ),
@@ -207,7 +207,7 @@ const Parser = struct {
                         try events.append(this.context.arena, try this.parseEvent());
                     } else if (std.mem.eql(u8, tag.name, "enum")) {
                         const e = try this.parseEnum();
-                        try enums.putNoClobber(this.context.arena, e.name, e);
+                        try enums.putNoClobber(this.context.gpa, e.name, e);
                     } else {
                         this.xmlErr("Unexpected element in interface: '{s}'", .{tag.name});
                         return error.MalformedXml;
