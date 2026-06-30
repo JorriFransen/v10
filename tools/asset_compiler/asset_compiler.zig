@@ -21,20 +21,27 @@ const pathIsAbsolute = std.fs.path.isAbsolute;
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
     clip.option(@as([]const u8, ""), "output_dir", 'o', "Output directory"),
+    clip.option(@as([]const u8, ".timestamps"), "timestamp_file_path", 't', "Timestamp file path relative to output_dir"),
     clip.option(false, "verbose", 'v', "Verbose outout"),
 });
 
 pub const Context = struct {
     io: std.Io,
     arena: Allocator,
+    gpa: Allocator,
 
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 
     verbose: bool = false,
+
+    scan_dir_path: []const u8 = undefined,
+    output_dir_path: []const u8 = undefined,
 };
 
 var total_aseprite_time: std.Io.Duration = .zero;
+
+var timestamp_file_buf: [4096]u8 = undefined;
 
 pub fn main(init: std.process.Init) !u8 {
     mem.init();
@@ -72,9 +79,10 @@ pub fn main(init: std.process.Init) !u8 {
         };
     };
 
-    const context = Context{
+    var context = Context{
         .io = init.io,
         .arena = arena,
+        .gpa = init.gpa,
         .stdout = &stdout_writer.interface,
         .stderr = &stderr_writer.interface,
         .verbose = args.verbose,
@@ -84,7 +92,9 @@ pub fn main(init: std.process.Init) !u8 {
     return 0;
 }
 
-pub fn run(context: *const Context, options: OptionParser.Options) !void {
+pub fn run(context: *Context, options: OptionParser.Options) !void {
+    const start_time = std.Io.Timestamp.now(context.io, .real);
+
     if (options.input_scan_dir.len == 0) {
         try context.stderr.print("error: missing argument 'input_scan_dir'\n", .{});
         try OptionParser.usage(context.stderr);
@@ -96,133 +106,289 @@ pub fn run(context: *const Context, options: OptionParser.Options) !void {
         try OptionParser.usage(context.stderr);
         return error.MissingOutputDir;
     }
-    const start_time = std.Io.Timestamp.now(context.io, .real);
 
     const cwd = try std.process.currentPathAlloc(context.io, context.arena);
 
-    var scan_path: []const u8 = "";
     const scan_dir = dir: {
         if (pathIsAbsolute(options.input_scan_dir)) {
-            scan_path = try context.arena.dupe(u8, options.input_scan_dir);
+            context.scan_dir_path = try context.arena.dupe(u8, options.input_scan_dir);
         } else {
-            scan_path = try pathResolve(context.arena, &.{ cwd, options.input_scan_dir });
+            context.scan_dir_path = try pathResolve(context.arena, &.{ cwd, options.input_scan_dir });
         }
 
         break :dir std.Io.Dir.cwd().openDir(context.io, options.input_scan_dir, .{ .iterate = true }) catch |e| {
-            std.log.err("Unable to open input dir '{s}'", .{scan_path});
+            std.log.err("Unable to open input dir '{s}'", .{context.scan_dir_path});
             std.log.err("{s}", .{@errorName(e)});
             return error.InvalidInputScanDir;
         };
     };
     errdefer scan_dir.close(context.io);
 
-    var output_dir_path: []const u8 = "";
     const output_dir = dir: {
         if (pathIsAbsolute(options.output_dir)) {
-            output_dir_path = try context.arena.dupe(u8, options.output_dir);
+            context.output_dir_path = try context.arena.dupe(u8, options.output_dir);
         } else {
-            output_dir_path = try pathResolve(context.arena, &.{ cwd, options.output_dir });
+            context.output_dir_path = try pathResolve(context.arena, &.{ cwd, options.output_dir });
         }
 
         // TODO: Consider creating the directory if it does not exist
         break :dir std.Io.Dir.cwd().openDir(context.io, options.output_dir, .{ .iterate = true }) catch |e| {
-            std.log.err("Unable to open input dir '{s}'", .{output_dir_path});
+            std.log.err("Unable to open input dir '{s}'", .{context.output_dir_path});
             std.log.err("{s}", .{@errorName(e)});
             return error.InvalidOutputDir;
         };
     };
     errdefer output_dir.close(context.io);
 
-    log.debug("input_scan_dir: '{s}'", .{scan_path});
-    log.debug("output_dir: '{s}'", .{output_dir_path});
+    log.debug("input_scan_dir: '{s}'", .{context.scan_dir_path});
+    log.debug("output_dir: '{s}'", .{context.output_dir_path});
 
-    const input_files = try collectInputFiles(context, &scan_dir, scan_path);
+    var tmp = mem.getScratch(context.arena);
+    defer tmp.release();
 
+    var ts_file_opt = try readTimestampFile(context, &output_dir, options.timestamp_file_path);
+    defer if (ts_file_opt) |*ts_file| ts_file.deinit(context);
+
+    const input_files = try collectInputFiles(context, context.arena, &scan_dir, context.scan_dir_path);
     scan_dir.close(context.io);
 
-    var per_input_tmp = mem.getScratch(context.arena);
-    for (input_files) |input_file| {
-        per_input_tmp.release();
+    var files_to_compile: std.ArrayList(*InputFile) = .empty;
+    defer files_to_compile.deinit(context.gpa);
 
-        log.debug("", .{});
-        log.debug("classify input file: {s}", .{input_file.path});
+    var all_output_files: std.StringHashMapUnmanaged(void) = .empty;
+    defer all_output_files.deinit(context.gpa);
 
-        const tags = try asepriteTags(context, per_input_tmp.a, input_file.abs_path);
-
-        var tag_skip = false;
-        var tag_split_layers = false;
-        for (tags) |t| {
-            if (std.mem.eql(u8, "skip", t))
-                tag_skip = true
-            else if (std.mem.eql(u8, "split_layers", t))
-                tag_split_layers = true;
-        }
-
-        log.debug("classification: skip:{} split_layers:{}", .{ tag_skip, tag_split_layers });
-
-        if (!tag_skip) {
-            const rel_dir_path = dirname(input_file.path) orelse "";
-
-            const abs_output_file_path_opt: ?[]const u8 = if (tag_split_layers) blk: {
-                const layers = try asepriteLayers(context, per_input_tmp.a, input_file.abs_path);
-                const output_prefix = stem(input_file.path);
-
-                for (layers) |l| {
-                    const out_file_name = try std.fmt.allocPrint(per_input_tmp.a, "{s}_{s}.bmp", .{ output_prefix, l });
-                    const abs_file_path = try pathJoin(per_input_tmp.a, &.{ output_dir_path, rel_dir_path, out_file_name });
-
-                    const status = try outputFileStatus(context, abs_file_path, input_file.timestamp);
-                    switch (status) {
-                        .missing, .outOfDate => break :blk abs_file_path,
-                        .upToDate => {},
+    if (ts_file_opt) |ts_file| {
+        for (input_files) |*input_file| {
+            if (ts_file.timestamp.nanoseconds <= input_file.timestamp.nanoseconds) {
+                try files_to_compile.append(context.gpa, input_file);
+            } else if (ts_file.outputs_per_input.get(input_file.path)) |old_output_files| {
+                const up_to_date = blk: {
+                    for (old_output_files) |output_file_path| {
+                        const status = try outputFileStatus(context, &output_dir, output_file_path, input_file.timestamp);
+                        switch (status) {
+                            .missing, .outOfDate => break :blk false,
+                            .upToDate => {},
+                        }
                     }
-                }
+                    break :blk true;
+                };
 
-                break :blk null;
-            } else blk: {
-                const out_file_name = try std.fmt.allocPrint(per_input_tmp.a, "{s}.bmp", .{std.fs.path.stem(input_file.path)});
-                const abs_file_path = try pathJoin(per_input_tmp.a, &.{ output_dir_path, rel_dir_path, out_file_name });
+                if (up_to_date) {
+                    if (old_output_files.len == 0) {
+                        verbose(context, "skipping: {s}", .{input_file.abs_path});
+                    }
+                    input_file.outputs = old_output_files;
 
-                const status = try outputFileStatus(context, abs_file_path, input_file.timestamp);
-                switch (status) {
-                    .missing, .outOfDate => break :blk abs_file_path,
-                    .upToDate => break :blk null,
-                }
-            };
-
-            if (abs_output_file_path_opt) |abs_output_path| {
-                log.debug("emit for: {s}", .{input_file.abs_path});
-                if (!tag_split_layers) {
-                    try asepriteExportBMP(context, input_file.abs_path, abs_output_path);
+                    for (old_output_files) |output_file_path| {
+                        try all_output_files.putNoClobber(context.gpa, output_file_path, undefined);
+                    }
                 } else {
-                    try asepriteExportSplitLayerBMP(context, input_file.abs_path, output_dir_path);
+                    try files_to_compile.append(context.gpa, input_file);
                 }
-            } else {
-                log.debug("skip emit for: {s}", .{input_file.abs_path});
             }
         }
+    } else {
+        for (input_files) |*input_file| {
+            try files_to_compile.append(context.gpa, input_file);
+        }
     }
-    per_input_tmp.release();
+
+    for (files_to_compile.items) |input_file| {
+        log.debug("", .{});
+
+        tmp.release();
+
+        const tags = try asepriteTags(context, tmp.a, input_file.abs_path);
+
+        // TODO: Do this while parsing tags in fn asepriteTags()
+        var tag_skip = false;
+        var tag_split_layers = false;
+
+        if (input_file.skip) {
+            tag_skip = true;
+        } else {
+            for (tags) |t| {
+                if (std.mem.eql(u8, "skip", t))
+                    tag_skip = true
+                else if (std.mem.eql(u8, "split_layers", t))
+                    tag_split_layers = true;
+            }
+        }
+
+        var output_file_paths: []const []const u8 = &.{};
+
+        if (!tag_skip) {
+            verbose(context, "compiling: {s}", .{input_file.abs_path});
+
+            const rel_dir_path = dirname(input_file.path) orelse "";
+
+            output_file_paths = if (tag_split_layers) blk: {
+                const layers = try asepriteLayers(context, tmp.a, input_file.abs_path);
+
+                const output_filename_prefix = stem(input_file.path);
+
+                const result = try context.arena.alloc([]const u8, layers.len);
+
+                for (layers, result) |l, *output_file_name| {
+                    const name = try mem.arenaAllocPrint(tmp.a, "{s}_{s}.bmp", .{ output_filename_prefix, l });
+                    output_file_name.* = try pathJoin(context.arena, &.{ rel_dir_path, name });
+                }
+
+                const abs_out_dir = try pathJoin(tmp.a, &.{ context.output_dir_path, rel_dir_path });
+                try asepriteExportSplitLayerBMP(context, input_file.abs_path, abs_out_dir);
+
+                break :blk result;
+            } else blk: {
+                const out_file_name = try std.fmt.allocPrint(tmp.a, "{s}.bmp", .{stem(input_file.path)});
+                const rel_out_path = try pathJoin(context.arena, &.{ rel_dir_path, out_file_name });
+                const abs_file_path = try pathJoin(tmp.a, &.{ context.output_dir_path, rel_out_path });
+
+                try asepriteExportBMP(context, input_file.abs_path, abs_file_path);
+                break :blk try context.arena.dupe([]const u8, &.{rel_out_path});
+            };
+        } else {
+            log.info("skipping: {s}", .{input_file.abs_path});
+        }
+
+        input_file.outputs = output_file_paths;
+        for (output_file_paths) |ofp| {
+            try all_output_files.putNoClobber(context.gpa, ofp, undefined);
+            log.debug(" output file: {s}", .{ofp});
+        }
+    }
+
+    try writeTimestampFile(context, &output_dir, options.timestamp_file_path, input_files);
+
+    // TODO: Attempt to remove any file in the output dir that's missing from all_output_files
 
     output_dir.close(context.io);
 
-    if (options.verbose) {
-        const total_time = start_time.untilNow(context.io, .real);
-        log.info("aseprite time: {f}", .{total_aseprite_time});
-        log.info("total time   : {f}", .{total_time});
-    }
+    const total_time = start_time.untilNow(context.io, .real);
+    verbose(context, "aseprite time: {f}", .{total_aseprite_time});
+    verbose(context, "total time   : {f}", .{total_time});
 }
 
-/// Wrapper around std.fs.path.resolve to make this safe to use with arenas.
-///  (std.fs.path.resolve does temporary allocations with allocator.)
-inline fn pathResolve(allocator: Allocator, paths: []const []const u8) ![]const u8 {
-    var tmp = mem.getScratch(allocator);
+pub const TimestampFile = struct {
+    timestamp: std.Io.Timestamp,
+    outputs_per_input: std.StringHashMapUnmanaged([]const []const u8),
+
+    pub fn deinit(this: *TimestampFile, context: *const Context) void {
+        this.outputs_per_input.deinit(context.gpa);
+    }
+};
+
+fn readTimestampFile(context: *const Context, output_dir: *const std.Io.Dir, rel_path: []const u8) !?TimestampFile {
+    var tmp = mem.getScratch(context.arena);
     defer tmp.release();
 
-    const tmp_res = try std.fs.path.resolve(tmp.a, paths);
-    const result = try allocator.dupe(u8, tmp_res);
+    const timestamp: std.Io.Timestamp = if (output_dir.statFile(context.io, rel_path, .{})) |stat|
+        stat.mtime
+    else |_| {
+        verbose(context, "missing timestamp file, compile everything", .{});
+        return null;
+    };
 
-    return result;
+    var outputs_per_input: std.StringHashMapUnmanaged([]const []const u8) = .empty;
+
+    verbose(context, "reading timestamp file", .{});
+
+    if (output_dir.openFile(context.io, rel_path, .{})) |timestamp_file| {
+        defer timestamp_file.close(context.io);
+
+        var file_reader = timestamp_file.reader(context.io, &timestamp_file_buf);
+        const reader = &file_reader.interface;
+
+        const timestamp_file_content_size = try file_reader.getSize();
+        const timestamp_file_content = try tmp.a.alloc(u8, timestamp_file_content_size);
+        defer tmp.release();
+
+        try reader.readSliceAll(timestamp_file_content);
+
+        var line_it = std.mem.splitScalar(u8, timestamp_file_content, '\n');
+
+        var current_input: ?[]const u8 = null;
+        var current_outputs: std.ArrayList([]const u8) = .empty;
+
+        while (line_it.next()) |raw_line| {
+            const line = std.mem.trim(u8, raw_line, "\r");
+            if (line.len > 0) {
+                if (!(line[0] == 'i' or line[0] == 'o') or line[1] != ':') {
+                    log.err("Invalid line in timestamp file: '{s}'", .{line});
+                    return error.ReadTimestampFile;
+                }
+
+                const path = try context.arena.dupe(u8, line[2..]);
+                if (path.len == 0) {
+                    log.err("Invalid line in timestamp file: '{s}'", .{line});
+                    return error.ReadTimestampFile;
+                }
+
+                if (line[0] == 'i') {
+                    if (current_input) |ci| {
+                        const outputs = try context.arena.dupe([]const u8, current_outputs.items);
+                        try outputs_per_input.put(context.gpa, ci, outputs);
+
+                        log.debug("input: '{s}'", .{ci});
+                        for (outputs) |o| log.debug("\toutput: '{s}'", .{o});
+                    }
+
+                    current_outputs = .empty;
+                    current_input = path;
+                } else if (line[0] == 'o') {
+                    if (current_input == null) {
+                        log.err("Invalid line in timestamp file: '{s}'", .{line});
+                        log.err("No associated input", .{});
+                        return error.ReadTimestampFile;
+                    }
+
+                    try current_outputs.append(tmp.a, path);
+                }
+            }
+        }
+
+        if (current_input) |ci| {
+            const outputs = try context.arena.dupe([]const u8, current_outputs.items);
+            try outputs_per_input.put(context.gpa, ci, outputs);
+
+            log.debug("input: '{s}'", .{ci});
+            for (outputs) |o| log.debug("\toutput: '{s}'", .{o});
+        }
+    } else |e| {
+        const full_path = try std.fs.path.resolve(tmp.a, &.{ context.output_dir_path, rel_path });
+        std.log.err("unable to open timestamp file for reading '{s}'", .{full_path});
+        std.log.err("{s}", .{@errorName(e)});
+        return error.WriteTimestampFile;
+    }
+
+    return .{ .timestamp = timestamp, .outputs_per_input = outputs_per_input };
+}
+
+pub fn writeTimestampFile(context: *const Context, output_dir: *const std.Io.Dir, rel_path: []const u8, input_files: []const InputFile) !void {
+    if (output_dir.createFile(context.io, rel_path, .{ .truncate = true })) |timestamp_file| {
+        defer timestamp_file.close(context.io);
+
+        var file_writer = timestamp_file.writer(context.io, &timestamp_file_buf);
+        const writer = &file_writer.interface;
+
+        for (input_files) |*input_file| {
+            try writer.print("i:{s}\n", .{input_file.path});
+
+            for (input_file.outputs) |out_file_path| {
+                try writer.print("o:{s}\n", .{out_file_path});
+            }
+        }
+
+        try writer.flush();
+    } else |e| {
+        var tmp = mem.getScratch(context.arena);
+        defer tmp.release();
+
+        const full_path = try std.fs.path.resolve(tmp.a, &.{ context.output_dir_path, rel_path });
+        std.log.err("unable to open timestamp file for writing '{s}'", .{full_path});
+        std.log.err("{s}", .{@errorName(e)});
+        return error.WriteTimestampFile;
+    }
 }
 
 pub const InputFile = struct {
@@ -230,11 +396,15 @@ pub const InputFile = struct {
     path: []const u8,
     abs_path: []const u8,
 
+    skip: bool = false,
+
     timestamp: std.Io.Timestamp,
+
+    outputs: []const []const u8 = &.{},
 };
 
-fn collectInputFiles(context: *const Context, scan_dir: *const std.Io.Dir, scan_path: []const u8) ![]const InputFile {
-    var tmp = mem.getScratch(context.arena);
+fn collectInputFiles(context: *const Context, allocator: Allocator, scan_dir: *const std.Io.Dir, scan_path: []const u8) ![]InputFile {
+    var tmp = mem.getScratch(allocator);
     defer tmp.release();
 
     var input_files: std.ArrayList(InputFile) = .empty;
@@ -244,11 +414,12 @@ fn collectInputFiles(context: *const Context, scan_dir: *const std.Io.Dir, scan_
         if (entry.kind == .file) {
             if (std.mem.eql(u8, ".aseprite", extension(entry.basename))) {
                 const tmp_input_path = try tmp.a.dupe(u8, entry.path);
-                const abs_path = try pathJoin(context.arena, &.{ scan_path, tmp_input_path });
+                const abs_path = try pathJoin(allocator, &.{ scan_path, tmp_input_path });
+                const path = abs_path[abs_path.len - tmp_input_path.len ..];
                 const stat = try scan_dir.statFile(context.io, entry.path, .{});
 
                 try input_files.append(tmp.a, .{
-                    .path = abs_path[abs_path.len - tmp_input_path.len ..],
+                    .path = path,
                     .abs_path = abs_path,
                     .timestamp = stat.mtime,
                 });
@@ -256,7 +427,7 @@ fn collectInputFiles(context: *const Context, scan_dir: *const std.Io.Dir, scan_
         }
     }
 
-    return try context.arena.dupe(InputFile, input_files.items);
+    return try allocator.dupe(InputFile, input_files.items);
 }
 
 const OutputFileStatus = enum(u2) {
@@ -265,12 +436,11 @@ const OutputFileStatus = enum(u2) {
     upToDate,
 };
 
-fn outputFileStatus(context: *const Context, abs_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
-    assert(pathIsAbsolute(abs_path));
+fn outputFileStatus(context: *const Context, output_dir: *const std.Io.Dir, dir_rel_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
+    const f = std.fs.path.fmtJoin(&.{ context.output_dir_path, dir_rel_path });
+    log.debug("checking output file: {f}", .{f});
 
-    log.debug("checking output file: {s}", .{abs_path});
-
-    const result: OutputFileStatus = if (std.Io.Dir.statFile(undefined, context.io, abs_path, .{})) |stat|
+    const result: OutputFileStatus = if (output_dir.statFile(context.io, dir_rel_path, .{})) |stat|
         if (stat.mtime.nanoseconds <= input_timestamp.nanoseconds)
             .outOfDate
         else
@@ -459,4 +629,20 @@ fn asepriteExportSplitLayerBMP(context: *const Context, abs_input_path: []const 
         std.log.err("Asprite invocation failed", .{});
         return error.AsepriteNonZeroExitCode;
     }
+}
+
+/// Wrapper around std.fs.path.resolve to make this safe to use with arenas.
+///  (std.fs.path.resolve does temporary allocations with allocator.)
+inline fn pathResolve(allocator: Allocator, paths: []const []const u8) ![]const u8 {
+    var tmp = mem.getScratch(allocator);
+    defer tmp.release();
+
+    const tmp_res = try std.fs.path.resolve(tmp.a, paths);
+    const result = try allocator.dupe(u8, tmp_res);
+
+    return result;
+}
+
+inline fn verbose(context: *const Context, comptime fmt: []const u8, args: anytype) void {
+    if (context.verbose) log.info(fmt, args);
 }
