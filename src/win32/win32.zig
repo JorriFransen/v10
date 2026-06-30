@@ -51,8 +51,8 @@ pub const LPVOID = zig_win32.LPVOID;
 pub const LPCVOID = zig_win32.LPCVOID;
 pub const FARPROC = *anyopaque;
 
-pub const TRUE = 1;
-pub const FALSE = 0;
+pub const TRUE: BOOL = .TRUE;
+pub const FALSE: BOOL = .FALSE;
 pub const MAX_PATH = 260;
 
 pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;

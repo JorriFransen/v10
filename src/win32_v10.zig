@@ -440,8 +440,21 @@ pub fn windowsEntry(
         const style: win32.DWORD = win32.WS_OVERLAPPEDWINDOW | win32.WS_VISIBLE;
         const ex_style: win32.DWORD = 0; //win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED;
 
-        var rc = win32.RECT{ .left = 0, .top = 0, .right = back_buffer_width, .bottom = back_buffer_height };
-        _ = win32.AdjustWindowRectEx(&rc, style, .FALSE, ex_style);
+        var client_rect = win32.RECT{
+            .left = 0,
+            .top = 0,
+            .right = back_buffer_width + 20, // The buffer is currently being drawn with a 10 pixel gutter
+            .bottom = back_buffer_height + 20,
+        };
+        log.debug("suggested client rect: {}", .{client_rect});
+        const awr_rc = win32.AdjustWindowRectEx(&client_rect, style, .FALSE, ex_style);
+        assert(awr_rc != win32.FALSE);
+
+        log.debug("adjusted client rect: {}", .{client_rect});
+
+        const request_width = client_rect.right - client_rect.left;
+        const request_height = client_rect.bottom - client_rect.top;
+        log.debug("request size: {},{}", .{ request_width, request_height });
 
         const window_opt = win32.CreateWindowExA(
             ex_style,
@@ -450,8 +463,8 @@ pub fn windowsEntry(
             style,
             win32.CW_USEDEFAULT,
             win32.CW_USEDEFAULT,
-            win32.CW_USEDEFAULT,
-            win32.CW_USEDEFAULT,
+            request_width,
+            request_height,
             null,
             null,
             instance,
@@ -941,7 +954,7 @@ pub fn mainWindowCallback(window: win32.HWND, message: c_uint, wparam: win32.WPA
                 result = win32.DefWindowProcA(window, message, wparam, lparam);
             } else {
                 _ = win32.SetCursor(null);
-                result = win32.TRUE;
+                result = @intFromEnum(win32.TRUE);
             }
         },
 

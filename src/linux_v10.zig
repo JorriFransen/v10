@@ -215,8 +215,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
 
-    wld.window_width = @as(f32, @floatFromInt(back_buffer_width)) * 1.5;
-    wld.window_height = @as(f32, @floatFromInt(back_buffer_height)) * 1.5;
+    // The backbuffer is currently being drawn with a 10 pixel gutter
+    wld.window_width = back_buffer_width + 20;
+    wld.window_height = back_buffer_height + 20;
+
+    log.debug("initial window size: {},{}", .{ wld.window_width, wld.window_height });
 
     try alloc_shm();
 
@@ -929,10 +932,6 @@ const WlData = struct {
 
     toplevel: WlToplevel = undefined,
 
-    /// Back buffer width
-    width: i32 = -1,
-    /// Back buffer height
-    height: i32 = -1,
     /// Window width
     window_width: i32 = 0,
     /// Window height
@@ -1367,11 +1366,6 @@ fn alloc_shm() ShmError!void {
 }
 
 fn resize(width: i32, height: i32) !void {
-    log.debug("resize: {},{}", .{ width, height });
-    // Back buffer
-    wld.width = back_buffer_width;
-    wld.height = back_buffer_height;
-
     if (width != 0) {
         wld.window_width = width;
     }
