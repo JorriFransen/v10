@@ -1386,6 +1386,8 @@ fn resize(width: i32, height: i32) !void {
     wld.double_scale = width >= global_back_buffer.width * 2 and height >= global_back_buffer.height * 2;
     wld.should_draw = true;
     wld.pending_resize = null;
+
+    log.info("resize: {},{} (double_scale:{})", .{ width, height, wld.double_scale });
 }
 
 fn aquireFreeBuffer() ?*WlBuffer {
