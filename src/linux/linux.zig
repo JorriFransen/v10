@@ -418,7 +418,6 @@ inline fn getShmPath(name: [:0]const u8) std.fmt.BufPrintError![:0]const u8 {
 pub const ShmError = Error || std.fmt.BufPrintError;
 pub fn shm_open(name: [:0]const u8, oflag: O, mode: mode_t) ShmError!c_int {
     const path = try getShmPath(name);
-    log.debug("shm_open name: {s}", .{path});
 
     const fd = try openat(AT.FDCWD, path, oflag, mode);
     return fd;

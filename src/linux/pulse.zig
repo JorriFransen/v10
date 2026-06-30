@@ -514,8 +514,8 @@ pub fn load() void {
                 @field(@This(), decl.name) = @field(@This(), decl.name ++ "_stub");
             }
         }
-        log.debug("Loaded stubs '{s}'", .{lib_name});
+        log.warn("Loaded stubs '{s}'", .{lib_name});
     } else {
-        log.debug("Loaded '{s}'", .{lib_name});
+        log.info("Loaded '{s}'", .{lib_name});
     }
 }

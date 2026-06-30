@@ -1,5 +1,7 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const log = std.log.scoped(.linux_v10);
+
 const mem = @import("mem");
 const options = @import("options");
 const linux_options = @import("linux_options");
@@ -37,11 +39,19 @@ const InputEvent = input.InputEvent;
 const Key = input.Key;
 const Abs = input.Abs;
 
+const std_log_scope_levels = platform.std_log_scope_levels ++ [_]std.log.ScopeLevel{
+    .{ .scope = .linux_v10, .level = .info },
+    .{ .scope = .pulse, .level = .info },
+};
+
+pub const std_options: std.Options = .{
+    .log_level = platform.std_options.log_level,
+    .log_scope_levels = &std_log_scope_levels,
+};
+
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
 // TODO: Query initial state of controller
 // TODO: Debug repeated controller plug in/out cycles, the disconnect seems to be missed sometimes
-
-const assert = std.debug.assert;
 
 var prng: std.Random = undefined;
 
@@ -74,8 +84,6 @@ var stderr_buf: [2048]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
 var stdout_buf: [2048]u8 = undefined;
 var stdout: *std.Io.Writer = undefined;
-
-pub const std_options = platform.std_options;
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = if (use_debug_allocator)
@@ -125,22 +133,22 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     const cwd_len = try std.process.currentPath(io, &shared_state.cwd_buf);
     shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
-    log.debug("cwd: '{s}'", .{shared_state.cwd});
+    log.info("cwd: '{s}'", .{shared_state.cwd});
 
     const exe_dir_path_len = try std.process.executableDirPath(io, &shared_state.exe_dir_path_buf);
     shared_state.exe_dir_path = shared_state.exe_dir_path_buf[0..exe_dir_path_len];
-    log.debug("exe_dir_path: {s}", .{shared_state.exe_dir_path});
+    log.info("exe_dir_path: {s}", .{shared_state.exe_dir_path});
 
     var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
-    log.debug("game_lib_name: {s}", .{game_lib_name});
+    log.info("game_lib_name: {s}", .{game_lib_name});
 
     const display = wlc.displayConnect(null, &init.environ) orelse {
         log.err("wl_display_connect failed", .{});
         return error.UnexpectedWayland;
     };
     defer wlc.displayDisconnect(display);
-    log.debug("Display connected", .{});
+    log.info("Wayland display connected", .{});
 
     const wl_registry = display.getRegistry();
 
@@ -211,8 +219,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     _ = wlc.displayRoundtrip(wld.display); // Wait for max_width/height to be set
 
-    log.debug("Format available", .{});
-    log.debug("Seat capabilities: {}", .{wli.seat_capabilities});
+    log.debug("Wayland seat capabilities: {}", .{wli.seat_capabilities});
     log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
 
     // The backbuffer is currently being drawn with a 10 pixel gutter
@@ -250,7 +257,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const xdg_toplevel = xdg_surface.getToplevel();
         xdg_toplevel.addListener(&xdg_toplevel_listener, &wld);
 
-        log.debug("xdg_toplevel: {}", .{xdg_toplevel});
         xdg_toplevel.setAppId(app_id);
         xdg_toplevel.setTitle(title);
         wld.surface.commit();
@@ -301,11 +307,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (output.active) monitor_hz = @min(monitor_hz, @as(f32, @floatFromInt(output.refresh_mhz)) / 1000);
     };
 
-    log.debug("monitor hz: {}", .{monitor_hz});
+    log.info("monitor hz: {}", .{monitor_hz});
 
-    const game_update_hz: f32 = monitor_hz / 2;
+    const game_update_hz: f32 = monitor_hz; // / 2;
     // const game_update_hz: f32 = 20;
-    log.debug("game update hz: {}", .{game_update_hz});
+    log.info("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
 
     wld.keyboard = wld.seat.getKeyboard();
@@ -357,8 +363,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return error.MMapFailed;
     }
 
-    log.debug("perm: {*}", .{game_memory.permanent});
-    log.debug("trans: {*}", .{game_memory.transient});
+    log.info("perm: {*}", .{game_memory.permanent});
+    log.info("trans: {*}", .{game_memory.transient});
 
     if (options.internal_build) {
         for (&shared_state.replay_buffers, 0..) |*replay_buffer, i| {
@@ -493,7 +499,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var last_cycle_count = arch.rdtsc();
 
-    log.debug("starting main loop", .{});
+    log.info("starting main loop", .{});
     while (running) {
         const new_lib_write_time = platform.getLastWriteTime(io, game_lib_name);
         if (new_lib_write_time > game_code.last_write_time) {
@@ -1314,7 +1320,7 @@ fn alloc_shm() ShmError!void {
 
     const pixel_count: usize = @intCast(wld.max_width * wld.max_height);
     const buffer_size: usize = pixel_count * bytes_per_pixel;
-    log.debug("Buffer size: {}", .{buffer_size});
+    log.debug("shm per buffer size: {}", .{buffer_size});
     const shm_size = buffer_size * wld.buffers.len;
     log.debug("Allocating shm: {}", .{shm_size});
 
@@ -1366,6 +1372,10 @@ fn alloc_shm() ShmError!void {
 }
 
 fn resize(width: i32, height: i32) !void {
+    if (width != wld.window_width or height != wld.window_height) {
+        log.info("resize: {},{} (double_scale:{})", .{ width, height, wld.double_scale });
+    }
+
     if (width != 0) {
         wld.window_width = width;
     }
@@ -1587,7 +1597,6 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, 
         const Interface: type = map[1];
 
         if (std.mem.eql(u8, interface_name, Interface.interface.name)) {
-            log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
             const proxy = registry.bindTyped(Interface, name, version);
             @field(wli, target_field_name) = proxy;
             found = true;
@@ -1601,7 +1610,6 @@ fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, 
 
     if (!found) {
         if (std.mem.eql(u8, "wl_output", interface_name)) {
-            log.debug("handleWlRegisterGlobal: {s}", .{interface_name});
             var free_slot_found = false;
             for (&wld.outputs) |*output| {
                 if (output.* == null) {
@@ -1634,8 +1642,6 @@ fn handleWlRemoveGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32) vo
 fn handleWlSurfaceEnter(data: ?*anyopaque, surface: *wl.Surface, current_output: *wl.Output) void {
     _ = data;
     _ = surface;
-
-    log.debug("Surface enter: {}", .{current_output});
 
     var found = false;
     for (&wld.outputs) |*output_opt| {
@@ -1691,7 +1697,6 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: *xdg_shell.Surface, ser
     _ = data;
     _ = surface;
 
-    log.debug("xdg surface configure: {}", .{serial});
     wld.pending_configure_serial = serial;
 }
 
@@ -1703,7 +1708,7 @@ fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, 
 
     const E = xdg_shell.Toplevel.State;
     const states: []const E = @ptrCast(states_);
-    log.debug("states: {any}", .{states});
+    _ = states;
 
     wld.pending_resize = .{ .width = width, .height = height };
 }
@@ -1720,11 +1725,10 @@ fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: *xdg_shell.Topl
 fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, capabilities: []const u32) void {
     _ = data;
     _ = toplevel;
-    log.debug("xdg toplevel capabilities count {}", .{capabilities.len});
 
     const E = xdg_shell.Toplevel.WmCapabilities;
     const caps: []const E = @ptrCast(capabilities);
-    log.debug("toplevel caps: {any}", .{caps});
+    _ = caps;
 }
 
 fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel) void {
@@ -1898,22 +1902,33 @@ fn handleWlMouseAxis(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, axis: w
 
 fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: *xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) void {
     _ = toplevel_decoration;
-    log.debug("xdg_decoration configure: {}", .{mode});
+    log.info("xdg_decoration configure: {}", .{mode});
 
     const mode_ptr: *?xdg_decoration.ToplevelDecorationV1.Mode = @ptrCast(@alignCast(data));
     mode_ptr.* = mode;
 }
+
 fn handleWlOutputGeometry(data: ?*anyopaque, output: *wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: []const u8, model: []const u8, transform: wl.Output.Transform) void {
-    _ = .{ data, output };
-    log.debug("handleWlOutputGeometry: {},{},{},{},{},{s},{s},{}", .{ x, y, physical_width, physical_height, subpixel, make, model, transform });
+    _ = data;
+    _ = output;
+    _ = x;
+    _ = y;
+    _ = physical_width;
+    _ = physical_height;
+    _ = subpixel;
+    _ = make;
+    _ = model;
+    _ = transform;
 }
 
 fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) void {
+    _ = flags;
+
     const output_data: *WlOutput = @ptrCast(@alignCast(data));
     assert(output_data.handle == output);
     output_data.refresh_mhz = refresh;
 
-    log.debug("handleWlOutputMode: {},{},{},{}", .{ flags, width, height, refresh });
+    // log.debug("handleWlOutputMode: {},{},{},{}", .{ flags, width, height, refresh });
 
     const new_pixel_count = width * height;
     const max_pixel_count = wld.max_width * wld.max_height;
@@ -1922,7 +1937,6 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
         wld.max_height = height;
 
         // TODO: Create new shm pool, delete old when all buffers are released
-        // wld.should_resize_shm = true;
     }
 }
 
@@ -2359,6 +2373,8 @@ const PulseContext = struct {
 
         pa.context_set_state_callback(this.context, null, null); // TODO: Set to runtime version
         pa.stream_set_state_callback(this.stream, null, null); // TODO: Set to runtime version
+
+        pa.log.info("stream started", .{});
     }
 
     /// Blocks until the first write callback is fired
@@ -2379,6 +2395,8 @@ const PulseContext = struct {
         }
 
         pa.threaded_mainloop_unlock(this.main_loop);
+
+        pa.log.info("stream callbacks started", .{});
     }
 
     pub fn firstWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {

@@ -24,12 +24,21 @@ const ButtonState = platform.ButtonState;
 const ThreadContext = platform.ThreadContext;
 const AudioBuffer = platform.AudioBuffer;
 
+const std_log_scope_levels = platform.std_log_scope_levels ++ [_]std.log.ScopeLevel{
+    .{ .scope = .win32_v10, .level = .info },
+    .{ .scope = .xinput, .level = .debug },
+    .{ .scope = .dsound, .level = .info },
+};
+
+pub const std_options: std.Options = .{
+    .log_level = platform.std_options.log_level,
+    .log_scope_levels = &std_log_scope_levels,
+};
+
 var stderr_buf: [2048]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
 var stdout_buf: [2048]u8 = undefined;
 var stdout: *std.Io.Writer = undefined;
-
-pub const std_options = platform.std_options;
 
 var global_running = false;
 var global_pause = false;
@@ -174,15 +183,15 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
             var primary_buffer_opt: ?*dsound.IDirectSoundBuffer = null;
             if (ds.CreateSoundBuffer(&buffer_desc, &primary_buffer_opt, null) == dsound.OK) {
                 if (primary_buffer_opt.?.SetFormat(&waveformat) == dsound.OK) {
-                    log.debug("DSound primary buffer format set", .{});
+                    dsound.log.debug("primary buffer format set", .{});
                 } else {
-                    log.warn("DSound primary_buffer.SetFormat failed", .{});
+                    dsound.log.warn("primary_buffer.SetFormat failed", .{});
                 }
             } else {
-                log.warn("DSound CreateSoundBuffer failed (primary buffer)", .{});
+                dsound.log.warn("CreateSoundBuffer failed (primary buffer)", .{});
             }
         } else {
-            log.warn("DSound SetCooperativeLevel failed", .{});
+            dsound.log.warn("SetCooperativeLevel failed", .{});
         }
 
         // Create secondary buffer
@@ -192,12 +201,12 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
         };
 
         if (ds.CreateSoundBuffer(&buffer_desc, &sound_buffer_opt, null) == dsound.OK and sound_buffer_opt != null) {
-            log.debug("DSound secondary buffer created", .{});
+            dsound.log.debug("secondary buffer created", .{});
         } else {
-            log.warn("DSound CreateSoundBuffer failed (secondary buffer)", .{});
+            dsound.log.warn("CreateSoundBuffer failed (secondary buffer)", .{});
         }
     } else {
-        log.warn("DirectSoundCreate failed", .{});
+        dsound.log.warn("DirectSoundCreate failed", .{});
     }
 
     return sound_buffer_opt;
@@ -398,13 +407,13 @@ pub fn windowsEntry(
 
     const cwd_len = win32.GetCurrentDirectoryA(shared_state.cwd_buf.len, @ptrCast(&shared_state.cwd_buf));
     shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
-    log.debug("cwd: '{s}'", .{shared_state.cwd});
+    log.info("cwd: '{s}'", .{shared_state.cwd});
 
     _ = win32.GetModuleFileNameA(null, @ptrCast(&shared_state.exe_dir_path_buf), shared_state.exe_dir_path_buf.len);
     const exe_name: [*:0]u8 = @ptrCast(&shared_state.exe_dir_path_buf);
-    log.debug("exe name: '{s}'", .{exe_name});
+    log.info("exe name: '{s}'", .{exe_name});
     shared_state.exe_dir_path = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
-    log.debug("exe dir: '{s}'", .{shared_state.exe_dir_path});
+    log.info("exe dir: '{s}'", .{shared_state.exe_dir_path});
 
     var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
     var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
@@ -414,9 +423,9 @@ pub fn windowsEntry(
     const temp_dll_name = try shared_state.buildExePathFilename(&temp_dll_name_buf, "v10_temp.dll");
     const gamecode_lock_file_name = try shared_state.buildExePathFilename(&gamecode_lock_file_name_buf, "lock.tmp");
 
-    log.debug("source dll: '{s}'", .{source_dll_name});
-    log.debug("temp dll: '{s}'", .{temp_dll_name});
-    log.debug("gamecode load lock: '{s}'", .{gamecode_lock_file_name});
+    log.info("source dll: '{s}'", .{source_dll_name});
+    log.info("temp dll: '{s}'", .{temp_dll_name});
+    log.info("gamecode load lock: '{s}'", .{gamecode_lock_file_name});
 
     var qpf_result: win32.LARGE_INTEGER = undefined;
     _ = win32.QueryPerformanceFrequency(&qpf_result);
@@ -446,15 +455,15 @@ pub fn windowsEntry(
             .right = back_buffer_width + 20, // The buffer is currently being drawn with a 10 pixel gutter
             .bottom = back_buffer_height + 20,
         };
-        log.debug("suggested client rect: {}", .{client_rect});
+        log.debug("suggested window client rect: {}", .{client_rect});
         const awr_rc = win32.AdjustWindowRectEx(&client_rect, style, .FALSE, ex_style);
         assert(awr_rc != win32.FALSE);
 
-        log.debug("adjusted client rect: {}", .{client_rect});
+        log.debug("adjusted window client rect: {}", .{client_rect});
 
         const request_width = client_rect.right - client_rect.left;
         const request_height = client_rect.bottom - client_rect.top;
-        log.debug("request size: {},{}", .{ request_width, request_height });
+        log.info("request window (client rect) size: {},{}", .{ request_width, request_height });
 
         const window_opt = win32.CreateWindowExA(
             ex_style,
@@ -482,7 +491,7 @@ pub fn windowsEntry(
             const win32_refresh_hz = win32.GetDeviceCaps(dc, win32.VREFRESH);
             if (win32_refresh_hz > 1) {
                 monitor_refresh_hz = win32_refresh_hz;
-                log.debug("Detected monitor refresh rate: {}", .{monitor_refresh_hz});
+                log.info("Detected monitor refresh rate: {}", .{monitor_refresh_hz});
             } else {
                 log.warn("Could not detect monitor refresh rate, fallback to: {}", .{monitor_refresh_hz});
             }
@@ -547,8 +556,8 @@ pub fn windowsEntry(
 
             shared_state.game_memory_block = perm.?[0..total_size];
 
-            log.debug("perm:  {*}", .{perm});
-            log.debug("trans: {*}", .{trans});
+            log.info("perm:  {*}", .{perm});
+            log.info("trans: {*}", .{trans});
 
             var game_memory: Memory = .{
                 .initialized = false,
@@ -876,7 +885,7 @@ pub fn windowsEntry(
                                 seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                             }
                         } else {
-                            log.debug("Missed frame time!", .{});
+                            log.warn("Missed frame time!", .{});
                         }
 
                         const end_counter = getWallClock();

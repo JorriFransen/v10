@@ -73,7 +73,7 @@ pub fn load() void {
     var lib: ?DynLib = null;
     for (versions) |version| {
         lib = DynLib.open(version) catch continue;
-        log.debug("Loaded {s}", .{version});
+        log.info("Loaded {s}", .{version});
         break;
     }
     var loaded = true;

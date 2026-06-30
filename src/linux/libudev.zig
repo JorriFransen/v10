@@ -237,7 +237,7 @@ pub fn load() void {
 
     var loaded = true;
     if (lib) |*l| {
-        log.debug("Loaded libudev.so", .{});
+        log.info("Loaded libudev.so", .{});
         const struct_info = @typeInfo(@This()).@"struct";
         inline for (struct_info.decls) |decl| {
             const decl_type = @TypeOf(@field(@This(), decl.name));

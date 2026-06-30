@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.v10_shared);
+const log = std.log.scoped(.v10_platform);
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
@@ -12,14 +12,17 @@ const DynLib = @import("dynlib");
 
 const assert = std.debug.assert;
 
+pub const std_log_scope_levels = [_]std.log.ScopeLevel{
+    .{ .scope = .v10_platform, .level = .debug },
+    .{
+        .scope = .asset_compiler,
+        .level = if (options.tools_optimize == .Debug) .debug else .info,
+    },
+};
+
 pub const std_options: std.Options = .{
     .log_level = std.log.default_level,
-    .log_scope_levels = &.{
-        .{
-            .scope = .asset_compiler,
-            .level = if (options.tools_optimize == .Debug) .debug else .info,
-        },
-    },
+    .log_scope_levels = &std_log_scope_levels,
 };
 
 pub const ThreadContext = extern struct {
@@ -232,7 +235,7 @@ pub const GameCode = struct {
             get_audio_frames != null;
 
         if (valid) {
-            log.debug("Loaded game code", .{});
+            log.info("Loaded game code", .{});
             return .{
                 .valid = true,
                 .dll = lib,

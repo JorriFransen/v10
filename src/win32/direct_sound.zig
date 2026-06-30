@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.dsound);
+pub const log = std.log.scoped(.dsound);
 const win32 = @import("win32.zig");
 const DynLib = @import("dynlib");
 
@@ -266,7 +266,7 @@ pub fn load() void {
         return;
     };
 
-    log.debug("Loaded dsound.dll", .{});
+    log.info("Loaded dsound.dll", .{});
 
     const struct_info = @typeInfo(@This()).@"struct";
     inline for (struct_info.decls) |decl| {
