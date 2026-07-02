@@ -539,7 +539,7 @@ pub fn windowsEntry(
             else
                 null;
 
-            const permanent_storage_size = mem.MiB * 64;
+            const permanent_storage_size = mem.MiB * 256;
             const transient_storage_size = mem.GiB * 1;
             const total_size = permanent_storage_size + transient_storage_size;
 
