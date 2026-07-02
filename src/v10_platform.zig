@@ -5,7 +5,6 @@ const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 
 const mem = @import("mem");
-const asset_compiler = @import("asset_compiler");
 const options = @import("options");
 const v10 = @import("v10.zig");
 const DynLib = @import("dynlib");
@@ -278,7 +277,9 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
 }
 
 pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
-    if (options.internal_build and !options.cross_compile) {
+    if (options.run_asset_compiler) {
+        const asset_compiler = @import("asset_compiler");
+
         const init_mem = !mem.temp_initialized;
         if (init_mem) mem.init();
         defer if (init_mem) mem.deinit();

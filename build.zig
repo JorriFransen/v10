@@ -12,7 +12,6 @@ var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
 var cross_compile = false;
-var compile_assets_from_engine = true;
 
 const src_path = "src";
 
@@ -30,13 +29,8 @@ pub fn build(b: *Build) !void {
 
     verbose_wayland = b.option(bool, "verbose_wayland", "Verbose wayland logging") orelse verbose_wayland;
 
-    compile_assets_from_engine = internal_build and !cross_compile;
-
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
-    if (internal_build) {
-        options.addOption(bool, "cross_compile", cross_compile);
-    }
     options.addOption(bool, "debug", optimize == .Debug);
     options.addOption(OptimizeMode, "tools_optimize", tools_optimize);
 
@@ -103,11 +97,18 @@ pub fn build(b: *Build) !void {
 
     const engine = try buildEngine(b, optimize, target, &modules, &tools);
     const game = try buildGameLib(b, optimize, target, &engine);
-
-    const assets = try buildAssets(b, &engine, &tools);
-
     _ = game;
-    _ = assets;
+
+    var run_asset_compiler = false;
+    if (tools.asset_compiler) |_| {
+        const asset_mode: AssetBuildMode = if (internal_build and !cross_compile) .engine else .build;
+        run_asset_compiler = asset_mode == .engine;
+        try buildAssets(b, &engine, &tools, asset_mode);
+    } else {
+        std.log.warn("Skipping asset compilation", .{});
+    }
+
+    options.addOption(bool, "run_asset_compiler", run_asset_compiler);
 
     try buildTests(b, &modules);
 }
@@ -278,7 +279,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
 
 const Tools = struct {
     wayland_gen: ?WaylandGen,
-    asset_compiler: AssetCompiler,
+    asset_compiler: ?AssetCompiler,
 
     fn build(b: *Build, tools_target: ResolvedTarget, target: ResolvedTarget, modules: *Modules) !Tools {
         const result: Tools = .{
@@ -287,7 +288,7 @@ const Tools = struct {
             else
                 null,
 
-            .asset_compiler = try AssetCompiler.build(b, tools_target, modules),
+            .asset_compiler = AssetCompiler.build(b, tools_target, modules),
         };
 
         return result;
@@ -350,8 +351,16 @@ const Tools = struct {
         exe: *Step.Compile,
         module: *Build.Module,
 
-        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) !AssetCompiler {
-            const aseprite_exe = try b.findProgram(&.{"aseprite"}, &.{});
+        fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?AssetCompiler {
+            const aseprite_names: []const []const u8 = if (tools_target.result.os.tag == .windows)
+                &.{"aseprite.exe"}
+            else
+                &.{"aseprite"};
+
+            const aseprite_exe = b.findProgram(aseprite_names, &.{}) catch {
+                std.log.warn("Unable to find aseprite executable", .{});
+                return null;
+            };
 
             const options = b.addOptions();
             options.addOption([]const u8, "aseprite_exe_path", aseprite_exe);
@@ -386,27 +395,38 @@ const Tools = struct {
     };
 };
 
-pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools) !*Step {
-    const asset_step = b.step("assets", "compile assets");
+pub const AssetBuildMode = enum {
+    engine,
+    build,
+};
 
-    if (compile_assets_from_engine) {
-        engine.build.root_module.addImport("asset_compiler", tools.asset_compiler.module);
-    } else {
-        const asset_compiler_run = b.addRunArtifact(tools.asset_compiler.exe);
-        asset_step.dependOn(&asset_compiler_run.step);
+pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: AssetBuildMode) !void {
+    assert(tools.asset_compiler != null);
 
-        if (b.verbose) {
-            asset_compiler_run.addArg("-v");
-        }
+    const asset_compiler = tools.asset_compiler.?;
 
-        asset_compiler_run.addPrefixedDirectoryArg("-i", b.path("data"));
-        asset_compiler_run.addPrefixedDirectoryArg("-o", b.path("data/test"));
+    switch (mode) {
+        .engine => {
+            engine.build.root_module.addImport("asset_compiler", asset_compiler.module);
+        },
+
+        .build => {
+            const asset_step = b.step("assets", "compile assets");
+
+            const asset_compiler_run = b.addRunArtifact(asset_compiler.exe);
+            asset_step.dependOn(&asset_compiler_run.step);
+
+            if (b.verbose) {
+                asset_compiler_run.addArg("-v");
+            }
+
+            asset_compiler_run.addPrefixedDirectoryArg("-i", b.path("data"));
+            asset_compiler_run.addPrefixedDirectoryArg("-o", b.path("data/test"));
+
+            b.getInstallStep().dependOn(asset_step);
+            engine.run.step.dependOn(asset_step);
+        },
     }
-
-    b.getInstallStep().dependOn(asset_step);
-    engine.run.step.dependOn(asset_step);
-
-    return asset_step;
 }
 
 pub fn buildTests(b: *Build, modules: *const Modules) !void {

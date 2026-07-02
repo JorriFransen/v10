@@ -7,7 +7,6 @@ const options = @import("options");
 const linux_options = @import("linux_options");
 const builtin = @import("builtin");
 const DynLib = @import("dynlib");
-const asset_compiler = @import("asset_compiler");
 
 const platform = @import("v10_platform.zig");
 
