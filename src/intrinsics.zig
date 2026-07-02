@@ -89,3 +89,9 @@ pub inline fn signOf(v: anytype) @TypeOf(v) {
     }
     return if (v >= 0) 1 else -1;
 }
+
+pub inline fn roundReal32ToInt32(r: f32) i32 {
+    const rounded: f32 = @round(r);
+    const result: i32 = @trunc(rounded);
+    return result;
+}

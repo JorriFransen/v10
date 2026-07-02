@@ -277,6 +277,22 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
 }
 
 const Tools = struct {
+    wayland_gen: ?WaylandGen,
+    asset_compiler: AssetCompiler,
+
+    fn build(b: *Build, tools_target: ResolvedTarget, target: ResolvedTarget, modules: *Modules) !Tools {
+        const result: Tools = .{
+            .wayland_gen = if (target.result.os.tag == .linux)
+                WaylandGen.build(b, tools_target, modules)
+            else
+                null,
+
+            .asset_compiler = try AssetCompiler.build(b, tools_target, modules),
+        };
+
+        return result;
+    }
+
     pub const WaylandGen = struct {
         gen_exe: *Step.Compile,
         options_module: *Build.Module,
@@ -368,22 +384,6 @@ const Tools = struct {
             };
         }
     };
-
-    wayland_gen: ?WaylandGen,
-    asset_compiler: AssetCompiler,
-
-    fn build(b: *Build, tools_target: ResolvedTarget, target: ResolvedTarget, modules: *Modules) !Tools {
-        const result: Tools = .{
-            .wayland_gen = if (target.result.os.tag == .linux)
-                WaylandGen.build(b, tools_target, modules)
-            else
-                null,
-
-            .asset_compiler = try AssetCompiler.build(b, tools_target, modules),
-        };
-
-        return result;
-    }
 };
 
 pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools) !*Step {
