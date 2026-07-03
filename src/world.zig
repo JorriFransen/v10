@@ -3,7 +3,9 @@ const assert = std.debug.assert;
 
 const MemoryArena = @import("arena.zig");
 const intrinsics = @import("intrinsics.zig");
+
 const v10 = @import("v10.zig");
+const EntityIndex = v10.EntityIndex;
 
 const math = @import("math.zig");
 const V2 = math.V2;
@@ -11,30 +13,35 @@ const v2 = V2.init;
 
 const World = @This();
 
-tile_size_in_meters: f32,
-chunk_hash: [4096]Chunk,
+tile_side_in_meters: f32,
+chunk_side_in_meters: f32,
+first_free_entity_block: ?*EntityBlock = null,
+chunk_hash: [4096]Chunk = undefined,
 
-const packed_tile_pos_bits = @bitSizeOf(@FieldType(PackedTilePosition, "tile"));
-pub const chunk_dim = 1 << packed_tile_pos_bits;
-const chunk_safe_margin = std.math.maxInt(@Int(.signed, @bitSizeOf(PackedTilePosition))) / 64;
-const chunk_x_uninitialized = std.math.maxInt(@Int(.signed, @bitSizeOf(PackedTilePosition)));
+const chunk_safe_margin = std.math.maxInt(i32) / 64;
+const chunk_x_uninitialized = std.math.maxInt(i32);
+pub const tiles_per_chunk_side = 16;
 
-pub fn init(this: *World, tile_size_in_meters: f32) void {
+pub fn init(this: *World, tile_side_in_meters: f32) void {
     this.* = .{
-        .tile_size_in_meters = tile_size_in_meters,
-        .chunk_hash = @splat(.{ .x = chunk_x_uninitialized }),
+        .tile_side_in_meters = tile_side_in_meters,
+        .chunk_side_in_meters = tiles_per_chunk_side * tile_side_in_meters,
+        .first_free_entity_block = null,
     };
+
+    for (&this.chunk_hash) |*chunk| {
+        chunk.x = chunk_x_uninitialized;
+        chunk.first_entity_block.entity_count = 0;
+        chunk.first_entity_block.next = null;
+    }
 }
 
 pub const Position = struct {
-    // Packed chunk.tile : 24.4
-    abs_tile_x: i32,
-    // Packed chunk.tile : 24.4
-    abs_tile_y: i32,
-
+    chunk_x: i32,
+    chunk_y: i32,
     chunk_z: i32,
 
-    /// In meters, from the tile center
+    /// In meters, from the chunk center
     _offset: V2 = .{},
 
     pub const Delta = struct {
@@ -53,31 +60,36 @@ pub const Position = struct {
 
     pub inline fn recanonicalize(position: Position, world: *const World) Position {
         var result = position;
-        world.recanonicalizeCoord(&result.abs_tile_x, &result._offset.x);
-        world.recanonicalizeCoord(&result.abs_tile_y, &result._offset.y);
+        world.recanonicalizeCoord(&result.chunk_x, &result._offset.x);
+        world.recanonicalizeCoord(&result.chunk_y, &result._offset.y);
         return result;
     }
 };
 
-pub inline fn recanonicalizeCoord(this: *const World, tile: *i32, tile_rel: *f32) void {
-    const offset: i32 = intrinsics.roundReal32ToInt32(tile_rel.* / this.tile_size_in_meters);
-    tile.* +%= @bitCast(offset);
-    tile_rel.* -= @as(f32, @floatFromInt(offset)) * this.tile_size_in_meters;
+pub inline fn recanonicalizeCoord(this: *const World, chunk: *i32, chunk_rel: *f32) void {
+    const offset: i32 = intrinsics.roundReal32ToInt32(chunk_rel.* / this.chunk_side_in_meters);
+    chunk.* +%= @bitCast(offset);
+    chunk_rel.* -= @as(f32, @floatFromInt(offset)) * this.chunk_side_in_meters;
 
-    assert(tile_rel.* >= -(0.5 * this.tile_size_in_meters));
-    assert(tile_rel.* <= (0.5 * this.tile_size_in_meters));
+    assert(this.isCanonical(chunk_rel.*));
 }
 
-pub const TilePositionUInt = i32;
-pub const PackedTilePosition = packed struct(TilePositionUInt) {
-    tile: u4,
-    chunk: i28,
-};
+pub inline fn isCanonical(this: *const World, chunk_rel: f32) bool {
+    const result =
+        chunk_rel >= -(0.5 * this.chunk_side_in_meters) and
+        chunk_rel <= (0.5 * this.chunk_side_in_meters);
+    return result;
+}
 
-pub const ChunkEntityBlock = struct {
+pub inline fn isCanonicalOffset(this: *World, offset: V2) bool {
+    const result = this.isCanonical(offset.x) and this.isCanonical(offset.x);
+    return result;
+}
+
+pub const EntityBlock = struct {
     entity_count: u32 = 0,
-    entity_indices: [16]v10.EntityIndex = @splat(0),
-    next: ?*ChunkEntityBlock = null,
+    entity_indices: [16]EntityIndex = undefined,
+    next: ?*EntityBlock = null,
 };
 
 pub const Chunk = struct {
@@ -85,7 +97,7 @@ pub const Chunk = struct {
     y: i32 = 0,
     z: i32 = 0,
 
-    first_entity_block: ChunkEntityBlock = .{},
+    first_entity_block: EntityBlock = .{},
 
     next_in_hash: ?*Chunk = null,
 };
@@ -93,19 +105,19 @@ pub const Chunk = struct {
 pub inline fn subtract(this: *const World, a: Position, b: Position) Position.Delta {
     var result: Position.Delta = undefined;
 
-    // const diff_x = @as(f64, @floatFromInt(a.abs_tile_x)) - @as(f64, @floatFromInt(b.abs_tile_x));
-    // const diff_y = @as(f64, @floatFromInt(a.abs_tile_y)) - @as(f64, @floatFromInt(b.abs_tile_y));
-    // const d_tile_xy = v2(@floatCast(diff_x), @floatCast(diff_y));
-    const d_tile_xy = v2(
-        @as(f32, @floatFromInt(a.abs_tile_x)) - @as(f32, @floatFromInt(b.abs_tile_x)),
-        @as(f32, @floatFromInt(a.abs_tile_y)) - @as(f32, @floatFromInt(b.abs_tile_y)),
+    // const diff_x = @as(f64, @floatFromInt(a.chunk_x)) - @as(f64, @floatFromInt(b.chunk_x));
+    // const diff_y = @as(f64, @floatFromInt(a.chunk_y)) - @as(f64, @floatFromInt(b.chunk_y));
+    // const d_chunk_xy = v2(@floatCast(diff_x), @floatCast(diff_y));
+    const d_chunk_xy = v2(
+        @as(f32, @floatFromInt(a.chunk_x)) - @as(f32, @floatFromInt(b.chunk_x)),
+        @as(f32, @floatFromInt(a.chunk_y)) - @as(f32, @floatFromInt(b.chunk_y)),
     );
 
-    const d_tile_z = @as(f32, @floatFromInt(a.chunk_z)) - @as(f32, @floatFromInt(b.chunk_z));
+    const d_chunk_z = @as(f32, @floatFromInt(a.chunk_z)) - @as(f32, @floatFromInt(b.chunk_z));
 
-    result.xy = d_tile_xy.mul(this.tile_size_in_meters).add(a._offset.sub(b._offset));
+    result.xy = d_chunk_xy.mul(this.chunk_side_in_meters).add(a._offset.sub(b._offset));
 
-    result.z = (this.tile_size_in_meters * d_tile_z);
+    result.z = (this.chunk_side_in_meters * d_chunk_z);
 
     return result;
 }
@@ -161,4 +173,73 @@ pub fn getChunk(this: *World, chunk_x: i32, chunk_y: i32, chunk_z: i32, options:
     }
 
     return chunk_opt;
+}
+
+pub inline fn areInSameChunk(this: *World, a: Position, b: Position) bool {
+    assert(this.isCanonicalOffset(a._offset));
+    assert(this.isCanonicalOffset(b._offset));
+
+    const result = a.chunk_x == b.chunk_x and
+        a.chunk_y == b.chunk_y and
+        a.chunk_z == b.chunk_z;
+    return result;
+}
+
+pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: EntityIndex, old_p_opt: ?Position, new_p: Position) void {
+    if (old_p_opt != null and areInSameChunk(old_p_opt.?, new_p)) {
+        // ok
+    } else {
+        if (old_p_opt) |old_p| {
+            const chunk_opt = this.getChunk(old_p.chunk_x, old_p.chunk_y, old_p.chunk_z, .{});
+            assert(chunk_opt != null);
+
+            if (chunk_opt) |chunk| {
+                const first_block = &chunk.first_entity_block;
+                var block_opt: ?*EntityBlock = first_block;
+
+                while (block_opt) |block| : (block_opt = block.next) block_loop: {
+                    for (block.entity_indices[0..block.entity_count]) |*entity_index_ptr| {
+                        if (low_index == entity_index_ptr.*) {
+                            first_block.entity_count -= 1;
+                            entity_index_ptr.* = first_block.entity_indices[first_block.entity_count];
+
+                            if (first_block.entity_count == 0) {
+                                if (first_block.next) {
+                                    const next = first_block.next;
+                                    first_block.* = next.*;
+
+                                    next.next = this.first_free_entity_block;
+                                    this.first_free_entity_block = next;
+                                }
+                            }
+
+                            break :block_loop;
+                        }
+                    }
+                }
+            }
+        }
+
+        // insert
+        const chunk = this.getChunk(new_p.chunk_x, new_p.chunk_y, new_p.chunk_z, .{ .arena = arena }).?;
+        const block = &chunk.first_entity_block;
+
+        if (block.entity_count >= block.entity_indices.len) {
+            const old_block_opt = this.first_free_entity_block;
+            if (old_block_opt) |old_block| {
+                this.first_free_entity_block = old_block.next;
+            } else {
+                old_block_opt = arena.pushMemory(EntityBlock);
+            }
+            const old_block = old_block_opt.?;
+
+            old_block.* = block.*;
+            block.next = old_block;
+            block.entity_count = 0;
+        }
+
+        assert(block.entity_count < block.entity_indices.len);
+        block.entity_indices[block.entity_count] = low_index;
+        block.entity_count += 1;
+    }
 }

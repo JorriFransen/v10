@@ -6,7 +6,6 @@ const builtin = @import("builtin");
 
 const mem = @import("mem");
 const options = @import("options");
-const v10 = @import("v10.zig");
 const DynLib = @import("dynlib");
 
 const assert = std.debug.assert;

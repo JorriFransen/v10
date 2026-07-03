@@ -37,9 +37,10 @@ pub const Entity = struct {
 pub const HighEntity = struct {
     p: V2 = .zero,
     d_p: V2 = .zero,
-    abs_tile_z: i32 = 0,
+    chunk_z: i32 = 0,
     facing_direction: FacingDirection = .down,
 
+    boost: bool = false,
     z: f32 = 0,
     d_z: f32 = 0,
 
@@ -148,7 +149,7 @@ pub const GameState = struct {
                 const diff = this.world.subtract(low.p, this.camera_pos);
                 high.p = diff.xy;
                 high.d_p = V2.zero;
-                high.abs_tile_z = low.p.chunk_z;
+                high.chunk_z = low.p.chunk_z;
                 high.facing_direction = .down;
                 high.low_entity_index = low_index;
 
@@ -208,31 +209,31 @@ pub const GameState = struct {
 
         const tile_span_x = screen_tile_width * 3;
         const tile_span_y = screen_tile_height * 3;
-        const bound_dim = v2(tile_span_x, tile_span_y).mul(world.tile_size_in_meters);
+        const bound_dim = v2(tile_span_x, tile_span_y).mul(world.tile_side_in_meters);
         const camera_in_bounds: Rect = .centerDim(V2.zero, bound_dim);
 
         const entity_offset_for_frame: V2 = diff_cam_p.xy.mul(-1);
         this.offsetAndCheckFrequencyByArea(entity_offset_for_frame, camera_in_bounds);
 
-        const min_tile_x = new_pos.abs_tile_x - (tile_span_x / 2);
-        const max_tile_x = new_pos.abs_tile_x + (tile_span_x / 2);
-        const min_tile_y = new_pos.abs_tile_y - (tile_span_y / 2);
-        const max_tile_y = new_pos.abs_tile_y + (tile_span_y / 2);
-
-        for (this.low_entities[1..this.low_entity_count], 1..) |*low, low_index_| {
-            const low_index: EntityIndex = @intCast(low_index_);
-
-            if (low.high_entity_index == 0) {
-                if ((low.p.chunk_z == new_pos.chunk_z) and
-                    (low.p.abs_tile_x >= min_tile_x) and
-                    (low.p.abs_tile_x <= max_tile_x) and
-                    (low.p.abs_tile_y >= min_tile_y) and
-                    (low.p.abs_tile_y <= max_tile_y))
-                {
-                    _ = this.makeEntityHighFrequency(low_index);
-                }
-            }
-        }
+        // const min_tile_x = new_pos.abs_tile_x - (tile_span_x / 2);
+        // const max_tile_x = new_pos.abs_tile_x + (tile_span_x / 2);
+        // const min_tile_y = new_pos.abs_tile_y - (tile_span_y / 2);
+        // const max_tile_y = new_pos.abs_tile_y + (tile_span_y / 2);
+        //
+        // for (this.low_entities[1..this.low_entity_count], 1..) |*low, low_index_| {
+        //     const low_index: EntityIndex = @intCast(low_index_);
+        //
+        //     if (low.high_entity_index == 0) {
+        //         if ((low.p.chunk_z == new_pos.chunk_z) and
+        //             (low.p.abs_tile_x >= min_tile_x) and
+        //             (low.p.abs_tile_x <= max_tile_x) and
+        //             (low.p.abs_tile_y >= min_tile_y) and
+        //             (low.p.abs_tile_y <= max_tile_y))
+        //         {
+        //             _ = this.makeEntityHighFrequency(low_index);
+        //         }
+        //     }
+        // }
     }
 
     fn addWall(this: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) EntityIndex {
@@ -241,12 +242,8 @@ pub const GameState = struct {
 
         const world = this.world;
 
-        low_entity.p = .{
-            .abs_tile_x = abs_tile_x,
-            .abs_tile_y = abs_tile_y,
-            .chunk_z = abs_tile_z,
-        };
-        low_entity.size = V2.scalar(world.tile_size_in_meters);
+        low_entity.p = chunkPositionFromTilePosition(this.world, abs_tile_x, abs_tile_y, abs_tile_z);
+        low_entity.size = V2.scalar(world.tile_side_in_meters);
         low_entity.collides = true;
 
         return low_index;
@@ -433,7 +430,8 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
     else
         direction;
 
-    const speed: f32 = 50; // ms/s^2
+    var speed: f32 = 50; // ms/s^2
+    if (entity.high.boost) speed *= 5;
     ddp = ddp.mul(speed);
     ddp = ddp.add(entity.high.d_p.mul(-8));
 
@@ -444,11 +442,10 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
     entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
 
     var it_count: usize = 0;
-    var hit_high_index: usize = 0;
-
     while (it_count < 4) : (it_count += 1) {
         var t_min: f32 = 1;
         var wall_normal: V2 = .zero;
+        var hit_high_index: usize = 0;
 
         const desired_position = entity.high.p.add(player_delta);
 
@@ -487,16 +484,24 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
                 }
             }
         }
-        entity.high.p = entity.high.p.add(player_delta.mul(t_min));
+        if (false) {
+
+            // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
+            entity.high.p = entity.high.p.add(player_delta.mul(t_min));
+        } else {
+            const push_out: f32 = 0.00001;
+            const delta = player_delta.mul(t_min).add(wall_normal.mul(push_out));
+            entity.high.p = entity.high.p.add(delta);
+        }
 
         if (hit_high_index != 0) {
             entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
             player_delta = desired_position.sub(entity.high.p);
             player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
 
-            const hit_high = &game_state.high_entities[hit_high_index];
-            const hit_low = &game_state.low_entities[hit_high.low_entity_index];
-            entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_low.d_abs_tile_z);
+            // const hit_high = &game_state.high_entities[hit_high_index];
+            // const hit_low = &game_state.low_entities[hit_high.low_entity_index];
+            // entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_low.d_abs_tile_z);
         } else {
             break;
         }
@@ -513,8 +518,6 @@ fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) vo
 }
 
 fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
-    const t_epsilon: f32 = 0.0001;
-
     var hit = false;
 
     if (delta_x != 0) {
@@ -523,7 +526,13 @@ fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t
         if (t_result >= 0 and t_min.* > t_result) {
             const y = test_y + (t_result * delta_y);
             if (y >= wall_min_y and y <= wall_max_y) {
-                t_min.* = @max(0, t_result - t_epsilon);
+                if (false) {
+                    // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
+                    const t_epsilon: f32 = 0.0001;
+                    t_min.* = @max(0, t_result - t_epsilon);
+                } else {
+                    t_min.* = t_result;
+                }
                 hit = true;
             }
         }
@@ -617,7 +626,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_up = false;
     var door_down = false;
 
-    for (0..2) |_| {
+    for (0..2000) |_| {
         const random_number = Random.random_number_table[next_random_number_index];
         next_random_number_index += 1;
 
@@ -716,11 +725,14 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
         door_top = false;
     }
 
-    const cam_pos = World.Position{
-        .abs_tile_x = (screen_base_x * screen_tile_width) + (screen_tile_width / 2),
-        .abs_tile_y = (screen_base_y * screen_tile_height) + (screen_tile_height / 2),
-        .chunk_z = screen_base_z,
-    };
+    // const cam_pos = World.Position{
+    //     .abs_tile_x = (screen_base_x * screen_tile_width) + (screen_tile_width / 2),
+    //     .abs_tile_y = (screen_base_y * screen_tile_height) + (screen_tile_height / 2),
+    //     .chunk_z = screen_base_z,
+    // };
+    const cam_tile_x = (screen_base_x * screen_tile_width) + (screen_tile_width / 2);
+    const cam_tile_y = (screen_base_y * screen_tile_height) + (screen_tile_height / 2);
+    const cam_pos = chunkPositionFromTilePosition(game_state.world, cam_tile_x, cam_tile_y, screen_base_z);
     game_state.setCamera(cam_pos);
 }
 
@@ -736,7 +748,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const world: *World = game_state.world;
 
     const tile_size_in_pixels = 60;
-    const meters_to_pixels = tile_size_in_pixels / world.tile_size_in_meters;
+    const meters_to_pixels = tile_size_in_pixels / world.tile_side_in_meters;
 
     for (input.controllers, 0..) |controller, controller_index| {
         // TODO: Is controller.connected supposed to exist?
@@ -779,6 +791,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     }
                 }
 
+                controlling_entity.high.boost = buttons.action_down.ended_down;
+
                 movePlayer(game_state, controlling_entity, input.dt, move_dir);
             }
         }
@@ -792,16 +806,16 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         if (false) {
             const x_bound_offset: i32 = @round(@as(f32, screen_tile_width) / 2);
-            if (entity_p.x > (x_bound_offset) * world.tile_size_in_meters) {
+            if (entity_p.x > (x_bound_offset) * world.tile_side_in_meters) {
                 new_cam_p.abs_tile_x += screen_tile_width;
-            } else if (entity_p.x < -(x_bound_offset) * world.tile_size_in_meters) {
+            } else if (entity_p.x < -(x_bound_offset) * world.tile_side_in_meters) {
                 new_cam_p.abs_tile_x -= screen_tile_width;
             }
 
             const y_bound_offset: i32 = @round(@as(f32, screen_tile_height) / 2);
-            if (entity_p.y > (y_bound_offset) * world.tile_size_in_meters) {
+            if (entity_p.y > (y_bound_offset) * world.tile_side_in_meters) {
                 new_cam_p.abs_tile_y += screen_tile_height;
-            } else if (entity_p.y < -(y_bound_offset) * world.tile_size_in_meters) {
+            } else if (entity_p.y < -(y_bound_offset) * world.tile_side_in_meters) {
                 new_cam_p.abs_tile_y -= screen_tile_height;
             }
         } else {
@@ -961,3 +975,18 @@ pub const DEBUG = struct {
         return result;
     }
 };
+
+pub fn chunkPositionFromTilePosition(world: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) World.Position {
+    const chunk_x = @divTrunc(abs_tile_x, World.tiles_per_chunk_side);
+    const chunk_y = @divTrunc(abs_tile_y, World.tiles_per_chunk_side);
+
+    return .{
+        .chunk_x = chunk_x,
+        .chunk_y = chunk_y,
+        .chunk_z = abs_tile_z,
+        ._offset = .{
+            .x = @as(f32, @floatFromInt(abs_tile_x - (chunk_x * World.tiles_per_chunk_side))) * world.tile_side_in_meters,
+            .y = @as(f32, @floatFromInt(abs_tile_y - (chunk_y * World.tiles_per_chunk_side))) * world.tile_side_in_meters,
+        },
+    };
+}
