@@ -186,6 +186,9 @@ pub fn run(context: *Context, options: OptionParser.Options) !void {
                 } else {
                     try files_to_compile.append(context.gpa, input_file);
                 }
+            } else {
+                // Older than timestamp file
+                try files_to_compile.append(context.gpa, input_file);
             }
         }
     } else {
@@ -423,6 +426,7 @@ fn collectInputFiles(context: *const Context, allocator: Allocator, scan_dir: *c
                     .abs_path = abs_path,
                     .timestamp = stat.mtime,
                 });
+                log.debug("Input file: {s}", .{abs_path});
             }
         }
     }
