@@ -1,6 +1,7 @@
 const std = @import("std");
 pub const log = std.log.scoped(.pulse);
 const options = @import("options");
+const math = @import("math");
 
 pub const Context = opaque {};
 pub const MainLoop = opaque {};
@@ -380,7 +381,7 @@ fn stream_get_state_stub(p: ?*const Stream) callconv(.c) StreamState {
 pub var stream_writable_size: *const @TypeOf(stream_writable_size_stub) = undefined;
 fn stream_writable_size_stub(p: ?*const Stream) callconv(.c) usize {
     _ = .{p};
-    return std.math.maxInt(usize);
+    return math.maxInt(usize);
 }
 
 pub var stream_get_latency: *const @TypeOf(stream_get_latency_stub) = undefined;
@@ -405,7 +406,7 @@ fn stream_begin_write_stub(p: ?*const Stream, data: *?*anyopaque, nbytes: *usize
 pub var stream_write: *const @TypeOf(stream_write_stub) = undefined;
 fn stream_write_stub(p: ?*const Stream, data: *const anyopaque, n_bytes: usize, free_cb: ?FreeCb, offset: i64, seek: SeekMode) callconv(.c) usize {
     _ = .{ p, data, n_bytes, free_cb, offset, seek };
-    return std.math.maxInt(usize);
+    return math.maxInt(usize);
 }
 
 pub var stream_cork: *const @TypeOf(stream_cork_stub) = undefined;

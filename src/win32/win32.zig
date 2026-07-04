@@ -1,6 +1,8 @@
 pub const xinput = @import("xinput.zig");
 pub const direct_sound = @import("direct_sound.zig");
 
+pub const math = @import("math");
+
 const std = @import("std");
 const zig_win32 = std.os.windows;
 
@@ -60,7 +62,7 @@ pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
 pub const ERROR_SUCCESS = 0x0;
 pub const ERROR_DEVICE_NOT_CONNECTED = 0x48f;
 
-pub const ATTACH_PARENT_PROCESS: DWORD = std.math.maxInt(DWORD);
+pub const ATTACH_PARENT_PROCESS: DWORD = math.maxInt(DWORD);
 
 pub const MEM_COALESCE_PLACEHOLDERS: DWORD = 0x00000001;
 pub const MEM_PRESERVE_PLACEHOLDER: DWORD = 0x00000002;

@@ -13,6 +13,8 @@ const dsound = win32.direct_sound;
 
 const arch = @import("arch").arch;
 
+const math = @import("math");
+
 const platform = @import("v10_platform.zig");
 
 const GameCode = platform.GameCode;
@@ -313,9 +315,9 @@ fn processXInputStickValue(value: win32.SHORT, deadzone: win32.SHORT) f32 {
 
     const fvalue: f32 = @floatFromInt(value);
     if (value < -deadzone) {
-        result = fvalue / -@as(f32, @floatFromInt(std.math.minInt(win32.SHORT)));
+        result = fvalue / -@as(f32, @floatFromInt(math.minInt(win32.SHORT)));
     } else if (value > deadzone) {
-        result = fvalue / @as(f32, @floatFromInt(std.math.maxInt(win32.SHORT)));
+        result = fvalue / @as(f32, @floatFromInt(math.maxInt(win32.SHORT)));
     }
 
     return result;
@@ -1295,6 +1297,6 @@ comptime {
 }
 
 inline fn safeTruncateU64(value: u64) u32 {
-    assert(value <= std.math.maxInt(u32));
+    assert(value <= math.maxInt(u32));
     return @intCast(value);
 }

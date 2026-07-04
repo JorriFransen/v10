@@ -3,6 +3,16 @@ const std = @import("std");
 pub const pi = std.math.pi;
 pub const tau = std.math.tau;
 
+pub const maxInt = std.math.maxInt;
+pub const minInt = std.math.minInt;
+pub const atan2 = std.math.atan2;
+pub const log2 = std.math.log2;
+pub const isPowerOfTwo = std.math.isPowerOfTwo;
+pub const shl = std.math.shl;
+pub const shr = std.math.shr;
+
+pub const Log2Int = std.math.Log2Int;
+
 pub inline fn square(x: f32) f32 {
     return x * x;
 }

@@ -4,7 +4,7 @@ const options = @import("options");
 const platform = @import("v10_platform.zig");
 const intrinsics = @import("intrinsics.zig");
 
-const math = @import("math.zig");
+const math = @import("math");
 const V2 = math.V2;
 const v2 = V2.init;
 const v2i = V2.initSigned;
@@ -695,8 +695,8 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
 
         frame.* = .{ .left = sample_value, .right = sample_value };
 
-        // game_state.t_sine += std.math.tau / wave_period;
-        // if (game_state.t_sine > std.math.tau) game_state.t_sine -= std.math.tau;
+        // game_state.t_sine += math.tau / wave_period;
+        // if (game_state.t_sine > math.tau) game_state.t_sine -= math.tau;
     }
 }
 

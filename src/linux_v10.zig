@@ -25,6 +25,8 @@ const ioctl = linux.ioctl;
 const udev = linux.libudev;
 const errno = linux.errno;
 
+const math = @import("math");
+
 const GameCode = platform.GameCode;
 const Memory = platform.Memory;
 const OffscreenBuffer = platform.OffscreenBuffer;
@@ -2306,11 +2308,11 @@ const PulseContext = struct {
         const min_req_frames = 8;
         const min_req_bytes = min_req_frames * @sizeOf(AudioOutput.Frame);
         const aggressive_buffer_attr = pa.BufferAttr{
-            .max_length = std.math.maxInt(u32),
+            .max_length = math.maxInt(u32),
             .t_length = (min_req_bytes * 2) + 4,
             .pre_buf = 0,
             .min_req = min_req_bytes,
-            .frag_size = std.math.maxInt(u32),
+            .frag_size = math.maxInt(u32),
         };
         pa.log.debug("initial buffer attributes: {}", .{aggressive_buffer_attr});
 

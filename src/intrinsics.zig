@@ -1,4 +1,4 @@
-const std = @import("std");
+const math = @import("math");
 
 pub inline fn sin(angle: anytype) @TypeOf(angle) {
     comptime {
@@ -24,13 +24,13 @@ pub inline fn atan2(y: anytype, x: @TypeOf(y)) @TypeOf(y) {
         if (float_info != .float) @compileError("Expected float type");
     }
 
-    return std.math.atan2(x, y);
+    return math.atan2(x, y);
 }
 
 pub fn BitScanResult(comptime T: type) type {
     const int_info = @typeInfo(T);
     if (int_info != .int) @compileError("Expected integer type");
-    const IndexType = @Int(.unsigned, std.math.log2(@bitSizeOf(T)) + 1);
+    const IndexType = @Int(.unsigned, math.log2(@bitSizeOf(T)) + 1);
     return struct {
         found: bool = false,
         index: IndexType = 0,
@@ -52,7 +52,7 @@ pub inline fn findLSBSet(x: anytype) BitScanResult(@TypeOf(x)) {
 
 pub inline fn rotateLeft(
     v: anytype,
-    n: @Int(.signed, std.math.log2(@bitSizeOf(@TypeOf(v))) + 2),
+    n: @Int(.signed, math.log2(@bitSizeOf(@TypeOf(v))) + 2),
 ) @TypeOf(v) {
     const VT = @TypeOf(v);
     const vt_bits = @bitSizeOf(VT);
@@ -69,12 +69,12 @@ pub inline fn rotateLeft(
     // TODO: Replace with @rotl when added
     // NOTE: Integer only version of std.math.rotl
     if (VT == u0) return 0;
-    if (comptime std.math.isPowerOfTwo(vt_bits)) {
-        const an: std.math.Log2Int(VT) = @intCast(@mod(n, vt_bits));
+    if (comptime math.isPowerOfTwo(vt_bits)) {
+        const an: math.Log2Int(VT) = @intCast(@mod(n, vt_bits));
         return v << an | v >> 1 +% ~an;
     } else {
         const an = @mod(n, vt_bits);
-        return std.math.shl(VT, v, an) | std.math.shr(VT, v, (vt_bits - an));
+        return math.shl(VT, v, an) | math.shr(VT, v, (vt_bits - an));
     }
 }
 

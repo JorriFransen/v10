@@ -46,12 +46,18 @@ pub fn build(b: *Build) !void {
         .root_source_file = b.path(src_path ++ "/dynlib.zig"),
     });
 
+    const math_module = b.createModule(.{
+        .optimize = optimize,
+        .root_source_file = b.path(src_path ++ "/math.zig"),
+    });
+
     const linux_module = b.createModule(.{
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/linux/linux.zig"),
         .imports = &.{
             .{ .name = "arch", .module = arch_module },
             .{ .name = "options", .module = options_module },
+            .{ .name = "math", .module = math_module },
         },
     });
 
@@ -60,6 +66,7 @@ pub fn build(b: *Build) !void {
         .root_source_file = b.path(src_path ++ "/win32/win32.zig"),
         .imports = &.{
             .{ .name = "dynlib", .module = dynlib_module },
+            .{ .name = "math", .module = math_module },
         },
     });
     dynlib_module.addImport("win32", win32_module);
@@ -84,6 +91,7 @@ pub fn build(b: *Build) !void {
         .memory = mem_module,
         .dynlib = dynlib_module,
         .clip = clip_module,
+        .math = math_module,
         .xml = b.createModule(.{
             .optimize = optimize,
             .root_source_file = b.path(src_path ++ "/xml.zig"),
@@ -133,6 +141,7 @@ const Modules = struct {
     dynlib: *Build.Module,
     xml: *Build.Module,
     clip: *Build.Module,
+    math: *Build.Module,
 };
 
 const Engine = struct {
@@ -154,6 +163,7 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     };
     exe.root_module.addImport("mem", modules.memory);
     exe.root_module.addImport("options", modules.options);
+    exe.root_module.addImport("math", modules.math);
 
     const exe_install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .prefix } });
     b.getInstallStep().dependOn(&exe_install.step);
@@ -262,6 +272,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
         .root_source_file = b.path(src_path ++ "/v10.zig"),
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
+            .{ .module = engine.modules.math, .name = "math" },
         },
     });
 

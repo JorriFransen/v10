@@ -7,7 +7,7 @@ const intrinsics = @import("intrinsics.zig");
 const v10 = @import("v10.zig");
 const EntityIndex = v10.EntityIndex;
 
-const math = @import("math.zig");
+const math = @import("math");
 const V2 = math.V2;
 const v2 = V2.init;
 
@@ -18,8 +18,8 @@ chunk_side_in_meters: f32,
 first_free_entity_block: ?*EntityBlock = null,
 chunk_hash: [4096]Chunk = undefined,
 
-const chunk_safe_margin = std.math.maxInt(i32) / 64;
-const chunk_x_uninitialized = std.math.maxInt(i32);
+const chunk_safe_margin = math.maxInt(i32) / 64;
+const chunk_x_uninitialized = math.maxInt(i32);
 pub const tiles_per_chunk_side = 16;
 
 pub fn init(this: *World, tile_side_in_meters: f32) void {
