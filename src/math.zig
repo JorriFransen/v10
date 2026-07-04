@@ -21,6 +21,14 @@ pub const V2 = extern struct {
         return .{ .x = x, .y = y };
     }
 
+    pub inline fn initSigned(x: i32, y: i32) V2 {
+        return .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
+    }
+
+    pub inline fn initUnsigned(x: u32, y: u32) V2 {
+        return .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
+    }
+
     pub inline fn initv(vec: V) V2 {
         return @bitCast(vec);
     }

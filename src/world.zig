@@ -186,7 +186,7 @@ pub inline fn areInSameChunk(this: *World, a: Position, b: Position) bool {
 }
 
 pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: EntityIndex, old_p_opt: ?Position, new_p: Position) void {
-    if (old_p_opt != null and areInSameChunk(old_p_opt.?, new_p)) {
+    if (old_p_opt != null and this.areInSameChunk(old_p_opt.?, new_p)) {
         // ok
     } else {
         if (old_p_opt) |old_p| {
@@ -204,8 +204,7 @@ pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: Entity
                             entity_index_ptr.* = first_block.entity_indices[first_block.entity_count];
 
                             if (first_block.entity_count == 0) {
-                                if (first_block.next) {
-                                    const next = first_block.next;
+                                if (first_block.next) |next| {
                                     first_block.* = next.*;
 
                                     next.next = this.first_free_entity_block;
@@ -225,7 +224,8 @@ pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: Entity
         const block = &chunk.first_entity_block;
 
         if (block.entity_count >= block.entity_indices.len) {
-            const old_block_opt = this.first_free_entity_block;
+            var old_block_opt = this.first_free_entity_block;
+
             if (old_block_opt) |old_block| {
                 this.first_free_entity_block = old_block.next;
             } else {
@@ -242,4 +242,19 @@ pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: Entity
         block.entity_indices[block.entity_count] = low_index;
         block.entity_count += 1;
     }
+}
+
+pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) World.Position {
+    const chunk_x = @divTrunc(abs_tile_x, World.tiles_per_chunk_side);
+    const chunk_y = @divTrunc(abs_tile_y, World.tiles_per_chunk_side);
+
+    return .{
+        .chunk_x = chunk_x,
+        .chunk_y = chunk_y,
+        .chunk_z = abs_tile_z,
+        ._offset = .{
+            .x = @as(f32, @floatFromInt(abs_tile_x - (chunk_x * World.tiles_per_chunk_side))) * this.tile_side_in_meters,
+            .y = @as(f32, @floatFromInt(abs_tile_y - (chunk_y * World.tiles_per_chunk_side))) * this.tile_side_in_meters,
+        },
+    };
 }

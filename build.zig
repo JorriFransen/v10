@@ -103,12 +103,23 @@ pub fn build(b: *Build) !void {
     if (tools.asset_compiler) |_| {
         const asset_mode: AssetBuildMode = if (internal_build and !cross_compile) .engine else .build;
         run_asset_compiler = asset_mode == .engine;
-        try buildAssets(b, &engine, &tools, asset_mode);
+
+        const rel_scan_dir = "raw_art";
+        const rel_output_dir = "data";
+
+        try buildAssets(b, &engine, &tools, asset_mode, rel_scan_dir, rel_output_dir);
+
+        if (internal_build) {
+            options.addOption(bool, "run_asset_compiler", run_asset_compiler);
+
+            if (asset_mode == .engine) {
+                options.addOption([]const u8, "asset_compiler_scan_dir", b.pathFromRoot(rel_scan_dir));
+                options.addOption([]const u8, "asset_compiler_output_dir", b.pathFromRoot(rel_output_dir));
+            }
+        }
     } else {
         std.log.warn("Skipping asset compilation", .{});
     }
-
-    options.addOption(bool, "run_asset_compiler", run_asset_compiler);
 
     try buildTests(b, &modules);
 }
@@ -400,7 +411,7 @@ pub const AssetBuildMode = enum {
     build,
 };
 
-pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: AssetBuildMode) !void {
+pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: AssetBuildMode, scan_dir: []const u8, output_dir: []const u8) !void {
     assert(tools.asset_compiler != null);
 
     const asset_compiler = tools.asset_compiler.?;
@@ -420,8 +431,8 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
                 asset_compiler_run.addArg("-v");
             }
 
-            asset_compiler_run.addPrefixedDirectoryArg("-i", b.path("data"));
-            asset_compiler_run.addPrefixedDirectoryArg("-o", b.path("data/test"));
+            asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
+            asset_compiler_run.addPrefixedDirectoryArg("-o", b.path(output_dir));
 
             b.getInstallStep().dependOn(asset_step);
             engine.run.step.dependOn(asset_step);

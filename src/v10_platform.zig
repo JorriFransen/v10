@@ -276,24 +276,30 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
 }
 
 pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Writer, stdout: *std.Io.Writer) !void {
-    if (options.run_asset_compiler) {
-        const asset_compiler = @import("asset_compiler");
+    if (options.internal_build) {
+        if (options.run_asset_compiler) {
+            const asset_compiler = @import("asset_compiler");
 
-        const init_mem = !mem.temp_initialized;
-        if (init_mem) mem.init();
-        defer if (init_mem) mem.deinit();
+            const init_mem = !mem.temp_initialized;
+            if (init_mem) mem.init();
+            defer if (init_mem) mem.deinit();
 
-        var arena = try mem.Arena.init(.{ .virtual = .{} });
-        defer arena.deinit() catch {};
+            var arena = try mem.Arena.init(.{ .virtual = .{} });
+            defer arena.deinit() catch {};
 
-        var context = asset_compiler.Context{
-            .io = io,
-            .arena = arena.allocator(),
-            .gpa = gpa,
-            .stderr = stderr,
-            .stdout = stdout,
-            .verbose = true,
-        };
-        try asset_compiler.run(&context, .{ .input_scan_dir = ".", .output_dir = "./test", .verbose = true });
+            var context = asset_compiler.Context{
+                .io = io,
+                .arena = arena.allocator(),
+                .gpa = gpa,
+                .stderr = stderr,
+                .stdout = stdout,
+                .verbose = true,
+            };
+            try asset_compiler.run(&context, .{
+                .input_scan_dir = options.asset_compiler_scan_dir,
+                .output_dir = options.asset_compiler_output_dir,
+                .verbose = true,
+            });
+        }
     }
 }
