@@ -44,6 +44,8 @@ pub const Position = struct {
     /// In meters, from the chunk center
     _offset: V2 = .{},
 
+    pub const zero: Position = .{ .chunk_x = 0, .chunk_y = 0, .chunk_z = 0, ._offset = .zero };
+
     pub const Delta = struct {
         xy: V2,
         z: f32,
@@ -81,7 +83,7 @@ pub inline fn isCanonical(this: *const World, chunk_rel: f32) bool {
     return result;
 }
 
-pub inline fn isCanonicalOffset(this: *World, offset: V2) bool {
+pub inline fn isCanonicalOffset(this: *const World, offset: V2) bool {
     const result = this.isCanonical(offset.x) and this.isCanonical(offset.x);
     return result;
 }
@@ -245,16 +247,44 @@ pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: Entity
 }
 
 pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) World.Position {
-    const chunk_x = @divTrunc(abs_tile_x, World.tiles_per_chunk_side);
-    const chunk_y = @divTrunc(abs_tile_y, World.tiles_per_chunk_side);
+    if (false) {
+        // Exact hh macth
+        var result: Position = .zero;
 
-    return .{
-        .chunk_x = chunk_x,
-        .chunk_y = chunk_y,
-        .chunk_z = abs_tile_z,
-        ._offset = .{
-            .x = @as(f32, @floatFromInt(abs_tile_x - (chunk_x * World.tiles_per_chunk_side))) * this.tile_side_in_meters,
-            .y = @as(f32, @floatFromInt(abs_tile_y - (chunk_y * World.tiles_per_chunk_side))) * this.tile_side_in_meters,
-        },
-    };
+        result.chunk_x = @divTrunc(abs_tile_x, World.tiles_per_chunk_side);
+        result.chunk_y = @divTrunc(abs_tile_y, World.tiles_per_chunk_side);
+        result.chunk_z = @divTrunc(abs_tile_z, World.tiles_per_chunk_side);
+
+        if (abs_tile_x < 0) result.chunk_x -= 1;
+        if (abs_tile_y < 0) result.chunk_y -= 1;
+        if (abs_tile_z < 0) result.chunk_z -= 1;
+
+        const chunk_tiles = World.tiles_per_chunk_side;
+        const x_tiles: f32 = @floatFromInt((abs_tile_x - (chunk_tiles / 2)) - (result.chunk_x * chunk_tiles));
+        const y_tiles: f32 = @floatFromInt((abs_tile_y - (chunk_tiles / 2)) - (result.chunk_y * chunk_tiles));
+        result._offset = v2(x_tiles, y_tiles).mul(this.tile_side_in_meters);
+
+        assert(this.isCanonicalOffset(result._offset));
+
+        return result;
+    } else {
+        const chunk_x = @divFloor(abs_tile_x, World.tiles_per_chunk_side);
+        const chunk_y = @divFloor(abs_tile_y, World.tiles_per_chunk_side);
+
+        const chunk_tiles = World.tiles_per_chunk_side;
+        const x_tiles: f32 = @floatFromInt((abs_tile_x - (chunk_tiles / 2)) - (chunk_x * chunk_tiles));
+        const y_tiles: f32 = @floatFromInt((abs_tile_y - (chunk_tiles / 2)) - (chunk_y * chunk_tiles));
+        const offset = v2(x_tiles, y_tiles).mul(this.tile_side_in_meters);
+
+        const result = World.Position{
+            .chunk_x = chunk_x,
+            .chunk_y = chunk_y,
+            .chunk_z = abs_tile_z,
+            ._offset = offset,
+        };
+
+        assert(this.isCanonicalOffset(result._offset));
+
+        return result;
+    }
 }

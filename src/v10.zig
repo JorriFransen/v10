@@ -42,6 +42,8 @@ pub const HighEntity = struct {
     chunk_z: i32 = 0,
     facing_direction: FacingDirection = .down,
 
+    t_bob: f32 = 0,
+
     boost: bool = false,
     z: f32 = 0,
     d_z: f32 = 0,
@@ -53,6 +55,8 @@ pub const EntityType = enum {
     null,
     hero,
     wall,
+    familiar,
+    monster,
 };
 
 pub const LowEntity = struct {
@@ -75,9 +79,16 @@ const FacingDirection = enum(u2) {
     down,
 };
 
-const LowEntityChunkReference = struct {
-    chunk: *const World.Chunk = undefined,
-    index_in_chunk: u32 = 0,
+pub const EntityVisiblePiece = struct {
+    bitmap: *const LoadedBitmap,
+    offset: V2,
+    offset_z: f32,
+    alpha: f32,
+};
+
+pub const EntityVisiblePieceGroup = struct {
+    count: u32 = 0,
+    pieces: [8]EntityVisiblePiece = undefined,
 };
 
 pub const GameState = struct {
@@ -101,8 +112,14 @@ pub const GameState = struct {
 
     tree: LoadedBitmap = .{},
 
-    pub fn addLowEntity(this: *GameState, entity_type: EntityType, pos_opt: ?World.Position) EntityIndex {
+    pub const AddLowEntityResult = struct {
+        low: *LowEntity,
+        low_index: EntityIndex,
+    };
+
+    pub fn addLowEntity(this: *GameState, entity_type: EntityType, pos_opt: ?World.Position) AddLowEntityResult {
         assert(this.low_entity_count < this.low_entities.len);
+
         const low_index = this.low_entity_count;
         this.low_entity_count += 1;
 
@@ -115,7 +132,12 @@ pub const GameState = struct {
             this.world.changeEntityLocation(&this.world_arena, low_index, null, p);
         }
 
-        return low_index;
+        const result = AddLowEntityResult{
+            .low = low,
+            .low_index = low_index,
+        };
+
+        return result;
     }
 
     pub inline fn getLowEntity(this: *GameState, index: EntityIndex) ?*LowEntity {
@@ -127,7 +149,7 @@ pub const GameState = struct {
         return result;
     }
 
-    pub inline fn getHighEntity(this: *GameState, low_index: EntityIndex) ?Entity {
+    pub inline fn forceEntityIntoHigh(this: *GameState, low_index: EntityIndex) ?Entity {
         var result: ?Entity = null;
 
         if (low_index > 0 and low_index < this.low_entity_count) {
@@ -135,6 +157,28 @@ pub const GameState = struct {
                 .low_index = low_index,
                 .high = this.makeEntityHighFrequency(low_index).?,
                 .low = &this.low_entities[low_index],
+            };
+        }
+
+        return result;
+    }
+
+    pub inline fn entityFromHighIndex(this: *GameState, high_index: EntityIndex) Entity {
+        var result = Entity{ .low_index = 0 };
+
+        if (high_index != 0) {
+            assert(high_index < this.high_entity_count);
+
+            const high = &this.high_entities[high_index];
+            assert(high.low_entity_index != 0);
+            assert(high.low_entity_index < this.low_entity_count);
+
+            const low = &this.low_entities[high.low_entity_index];
+
+            result = Entity{
+                .low_index = high.low_entity_index,
+                .high = high,
+                .low = low,
             };
         }
 
@@ -285,29 +329,202 @@ pub const GameState = struct {
         assert(this.validateEntityPairs());
     }
 
-    fn addWall(this: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) EntityIndex {
-        const p = this.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
-        const low_index = this.addLowEntity(.wall, p);
-        const low_entity = this.getLowEntity(low_index).?;
+    fn moveEntity(this: *GameState, entity: Entity, dt: f32, direction: V2) void {
+        const world = this.world;
 
-        low_entity.size = V2.scalar(this.world.tile_side_in_meters);
-        low_entity.collides = true;
+        const ddp_length_sq = direction.lengthSquared();
+        var ddp = if (ddp_length_sq > 1)
+            direction.mul(1 / @sqrt(ddp_length_sq))
+        else
+            direction;
 
-        return low_index;
-    }
+        var speed: f32 = 50; // ms/s^2
+        if (entity.high.boost) speed *= 5;
+        ddp = ddp.mul(speed);
+        ddp = ddp.add(entity.high.d_p.mul(-8));
 
-    fn addPlayer(this: *GameState) EntityIndex {
-        const low_index = this.addLowEntity(.hero, this.camera_pos);
-        const low_entity = this.getLowEntity(low_index).?;
+        var player_delta = V2.add(
+            ddp.mul(0.5 * math.square(dt)),
+            entity.high.d_p.mul(dt),
+        );
+        entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
 
-        low_entity.size = v2(1, 0.5);
-        low_entity.collides = true;
+        var it_count: usize = 0;
+        while (it_count < 4) : (it_count += 1) {
+            var t_min: f32 = 1;
+            var wall_normal: V2 = .zero;
+            var hit_high_index: usize = 0;
 
-        if (this.camera_following_entity_index == 0) {
-            this.camera_following_entity_index = low_index;
+            const desired_position = entity.high.p.add(player_delta);
+
+            for (1..this.high_entity_count) |test_high_index| {
+                if (test_high_index != entity.low.high_entity_index) {
+                    const high = &this.high_entities[test_high_index];
+                    const test_entity = Entity{
+                        .high = high,
+                        .low = &this.low_entities[high.low_entity_index],
+                        .low_index = high.low_entity_index,
+                    };
+
+                    if (test_entity.low.collides) {
+                        const diameter = test_entity.low.size.add(entity.low.size);
+                        const min_corner = diameter.mul(-0.5);
+                        const max_corner = diameter.mul(0.5);
+
+                        const rel = entity.high.p.sub(test_entity.high.p);
+
+                        if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                            wall_normal = v2(-1, 0);
+                            hit_high_index = test_high_index;
+                        }
+                        if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                            wall_normal = v2(1, 0);
+                            hit_high_index = test_high_index;
+                        }
+                        if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                            wall_normal = v2(0, -1);
+                            hit_high_index = test_high_index;
+                        }
+                        if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                            wall_normal = v2(0, 1);
+                            hit_high_index = test_high_index;
+                        }
+                    }
+                }
+            }
+            if (test_wall_hh) {
+
+                // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
+                entity.high.p = entity.high.p.add(player_delta.mul(t_min));
+            } else {
+                const push_out: f32 = 0.0001;
+                const delta = player_delta.mul(t_min).add(wall_normal.mul(push_out));
+                entity.high.p = entity.high.p.add(delta);
+            }
+
+            if (hit_high_index != 0) {
+                entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
+                player_delta = desired_position.sub(entity.high.p);
+                player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
+
+                // const hit_high = &game_state.high_entities[hit_high_index];
+                // const hit_low = &game_state.low_entities[hit_high.low_entity_index];
+                // entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_low.d_abs_tile_z);
+            } else {
+                break;
+            }
         }
 
-        return low_index;
+        entity.high.facing_direction =
+            if (entity.high.d_p.x == 0 and entity.high.d_p.y == 0)
+                entity.high.facing_direction
+            else if (@abs(entity.high.d_p.x) > @abs(entity.high.d_p.y))
+                if (entity.high.d_p.x > 0) .right else .left
+            else if (entity.high.d_p.y > 0) .up else .down;
+
+        const new_p = this.camera_pos.offset(world, entity.high.p);
+        world.changeEntityLocation(&this.world_arena, entity.low_index, entity.low.p, new_p);
+        entity.low.p = new_p;
+    }
+
+    const test_wall_hh = false;
+    fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
+        var hit = false;
+
+        if (delta_x != 0) {
+            const t_result = (wall_x - test_x) / delta_x;
+
+            if (t_result >= 0 and t_min.* > t_result) {
+                const y = test_y + (t_result * delta_y);
+                if (y >= wall_min_y and y <= wall_max_y) {
+                    if (test_wall_hh) {
+                        // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
+                        const t_epsilon: f32 = 0.0001;
+                        t_min.* = @max(0, t_result - t_epsilon);
+                    } else {
+                        t_min.* = t_result;
+                    }
+                    hit = true;
+                }
+            }
+        }
+
+        return hit;
+    }
+
+    pub fn updateFamiliar(this: *GameState, entity: Entity, dt: f32) void {
+        var closest_hero_opt: ?Entity = null;
+        var closest_hero_d_sq: f32 = math.square(10);
+
+        for (1..this.high_entity_count) |high_index_| {
+            const high_index: EntityIndex = @intCast(high_index_);
+
+            const test_entity = this.entityFromHighIndex(high_index);
+            if (test_entity.low.type == .hero and closest_hero_d_sq > 0) {
+                const test_d_sq = test_entity.high.p.sub(entity.high.p).lengthSquared();
+                if (closest_hero_d_sq > test_d_sq) {
+                    closest_hero_opt = test_entity;
+                    closest_hero_d_sq = test_d_sq;
+                }
+            }
+        }
+
+        var ddp = V2.zero;
+        if (closest_hero_opt) |hero| {
+            const acceleration = 0.5;
+            const one_over_length = acceleration / math.sqrt(closest_hero_d_sq);
+            ddp = hero.high.p.sub(entity.high.p).mul(one_over_length);
+        }
+        this.moveEntity(entity, dt, ddp);
+    }
+
+    pub fn updateMonster(this: *GameState, entity: Entity, dt: f32) void {
+        _ = this;
+        _ = entity;
+        _ = dt;
+    }
+
+    pub fn addWall(this: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
+        const p = this.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+        const entity = this.addLowEntity(.wall, p);
+
+        entity.low.size = V2.scalar(this.world.tile_side_in_meters);
+        entity.low.collides = true;
+
+        return entity;
+    }
+
+    pub fn addPlayer(this: *GameState) AddLowEntityResult {
+        const entity = this.addLowEntity(.hero, this.camera_pos);
+
+        entity.low.size = v2(1, 0.5);
+        entity.low.collides = true;
+
+        if (this.camera_following_entity_index == 0) {
+            this.camera_following_entity_index = entity.low_index;
+        }
+
+        return entity;
+    }
+
+    pub fn addMonster(this: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
+        const p = this.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+        const entity = this.addLowEntity(.monster, p);
+
+        entity.low.size = v2(1, 0.5);
+        entity.low.collides = true;
+
+        return entity;
+    }
+
+    pub fn addFamiliar(this: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
+        const p = this.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+        const entity = this.addLowEntity(.familiar, p);
+
+        entity.low.size = v2(1, 0.5);
+        entity.low.collides = false;
+
+        return entity;
     }
 };
 
@@ -365,17 +582,12 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32,
     }
 }
 
-const DrawBitmapOptions = struct {
-    center: V2 = V2.zero,
-    c_alpha: f32 = 1,
-};
-
-pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f32, o: DrawBitmapOptions) void {
+pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: *const LoadedBitmap, px: f32, py: f32, c_alpha: f32) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(buffer.bytes_per_pixel);
 
-    const real_x: f32 = px - o.center.x;
-    const real_y: f32 = py - o.center.y;
+    const real_x: f32 = px;
+    const real_y: f32 = py;
 
     var min_x: i32 = @round(real_x);
     var min_y: i32 = @round(real_y);
@@ -424,7 +636,7 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: LoadedBitmap, px: f32, py: f
             const sc = ColorU8ARGB.fromU32(source[0]);
             const dc = ColorU8ARGB.fromU32(dest[0]);
 
-            const a: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * o.c_alpha);
+            const a: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * c_alpha);
 
             const sr: f32 = sc.r;
             const sg: f32 = sc.g;
@@ -467,128 +679,6 @@ pub const HeroBitmaps = struct {
     torso: LoadedBitmap = .{},
 };
 
-fn movePlayer(game_state: *GameState, entity: Entity, dt: f32, direction: V2) void {
-    const world = game_state.world;
-
-    const ddp_length_sq = direction.lengthSquared();
-    var ddp = if (ddp_length_sq > 1)
-        direction.mul(1 / @sqrt(ddp_length_sq))
-    else
-        direction;
-
-    var speed: f32 = 50; // ms/s^2
-    if (entity.high.boost) speed *= 5;
-    ddp = ddp.mul(speed);
-    ddp = ddp.add(entity.high.d_p.mul(-8));
-
-    var player_delta = V2.add(
-        ddp.mul(0.5 * math.square(dt)),
-        entity.high.d_p.mul(dt),
-    );
-    entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
-
-    var it_count: usize = 0;
-    while (it_count < 4) : (it_count += 1) {
-        var t_min: f32 = 1;
-        var wall_normal: V2 = .zero;
-        var hit_high_index: usize = 0;
-
-        const desired_position = entity.high.p.add(player_delta);
-
-        for (1..game_state.high_entity_count) |test_high_index| {
-            if (test_high_index != entity.low.high_entity_index) {
-                const high = &game_state.high_entities[test_high_index];
-                const test_entity = Entity{
-                    .high = high,
-                    .low = &game_state.low_entities[high.low_entity_index],
-                    .low_index = high.low_entity_index,
-                };
-
-                if (test_entity.low.collides) {
-                    const diameter = test_entity.low.size.add(entity.low.size);
-                    const min_corner = diameter.mul(-0.5);
-                    const max_corner = diameter.mul(0.5);
-
-                    const rel = entity.high.p.sub(test_entity.high.p);
-
-                    if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                        wall_normal = v2(-1, 0);
-                        hit_high_index = test_high_index;
-                    }
-                    if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                        wall_normal = v2(1, 0);
-                        hit_high_index = test_high_index;
-                    }
-                    if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                        wall_normal = v2(0, -1);
-                        hit_high_index = test_high_index;
-                    }
-                    if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                        wall_normal = v2(0, 1);
-                        hit_high_index = test_high_index;
-                    }
-                }
-            }
-        }
-        if (false) {
-
-            // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
-            entity.high.p = entity.high.p.add(player_delta.mul(t_min));
-        } else {
-            const push_out: f32 = 0.00001;
-            const delta = player_delta.mul(t_min).add(wall_normal.mul(push_out));
-            entity.high.p = entity.high.p.add(delta);
-        }
-
-        if (hit_high_index != 0) {
-            entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
-            player_delta = desired_position.sub(entity.high.p);
-            player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
-
-            // const hit_high = &game_state.high_entities[hit_high_index];
-            // const hit_low = &game_state.low_entities[hit_high.low_entity_index];
-            // entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_low.d_abs_tile_z);
-        } else {
-            break;
-        }
-    }
-
-    entity.high.facing_direction =
-        if (entity.high.d_p.x == 0 and entity.high.d_p.y == 0)
-            entity.high.facing_direction
-        else if (@abs(entity.high.d_p.x) > @abs(entity.high.d_p.y))
-            if (entity.high.d_p.x > 0) .right else .left
-        else if (entity.high.d_p.y > 0) .up else .down;
-
-    const new_p = game_state.camera_pos.offset(world, entity.high.p);
-    world.changeEntityLocation(&game_state.world_arena, entity.low_index, entity.low.p, new_p);
-    entity.low.p = new_p;
-}
-
-fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
-    var hit = false;
-
-    if (delta_x != 0) {
-        const t_result = (wall_x - test_x) / delta_x;
-
-        if (t_result >= 0 and t_min.* > t_result) {
-            const y = test_y + (t_result * delta_y);
-            if (y >= wall_min_y and y <= wall_max_y) {
-                if (false) {
-                    // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
-                    const t_epsilon: f32 = 0.0001;
-                    t_min.* = @max(0, t_result - t_epsilon);
-                } else {
-                    t_min.* = t_result;
-                }
-                hit = true;
-            }
-        }
-    }
-
-    return hit;
-}
-
 pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     _ = game_state;
     // _ = tone_hz;
@@ -623,8 +713,8 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
 
-    // const asset_prefix = "../../hh_assets/";
-    const asset_prefix = "";
+    const asset_prefix = "../../hh_assets/";
+    // const asset_prefix = "";
 
     game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_background.bmp");
     game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_shadow.bmp");
@@ -774,14 +864,17 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
         door_top = false;
     }
 
-    // const cam_pos = World.Position{
-    //     .abs_tile_x = (screen_base_x * screen_tile_width) + (screen_tile_width / 2),
-    //     .abs_tile_y = (screen_base_y * screen_tile_height) + (screen_tile_height / 2),
-    //     .chunk_z = screen_base_z,
-    // };
     const cam_tile_x = (screen_base_x * screen_tile_width) + (screen_tile_width / 2);
     const cam_tile_y = (screen_base_y * screen_tile_height) + (screen_tile_height / 2);
-    const cam_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, screen_base_z);
+    const cam_tile_z = screen_base_z;
+    const cam_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, cam_tile_z);
+
+    _ = game_state.addMonster(cam_tile_x + 2, cam_tile_y + 2, cam_tile_z);
+
+    _ = game_state.addFamiliar(cam_tile_x - 2, cam_tile_y + 2, cam_tile_z);
+
+    _ = game_state.addWall(-1, -1, 0);
+
     game_state.setCamera(cam_pos);
 }
 
@@ -807,11 +900,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const controlling_low_index = game_state.player_index_for_controller[controller_index];
         if (controlling_low_index == 0) {
             if (buttons.start.ended_down) {
-                const controlling_entity_low_index = game_state.addPlayer();
-                game_state.player_index_for_controller[controller_index] = controlling_entity_low_index;
+                const controlling_entity = game_state.addPlayer();
+                game_state.player_index_for_controller[controller_index] = controlling_entity.low_index;
             }
         } else {
-            if (game_state.getHighEntity(controlling_low_index)) |controlling_entity| {
+            if (game_state.forceEntityIntoHigh(controlling_low_index)) |controlling_entity| {
                 var move_dir: V2 = .{};
 
                 if (controller.is_analog) {
@@ -842,12 +935,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
                 controlling_entity.high.boost = buttons.action_down.ended_down;
 
-                movePlayer(game_state, controlling_entity, input.dt, move_dir);
+                game_state.moveEntity(controlling_entity, input.dt, move_dir);
             }
         }
     }
 
-    if (game_state.getHighEntity(game_state.camera_following_entity_index)) |cam_following_entity| {
+    if (game_state.forceEntityIntoHigh(game_state.camera_following_entity_index)) |cam_following_entity| {
         const entity_p = cam_following_entity.high.p;
 
         var new_cam_p = game_state.camera_pos;
@@ -883,44 +976,78 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
     );
 
+    var piece_group: EntityVisiblePieceGroup = .{};
     for (game_state.high_entities[1..game_state.high_entity_count]) |*high_entity| {
         const low_entity = &game_state.low_entities[high_entity.low_entity_index];
+        const entity = Entity{ .low_index = high_entity.low_entity_index, .high = high_entity, .low = low_entity };
+
+        piece_group.count = 0;
+
+        const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(high_entity.facing_direction)];
+        const shadow_alpha = @max(0, 1 - high_entity.z);
+
+        switch (low_entity.type) {
+            .null => unreachable,
+
+            .hero => {
+                pushPiece(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, shadow_alpha);
+                pushPiece(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, 1);
+                pushPiece(&piece_group, &hero_bitmap.cape, V2.zero, 0, hero_bitmap.alignment, 1);
+                pushPiece(&piece_group, &hero_bitmap.head, V2.zero, 0, hero_bitmap.alignment, 1);
+            },
+
+            .familiar => {
+                game_state.updateFamiliar(entity, input.dt);
+
+                entity.high.t_bob += input.dt;
+                if (entity.high.t_bob > math.tau) entity.high.t_bob -= math.tau;
+
+                pushPiece(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, shadow_alpha);
+                pushPiece(&piece_group, &hero_bitmap.head, V2.zero, 10 * @sin(2 * entity.high.t_bob), hero_bitmap.alignment, 1);
+            },
+
+            .monster => {
+                game_state.updateMonster(entity, input.dt);
+                pushPiece(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, shadow_alpha);
+                pushPiece(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, 1);
+            },
+
+            .wall => {
+                pushPiece(&piece_group, &game_state.tree, V2.zero, 0, v2(40, 80), 1);
+            },
+        }
 
         const ddz = -9.8;
         high_entity.z = @max(0, high_entity.z + (0.5 * ddz * math.square(input.dt)) + (high_entity.d_z * input.dt));
         high_entity.d_z = (ddz * input.dt) + high_entity.d_z;
 
-        const player_size = low_entity.size.mul(meters_to_pixels);
-
-        const player_ground_point_x = screen_center.x + (meters_to_pixels * high_entity.p.x);
-        const player_ground_point_y = screen_center.y - (meters_to_pixels * high_entity.p.y);
-        const z = meters_to_pixels * -high_entity.z;
-
-        const player_top_left = v2(
-            player_ground_point_x - (0.5 * player_size.x),
-            player_ground_point_y - (0.5 * player_size.y),
+        const entity_ground_point = v2(
+            screen_center.x + (meters_to_pixels * high_entity.p.x),
+            screen_center.y - (meters_to_pixels * high_entity.p.y),
         );
-        const player_bottom_right = player_top_left.add(player_size);
-        _ = player_bottom_right;
+        const entity_z = meters_to_pixels * -high_entity.z;
 
-        if (low_entity.type == .hero) {
-            const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(high_entity.facing_direction)];
-
-            const c_alpha = @max(0, 1 - high_entity.z);
-            drawBitmap(offscreen_buffer, game_state.hero_shadow, player_ground_point_x, player_ground_point_y, .{
-                .center = hero_bitmap.alignment,
-                .c_alpha = c_alpha,
-            });
-
-            const o = DrawBitmapOptions{ .center = hero_bitmap.alignment };
-            drawBitmap(offscreen_buffer, hero_bitmap.torso, player_ground_point_x, player_ground_point_y + z, o);
-            drawBitmap(offscreen_buffer, hero_bitmap.cape, player_ground_point_x, player_ground_point_y + z, o);
-            drawBitmap(offscreen_buffer, hero_bitmap.head, player_ground_point_x, player_ground_point_y + z, o);
-        } else {
-            // drawRectangle(offscreen_buffer, player_top_left, player_top_left.add(player_size.mul(0.9)), 1, 1, 0);
-            drawBitmap(offscreen_buffer, game_state.tree, player_ground_point_x, player_ground_point_y + z, .{ .center = v2(40, 80) });
+        for (piece_group.pieces[0..piece_group.count]) |*piece| {
+            drawBitmap(
+                offscreen_buffer,
+                piece.bitmap,
+                entity_ground_point.x + piece.offset.x,
+                entity_ground_point.y + piece.offset.y + piece.offset_z + entity_z,
+                piece.alpha,
+            );
         }
     }
+}
+
+fn pushPiece(group: *EntityVisiblePieceGroup, bitmap: *const LoadedBitmap, offset: V2, offset_z: f32, @"align": V2, alpha: f32) void {
+    assert(group.count < group.pieces.len);
+    group.pieces[group.count] = .{
+        .bitmap = bitmap,
+        .offset = offset.sub(@"align"),
+        .offset_z = offset_z,
+        .alpha = alpha,
+    };
+    group.count += 1;
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {

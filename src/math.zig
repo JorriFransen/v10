@@ -1,5 +1,8 @@
 const std = @import("std");
 
+pub const pi = std.math.pi;
+pub const tau = std.math.tau;
+
 pub inline fn square(x: f32) f32 {
     return x * x;
 }
