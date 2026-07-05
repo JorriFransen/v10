@@ -35,30 +35,28 @@ pub const V2 = extern struct {
     }
 
     pub inline fn initSigned(x: i32, y: i32) V2 {
-        return .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
+        const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
+        return result;
     }
 
     pub inline fn initUnsigned(x: u32, y: u32) V2 {
-        return .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
+        const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
+        return result;
     }
 
-    pub inline fn initv(vec: V) V2 {
-        return @bitCast(vec);
-    }
     pub inline fn scalar(s: f32) V2 {
-        return @bitCast(@as(V, @splat(s)));
+        const result: V2 = @bitCast(@as(V, @splat(s)));
+        return result;
     }
 
     pub inline fn v(this: V2) V {
-        return @bitCast(this);
-    }
-
-    pub inline fn vp(this: *V2) *V {
-        return @ptrCast(@alignCast(this));
+        const result: V = @bitCast(this);
+        return result;
     }
 
     pub inline fn add(a: V2, b: V2) V2 {
-        return @bitCast(a.v() + b.v());
+        const result: V2 = @bitCast(a.v() + b.v());
+        return result;
     }
 
     pub inline fn addAll(vecs: []const V2) V2 {
@@ -67,46 +65,238 @@ pub const V2 = extern struct {
         return @bitCast(result);
     }
 
-    pub inline fn addv(a: V2, b: V) V2 {
-        return @bitCast(a.v() + b);
-    }
-
     pub inline fn sub(a: V2, b: V2) V2 {
-        return @bitCast(a.v() - b.v());
-    }
-
-    pub inline fn subv(a: V2, b: V) V2 {
-        return @bitCast(a.v() - b);
+        const result: V2 = @bitCast(a.v() - b.v());
+        return result;
     }
 
     pub inline fn neg(this: V2) V2 {
-        return @bitCast(-this.v());
+        const result: V2 = @bitCast(-this.v());
+        return result;
     }
 
     pub inline fn mul(this: V2, s: f32) V2 {
-        return @bitCast(this.v() * @as(V, @splat(s)));
+        const result: V2 = @bitCast(this.v() * @as(V, @splat(s)));
+        return result;
     }
 
     pub inline fn div(this: V2, s: f32) V2 {
-        return @bitCast(this.v() / @as(V, @splat(s)));
+        const result: V2 = @bitCast(this.v() / @as(V, @splat(s)));
+        return result;
     }
 
     pub inline fn inner(a: V2, b: V2) f32 {
-        const result = a.x * b.x + a.y * b.y;
+        const result: f32 = @reduce(.Add, a.v() * b.v());
         return result;
     }
 
     pub inline fn length(this: V2) f32 {
-        return sqrt(this.lengthSquared());
+        const result: f32 = sqrt(this.lengthSquared());
+        return result;
     }
 
     pub inline fn lengthSquared(this: V2) f32 {
-        return this.inner(this);
+        const result: f32 = this.inner(this);
+        return result;
     }
 
     pub fn format(this: V2, writer: anytype) !void {
         try writer.print("[{}, {}]", .{ this.x, this.y });
     }
+};
+
+pub const V3 = extern struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    z: f32 = 0,
+
+    pub const zero = scalar(0);
+    pub const one = scalar(1);
+
+    pub const V = @Vector(3, f32);
+
+    pub inline fn init(x: f32, y: f32, z: f32) V3 {
+        const result: V3 = .{ .x = x, .y = y, .z = z };
+        return result;
+    }
+
+    pub inline fn initSigned(x: i32, y: i32, z: i32) V3 {
+        const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
+        return result;
+    }
+
+    pub inline fn initUnsigned(x: u32, y: u32, z: u32) V3 {
+        const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
+        return result;
+    }
+
+    pub inline fn scalar(s: f32) V3 {
+        const result: V3 = @bitCast(@as(V, @splat(s)));
+        return result;
+    }
+
+    pub inline fn v(this: V3) V {
+        const result: V3 = @bitCast(this);
+        return result;
+    }
+
+    pub inline fn add(a: V3, b: V3) V3 {
+        const result: V3 = @bitCast(a.v() + b.v());
+        return result;
+    }
+
+    pub inline fn addAll(vecs: []const V3) V3 {
+        var result: V = std.mem.zeroes(V);
+        for (vecs) |vec| result += vec.v();
+        return @bitCast(result);
+    }
+
+    pub inline fn sub(a: V3, b: V3) V3 {
+        const result: V3 = @bitCast(a.v() - b.v());
+        return result;
+    }
+
+    pub inline fn neg(this: V3) V3 {
+        const result: V3 = @bitCast(-this.v());
+        return result;
+    }
+
+    pub inline fn mul(this: V3, s: f32) V3 {
+        const result: V3 = @bitCast(this.v() * @as(V, @splat(s)));
+        return result;
+    }
+
+    pub inline fn div(this: V3, s: f32) V3 {
+        const result: V3 = @bitCast(this.v() / @as(V, @splat(s)));
+        return result;
+    }
+
+    pub inline fn inner(a: V3, b: V3) f32 {
+        const result: f32 = @reduce(.add, a.v() * b.v());
+        return result;
+    }
+
+    pub inline fn length(this: V3) f32 {
+        const result: f32 = sqrt(this.lengthSquared());
+        return result;
+    }
+
+    pub inline fn lengthSquared(this: V3) f32 {
+        const result: f32 = this.inner(this);
+        return result;
+    }
+
+    pub fn format(this: V3, writer: anytype) !void {
+        try writer.print("[{}, {}, {}]", .{ this.x, this.y, this.z });
+    }
+};
+
+pub const V4 = extern struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    z: f32 = 0,
+    w: f32 = 0,
+
+    pub const zero = scalar(0);
+    pub const one = scalar(1);
+
+    pub const V = @Vector(3, f32);
+
+    pub inline fn init(x: f32, y: f32, z: f32, w: f32) V4 {
+        const result: V4 = .{ .x = x, .y = y, .z = z, .w = w };
+        return result;
+    }
+
+    pub inline fn initSigned(x: i32, y: i32, z: i32, w: i32) V4 {
+        const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
+        return result;
+    }
+
+    pub inline fn initUnsigned(x: u32, y: u32, z: u32, w: u32) V4 {
+        const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
+        return result;
+    }
+
+    pub inline fn scalar(s: f32) V4 {
+        const result: V4 = @bitCast(@as(V, @splat(s)));
+        return result;
+    }
+
+    pub inline fn v(this: V4) V {
+        const result: V4 = @bitCast(this);
+        return result;
+    }
+
+    pub inline fn add(a: V4, b: V4) V4 {
+        const result: V4 = @bitCast(a.v() + b.v());
+        return result;
+    }
+
+    pub inline fn addAll(vecs: []const V4) V4 {
+        var result: V = std.mem.zeroes(V);
+        for (vecs) |vec| result += vec.v();
+        return @bitCast(result);
+    }
+
+    pub inline fn sub(a: V4, b: V4) V4 {
+        const result: V4 = @bitCast(a.v() - b.v());
+        return result;
+    }
+
+    pub inline fn neg(this: V4) V4 {
+        const result: V4 = @bitCast(-this.v());
+        return result;
+    }
+
+    pub inline fn mul(this: V4, s: f32) V4 {
+        const result: V4 = @bitCast(this.v() * @as(V, @splat(s)));
+        return result;
+    }
+
+    pub inline fn div(this: V4, s: f32) V4 {
+        const result: V4 = @bitCast(this.v() / @as(V, @splat(s)));
+        return result;
+    }
+
+    pub inline fn inner(a: V4, b: V4) f32 {
+        const result: f32 = @reduce(.add, a.v() * b.v());
+        return result;
+    }
+
+    pub inline fn length(this: V4) f32 {
+        const result: f32 = sqrt(this.lengthSquared());
+        return result;
+    }
+
+    pub inline fn lengthSquared(this: V4) f32 {
+        const result: f32 = this.inner(this);
+        return result;
+    }
+
+    pub fn format(this: V4, writer: anytype) !void {
+        try writer.print("[{}, {}, {}, {}]", .{ this.x, this.y, this.z, this.w });
+    }
+
+    pub inline fn color(this: V4) Color {
+        return @bitCast(this);
+    }
+
+    pub const Color = extern struct {
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+
+        pub fn init(r: f32, g: f32, b: f32, a: f32) Color {
+            const result: Color = .{ .r = r, .g = g, .b = b, .a = a };
+            return result;
+        }
+
+        pub inline fn v4(this: Color) V4 {
+            const result: V4 = @bitCast(this);
+            return result;
+        }
+    };
 };
 
 pub fn isInRectangle(rect: Rect, p: V2) bool {

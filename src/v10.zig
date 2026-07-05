@@ -9,6 +9,8 @@ const V2 = math.V2;
 const v2 = V2.init;
 const v2i = V2.initSigned;
 const v2u = V2.initUnsigned;
+const V4 = math.V4;
+const v4 = V4.init;
 const Rect = math.Rect;
 
 const assert = std.debug.assert;
@@ -59,6 +61,13 @@ pub const EntityType = enum {
     monster,
 };
 
+pub const HitPoint = struct {
+    pub const max_amount = 4;
+
+    flags: u8 = 0,
+    amount: u8 = 0,
+};
+
 pub const LowEntity = struct {
     type: EntityType = .null,
 
@@ -70,6 +79,9 @@ pub const LowEntity = struct {
     d_abs_tile_z: i32 = 0,
 
     high_entity_index: EntityIndex = 0,
+
+    hitpoint_max: u32 = 0,
+    hitpoints: [16]HitPoint = @splat(.{}),
 };
 
 const FacingDirection = enum(u2) {
@@ -80,20 +92,30 @@ const FacingDirection = enum(u2) {
 };
 
 pub const EntityVisiblePiece = struct {
-    bitmap: *const LoadedBitmap,
+    bitmap: ?*const LoadedBitmap,
     offset: V2,
     offset_z: f32,
-    alpha: f32,
+    entity_z_c: f32,
+
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+
+    dim: V2,
 };
 
 pub const EntityVisiblePieceGroup = struct {
+    game_state: *GameState,
     count: u32 = 0,
-    pieces: [8]EntityVisiblePiece = undefined,
+    pieces: [16]EntityVisiblePiece = undefined,
 };
 
 pub const GameState = struct {
     world_arena: MemoryArena = undefined,
     world: *World = undefined,
+
+    meters_to_pixels: f32 = 0,
 
     camera_following_entity_index: EntityIndex = 0,
     camera_pos: World.Position = undefined,
@@ -471,9 +493,11 @@ pub const GameState = struct {
 
         var ddp = V2.zero;
         if (closest_hero_opt) |hero| {
-            const acceleration = 0.5;
-            const one_over_length = acceleration / math.sqrt(closest_hero_d_sq);
-            ddp = hero.high.p.sub(entity.high.p).mul(one_over_length);
+            if (closest_hero_d_sq >= math.square(3)) {
+                const acceleration = 0.5;
+                const one_over_length = acceleration / math.sqrt(closest_hero_d_sq);
+                ddp = hero.high.p.sub(entity.high.p).mul(one_over_length);
+            }
         }
         this.moveEntity(entity, dt, ddp);
     }
@@ -497,6 +521,11 @@ pub const GameState = struct {
     pub fn addPlayer(this: *GameState) AddLowEntityResult {
         const entity = this.addLowEntity(.hero, this.camera_pos);
 
+        entity.low.hitpoint_max = 3;
+        @memset(
+            entity.low.hitpoints[0..entity.low.hitpoint_max],
+            .{ .amount = HitPoint.max_amount },
+        );
         entity.low.size = v2(1, 0.5);
         entity.low.collides = true;
 
@@ -713,6 +742,17 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
 
+    game_state.world = game_state.world_arena.pushMemory(World);
+    const world: *World = game_state.world;
+
+    world.init(1.4);
+
+    const tile_size_in_pixels = 60;
+    game_state.meters_to_pixels = tile_size_in_pixels / world.tile_side_in_meters;
+
+    _ = game_state.addLowEntity(.null, null);
+    game_state.high_entity_count = 1;
+
     const asset_prefix = "../../hh_assets/";
     // const asset_prefix = "";
 
@@ -739,14 +779,6 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     game_state.hero_bitmaps[3].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_cape.bmp");
     game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_torso.bmp");
     game_state.hero_bitmaps[3].alignment = v2(72, 182);
-
-    game_state.world = game_state.world_arena.pushMemory(World);
-    const world: *World = game_state.world;
-
-    world.init(1.4);
-
-    _ = game_state.addLowEntity(.null, null);
-    game_state.high_entity_count = 1;
 
     var next_random_number_index: usize = 0;
 
@@ -889,9 +921,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     const world: *World = game_state.world;
 
-    const tile_size_in_pixels = 60;
-    const meters_to_pixels = tile_size_in_pixels / world.tile_side_in_meters;
-
     for (input.controllers, 0..) |controller, controller_index| {
         // TODO: Is controller.connected supposed to exist?
 
@@ -976,7 +1005,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
     );
 
-    var piece_group: EntityVisiblePieceGroup = .{};
+    var piece_group: EntityVisiblePieceGroup = .{ .game_state = game_state };
     for (game_state.high_entities[1..game_state.high_entity_count]) |*high_entity| {
         const low_entity = &game_state.low_entities[high_entity.low_entity_index];
         const entity = Entity{ .low_index = high_entity.low_entity_index, .high = high_entity, .low = low_entity };
@@ -990,10 +1019,30 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             .null => unreachable,
 
             .hero => {
-                pushPiece(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, shadow_alpha);
-                pushPiece(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, 1);
-                pushPiece(&piece_group, &hero_bitmap.cape, V2.zero, 0, hero_bitmap.alignment, 1);
-                pushPiece(&piece_group, &hero_bitmap.head, V2.zero, 0, hero_bitmap.alignment, 1);
+                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
+                pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
+                pushBitmap(&piece_group, &hero_bitmap.cape, V2.zero, 0, hero_bitmap.alignment, .{});
+                pushBitmap(&piece_group, &hero_bitmap.head, V2.zero, 0, hero_bitmap.alignment, .{});
+
+                if (low_entity.hitpoint_max >= 1) {
+                    const health_dim = v2(0.2, 0.2);
+                    const spacing_x = health_dim.x * 1.5;
+
+                    var hit_p = v2(
+                        -0.5 * @as(f32, @floatFromInt(low_entity.hitpoint_max - 1)) * spacing_x,
+                        -0.25,
+                    );
+
+                    for (low_entity.hitpoints[0..low_entity.hitpoint_max]) |*hit_point| {
+                        var color = v4(1, 0, 0, 1);
+                        if (hit_point.amount == 0) {
+                            color = v4(0.2, 0.2, 0.2, 1);
+                        }
+
+                        pushRect(&piece_group, hit_p, 0, health_dim, color, .{ .entity_z_c = 0 });
+                        hit_p.x += spacing_x;
+                    }
+                }
             },
 
             .familiar => {
@@ -1002,18 +1051,23 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 entity.high.t_bob += input.dt;
                 if (entity.high.t_bob > math.tau) entity.high.t_bob -= math.tau;
 
-                pushPiece(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, shadow_alpha);
-                pushPiece(&piece_group, &hero_bitmap.head, V2.zero, 10 * @sin(2 * entity.high.t_bob), hero_bitmap.alignment, 1);
+                const bob_sin = @sin(2 * entity.high.t_bob);
+
+                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{
+                    .alpha = (0.5 * shadow_alpha) + (0.2 * bob_sin),
+                    .entity_z_c = 0,
+                });
+                pushBitmap(&piece_group, &hero_bitmap.head, V2.zero, 0.25 * bob_sin, hero_bitmap.alignment, .{});
             },
 
             .monster => {
                 game_state.updateMonster(entity, input.dt);
-                pushPiece(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, shadow_alpha);
-                pushPiece(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, 1);
+                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
+                pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
             },
 
             .wall => {
-                pushPiece(&piece_group, &game_state.tree, V2.zero, 0, v2(40, 80), 1);
+                pushBitmap(&piece_group, &game_state.tree, V2.zero, 0, v2(40, 80), .{});
             },
         }
 
@@ -1022,32 +1076,87 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         high_entity.d_z = (ddz * input.dt) + high_entity.d_z;
 
         const entity_ground_point = v2(
-            screen_center.x + (meters_to_pixels * high_entity.p.x),
-            screen_center.y - (meters_to_pixels * high_entity.p.y),
+            screen_center.x + (game_state.meters_to_pixels * high_entity.p.x),
+            screen_center.y - (game_state.meters_to_pixels * high_entity.p.y),
         );
-        const entity_z = meters_to_pixels * -high_entity.z;
+        const entity_z = game_state.meters_to_pixels * -high_entity.z;
 
         for (piece_group.pieces[0..piece_group.count]) |*piece| {
-            drawBitmap(
-                offscreen_buffer,
-                piece.bitmap,
+            const center = v2(
                 entity_ground_point.x + piece.offset.x,
-                entity_ground_point.y + piece.offset.y + piece.offset_z + entity_z,
-                piece.alpha,
+                entity_ground_point.y + piece.offset.y + piece.offset_z + (piece.entity_z_c * entity_z),
             );
+
+            if (piece.bitmap) |bitmap| {
+                drawBitmap(offscreen_buffer, bitmap, center.x, center.y, piece.a);
+            } else {
+                const dim = piece.dim.mul(game_state.meters_to_pixels);
+                const half_dim = dim.mul(0.5);
+                drawRectangle(
+                    offscreen_buffer,
+                    center.sub(half_dim),
+                    center.add(half_dim),
+                    piece.r,
+                    piece.g,
+                    piece.b,
+                );
+            }
         }
     }
 }
 
-fn pushPiece(group: *EntityVisiblePieceGroup, bitmap: *const LoadedBitmap, offset: V2, offset_z: f32, @"align": V2, alpha: f32) void {
+const PushPieceOptions = struct {
+    alpha: f32 = 1,
+    entity_z_c: f32 = 1,
+};
+
+fn pushPiece(
+    group: *EntityVisiblePieceGroup,
+    bitmap: ?*const LoadedBitmap,
+    offset: V2,
+    offset_z: f32,
+    dim: V2,
+    @"align": V2,
+    entity_z_c: f32,
+    color: V4,
+) void {
     assert(group.count < group.pieces.len);
+
+    const c = color.color();
+
     group.pieces[group.count] = .{
         .bitmap = bitmap,
-        .offset = offset.sub(@"align"),
-        .offset_z = offset_z,
-        .alpha = alpha,
+        .offset = v2(offset.x, -offset.y).mul(group.game_state.meters_to_pixels).sub(@"align"),
+        .offset_z = offset_z * group.game_state.meters_to_pixels,
+        .entity_z_c = entity_z_c,
+        .r = c.r,
+        .g = c.g,
+        .b = c.b,
+        .a = c.a,
+        .dim = dim,
     };
     group.count += 1;
+}
+
+inline fn pushBitmap(group: *EntityVisiblePieceGroup, bitmap: *const LoadedBitmap, offset: V2, offset_z: f32, @"align": V2, o: PushPieceOptions) void {
+    pushPiece(group, bitmap, offset, offset_z, V2.zero, @"align", o.entity_z_c, v4(1, 1, 1, o.alpha));
+}
+
+const PushRectOptions = struct {
+    entity_z_c: f32 = 1,
+};
+
+inline fn pushRect(group: *EntityVisiblePieceGroup, offset: V2, offset_z: f32, dim: V2, color: V4, o: PushRectOptions) void {
+    pushPiece(
+        group,
+        null,
+        offset,
+        offset_z,
+        dim,
+        V2.zero,
+        o.entity_z_c,
+        color,
+    );
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
