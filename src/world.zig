@@ -204,6 +204,8 @@ pub fn changeEntityLocation(
 
     if (new_p_opt) |new_p| {
         low_entity.p = new_p;
+    } else {
+        low_entity.p = .null;
     }
 }
 
@@ -222,7 +224,7 @@ pub fn changeEntityLocationRaw(this: *World, arena: *MemoryArena, low_index: Ent
                 const first_block = &chunk.first_entity_block;
                 var block_opt: ?*EntityBlock = first_block;
 
-                while (block_opt) |block| : (block_opt = block.next) block_loop: {
+                block_loop: while (block_opt) |block| : (block_opt = block.next) {
                     for (block.entity_indices[0..block.entity_count]) |*entity_index_ptr| {
                         if (low_index == entity_index_ptr.*) {
                             first_block.entity_count -= 1;

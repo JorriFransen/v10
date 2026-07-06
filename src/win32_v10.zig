@@ -888,7 +888,7 @@ pub fn windowsEntry(
                                 seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                             }
                         } else {
-                            log.warn("Missed frame time!", .{});
+                            log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
                         }
 
                         const end_counter = getWallClock();
