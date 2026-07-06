@@ -6,6 +6,7 @@ const intrinsics = @import("intrinsics.zig");
 
 const v10 = @import("v10.zig");
 const EntityIndex = v10.EntityIndex;
+const LowEntity = v10.LowEntity;
 
 const math = @import("math");
 const V2 = math.V2;
@@ -45,11 +46,16 @@ pub const Position = struct {
     _offset: V2 = .{},
 
     pub const zero: Position = .{ .chunk_x = 0, .chunk_y = 0, .chunk_z = 0, ._offset = .zero };
+    pub const @"null": Position = .{ .chunk_x = chunk_x_uninitialized, .chunk_y = 0, .chunk_z = 0, ._offset = .zero };
 
     pub const Delta = struct {
         xy: V2,
         z: f32,
     };
+
+    pub inline fn isValid(this: Position) bool {
+        return this.chunk_x != @"null".chunk_x;
+    }
 
     pub inline fn offset(this: Position, world: *const World, offset_by: V2) Position {
         var result = this;
@@ -186,9 +192,26 @@ pub inline fn areInSameChunk(this: *World, a: Position, b: Position) bool {
         a.chunk_z == b.chunk_z;
     return result;
 }
+pub fn changeEntityLocation(
+    this: *World,
+    arena: *MemoryArena,
+    low_index: EntityIndex,
+    low_entity: *LowEntity,
+    old_p_opt: ?Position,
+    new_p_opt: ?Position,
+) void {
+    this.changeEntityLocationRaw(arena, low_index, old_p_opt, new_p_opt);
 
-pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: EntityIndex, old_p_opt: ?Position, new_p: Position) void {
-    if (old_p_opt != null and this.areInSameChunk(old_p_opt.?, new_p)) {
+    if (new_p_opt) |new_p| {
+        low_entity.p = new_p;
+    }
+}
+
+pub fn changeEntityLocationRaw(this: *World, arena: *MemoryArena, low_index: EntityIndex, old_p_opt: ?Position, new_p_opt: ?Position) void {
+    assert(old_p_opt == null or old_p_opt.?.isValid());
+    assert(new_p_opt == null or new_p_opt.?.isValid());
+
+    if (old_p_opt != null and new_p_opt != null and this.areInSameChunk(old_p_opt.?, new_p_opt.?)) {
         // ok
     } else {
         if (old_p_opt) |old_p| {
@@ -221,28 +244,30 @@ pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: Entity
             }
         }
 
-        // insert
-        const chunk = this.getChunk(new_p.chunk_x, new_p.chunk_y, new_p.chunk_z, .{ .arena = arena }).?;
-        const block = &chunk.first_entity_block;
+        if (new_p_opt) |new_p| {
+            // insert
+            const chunk = this.getChunk(new_p.chunk_x, new_p.chunk_y, new_p.chunk_z, .{ .arena = arena }).?;
+            const block = &chunk.first_entity_block;
 
-        if (block.entity_count >= block.entity_indices.len) {
-            var old_block_opt = this.first_free_entity_block;
+            if (block.entity_count >= block.entity_indices.len) {
+                var old_block_opt = this.first_free_entity_block;
 
-            if (old_block_opt) |old_block| {
-                this.first_free_entity_block = old_block.next;
-            } else {
-                old_block_opt = arena.pushMemory(EntityBlock);
+                if (old_block_opt) |old_block| {
+                    this.first_free_entity_block = old_block.next;
+                } else {
+                    old_block_opt = arena.pushMemory(EntityBlock);
+                }
+                const old_block = old_block_opt.?;
+
+                old_block.* = block.*;
+                block.next = old_block;
+                block.entity_count = 0;
             }
-            const old_block = old_block_opt.?;
 
-            old_block.* = block.*;
-            block.next = old_block;
-            block.entity_count = 0;
+            assert(block.entity_count < block.entity_indices.len);
+            block.entity_indices[block.entity_count] = low_index;
+            block.entity_count += 1;
         }
-
-        assert(block.entity_count < block.entity_indices.len);
-        block.entity_indices[block.entity_count] = low_index;
-        block.entity_count += 1;
     }
 }
 

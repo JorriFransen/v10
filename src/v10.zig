@@ -46,7 +46,6 @@ pub const HighEntity = struct {
 
     t_bob: f32 = 0,
 
-    boost: bool = false,
     z: f32 = 0,
     d_z: f32 = 0,
 
@@ -59,6 +58,7 @@ pub const EntityType = enum {
     wall,
     familiar,
     monster,
+    sword,
 };
 
 pub const HitPoint = struct {
@@ -71,7 +71,7 @@ pub const HitPoint = struct {
 pub const LowEntity = struct {
     type: EntityType = .null,
 
-    p: World.Position = std.mem.zeroInit(World.Position, .{}),
+    p: World.Position = .null,
     size: V2 = .zero,
 
     // for "stairs"
@@ -82,6 +82,9 @@ pub const LowEntity = struct {
 
     hitpoint_max: u32 = 0,
     hitpoints: [16]HitPoint = @splat(.{}),
+
+    sword_low_index: EntityIndex = 0,
+    distance_remaining: f32 = 0,
 };
 
 const FacingDirection = enum(u2) {
@@ -133,6 +136,7 @@ pub const GameState = struct {
     hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
 
     tree: LoadedBitmap = .{},
+    sword: LoadedBitmap = .{},
 
     pub const AddLowEntityResult = struct {
         low: *LowEntity,
@@ -145,17 +149,18 @@ pub const GameState = struct {
         const low_index = this.low_entity_count;
         this.low_entity_count += 1;
 
-        const low = &this.low_entities[low_index];
-        low.* = .{};
-        low.type = entity_type;
+        const low_entity = &this.low_entities[low_index];
+        low_entity.* = .{};
+        low_entity.type = entity_type;
 
         if (pos_opt) |p| {
-            low.p = p;
-            this.world.changeEntityLocation(&this.world_arena, low_index, null, p);
+            this.world.changeEntityLocation(&this.world_arena, low_index, low_entity, null, p);
+        } else {
+            low_entity.p = .null;
         }
 
         const result = AddLowEntityResult{
-            .low = low,
+            .low = low_entity,
             .low_index = low_index,
         };
 
@@ -360,8 +365,7 @@ pub const GameState = struct {
         else
             direction;
 
-        var speed: f32 = 50; // ms/s^2
-        if (entity.high.boost) speed *= 5;
+        const speed: f32 = 50; // ms/s^2
         ddp = ddp.mul(speed);
         ddp = ddp.add(entity.high.d_p.mul(-8));
 
@@ -445,8 +449,7 @@ pub const GameState = struct {
             else if (entity.high.d_p.y > 0) .up else .down;
 
         const new_p = this.camera_pos.offset(world, entity.high.p);
-        world.changeEntityLocation(&this.world_arena, entity.low_index, entity.low.p, new_p);
-        entity.low.p = new_p;
+        world.changeEntityLocation(&this.world_arena, entity.low_index, entity.low, entity.low.p, new_p);
     }
 
     const test_wall_hh = false;
@@ -521,13 +524,13 @@ pub const GameState = struct {
     pub fn addPlayer(this: *GameState) AddLowEntityResult {
         const entity = this.addLowEntity(.hero, this.camera_pos);
 
-        entity.low.hitpoint_max = 3;
-        @memset(
-            entity.low.hitpoints[0..entity.low.hitpoint_max],
-            .{ .amount = HitPoint.max_amount },
-        );
         entity.low.size = v2(1, 0.5);
         entity.low.collides = true;
+
+        initHitpoints(entity.low, 3);
+
+        const sword = this.addSword();
+        entity.low.sword_low_index = sword.low_index;
 
         if (this.camera_following_entity_index == 0) {
             this.camera_following_entity_index = entity.low_index;
@@ -540,6 +543,7 @@ pub const GameState = struct {
         const p = this.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
         const entity = this.addLowEntity(.monster, p);
 
+        initHitpoints(entity.low, 3);
         entity.low.size = v2(1, 0.5);
         entity.low.collides = true;
 
@@ -549,6 +553,15 @@ pub const GameState = struct {
     pub fn addFamiliar(this: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
         const p = this.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
         const entity = this.addLowEntity(.familiar, p);
+
+        entity.low.size = v2(1, 0.5);
+        entity.low.collides = false;
+
+        return entity;
+    }
+
+    pub fn addSword(this: *GameState) AddLowEntityResult {
+        const entity = this.addLowEntity(.sword, null);
 
         entity.low.size = v2(1, 0.5);
         entity.low.collides = false;
@@ -580,6 +593,37 @@ pub const ColorU8ARGB = packed struct(u32) {
         };
     }
 };
+
+fn initHitpoints(low_entity: *LowEntity, count: u32) void {
+    assert(count <= low_entity.hitpoints.len);
+    low_entity.hitpoint_max = count;
+    @memset(
+        low_entity.hitpoints[0..low_entity.hitpoint_max],
+        .{ .amount = HitPoint.max_amount },
+    );
+}
+
+fn drawHitpoints(low_entity: *LowEntity, piece_group: *EntityVisiblePieceGroup) void {
+    if (low_entity.hitpoint_max >= 1) {
+        const health_dim = v2(0.2, 0.2);
+        const spacing_x = health_dim.x * 1.5;
+
+        var hit_p = v2(
+            -0.5 * @as(f32, @floatFromInt(low_entity.hitpoint_max - 1)) * spacing_x,
+            -0.25,
+        );
+
+        for (low_entity.hitpoints[0..low_entity.hitpoint_max]) |*hit_point| {
+            var color = v4(1, 0, 0, 1);
+            if (hit_point.amount == 0) {
+                color = v4(0.2, 0.2, 0.2, 1);
+            }
+
+            pushRect(piece_group, hit_p, 0, health_dim, color, .{ .entity_z_c = 0 });
+            hit_p.x += spacing_x;
+        }
+    }
+}
 
 pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32, b: f32) void {
     const pitch: usize = @intCast(buffer.pitch);
@@ -759,6 +803,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_background.bmp");
     game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_shadow.bmp");
     game_state.tree = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tree00.bmp");
+    game_state.sword = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/rock03.bmp");
 
     game_state.hero_bitmaps[0].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_head.bmp");
     game_state.hero_bitmaps[0].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_cape.bmp");
@@ -956,13 +1001,34 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     }
                 }
 
-                if (buttons.action_up.ended_down) {
+                if (buttons.start.ended_down) {
                     if (controlling_entity.high.z <= 0) {
                         controlling_entity.high.d_z = 3;
                     }
                 }
 
-                controlling_entity.high.boost = buttons.action_down.ended_down;
+                var d_sword: V2 = .zero;
+                if (buttons.action_up.ended_down) {
+                    d_sword = v2(0, 1);
+                }
+                if (buttons.action_down.ended_down) {
+                    d_sword = v2(0, -1);
+                }
+                if (buttons.action_left.ended_down) {
+                    d_sword = v2(-1, 0);
+                }
+                if (buttons.action_right.ended_down) {
+                    d_sword = v2(1, 0);
+                }
+
+                if (d_sword.x != 0 or d_sword.y != 0) {
+                    const sword_index = controlling_entity.low.sword_low_index;
+                    if (game_state.getLowEntity(sword_index)) |sword| {
+                        if (!sword.p.isValid()) {
+                            world.changeEntityLocation(&game_state.world_arena, sword_index, sword, null, controlling_entity.low.p);
+                        }
+                    }
+                }
 
                 game_state.moveEntity(controlling_entity, input.dt, move_dir);
             }
@@ -1024,25 +1090,16 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 pushBitmap(&piece_group, &hero_bitmap.cape, V2.zero, 0, hero_bitmap.alignment, .{});
                 pushBitmap(&piece_group, &hero_bitmap.head, V2.zero, 0, hero_bitmap.alignment, .{});
 
-                if (low_entity.hitpoint_max >= 1) {
-                    const health_dim = v2(0.2, 0.2);
-                    const spacing_x = health_dim.x * 1.5;
+                drawHitpoints(low_entity, &piece_group);
+            },
 
-                    var hit_p = v2(
-                        -0.5 * @as(f32, @floatFromInt(low_entity.hitpoint_max - 1)) * spacing_x,
-                        -0.25,
-                    );
+            .wall => {
+                pushBitmap(&piece_group, &game_state.tree, V2.zero, 0, v2(40, 80), .{});
+            },
 
-                    for (low_entity.hitpoints[0..low_entity.hitpoint_max]) |*hit_point| {
-                        var color = v4(1, 0, 0, 1);
-                        if (hit_point.amount == 0) {
-                            color = v4(0.2, 0.2, 0.2, 1);
-                        }
-
-                        pushRect(&piece_group, hit_p, 0, health_dim, color, .{ .entity_z_c = 0 });
-                        hit_p.x += spacing_x;
-                    }
-                }
+            .sword => {
+                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
+                pushBitmap(&piece_group, &game_state.sword, V2.zero, 0, v2(29, 10), .{});
             },
 
             .familiar => {
@@ -1064,10 +1121,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 game_state.updateMonster(entity, input.dt);
                 pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
                 pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
-            },
 
-            .wall => {
-                pushBitmap(&piece_group, &game_state.tree, V2.zero, 0, v2(40, 80), .{});
+                drawHitpoints(low_entity, &piece_group);
             },
         }
 
