@@ -5,6 +5,12 @@ const platform = @import("v10_platform.zig");
 const intrinsics = @import("intrinsics.zig");
 
 const SimRegion = @import("sim_region.zig");
+const SimEntity = SimRegion.SimEntity;
+const EntityIndex = SimRegion.EntityIndex;
+const EntityType = SimRegion.EntityType;
+const EntityReference = SimRegion.EntityReference;
+const HitPoint = SimRegion.HitPoint;
+const MoveSpec = SimRegion.MoveSpec;
 
 const math = @import("math");
 const V2 = math.V2;
@@ -29,50 +35,9 @@ const AudioBuffer = platform.AudioBuffer;
 
 const os = @import("builtin").os.tag;
 
-pub const EntityIndex = u32;
-
-pub const EntityType = enum {
-    null,
-    hero,
-    wall,
-    familiar,
-    monster,
-    sword,
-};
-
-pub const HitPoint = struct {
-    pub const max_amount = 4;
-
-    flags: u8 = 0,
-    amount: u8 = 0,
-};
-
 pub const LowEntity = struct {
-    type: EntityType = .null,
-
+    sim: SimRegion.SimEntity,
     p: World.Position = .null,
-    d_p: V2 = .zero,
-    size: V2 = .zero,
-
-    facing_direction: FacingDirection = .down,
-
-    t_bob: f32 = 0,
-
-    collides: bool = false,
-    d_abs_tile_z: i32 = 0,
-
-    hitpoint_max: u32 = 0,
-    hitpoints: [16]HitPoint = @splat(.{}),
-
-    sword_low_index: EntityIndex = 0,
-    distance_remaining: f32 = 0,
-};
-
-const FacingDirection = enum(u2) {
-    right,
-    up,
-    left,
-    down,
 };
 
 pub const EntityVisiblePiece = struct {
@@ -125,6 +90,16 @@ pub const AddLowEntityResult = struct {
     low_index: EntityIndex,
 };
 
+pub inline fn getLowEntity(game_state: *GameState, index: EntityIndex) ?*LowEntity {
+    var result: ?*LowEntity = null;
+
+    if (index > 0 and index < game_state.low_entity_count) {
+        result = &game_state.low_entities[index];
+    }
+
+    return result;
+}
+
 pub fn addLowEntity(game_state: *GameState, entity_type: EntityType, pos_opt: ?World.Position) AddLowEntityResult {
     assert(game_state.low_entity_count < game_state.low_entities.len);
 
@@ -133,7 +108,7 @@ pub fn addLowEntity(game_state: *GameState, entity_type: EntityType, pos_opt: ?W
 
     const low_entity = &game_state.low_entities[low_index];
     low_entity.* = .{};
-    low_entity.type = entity_type;
+    low_entity.sim.type = entity_type;
 
     if (pos_opt) |p| {
         game_state.world.changeEntityLocation(&game_state.world_arena, low_index, low_entity, null, p);
@@ -149,30 +124,12 @@ pub fn addLowEntity(game_state: *GameState, entity_type: EntityType, pos_opt: ?W
     return result;
 }
 
-pub inline fn entityFromHighIndex(game_state: *GameState, high_index: EntityIndex) Entity {
-    var result = Entity{ .low_index = 0 };
+pub fn updateFamiliar(game_state: *GameState, entity: *SimEntity, dt: f32) void {
+    _ = game_state;
+    _ = entity;
+    _ = dt;
 
-    if (high_index != 0) {
-        assert(high_index < game_state.high_entity_count);
-
-        const high = &game_state.high_entities[high_index];
-        assert(high.low_entity_index != 0);
-        assert(high.low_entity_index < game_state.low_entity_count);
-
-        const low = &game_state.low_entities[high.low_entity_index];
-
-        result = Entity{
-            .low_index = high.low_entity_index,
-            .high = high,
-            .low = low,
-        };
-    }
-
-    return result;
-}
-
-pub fn updateFamiliar(game_state: *GameState, entity: Entity, dt: f32) void {
-    var closest_hero_opt: ?Entity = null;
+    var closest_hero_opt: ?SimEntity = null;
     var closest_hero_d_sq: f32 = math.square(10);
 
     for (1..game_state.high_entity_count) |high_index_| {
@@ -201,22 +158,22 @@ pub fn updateFamiliar(game_state: *GameState, entity: Entity, dt: f32) void {
     moveEntity(game_state, entity, dt, move_spec, ddp);
 }
 
-pub fn updateMonster(game_state: *GameState, entity: Entity, dt: f32) void {
+pub fn updateMonster(game_state: *GameState, entity: *SimEntity, dt: f32) void {
     _ = game_state;
     _ = entity;
     _ = dt;
 }
 
-pub fn updateSword(game_state: *GameState, entity: Entity, dt: f32) void {
+pub fn updateSword(game_state: *GameState, entity: *SimEntity, dt: f32) void {
     const move_spec = MoveSpec{ .speed = 0 };
 
-    const old_p = entity.high.p;
+    const old_p = entity.p;
     moveEntity(game_state, entity, dt, move_spec, V2.zero);
-    const distance_traveled = entity.high.p.sub(old_p).length();
+    const distance_traveled = entity.p.sub(old_p).length();
 
-    entity.low.distance_remaining -= distance_traveled;
-    if (entity.low.distance_remaining < 0) {
-        game_state.world.changeEntityLocation(&game_state.world_arena, entity.low_index, entity.low, entity.low.p, null);
+    entity.distance_remaining -= distance_traveled;
+    if (entity.distance_remaining < 0) {
+        game_state.world.changeEntityLocation(&game_state.world_arena, entity.storage_index, entity.low, entity.low.p, null);
     }
 }
 
@@ -224,8 +181,8 @@ pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_til
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
     const entity = addLowEntity(game_state, .wall, p);
 
-    entity.low.size = V2.scalar(game_state.world.tile_side_in_meters);
-    entity.low.collides = true;
+    entity.low.sim.size = V2.scalar(game_state.world.tile_side_in_meters);
+    entity.low.sim.collides = true;
 
     return entity;
 }
@@ -233,13 +190,13 @@ pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_til
 pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
     const entity = addLowEntity(game_state, .hero, game_state.camera_pos);
 
-    entity.low.size = v2(1, 0.5);
-    entity.low.collides = true;
+    entity.low.sim.size = v2(1, 0.5);
+    entity.low.sim.collides = true;
 
     initHitpoints(entity.low, 3);
 
     const sword = addSword(game_state);
-    entity.low.sword_low_index = sword.low_index;
+    entity.low.sim.sword = EntityReference{ .index = sword.low_index };
 
     if (game_state.camera_following_entity_index == 0) {
         game_state.camera_following_entity_index = entity.low_index;
@@ -276,138 +233,6 @@ pub fn addSword(game_state: *GameState) AddLowEntityResult {
     entity.low.collides = false;
 
     return entity;
-}
-
-const MoveSpec = struct {
-    unit_max_ddp: bool = false,
-    speed: f32 = 1,
-    drag: f32 = 0,
-};
-
-fn moveEntity(game_state: *GameState, entity: Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
-    const world = game_state.world;
-
-    var ddp = raw_ddp;
-
-    if (move_spec.unit_max_ddp) {
-        const ddp_length_sq = raw_ddp.lengthSquared();
-        ddp = if (ddp_length_sq > 1)
-            ddp.mul(1 / @sqrt(ddp_length_sq))
-        else
-            ddp;
-    }
-
-    ddp = ddp.mul(move_spec.speed);
-    ddp = ddp.add(entity.high.d_p.mul(-move_spec.drag));
-
-    var player_delta = V2.add(
-        ddp.mul(0.5 * math.square(dt)),
-        entity.high.d_p.mul(dt),
-    );
-    entity.high.d_p = entity.high.d_p.add(ddp.mul(dt));
-
-    var it_count: usize = 0;
-    while (it_count < 4) : (it_count += 1) {
-        var t_min: f32 = 1;
-        var wall_normal: V2 = .zero;
-        var hit_high_index: usize = 0;
-
-        const desired_position = entity.high.p.add(player_delta);
-
-        if (entity.low.collides) {
-            for (1..game_state.high_entity_count) |test_high_index| {
-                if (test_high_index != entity.low.high_entity_index) {
-                    const high = &game_state.high_entities[test_high_index];
-                    const test_entity = Entity{
-                        .high = high,
-                        .low = &game_state.low_entities[high.low_entity_index],
-                        .low_index = high.low_entity_index,
-                    };
-
-                    if (test_entity.low.collides) {
-                        const diameter = test_entity.low.size.add(entity.low.size);
-                        const min_corner = diameter.mul(-0.5);
-                        const max_corner = diameter.mul(0.5);
-
-                        const rel = entity.high.p.sub(test_entity.high.p);
-
-                        if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v2(-1, 0);
-                            hit_high_index = test_high_index;
-                        }
-                        if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v2(1, 0);
-                            hit_high_index = test_high_index;
-                        }
-                        if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v2(0, -1);
-                            hit_high_index = test_high_index;
-                        }
-                        if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v2(0, 1);
-                            hit_high_index = test_high_index;
-                        }
-                    }
-                }
-            }
-        }
-        if (test_wall_hh) {
-
-            // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
-            entity.high.p = entity.high.p.add(player_delta.mul(t_min));
-        } else {
-            const push_out: f32 = 0.0001;
-            const delta = player_delta.mul(t_min).add(wall_normal.mul(push_out));
-            entity.high.p = entity.high.p.add(delta);
-        }
-
-        if (hit_high_index != 0) {
-            entity.high.d_p = entity.high.d_p.sub(wall_normal.mul(entity.high.d_p.inner(wall_normal)));
-            player_delta = desired_position.sub(entity.high.p);
-            player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
-
-            // const hit_high = &game_state.high_entities[hit_high_index];
-            // const hit_low = &game_state.low_entities[hit_high.low_entity_index];
-            // entity.high.abs_tile_z = @intCast(@as(i64, entity.high.abs_tile_z) + hit_low.d_abs_tile_z);
-        } else {
-            break;
-        }
-    }
-
-    entity.high.facing_direction =
-        if (entity.high.d_p.x == 0 and entity.high.d_p.y == 0)
-            entity.high.facing_direction
-        else if (@abs(entity.high.d_p.x) > @abs(entity.high.d_p.y))
-            if (entity.high.d_p.x > 0) .right else .left
-        else if (entity.high.d_p.y > 0) .up else .down;
-
-    const new_p = game_state.camera_pos.offset(world, entity.high.p);
-    world.changeEntityLocation(&game_state.world_arena, entity.low_index, entity.low, entity.low.p, new_p);
-}
-
-const test_wall_hh = false;
-fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
-    var hit = false;
-
-    if (delta_x != 0) {
-        const t_result = (wall_x - test_x) / delta_x;
-
-        if (t_result >= 0 and t_min.* > t_result) {
-            const y = test_y + (t_result * delta_y);
-            if (y >= wall_min_y and y <= wall_max_y) {
-                if (test_wall_hh) {
-                    // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
-                    const t_epsilon: f32 = 0.0001;
-                    t_min.* = @max(0, t_result - t_epsilon);
-                } else {
-                    t_min.* = t_result;
-                }
-                hit = true;
-            }
-        }
-    }
-
-    return hit;
 }
 
 pub const ColorU8ARGB = packed struct(u32) {
@@ -790,8 +615,6 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     _ = addFamiliar(game_state, cam_tile_x - 2, cam_tile_y + 2, cam_tile_z);
 
     _ = addWall(game_state, -1, -1, 0);
-
-    // setCamera(game_state, cam_pos);
 }
 
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void {
