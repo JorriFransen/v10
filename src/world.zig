@@ -57,7 +57,7 @@ pub const Position = struct {
         return this.chunk_x != @"null".chunk_x;
     }
 
-    pub inline fn offset(this: Position, world: *const World, offset_by: V2) Position {
+    pub fn offset(this: Position, world: *const World, offset_by: V2) Position {
         var result = this;
 
         result._offset = result._offset.add(offset_by);
@@ -83,9 +83,11 @@ pub inline fn recanonicalizeCoord(this: *const World, chunk: *i32, chunk_rel: *f
 }
 
 pub inline fn isCanonical(this: *const World, chunk_rel: f32) bool {
+    const epsilon = 0.0001;
+
     const result =
-        chunk_rel >= -(0.5 * this.chunk_side_in_meters) and
-        chunk_rel <= (0.5 * this.chunk_side_in_meters);
+        chunk_rel >= -(0.5 * this.chunk_side_in_meters + epsilon) and
+        chunk_rel <= (0.5 * this.chunk_side_in_meters + epsilon);
     return result;
 }
 

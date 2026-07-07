@@ -18,8 +18,8 @@ const entities_per_region = 4096;
 game_state: *v10.GameState,
 origin: World.Position,
 bounds: Rect,
-max_entity_count: u32,
-entities: []SimEntity,
+max_entity_count: usize,
+entities: []Entity,
 
 // Must be power of 2!
 sim_entity_hash: [entities_per_region]EntityHash,
@@ -52,16 +52,16 @@ pub const HitPoint = struct {
 };
 
 pub const EntityReference = union {
-    ptr: ?*SimEntity,
+    ptr: ?*Entity,
     index: EntityIndex,
 };
 
 pub const EntityHash = struct {
-    ptr: ?*SimEntity = null,
+    ptr: ?*Entity = null,
     index: EntityIndex = 0,
 };
 
-pub const SimEntity = struct {
+pub const Entity = struct {
     storage_index: EntityIndex = 0,
 
     type: EntityType = .null,
@@ -85,11 +85,11 @@ pub const SimEntity = struct {
     hitpoint_max: u32 = 0,
     hitpoints: [16]HitPoint = @splat(.{}),
 
-    sword: EntityReference,
+    sword: EntityReference = .{ .index = 0 },
     distance_remaining: f32 = 0,
 };
 
-const MoveSpec = struct {
+pub const MoveSpec = struct {
     unit_max_ddp: bool = false,
     speed: f32 = 1,
     drag: f32 = 0,
@@ -104,8 +104,8 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin:
         .origin = region_origin,
         .bounds = region_bounds,
         .max_entity_count = entities_per_region,
-        .entities = sim_arena.pushArray(entities_per_region, SimEntity),
-        .hash = @splat(std.mem.zeroes(EntityHash)),
+        .entities = sim_arena.pushArray(entities_per_region, Entity),
+        .sim_entity_hash = @splat(std.mem.zeroes(EntityHash)),
     };
     sim_region.entities.len = 0;
 
@@ -149,8 +149,6 @@ pub fn end(this: *SimRegion) void {
         world.changeEntityLocation(&this.game_state.world_arena, entity.storage_index, stored, stored.p, new_p);
 
         if (entity.storage_index == this.game_state.camera_following_entity_index) {
-            // const entity_p = cam_following_entity.high.p;
-
             var new_cam_p = this.game_state.camera_pos;
             new_cam_p.chunk_z = stored.p.chunk_z;
 
@@ -182,11 +180,14 @@ fn getHashFromStorageIndex(this: *SimRegion, storage_index: EntityIndex) *Entity
 
     var result: ?*EntityHash = null;
 
-    const hash_value: u32 = storage_index;
+    const hash_value = storage_index;
 
     var offset: usize = 0;
     while (offset < this.sim_entity_hash.len) : (offset += 1) {
-        const entry = &this.sim_entity_hash[(hash_value + offset) & (this.sim_entity_hash.len - 1)];
+        const hash_mask: usize = this.sim_entity_hash.len - 1;
+        const hash_index: usize = (hash_value + offset) & hash_mask;
+
+        const entry = &this.sim_entity_hash[hash_index];
         if (entry.index == storage_index or entry.index == 0) {
             result = entry;
             break;
@@ -197,7 +198,7 @@ fn getHashFromStorageIndex(this: *SimRegion, storage_index: EntityIndex) *Entity
     return result.?;
 }
 
-inline fn mapStorageIndexToEntity(this: *SimRegion, storage_index: EntityIndex, entity: *SimEntity) void {
+inline fn mapStorageIndexToEntity(this: *SimRegion, storage_index: EntityIndex, entity: *Entity) void {
     const hash = this.getHashFromStorageIndex(storage_index);
     assert(hash.index == 0 or hash.index == storage_index);
     hash.index = storage_index;
@@ -209,19 +210,19 @@ inline fn storeEntityReference(ref: *EntityReference) void {
     ref.* = EntityReference{ .index = index };
 }
 
-inline fn getEntityByStorageIndex(this: *SimRegion, storage_index: EntityIndex) ?*SimEntity {
+inline fn getEntityByStorageIndex(this: *SimRegion, storage_index: EntityIndex) ?*Entity {
     const entry = this.getHashFromStorageIndex(storage_index);
     const result = entry.ptr;
     return result;
 }
 
 inline fn loadEntityReference(this: *SimRegion, ref: *EntityReference) void {
-    const ptr: ?*SimEntity = if (ref.index == 0) null else blk: {
+    const ptr: ?*Entity = if (ref.index == 0) null else blk: {
         const entry = this.getHashFromStorageIndex(ref.index);
 
         if (entry.ptr == null) {
             const low_entity = v10.getLowEntity(this.game_state, ref.index);
-            const ptr = this.addEntity(ref.index, low_entity);
+            const ptr = this.addEntityRaw(ref.index, low_entity);
             assert(entry.ptr == ptr);
             assert(entry.index == ref.index);
         }
@@ -232,24 +233,24 @@ inline fn loadEntityReference(this: *SimRegion, ref: *EntityReference) void {
     ref.* = EntityReference{ .ptr = ptr };
 }
 
-fn addEntityRaw(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*StoredEntity) ?*SimEntity {
+fn addEntityRaw(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*StoredEntity) ?*Entity {
     assert(storage_index != 0);
 
-    var entity_opt: ?*SimEntity = null;
+    var entity_opt: ?*Entity = null;
 
     if (this.entities.len < this.max_entity_count) {
+        const entity: *Entity = @ptrCast(this.entities.ptr + this.entities.len);
         this.entities.len += 1;
-        const entity = &this.entities[this.entities.len - 1];
         entity_opt = entity;
 
-        this.mapStorageIndexToEntity(storage_index, entity.?);
+        this.mapStorageIndexToEntity(storage_index, entity);
 
         if (source_opt) |source| {
             entity.* = source.sim;
             this.loadEntityReference(&entity.sword);
         }
 
-        entity.?.storage_index = storage_index;
+        entity.storage_index = storage_index;
     } else {
         // Out of entities
         unreachable;
@@ -258,8 +259,8 @@ fn addEntityRaw(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*Stor
     return entity_opt;
 }
 
-fn addEntity(this: *SimRegion, storage_index: EntityIndex, source: *StoredEntity, sim_p_opt: ?V2) ?*SimEntity {
-    var entity: ?*SimEntity = null;
+fn addEntity(this: *SimRegion, storage_index: EntityIndex, source: *StoredEntity, sim_p_opt: ?V2) ?*Entity {
+    var entity: ?*Entity = null;
 
     if (this.addEntityRaw(storage_index, source)) |dest| {
         entity = dest;
@@ -275,12 +276,12 @@ fn addEntity(this: *SimRegion, storage_index: EntityIndex, source: *StoredEntity
 }
 
 inline fn getSimSpaceP(this: *SimRegion, stored: *StoredEntity) V2 {
-    const diff = this.world.subtract(stored.p, this.origin);
+    const diff = this.game_state.world.subtract(stored.p, this.origin);
     const result = diff.xy;
     return result;
 }
 
-fn moveEntity(this: *SimRegion, entity: *SimEntity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
+pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
     var ddp = raw_ddp;
 
     if (move_spec.unit_max_ddp) {
@@ -304,7 +305,7 @@ fn moveEntity(this: *SimRegion, entity: *SimEntity, dt: f32, move_spec: MoveSpec
     while (it_count < 4) : (it_count += 1) {
         var t_min: f32 = 1;
         var wall_normal: V2 = .zero;
-        var hit_entity_opt: ?*SimEntity = null;
+        var hit_entity_opt: ?*Entity = null;
 
         const desired_position = entity.p.add(player_delta);
 
@@ -312,7 +313,7 @@ fn moveEntity(this: *SimRegion, entity: *SimEntity, dt: f32, move_spec: MoveSpec
             for (this.entities) |*test_entity| {
                 if (entity != test_entity) {
                     if (test_entity.collides) {
-                        const diameter = test_entity.size.add(entity.low.size);
+                        const diameter = test_entity.size.add(entity.size);
                         const min_corner = diameter.mul(-0.5);
                         const max_corner = diameter.mul(0.5);
 
