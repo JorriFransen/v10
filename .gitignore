@@ -1,7 +1,6 @@
 
 .zig-cache/
 zig-out/
-.vscode/
 
 .nvim.lua
 
