@@ -57,7 +57,7 @@ pub const Position = struct {
         return this.chunk_x != @"null".chunk_x;
     }
 
-    pub inline fn offset(this: Position, world: *const World, offset_by: V2) Position {
+    pub fn offset(this: Position, world: *const World, offset_by: V2) Position {
         var result = this;
 
         result._offset = result._offset.add(offset_by);
@@ -83,9 +83,11 @@ pub inline fn recanonicalizeCoord(this: *const World, chunk: *i32, chunk_rel: *f
 }
 
 pub inline fn isCanonical(this: *const World, chunk_rel: f32) bool {
+    const epsilon = 0.0001;
+
     const result =
-        chunk_rel >= -(0.5 * this.chunk_side_in_meters) and
-        chunk_rel <= (0.5 * this.chunk_side_in_meters);
+        chunk_rel >= -(0.5 * this.chunk_side_in_meters + epsilon) and
+        chunk_rel <= (0.5 * this.chunk_side_in_meters + epsilon);
     return result;
 }
 
@@ -147,14 +149,14 @@ pub fn getChunk(this: *World, chunk_x: i32, chunk_y: i32, chunk_z: i32, options:
     assert(hash_slot < this.chunk_hash.len);
 
     var chunk_opt: ?*Chunk = &this.chunk_hash[hash_slot];
-    while (chunk_opt) |chunk_| {
+    const result: ?*Chunk = blk: while (chunk_opt) |chunk_| {
         var chunk = chunk_;
 
         if ((chunk_x == chunk.x) and
             (chunk_y == chunk.y) and
             (chunk_z == chunk.z))
         {
-            break;
+            break :blk chunk;
         }
 
         if (options.arena) |arena| {
@@ -173,14 +175,14 @@ pub fn getChunk(this: *World, chunk_x: i32, chunk_y: i32, chunk_z: i32, options:
                     .next_in_hash = null,
                 };
 
-                break;
+                break :blk chunk;
             }
         }
 
         chunk_opt = chunk.next_in_hash;
-    }
+    } else null;
 
-    return chunk_opt;
+    return result;
 }
 
 pub inline fn areInSameChunk(this: *World, a: Position, b: Position) bool {
@@ -192,20 +194,26 @@ pub inline fn areInSameChunk(this: *World, a: Position, b: Position) bool {
         a.chunk_z == b.chunk_z;
     return result;
 }
-pub fn changeEntityLocation(
-    this: *World,
-    arena: *MemoryArena,
-    low_index: EntityIndex,
-    low_entity: *LowEntity,
-    old_p_opt: ?Position,
-    new_p_opt: ?Position,
-) void {
+pub fn changeEntityLocation(this: *World, arena: *MemoryArena, low_index: EntityIndex, low_entity: *LowEntity, new_p_in: Position) void {
+    var old_p_opt: ?Position = null;
+    var new_p_opt: ?Position = null;
+
+    if (!low_entity.sim.flags.non_spatial and low_entity.p.isValid()) {
+        old_p_opt = low_entity.p;
+    }
+
+    if (new_p_in.isValid()) {
+        new_p_opt = new_p_in;
+    }
+
     this.changeEntityLocationRaw(arena, low_index, old_p_opt, new_p_opt);
 
     if (new_p_opt) |new_p| {
         low_entity.p = new_p;
+        low_entity.sim.flags.non_spatial = false;
     } else {
         low_entity.p = .null;
+        low_entity.sim.flags.non_spatial = true;
     }
 }
 

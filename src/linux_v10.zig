@@ -2145,7 +2145,7 @@ const PulseContext = struct {
             const callback_cursor: u32 = @intCast(this.read_cursor);
             pa.threaded_mainloop_unlock(ctx.main_loop);
 
-            const pa_latency_frames: u32 = @intCast((pa_latency_usec * rate) / std.time.us_per_s);
+            const pa_latency_frames: u32 = @intCast((pa_latency_usec *% rate) / std.time.us_per_s);
             const pa_latency_bytes: u32 = pa_latency_frames * @sizeOf(AudioOutput.Frame);
             const buf_len: u32 = @intCast(this.buffer.len);
 
