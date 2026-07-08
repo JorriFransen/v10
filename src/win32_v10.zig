@@ -32,9 +32,12 @@ const std_log_scope_levels = platform.std_log_scope_levels ++ [_]std.log.ScopeLe
     .{ .scope = .dsound, .level = .info },
 };
 
-pub const std_options: std.Options = .{
-    .log_level = platform.std_options.log_level,
-    .log_scope_levels = &std_log_scope_levels,
+pub const std_options: std.Options = blk: {
+    var o = platform.std_options;
+
+    o.log_scope_levels = o.log_scope_levels ++ std_log_scope_levels;
+
+    break :blk o;
 };
 
 var stderr_buf: [2048]u8 = undefined;
@@ -404,7 +407,7 @@ pub fn windowsEntry(
     instance: win32.HINSTANCE,
 ) !c_int {
     var shared_state: platform.SharedState = .{};
-    var thread_context: ThreadContext = .{ .io = &io };
+    var thread_context: ThreadContext = .{ .io = io };
 
     try platform.runAssetCompiler(io, gpa, stderr, stdout);
 

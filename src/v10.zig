@@ -37,6 +37,8 @@ const AudioBuffer = platform.AudioBuffer;
 
 const os = @import("builtin").os.tag;
 
+pub const std_options = platform.std_options;
+
 pub const LowEntity = struct {
     sim: SimRegion.Entity = .{},
     p: World.Position = .null,

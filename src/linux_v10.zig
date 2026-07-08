@@ -40,14 +40,17 @@ const InputEvent = input.InputEvent;
 const Key = input.Key;
 const Abs = input.Abs;
 
-const std_log_scope_levels = platform.std_log_scope_levels ++ [_]std.log.ScopeLevel{
+const std_log_scope_levels = [_]std.log.ScopeLevel{
     .{ .scope = .linux_v10, .level = .info },
     .{ .scope = .pulse, .level = .info },
 };
 
-pub const std_options: std.Options = .{
-    .log_level = platform.std_options.log_level,
-    .log_scope_levels = &std_log_scope_levels,
+pub const std_options: std.Options = blk: {
+    var o = platform.std_options;
+
+    o.log_scope_levels = o.log_scope_levels ++ std_log_scope_levels;
+
+    break :blk o;
 };
 
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
@@ -121,7 +124,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     var thread_context: ThreadContext = .{
-        .io = &io,
+        .io = io,
     };
 
     try platform.runAssetCompiler(io, gpa, stderr, stdout);

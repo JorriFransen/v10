@@ -8,6 +8,8 @@ const mem = @import("mem");
 const options = @import("options");
 const DynLib = @import("dynlib");
 
+const TimeParts = @import("timeparts.zig").TimeParts;
+
 const assert = std.debug.assert;
 
 pub const std_log_scope_levels = [_]std.log.ScopeLevel{
@@ -21,10 +23,51 @@ pub const std_log_scope_levels = [_]std.log.ScopeLevel{
 pub const std_options: std.Options = .{
     .log_level = std.log.default_level,
     .log_scope_levels = &std_log_scope_levels,
+    .logFn = defaultLog,
 };
 
-pub const ThreadContext = extern struct {
-    io: *const std.Io,
+fn defaultLog(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
+    var buffer: [64]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buffer).terminal();
+    defer std.debug.unlockStderr();
+    return defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
+}
+pub fn defaultLogFileTerminal(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+    t: std.Io.Terminal,
+) !void {
+    const color = switch (level) {
+        .err => .red,
+        .warn => .yellow,
+        .info => .green,
+        .debug => .magenta,
+    };
+    const ts = std.Io.Timestamp.now(std.Options.debug_io, .real);
+    const tp = TimeParts.fromMsTimestamp(@bitCast(ts.toMilliseconds()));
+
+    try t.writer.print("{f} ", .{std.fmt.alt(tp, .writeTime)});
+
+    try t.setColor(color);
+    try t.setColor(.bold);
+    try t.writer.writeAll(level.asText());
+
+    try t.setColor(.dim);
+    try t.setColor(.bold);
+    if (scope != .default) try t.writer.print("({t})", .{scope});
+    try t.writer.writeAll(": ");
+
+    try t.setColor(.reset);
+    try t.writer.print(format ++ "\n", args);
+}
+
+pub const ThreadContext = struct {
+    io: std.Io,
 };
 
 pub const FN_updateAndRender = *const fn (thread_context: *const ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void;
