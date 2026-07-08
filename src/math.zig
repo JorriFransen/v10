@@ -21,6 +21,21 @@ pub inline fn sqrt(x: f32) f32 {
     return @sqrt(x);
 }
 
+pub inline fn divCeil(numerator: anytype, denominator: @TypeOf(numerator)) @TypeOf(numerator) {
+    const T = @TypeOf(numerator);
+    comptime {
+        const t_info = @typeInfo(T);
+        switch (t_info) {
+            .comptime_float, .float, .comptime_int, .int => {},
+            else => {
+                @compileError("Unsupported type for divCeil");
+            },
+        }
+    }
+
+    return std.math.divCeil(T, numerator, denominator) catch unreachable;
+}
+
 pub const V2 = extern struct {
     x: f32 = 0,
     y: f32 = 0,

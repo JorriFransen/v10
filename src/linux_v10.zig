@@ -477,6 +477,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .running_frame_index = 0,
                     .read_cursor = 0,
                     .buffer = audio_buffer,
+                    .max_latency_usec = audio_buffer_byte_size / @sizeOf(AudioOutput.Frame) * std.time.us_per_s / audio_fps,
                 },
                 .pulsePull => .{
                     .thread_context = &thread_context,
@@ -2119,6 +2120,8 @@ const PulseContext = struct {
         read_cursor: usize,
         buffer: []u8,
 
+        max_latency_usec: u64,
+
         audio_valid: bool = false,
 
         pub fn init(this: *@This(), sample_rate: u32, application_name: [:0]const u8) error{PulseInitFailed}!void {
@@ -2145,11 +2148,14 @@ const PulseContext = struct {
             const callback_cursor: u32 = @intCast(this.read_cursor);
             pa.threaded_mainloop_unlock(ctx.main_loop);
 
-            const pa_latency_frames: u32 = @intCast((pa_latency_usec *% rate) / std.time.us_per_s);
-            const pa_latency_bytes: u32 = pa_latency_frames * @sizeOf(AudioOutput.Frame);
+            const latency_usec: u64 = @min(pa_latency_usec, this.max_latency_usec);
+
+            const latency_frames: u32 = @intCast(math.divCeil(latency_usec * rate, std.time.us_per_s));
+
+            const latency_bytes: u32 = latency_frames * @sizeOf(AudioOutput.Frame);
             const buf_len: u32 = @intCast(this.buffer.len);
 
-            const play_cursor: u32 = (callback_cursor + buf_len - (pa_latency_bytes % buf_len)) % buf_len;
+            const play_cursor: u32 = (callback_cursor + buf_len - (latency_bytes % buf_len)) % buf_len;
             const write_cursor: u32 = callback_cursor;
 
             return .{ .play = play_cursor, .write = write_cursor };
