@@ -8,7 +8,7 @@ const linux_options = @import("linux_options");
 const builtin = @import("builtin");
 const DynLib = @import("dynlib");
 
-const platform = @import("v10_platform.zig");
+const common = @import("v10_common");
 
 const arch = @import("arch").arch;
 
@@ -27,14 +27,14 @@ const errno = linux.errno;
 
 const math = @import("math");
 
-const GameCode = platform.GameCode;
-const Memory = platform.Memory;
-const OffscreenBuffer = platform.OffscreenBuffer;
-const Input = platform.Input;
-const ControllerInput = platform.ControllerInput;
-const ButtonState = platform.ButtonState;
-const ThreadContext = platform.ThreadContext;
-const AudioBuffer = platform.AudioBuffer;
+const GameCode = common.GameCode;
+const Memory = common.Memory;
+const OffscreenBuffer = common.OffscreenBuffer;
+const Input = common.Input;
+const ControllerInput = common.ControllerInput;
+const ButtonState = common.ButtonState;
+const ThreadContext = common.ThreadContext;
+const AudioBuffer = common.AudioBuffer;
 
 const InputEvent = input.InputEvent;
 const Key = input.Key;
@@ -46,7 +46,7 @@ const std_log_scope_levels = [_]std.log.ScopeLevel{
 };
 
 pub const std_options: std.Options = blk: {
-    var o = platform.std_options;
+    var o = common.std_options;
 
     o.log_scope_levels = o.log_scope_levels ++ std_log_scope_levels;
 
@@ -127,13 +127,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .io = io,
     };
 
-    try platform.runAssetCompiler(io, gpa, stderr, stdout);
+    try common.runAssetCompiler(io, gpa, stderr, stdout);
 
     const prng_seed = std.Io.Timestamp.now(io, .real).toNanoseconds();
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
     prng = prng_impl.random();
 
-    var shared_state: platform.SharedState = .{};
+    var shared_state: common.SharedState = .{};
 
     const cwd_len = try std.process.currentPath(io, &shared_state.cwd_buf);
     shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
@@ -506,7 +506,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     log.info("starting main loop", .{});
     while (running) {
-        const new_lib_write_time = platform.getLastWriteTime(io, game_lib_name);
+        const new_lib_write_time = common.getLastWriteTime(io, game_lib_name);
         if (new_lib_write_time > game_code.last_write_time) {
             game_code.unload();
             game_code = GameCode.load(io, game_lib_name);
@@ -525,7 +525,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (options.internal_build) {
             const mouse = &wld.new_input.debug_mouse;
             const old_mouse = &wld.old_input.debug_mouse;
-            mouse.* = std.mem.zeroes(platform.DebugMouseInput);
+            mouse.* = std.mem.zeroes(common.DebugMouseInput);
             mouse.x = old_mouse.x;
             mouse.y = old_mouse.y;
             mouse.z = old_mouse.z;
@@ -968,11 +968,11 @@ const WlData = struct {
     key_mods_pressed: KeyMods = .{},
     key_mods_latched: KeyMods = .{},
     key_mods_locked: KeyMods = .{},
-    game_input: [2]platform.Input = @splat(.{}),
+    game_input: [2]common.Input = @splat(.{}),
     new_input: *Input = undefined,
     old_input: *Input = undefined,
 
-    shared_state: *platform.SharedState = undefined,
+    shared_state: *common.SharedState = undefined,
 
     io: std.Io = undefined,
 };
@@ -1426,9 +1426,9 @@ fn aquireFreeBuffer() ?*WlBuffer {
 }
 
 pub const DEBUG = struct {
-    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) platform.DEBUG.ReadFileResult {
+    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) common.DEBUG.ReadFileResult {
         assert(std.mem.span(path).len == path_len);
-        var result = platform.DEBUG.ReadFileResult{};
+        var result = common.DEBUG.ReadFileResult{};
 
         if (linux.open(path, .{ .ACCMODE = .RDONLY }, 0)) |fd| {
             var stat: linux.Stat = undefined;
@@ -2541,7 +2541,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     _ = wlc.displayFlush(wld.display);
 }
 
-pub fn beginRecordingInput(shared_state: *platform.SharedState, io: std.Io, input_recording_index: usize) void {
+pub fn beginRecordingInput(shared_state: *common.SharedState, io: std.Io, input_recording_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -2556,14 +2556,14 @@ pub fn beginRecordingInput(shared_state: *platform.SharedState, io: std.Io, inpu
     } else log.warn("Invalid recording buffer: {}", .{input_recording_index});
 }
 
-pub fn endRecordingInput(shared_state: *platform.SharedState, io: std.Io) void {
+pub fn endRecordingInput(shared_state: *common.SharedState, io: std.Io) void {
     if (shared_state.input_recording_index != 0) {
         shared_state.recording_handle.close(io);
         shared_state.input_recording_index = 0;
     }
 }
 
-pub fn beginInputPlayback(shared_state: *platform.SharedState, io: std.Io, input_playing_index: usize) void {
+pub fn beginInputPlayback(shared_state: *common.SharedState, io: std.Io, input_playing_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_playing_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -2578,18 +2578,18 @@ pub fn beginInputPlayback(shared_state: *platform.SharedState, io: std.Io, input
     } else log.warn("Invalid replay buffer: {}", .{input_playing_index});
 }
 
-pub fn endInputPlayback(shared_state: *platform.SharedState, io: std.Io) void {
+pub fn endInputPlayback(shared_state: *common.SharedState, io: std.Io) void {
     if (shared_state.input_playing_index != 0) {
         shared_state.playback_handle.close(io);
         shared_state.input_playing_index = 0;
     }
 }
 
-pub fn recordInput(shared_state: *platform.SharedState, io: std.Io, new_input: *Input) void {
+pub fn recordInput(shared_state: *common.SharedState, io: std.Io, new_input: *Input) void {
     shared_state.recording_handle.writeStreamingAll(io, @ptrCast(new_input)) catch @panic("Input recording write failed");
 }
 
-pub fn playbackInput(shared_state: *platform.SharedState, io: std.Io, new_input: *Input) void {
+pub fn playbackInput(shared_state: *common.SharedState, io: std.Io, new_input: *Input) void {
     const bytes_read = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(new_input))}) catch |e| switch (e) {
         error.EndOfStream => 0,
         else => @panic("Input playback read failed"),

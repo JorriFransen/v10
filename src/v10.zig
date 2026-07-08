@@ -1,7 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.v10);
 const options = @import("options");
-const platform = @import("v10_platform.zig");
+const common = @import("v10_common");
 const intrinsics = @import("intrinsics.zig");
 
 const SimRegion = @import("sim_region.zig");
@@ -29,15 +29,15 @@ const Random = @import("random.zig");
 const MemoryArena = @import("arena.zig");
 const World = @import("world.zig");
 
-const ThreadContext = platform.ThreadContext;
-const Memory = platform.Memory;
-const Input = platform.Input;
-const OffscreenBuffer = platform.OffscreenBuffer;
-const AudioBuffer = platform.AudioBuffer;
+const ThreadContext = common.ThreadContext;
+const Memory = common.Memory;
+const Input = common.Input;
+const OffscreenBuffer = common.OffscreenBuffer;
+const AudioBuffer = common.AudioBuffer;
 
 const os = @import("builtin").os.tag;
 
-pub const std_options = platform.std_options;
+pub const std_options = common.std_options;
 
 pub const LowEntity = struct {
     sim: SimRegion.Entity = .{},
@@ -849,7 +849,7 @@ pub const DEBUG = struct {
         alpha_mask: u32,
     };
 
-    pub fn loadBMP(pd: *const platform.DEBUG, thread_context: *ThreadContext, filename: [:0]const u8) LoadedBitmap {
+    pub fn loadBMP(pd: *const common.DEBUG, thread_context: *ThreadContext, filename: [:0]const u8) LoadedBitmap {
         var result: LoadedBitmap = .{};
 
         const read_result = pd.readEntireFile(thread_context, filename, filename.len);

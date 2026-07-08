@@ -15,25 +15,25 @@ const arch = @import("arch").arch;
 
 const math = @import("math");
 
-const platform = @import("v10_platform.zig");
+const common = @import("v10_common");
 
-const GameCode = platform.GameCode;
-const Memory = platform.Memory;
-const OffscreenBuffer = platform.OffscreenBuffer;
-const Input = platform.Input;
-const ControllerInput = platform.ControllerInput;
-const ButtonState = platform.ButtonState;
-const ThreadContext = platform.ThreadContext;
-const AudioBuffer = platform.AudioBuffer;
+const GameCode = common.GameCode;
+const Memory = common.Memory;
+const OffscreenBuffer = common.OffscreenBuffer;
+const Input = common.Input;
+const ControllerInput = common.ControllerInput;
+const ButtonState = common.ButtonState;
+const ThreadContext = common.ThreadContext;
+const AudioBuffer = common.AudioBuffer;
 
-const std_log_scope_levels = platform.std_log_scope_levels ++ [_]std.log.ScopeLevel{
+const std_log_scope_levels = common.std_log_scope_levels ++ [_]std.log.ScopeLevel{
     .{ .scope = .win32_v10, .level = .info },
     .{ .scope = .xinput, .level = .debug },
     .{ .scope = .dsound, .level = .info },
 };
 
 pub const std_options: std.Options = blk: {
-    var o = platform.std_options;
+    var o = common.std_options;
 
     o.log_scope_levels = o.log_scope_levels ++ std_log_scope_levels;
 
@@ -219,7 +219,7 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*d
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn processPendingMessages(shared_state: *platform.SharedState, keyboard_controller: *ControllerInput) void {
+fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller: *ControllerInput) void {
     var msg = win32.MSG{};
 
     const buttons = &keyboard_controller.buttons.named;
@@ -406,10 +406,10 @@ pub fn windowsEntry(
     gpa: Allocator,
     instance: win32.HINSTANCE,
 ) !c_int {
-    var shared_state: platform.SharedState = .{};
+    var shared_state: common.SharedState = .{};
     var thread_context: ThreadContext = .{ .io = io };
 
-    try platform.runAssetCompiler(io, gpa, stderr, stdout);
+    try common.runAssetCompiler(io, gpa, stderr, stdout);
 
     const cwd_len = win32.GetCurrentDirectoryA(shared_state.cwd_buf.len, @ptrCast(&shared_state.cwd_buf));
     shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
@@ -622,7 +622,7 @@ pub fn windowsEntry(
                 var last_cycle_count = arch.rdtsc();
 
                 while (global_running) {
-                    const new_dll_write_time = platform.getLastWriteTime(io, source_dll_name);
+                    const new_dll_write_time = common.getLastWriteTime(io, source_dll_name);
                     if (new_dll_write_time > game_code.last_write_time) {
                         var __dummy__: win32.FILE_ATTRIBUTE_DATA = undefined;
 
@@ -650,7 +650,7 @@ pub fn windowsEntry(
                     if (options.debug) {
                         const mouse = &new_input.debug_mouse;
                         const old_mouse = &old_input.debug_mouse;
-                        mouse.* = std.mem.zeroes(platform.DebugMouseInput);
+                        mouse.* = std.mem.zeroes(common.DebugMouseInput);
                         for (&mouse.buttons.array, old_mouse.buttons.array) |*new_button, old_button| {
                             new_button.ended_down = old_button.ended_down;
                         }
@@ -1058,7 +1058,7 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     }
 }
 
-pub fn beginRecordingInput(shared_state: *platform.SharedState, input_recording_index: usize) void {
+pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -1074,12 +1074,12 @@ pub fn beginRecordingInput(shared_state: *platform.SharedState, input_recording_
     }
 }
 
-pub fn endRecordingInput(shared_state: *platform.SharedState) void {
+pub fn endRecordingInput(shared_state: *common.SharedState) void {
     _ = win32.CloseHandle(shared_state.recording_handle.handle);
     shared_state.input_recording_index = 0;
 }
 
-pub fn beginInputPlayback(shared_state: *platform.SharedState, input_playing_index: usize) void {
+pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_playing_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -1095,18 +1095,18 @@ pub fn beginInputPlayback(shared_state: *platform.SharedState, input_playing_ind
     }
 }
 
-pub fn endInputPlayback(shared_state: *platform.SharedState) void {
+pub fn endInputPlayback(shared_state: *common.SharedState) void {
     _ = win32.CloseHandle(shared_state.playback_handle.handle);
     shared_state.input_playing_index = 0;
 }
 
-pub fn recordInput(shared_state: *platform.SharedState, input: *Input) void {
+pub fn recordInput(shared_state: *common.SharedState, input: *Input) void {
     var written: win32.DWORD = undefined;
     _ = win32.WriteFile(shared_state.recording_handle.handle, input, @sizeOf(Input), &written, null);
     assert(written == @sizeOf(Input));
 }
 
-pub fn playbackInput(shared_state: *platform.SharedState, input: *Input) void {
+pub fn playbackInput(shared_state: *common.SharedState, input: *Input) void {
     var read: win32.DWORD = 0;
     if (win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null) != .FALSE) {
         if (read == 0) {
@@ -1137,9 +1137,9 @@ pub fn toggleFullscreen(window: win32.HWND) void {
 }
 
 pub const DEBUG = struct {
-    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) platform.DEBUG.ReadFileResult {
+    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) common.DEBUG.ReadFileResult {
         assert(std.mem.span(path).len == path_len);
-        var result = platform.DEBUG.ReadFileResult{};
+        var result = common.DEBUG.ReadFileResult{};
 
         const handle = win32.CreateFileA(path, win32.GENERIC_READ, win32.FILE_SHARE_READ, null, win32.OPEN_EXISTING, 0, null);
 

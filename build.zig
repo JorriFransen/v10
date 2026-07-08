@@ -80,12 +80,26 @@ pub fn build(b: *Build) !void {
         },
     });
 
+    const common_module = b.createModule(.{
+        .optimize = optimize,
+        .root_source_file = b.path(src_path ++ "/v10_common.zig"),
+        .imports = &.{
+            .{ .name = "options", .module = options_module },
+            .{ .name = "mem", .module = mem_module },
+            .{ .name = "dynlib", .module = dynlib_module },
+        },
+    });
+    if (target.result.os.tag == .windows) {
+        common_module.addImport("win32", win32_module);
+    }
+
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
     const clip_module = cli_parse_dep.module("CliParse");
 
     var modules = Modules{
         .options = options_module,
         .arch = arch_module,
+        .common = common_module,
         .linux = linux_module,
         .win32 = win32_module,
         .memory = mem_module,
@@ -142,6 +156,9 @@ const Modules = struct {
     xml: *Build.Module,
     clip: *Build.Module,
     math: *Build.Module,
+
+    // This should really be shared/common?
+    common: *Build.Module,
 };
 
 const Engine = struct {
@@ -164,6 +181,7 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     exe.root_module.addImport("mem", modules.memory);
     exe.root_module.addImport("options", modules.options);
     exe.root_module.addImport("math", modules.math);
+    exe.root_module.addImport("v10_common", modules.common);
 
     const exe_install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .prefix } });
     b.getInstallStep().dependOn(&exe_install.step);
@@ -196,7 +214,6 @@ fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget,
         .imports = &.{
             .{ .name = "arch", .module = modules.arch },
             .{ .name = "win32", .module = modules.win32 },
-            .{ .name = "dynlib", .module = modules.dynlib },
         },
     });
 
@@ -245,7 +262,6 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
         .imports = &.{
             .{ .name = "arch", .module = modules.arch },
             .{ .name = "linux", .module = modules.linux },
-            .{ .name = "dynlib", .module = modules.dynlib },
             .{ .name = "wayland", .module = wayland_module },
             .{ .name = "linux_options", .module = linux_options_module },
         },
@@ -273,6 +289,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
             .{ .module = engine.modules.math, .name = "math" },
+            .{ .module = engine.modules.common, .name = "v10_common" },
         },
     });
 
@@ -336,6 +353,7 @@ const Tools = struct {
                         .{ .name = "mem", .module = modules.memory },
                         .{ .name = "clip", .module = modules.clip },
                         .{ .name = "options", .module = options_module },
+                        .{ .name = "v10_common", .module = modules.common },
                     },
                 }),
                 .use_llvm = use_llvm,
@@ -398,6 +416,7 @@ const Tools = struct {
                     .{ .name = "mem", .module = modules.memory },
                     .{ .name = "clip", .module = modules.clip },
                     .{ .name = "options", .module = option_module },
+                    .{ .name = "v10_common", .module = modules.common },
                 },
             });
 
@@ -429,7 +448,7 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
 
     switch (mode) {
         .engine => {
-            engine.build.root_module.addImport("asset_compiler", asset_compiler.module);
+            engine.modules.common.addImport("asset_compiler", asset_compiler.module);
         },
 
         .build => {
