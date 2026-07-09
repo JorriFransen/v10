@@ -71,6 +71,14 @@ pub const ControlledHero = struct {
     d_sword: V2 = .zero,
 };
 
+pub const PairwiseCollisionRule = struct {
+    should_collide: bool,
+    storage_index_a: EntityIndex,
+    storage_index_b: EntityIndex,
+
+    next_in_hash: ?*PairwiseCollisionRule = null,
+};
+
 pub const GameState = struct {
     const screen_tile_width: i32 = 17;
     const screen_tile_height: i32 = 9;
@@ -95,6 +103,10 @@ pub const GameState = struct {
 
     tree: LoadedBitmap = .{},
     sword: LoadedBitmap = .{},
+
+    // Must be power of 2
+    collision_rule_hash: [256]?*PairwiseCollisionRule = @splat(null),
+    first_free_collision_rule: ?*PairwiseCollisionRule = null,
 };
 
 pub const AddLowEntityResult = struct {
@@ -242,6 +254,63 @@ fn drawHitpoints(entity: *Entity, piece_group: *EntityVisiblePieceGroup) void {
 
             pushRect(piece_group, hit_p, 0, health_dim, color, .{ .entity_z_c = 0 });
             hit_p.x += spacing_x;
+        }
+    }
+}
+
+pub fn addCollisionRule(game_state: *GameState, storage_index_a_: EntityIndex, storage_index_b_: EntityIndex, should_collide: bool) void {
+    const storage_index_a, const storage_index_b = if (storage_index_a_ > storage_index_b_)
+        .{ storage_index_b_, storage_index_a_ }
+    else
+        .{ storage_index_a_, storage_index_b_ };
+
+    const hash_bucket = storage_index_a & (game_state.collision_rule_hash.len - 1);
+    var rule_opt: ?*PairwiseCollisionRule = game_state.collision_rule_hash[hash_bucket];
+
+    var found_opt: ?*PairwiseCollisionRule = null;
+
+    while (rule_opt) |rule| : (rule_opt = rule.next_in_hash) {
+        if (rule.storage_index_a == storage_index_a and
+            rule.storage_index_b == storage_index_b)
+        {
+            found_opt = rule;
+            break;
+        }
+    }
+
+    if (found_opt == null) {
+        found_opt = game_state.first_free_collision_rule;
+        if (found_opt) |found| {
+            game_state.first_free_collision_rule = found.next_in_hash;
+        } else {
+            found_opt = game_state.world_arena.pushMemory(PairwiseCollisionRule);
+        }
+
+        found_opt.?.next_in_hash = game_state.collision_rule_hash[hash_bucket];
+        game_state.collision_rule_hash[hash_bucket] = found_opt;
+    }
+
+    if (found_opt) |found| {
+        found.should_collide = should_collide;
+        found.storage_index_a = storage_index_a;
+        found.storage_index_b = storage_index_b;
+    }
+}
+
+pub fn clearCollisionRulesFor(game_state: *GameState, storage_index: EntityIndex) void {
+    for (&game_state.collision_rule_hash) |*entry| {
+        var rule_opt: *?*PairwiseCollisionRule = entry;
+
+        while (rule_opt.*) |rule| {
+            if (rule.storage_index_a == storage_index or rule.storage_index_b == storage_index) {
+                const removed_rule = rule;
+                rule_opt.* = rule.next_in_hash;
+
+                removed_rule.next_in_hash = game_state.first_free_collision_rule;
+                game_state.first_free_collision_rule = removed_rule;
+            } else {
+                rule_opt = &rule.next_in_hash;
+            }
         }
     }
 }
@@ -689,7 +758,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                             if (con_hero.d_sword.x != 0 or con_hero.d_sword.y != 0) {
                                 if (entity.sword.ptr) |sword| if (sword.flags.non_spatial) {
                                     sword.distance_limit = 5;
-                                    SimRegion.makeEntitySpatial(sword, entity.p, con_hero.d_sword.mul(5));
+                                    addCollisionRule(game_state, entity.storage_index, sword.storage_index, false);
+                                    SimRegion.makeEntitySpatial(sword, entity.p, entity.dp.add(con_hero.d_sword.mul(5)));
                                 };
                             }
                         }
@@ -712,6 +782,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     ddp = V2.zero;
 
                     if (entity.distance_limit == 0) {
+                        clearCollisionRulesFor(game_state, entity.storage_index);
                         SimRegion.makeEntityNonSpatial(entity);
                     }
 
@@ -765,7 +836,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             }
 
             if (!entity.flags.non_spatial) {
-                sim_region.moveEntity(entity, input.dt, move_spec, ddp);
+                sim_region.moveEntity(game_state, entity, input.dt, move_spec, ddp);
             }
 
             const entity_ground_point = v2(
@@ -798,7 +869,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     }
 
-    sim_region.end();
+    sim_region.end(game_state);
 }
 
 const PushPieceOptions = struct {

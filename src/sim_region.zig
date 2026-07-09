@@ -4,7 +4,9 @@ const assert = std.debug.assert;
 const MemoryArena = @import("arena.zig");
 
 const v10 = @import("v10.zig");
-const StoredEntity = v10.LowEntity;
+const GameState = v10.GameState;
+const LowEntity = v10.LowEntity;
+const PairwiseCollisionRule = v10.PairwiseCollisionRule;
 
 const _entities = @import("entity.zig");
 const invalid_p = _entities.invalid_p;
@@ -18,7 +20,6 @@ const Rect = math.Rect;
 
 const entities_per_region = 4096;
 
-game_state: *v10.GameState,
 origin: World.Position,
 bounds: Rect,
 updateable_bounds: Rect,
@@ -108,7 +109,7 @@ pub const MoveSpec = struct {
     drag: f32 = 0,
 };
 
-pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin: World.Position, region_bounds_: Rect) *SimRegion {
+pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: World.Position, region_bounds_: Rect) *SimRegion {
     const world = game_state.world;
 
     const sim_region = sim_arena.pushMemory(SimRegion);
@@ -116,7 +117,6 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin:
     const update_safety_margin = 1;
 
     sim_region.* = .{
-        .game_state = game_state,
         .origin = region_origin,
         .bounds = region_bounds_.addRadius(update_safety_margin, update_safety_margin),
         .updateable_bounds = region_bounds_,
@@ -140,9 +140,9 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin:
                     for (block.entity_indices[0..block.entity_count]) |low_index| {
                         const low = &game_state.low_entities[low_index];
                         if (!low.sim.flags.non_spatial) {
-                            const sim_space_p = sim_region.getSimSpaceP(low);
+                            const sim_space_p = sim_region.getSimSpaceP(game_state, low);
                             if (math.isInRectangle(sim_region.bounds, sim_space_p)) {
-                                _ = addEntity(sim_region, low_index, low, sim_space_p);
+                                _ = sim_region.addEntity(game_state, low_index, low, sim_space_p);
                             }
                         }
                     }
@@ -154,11 +154,11 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin:
     return sim_region;
 }
 
-pub fn end(this: *SimRegion) void {
-    const world = this.game_state.world;
+pub fn end(this: *SimRegion, game_state: *GameState) void {
+    const world = game_state.world;
 
     for (this.entities) |*entity| {
-        const stored = &this.game_state.low_entities[entity.storage_index];
+        const stored = &game_state.low_entities[entity.storage_index];
 
         assert(stored.sim.flags.in_sim);
         stored.sim = entity.*;
@@ -167,31 +167,31 @@ pub fn end(this: *SimRegion) void {
         storeEntityReference(&stored.sim.sword);
 
         const new_p: World.Position = if (entity.flags.non_spatial) .null else this.origin.offset(world, entity.p);
-        world.changeEntityLocation(&this.game_state.world_arena, entity.storage_index, stored, new_p);
+        world.changeEntityLocation(&game_state.world_arena, entity.storage_index, stored, new_p);
 
-        if (entity.storage_index == this.game_state.camera_following_entity_index) {
-            var new_cam_p = this.game_state.camera_pos;
+        if (entity.storage_index == game_state.camera_following_entity_index) {
+            var new_cam_p = game_state.camera_pos;
             new_cam_p.chunk_z = stored.p.chunk_z;
 
             if (false) {
-                const x_bound_offset: i32 = @round(@as(f32, v10.GameState.screen_tile_width) / 2);
+                const x_bound_offset: i32 = @round(@as(f32, GameState.screen_tile_width) / 2);
                 if (entity.p.x > (x_bound_offset) * world.tile_side_in_meters) {
-                    new_cam_p.abs_tile_x += v10.GameState.screen_tile_width;
+                    new_cam_p.abs_tile_x += GameState.screen_tile_width;
                 } else if (entity.p.x < -(x_bound_offset) * world.tile_side_in_meters) {
-                    new_cam_p.abs_tile_x -= v10.GameState.screen_tile_width;
+                    new_cam_p.abs_tile_x -= GameState.screen_tile_width;
                 }
 
-                const y_bound_offset: i32 = @round(@as(f32, v10.GameState.screen_tile_height) / 2);
+                const y_bound_offset: i32 = @round(@as(f32, GameState.screen_tile_height) / 2);
                 if (entity.p.y > (y_bound_offset) * world.tile_side_in_meters) {
-                    new_cam_p.abs_tile_y += v10.GameState.screen_tile_height;
+                    new_cam_p.abs_tile_y += GameState.screen_tile_height;
                 } else if (entity.p.y < -(y_bound_offset) * world.tile_side_in_meters) {
-                    new_cam_p.abs_tile_y -= v10.GameState.screen_tile_height;
+                    new_cam_p.abs_tile_y -= GameState.screen_tile_height;
                 }
             } else {
                 new_cam_p = stored.p;
             }
 
-            this.game_state.camera_pos = new_cam_p;
+            game_state.camera_pos = new_cam_p;
         }
     }
 }
@@ -230,15 +230,15 @@ inline fn getEntityByStorageIndex(this: *SimRegion, storage_index: EntityIndex) 
     return result;
 }
 
-inline fn loadEntityReference(this: *SimRegion, ref: *EntityReference) void {
+inline fn loadEntityReference(this: *SimRegion, game_state: *GameState, ref: *EntityReference) void {
     const ptr: ?*Entity = if (ref.index == 0) null else blk: {
         const entry = this.getHashFromStorageIndex(ref.index);
 
         if (entry.ptr == null) {
-            const low_entity = v10.getLowEntity(this.game_state, ref.index).?;
+            const low_entity = v10.getLowEntity(game_state, ref.index).?;
 
-            const sim_space_p = this.getSimSpaceP(low_entity);
-            const ptr = this.addEntity(ref.index, low_entity, sim_space_p);
+            const sim_space_p = this.getSimSpaceP(game_state, low_entity);
+            const ptr = this.addEntity(game_state, ref.index, low_entity, sim_space_p);
 
             assert(entry.ptr == ptr);
             assert(entry.index == ref.index);
@@ -250,7 +250,7 @@ inline fn loadEntityReference(this: *SimRegion, ref: *EntityReference) void {
     ref.* = EntityReference{ .ptr = ptr };
 }
 
-fn addEntityRaw(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*StoredEntity) ?*Entity {
+fn addEntityRaw(this: *SimRegion, game_state: *GameState, storage_index: EntityIndex, source_opt: ?*LowEntity) ?*Entity {
     assert(storage_index != 0);
 
     var entity_opt: ?*Entity = null;
@@ -267,7 +267,7 @@ fn addEntityRaw(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*Stor
 
             if (source_opt) |source| {
                 entity.* = source.sim;
-                this.loadEntityReference(&entity.sword);
+                this.loadEntityReference(game_state, &entity.sword);
 
                 assert(!source.sim.flags.in_sim);
                 source.sim.flags.in_sim = true;
@@ -284,10 +284,10 @@ fn addEntityRaw(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*Stor
     return entity_opt;
 }
 
-fn addEntity(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*StoredEntity, sim_p_opt: ?V2) ?*Entity {
+fn addEntity(this: *SimRegion, game_state: *GameState, storage_index: EntityIndex, source_opt: ?*LowEntity, sim_p_opt: ?V2) ?*Entity {
     var entity: ?*Entity = null;
 
-    if (this.addEntityRaw(storage_index, source_opt)) |dest| {
+    if (this.addEntityRaw(game_state, storage_index, source_opt)) |dest| {
         entity = dest;
 
         if (sim_p_opt) |sim_p| {
@@ -295,18 +295,18 @@ fn addEntity(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*StoredE
             dest.updatable = math.isInRectangle(this.updateable_bounds, dest.p);
         } else {
             assert(source_opt != null);
-            dest.p = this.getSimSpaceP(source_opt.?);
+            dest.p = this.getSimSpaceP(game_state, source_opt.?);
         }
     }
 
     return entity;
 }
 
-inline fn getSimSpaceP(this: *SimRegion, stored: *StoredEntity) V2 {
+inline fn getSimSpaceP(this: *SimRegion, game_state: *GameState, stored: *LowEntity) V2 {
     var result: V2 = invalid_p;
 
     if (!stored.sim.flags.non_spatial) {
-        const diff = this.game_state.world.subtract(stored.p, this.origin);
+        const diff = game_state.world.subtract(stored.p, this.origin);
         result = diff.xy;
     }
 
@@ -324,14 +324,57 @@ pub inline fn makeEntityNonSpatial(entity: *Entity) void {
     entity.p = invalid_p;
 }
 
-fn handleCollision(a: *Entity, b: *Entity) void {
-    if (a.type == .monster and b.type == .sword) {
-        a.hitpoint_max = if (a.hitpoint_max == 0) 0 else a.hitpoint_max - 1;
-        makeEntityNonSpatial(b);
+fn shouldCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
+    const a: *Entity, const b: *Entity = if (a_.storage_index > b_.storage_index)
+        .{ b_, a_ }
+    else
+        .{ a_, b_ };
+
+    var result = false;
+
+    if (a != b) {
+        if (!a.flags.non_spatial and !b.flags.non_spatial) {
+            result = true;
+        }
     }
+
+    const hash_bucket = a.storage_index & (game_state.collision_rule_hash.len - 1);
+    var rule_opt: ?*PairwiseCollisionRule = game_state.collision_rule_hash[hash_bucket];
+
+    while (rule_opt) |rule| : (rule_opt = rule.next_in_hash) {
+        if (rule.storage_index_a == a.storage_index and
+            rule.storage_index_b == b.storage_index)
+        {
+            result = rule.should_collide;
+            break;
+        }
+    }
+
+    return result;
 }
 
-pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
+fn handleCollision(a_: *Entity, b_: *Entity) bool {
+    var stops_on_collision = true;
+
+    if (a_.type == .sword) {
+        stops_on_collision = false;
+    }
+
+    const a: *Entity, const b: *Entity = if (@intFromEnum(a_.type) > @intFromEnum(b_.type))
+        .{ b_, a_ }
+    else
+        .{ a_, b_ };
+
+    if (a.type == .monster and b.type == .sword) {
+        if (a.hitpoint_max > 0) {
+            a.hitpoint_max -= 1;
+        }
+    }
+
+    return stops_on_collision;
+}
+
+pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
     assert(!entity.flags.non_spatial);
 
     var ddp = blk: {
@@ -379,34 +422,30 @@ pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpe
 
             const desired_position = entity.p.add(player_delta);
 
-            const stops_on_collision = entity.flags.collides;
-
             if (!entity.flags.non_spatial) {
                 for (this.entities) |*test_entity| {
-                    if (entity != test_entity) {
-                        if (test_entity.flags.collides and !test_entity.flags.non_spatial) {
-                            const diameter = test_entity.size.add(entity.size);
-                            const min_corner = diameter.mul(-0.5);
-                            const max_corner = diameter.mul(0.5);
+                    if (shouldCollide(game_state, entity, test_entity)) {
+                        const diameter = test_entity.size.add(entity.size);
+                        const min_corner = diameter.mul(-0.5);
+                        const max_corner = diameter.mul(0.5);
 
-                            const rel = entity.p.sub(test_entity.p);
+                        const rel = entity.p.sub(test_entity.p);
 
-                            if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                                wall_normal = v2(-1, 0);
-                                hit_entity_opt = test_entity;
-                            }
-                            if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                                wall_normal = v2(1, 0);
-                                hit_entity_opt = test_entity;
-                            }
-                            if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                                wall_normal = v2(0, -1);
-                                hit_entity_opt = test_entity;
-                            }
-                            if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                                wall_normal = v2(0, 1);
-                                hit_entity_opt = test_entity;
-                            }
+                        if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                            wall_normal = v2(-1, 0);
+                            hit_entity_opt = test_entity;
+                        }
+                        if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                            wall_normal = v2(1, 0);
+                            hit_entity_opt = test_entity;
+                        }
+                        if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                            wall_normal = v2(0, -1);
+                            hit_entity_opt = test_entity;
+                        }
+                        if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                            wall_normal = v2(0, 1);
+                            hit_entity_opt = test_entity;
                         }
                     }
                 }
@@ -424,19 +463,15 @@ pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpe
 
             if (hit_entity_opt) |hit_entity| {
                 player_delta = desired_position.sub(entity.p);
+
+                const stops_on_collision = handleCollision(entity, hit_entity);
+
                 if (stops_on_collision) {
                     player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
                     entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
+                } else {
+                    v10.addCollisionRule(game_state, entity.storage_index, hit_entity.storage_index, false);
                 }
-
-                var a = entity;
-                var b = hit_entity;
-                if (@intFromEnum(a.type) > @intFromEnum(b.type)) {
-                    const temp = a;
-                    a = b;
-                    b = temp;
-                }
-                handleCollision(a, b);
             } else {
                 break;
             }
