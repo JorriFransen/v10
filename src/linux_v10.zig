@@ -474,20 +474,22 @@ pub fn main(init: std.process.Init.Minimal) !void {
             .frames_per_video_frame = frames_per_video_frame,
             .bytes_per_video_frame = frames_per_video_frame * @sizeOf(AudioOutput.Frame),
 
-            .pulse = .{ .impl = switch (linux_options.linux_audio_impl) {
-                .pulseEmulateDSound => .{
-                    .safety_frame_bytes = @max(1024, @as(u32, @intFromFloat((audio_fps / game_update_hz) / 3)) * @sizeOf(AudioOutput.Frame)),
-                    .running_frame_index = 0,
-                    .read_cursor = 0,
-                    .buffer = audio_buffer,
-                    .max_latency_usec = audio_buffer_byte_size / @sizeOf(AudioOutput.Frame) * std.time.us_per_s / audio_fps,
+            .pulse = .{
+                .max_latency_usec = audio_buffer_byte_size / @sizeOf(AudioOutput.Frame) * std.time.us_per_s / audio_fps,
+                .impl = switch (linux_options.linux_audio_impl) {
+                    .pulseEmulateDSound => .{
+                        .safety_frame_bytes = @max(1024, @as(u32, @intFromFloat((audio_fps / game_update_hz) / 3)) * @sizeOf(AudioOutput.Frame)),
+                        .running_frame_index = 0,
+                        .read_cursor = 0,
+                        .buffer = audio_buffer,
+                    },
+                    .pulsePull => .{
+                        .thread_context = &thread_context,
+                        .game_code = &game_code,
+                        .game_memory = &game_memory,
+                    },
                 },
-                .pulsePull => .{
-                    .thread_context = &thread_context,
-                    .game_code = &game_code,
-                    .game_memory = &game_memory,
-                },
-            } },
+            },
         };
     };
     const pulse = &audio_output.pulse.impl;
@@ -811,10 +813,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     _ = pa.stream_get_latency(audio_output.pulse.stream, &pa_latency_usec, null);
                     pa.threaded_mainloop_unlock(audio_output.pulse.main_loop);
 
-                    const pa_latency_frames: u32 = @intCast((pa_latency_usec * audio_output.frames_per_second) / std.time.us_per_s);
-                    const pa_latency_bytes: u32 = pa_latency_frames * @sizeOf(AudioOutput.Frame);
+                    const latency_usec: u64 = @min(pa_latency_usec, audio_output.pulse.max_latency_usec);
+                    const latency_frames: u32 = @intCast(math.divCeil(latency_usec * audio_output.frames_per_second, std.time.us_per_s));
+                    const latency_bytes = latency_frames * @sizeOf(AudioOutput.Frame);
 
-                    log.debug("audio latency: {} - {:.3}s", .{ pa_latency_bytes, @as(f32, @floatFromInt(pa_latency_usec)) / std.time.us_per_s });
+                    // log.debug("audio latency: {} - {:.3}s", .{ latency_bytes, @as(f32, @floatFromInt(pa_latency_usec)) / std.time.us_per_s });
+                    _ = .{latency_bytes};
                 }
             }
 
@@ -2114,6 +2118,8 @@ const PulseContext = struct {
     stream_state: pa.StreamState = .unconnected,
     callbacks_started: bool = false,
 
+    max_latency_usec: u64,
+
     impl: Implementation,
 
     pub const PulseEmulateDSound = struct {
@@ -2122,8 +2128,6 @@ const PulseContext = struct {
         running_frame_index: usize,
         read_cursor: usize,
         buffer: []u8,
-
-        max_latency_usec: u64,
 
         audio_valid: bool = false,
 
@@ -2151,8 +2155,7 @@ const PulseContext = struct {
             const callback_cursor: u32 = @intCast(this.read_cursor);
             pa.threaded_mainloop_unlock(ctx.main_loop);
 
-            const latency_usec: u64 = @min(pa_latency_usec, this.max_latency_usec);
-
+            const latency_usec: u64 = @min(pa_latency_usec, ctx.max_latency_usec);
             const latency_frames: u32 = @intCast(math.divCeil(latency_usec * rate, std.time.us_per_s));
 
             const latency_bytes: u32 = latency_frames * @sizeOf(AudioOutput.Frame);

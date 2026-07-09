@@ -351,7 +351,13 @@ pub const Rect = struct {
         return result;
     }
 
-    pub inline fn containsPoint(this: Rect, p: V2) bool {
+    pub inline fn addRadius(this: Rect, radius_w: f32, radius_h: f32) Rect {
+        const vr = V2.init(radius_w, radius_h);
+        const result: Rect = .{ .min = this.min.sub(vr), .max = this.max.add(vr) };
+        return result;
+    }
+
+    pub inline fn contains(this: Rect, p: V2) bool {
         const result = isInRectangle(this, p);
         return result;
     }

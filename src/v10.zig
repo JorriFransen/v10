@@ -67,7 +67,7 @@ pub const EntityVisiblePieceGroup = struct {
 pub const ControlledHero = struct {
     index: EntityIndex = 0,
     ddp: V2 = .zero,
-    d_z: f32 = 0,
+    dz: f32 = 0,
     d_sword: V2 = .zero,
 };
 
@@ -420,6 +420,8 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     const asset_prefix = "../../hh_assets/";
     // const asset_prefix = "";
 
+    const asset_load_begin = std.Io.Timestamp.now(thread_context.io, .real);
+
     game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_background.bmp");
     game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_shadow.bmp");
     game_state.tree = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tree00.bmp");
@@ -444,6 +446,9 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     game_state.hero_bitmaps[3].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_cape.bmp");
     game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_torso.bmp");
     game_state.hero_bitmaps[3].alignment = v2(72, 182);
+
+    const asset_load_duration = asset_load_begin.untilNow(thread_context.io, .real);
+    log.info("Asset loading took: {f}", .{asset_load_duration});
 
     var next_random_number_index: usize = 0;
 
@@ -598,7 +603,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 game_state.controlled_heroes[controller_index] = .{ .index = con_hero.index };
             }
         } else {
-            con_hero.d_z = 0;
+            con_hero.dz = 0;
             con_hero.ddp = .zero;
             con_hero.d_sword = .zero;
 
@@ -621,7 +626,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             }
 
             if (buttons.start.ended_down) {
-                con_hero.d_z = 3;
+                con_hero.dz = 3;
             }
 
             if (buttons.action_up.ended_down) {
@@ -658,106 +663,141 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     var piece_group: EntityVisiblePieceGroup = .{ .game_state = game_state };
     for (sim_region.entities) |*entity| {
-        piece_group.count = 0;
+        if (entity.updatable) {
+            piece_group.count = 0;
 
-        const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(entity.facing_direction)];
-        const shadow_alpha = @max(0, 1 - entity.z);
+            const shadow_alpha = @max(0, 1 - entity.z);
 
-        switch (entity.type) {
-            .null => unreachable,
+            var move_spec: MoveSpec = .{};
+            var ddp: V2 = .zero;
 
-            .hero => {
-                for (&game_state.controlled_heroes) |*con_hero| {
-                    if (con_hero.index == entity.storage_index) {
-                        if (con_hero.d_z != 0) {
-                            entity.d_z = con_hero.d_z;
-                        }
+            const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(entity.facing_direction)];
 
-                        const move_spec = MoveSpec{ .unit_max_ddp = false, .speed = 50, .drag = 8 };
-                        sim_region.moveEntity(entity, input.dt, move_spec, con_hero.ddp);
+            switch (entity.type) {
+                .null => unreachable,
 
-                        if (con_hero.d_sword.x != 0 or con_hero.d_sword.y != 0) {
-                            if (entity.sword.ptr) |sword| if (sword.flags.non_spatial) {
-                                sword.distance_remaining = 5;
-                                entities.makeEntitySpatial(sword, entity.p, con_hero.d_sword.mul(5));
-                            };
+                .hero => {
+                    for (&game_state.controlled_heroes) |*con_hero| {
+                        if (con_hero.index == entity.storage_index) {
+                            if (con_hero.dz != 0) {
+                                entity.dz = con_hero.dz;
+                            }
+
+                            move_spec = MoveSpec{ .speed = 50, .drag = 8 };
+                            ddp = con_hero.ddp;
+
+                            if (con_hero.d_sword.x != 0 or con_hero.d_sword.y != 0) {
+                                if (entity.sword.ptr) |sword| if (sword.flags.non_spatial) {
+                                    sword.distance_remaining = 5;
+                                    SimRegion.makeEntitySpatial(sword, entity.p, con_hero.d_sword.mul(5));
+                                };
+                            }
                         }
                     }
-                }
 
-                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
-                pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
-                pushBitmap(&piece_group, &hero_bitmap.cape, V2.zero, 0, hero_bitmap.alignment, .{});
-                pushBitmap(&piece_group, &hero_bitmap.head, V2.zero, 0, hero_bitmap.alignment, .{});
+                    pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
+                    pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
+                    pushBitmap(&piece_group, &hero_bitmap.cape, V2.zero, 0, hero_bitmap.alignment, .{});
+                    pushBitmap(&piece_group, &hero_bitmap.head, V2.zero, 0, hero_bitmap.alignment, .{});
 
-                drawHitpoints(entity, &piece_group);
-            },
+                    drawHitpoints(entity, &piece_group);
+                },
 
-            .wall => {
-                pushBitmap(&piece_group, &game_state.tree, V2.zero, 0, v2(40, 80), .{});
-            },
+                .wall => {
+                    pushBitmap(&piece_group, &game_state.tree, V2.zero, 0, v2(40, 80), .{});
+                },
 
-            .sword => {
-                entities.updateSword(sim_region, entity, input.dt);
+                .sword => {
+                    move_spec = MoveSpec{ .unit_max_ddp = false, .speed = 0 };
+                    ddp = V2.zero;
 
-                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
-                pushBitmap(&piece_group, &game_state.sword, V2.zero, 0, v2(29, 10), .{});
-            },
+                    const old_p = entity.p;
+                    const distance_traveled = entity.p.sub(old_p).length();
 
-            .familiar => {
-                entities.updateFamiliar(sim_region, entity, input.dt);
+                    entity.distance_remaining -= distance_traveled;
+                    if (entity.distance_remaining < 0) {
+                        SimRegion.makeEntityNonSpatial(entity);
+                    }
 
-                entity.t_bob += input.dt;
-                if (entity.t_bob > math.tau) entity.t_bob -= math.tau;
+                    pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
+                    pushBitmap(&piece_group, &game_state.sword, V2.zero, 0, v2(29, 10), .{});
+                },
 
-                const bob_sin = @sin(2 * entity.t_bob);
+                .familiar => {
+                    var closest_hero_opt: ?*Entity = null;
+                    var closest_hero_d_sq: f32 = math.square(10);
 
-                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{
-                    .alpha = (0.5 * shadow_alpha) + (0.2 * bob_sin),
-                    .entity_z_c = 0,
-                });
-                pushBitmap(&piece_group, &hero_bitmap.head, V2.zero, 0.25 * bob_sin, hero_bitmap.alignment, .{});
-            },
+                    for (sim_region.entities) |*test_entity| {
+                        if (test_entity.type == .hero and closest_hero_d_sq > 0) {
+                            const test_d_sq = test_entity.p.sub(entity.p).lengthSquared();
+                            if (closest_hero_d_sq > test_d_sq) {
+                                closest_hero_opt = test_entity;
+                                closest_hero_d_sq = test_d_sq;
+                            }
+                        }
+                    }
 
-            .monster => {
-                entities.updateMonster(sim_region, entity, input.dt);
+                    ddp = V2.zero;
+                    if (closest_hero_opt) |hero| {
+                        if (closest_hero_d_sq >= math.square(3)) {
+                            const acceleration = 0.5;
+                            const one_over_length = acceleration / math.sqrt(closest_hero_d_sq);
+                            ddp = hero.p.sub(entity.p).mul(one_over_length);
+                        }
+                    }
 
-                pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
-                pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
+                    move_spec = MoveSpec{ .speed = 50, .drag = 8 };
 
-                drawHitpoints(entity, &piece_group);
-            },
-        }
+                    entity.t_bob += input.dt;
+                    if (entity.t_bob > math.tau) entity.t_bob -= math.tau;
 
-        const ddz = -9.8;
-        entity.z = @max(0, entity.z + (0.5 * ddz * math.square(input.dt)) + (entity.d_z * input.dt));
-        entity.d_z = (ddz * input.dt) + entity.d_z;
+                    const bob_sin = @sin(2 * entity.t_bob);
 
-        const entity_ground_point = v2(
-            screen_center.x + (game_state.meters_to_pixels * entity.p.x),
-            screen_center.y - (game_state.meters_to_pixels * entity.p.y),
-        );
-        const entity_z = game_state.meters_to_pixels * -entity.z;
+                    pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{
+                        .alpha = (0.5 * shadow_alpha) + (0.2 * bob_sin),
+                        .entity_z_c = 0,
+                    });
+                    pushBitmap(&piece_group, &hero_bitmap.head, V2.zero, 0.25 * bob_sin, hero_bitmap.alignment, .{});
+                },
 
-        for (piece_group.pieces[0..piece_group.count]) |*piece| {
-            const center = v2(
-                entity_ground_point.x + piece.offset.x,
-                entity_ground_point.y + piece.offset.y + piece.offset_z + (piece.entity_z_c * entity_z),
+                .monster => {
+                    pushBitmap(&piece_group, &game_state.hero_shadow, V2.zero, 0, hero_bitmap.alignment, .{ .alpha = shadow_alpha, .entity_z_c = 0 });
+                    pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
+
+                    drawHitpoints(entity, &piece_group);
+                },
+            }
+
+            if (!entity.flags.non_spatial) {
+                sim_region.moveEntity(entity, input.dt, move_spec, ddp);
+            }
+
+            const entity_ground_point = v2(
+                screen_center.x + (game_state.meters_to_pixels * entity.p.x),
+                screen_center.y - (game_state.meters_to_pixels * entity.p.y),
             );
+            const entity_z = game_state.meters_to_pixels * -entity.z;
 
-            if (piece.bitmap) |bitmap| {
-                drawBitmap(offscreen_buffer, bitmap, center.x, center.y, piece.a);
-            } else {
-                const dim = piece.dim.mul(game_state.meters_to_pixels);
-                const half_dim = dim.mul(0.5);
-                drawRectangle(
-                    offscreen_buffer,
-                    center.sub(half_dim),
-                    center.add(half_dim),
-                    piece.r,
-                    piece.g,
-                    piece.b,
+            for (piece_group.pieces[0..piece_group.count]) |*piece| {
+                const center = v2(
+                    entity_ground_point.x + piece.offset.x,
+                    entity_ground_point.y + piece.offset.y + piece.offset_z + (piece.entity_z_c * entity_z),
                 );
+
+                if (piece.bitmap) |bitmap| {
+                    drawBitmap(offscreen_buffer, bitmap, center.x, center.y, piece.a);
+                } else {
+                    const dim = piece.dim.mul(game_state.meters_to_pixels);
+                    const half_dim = dim.mul(0.5);
+                    drawRectangle(
+                        offscreen_buffer,
+                        center.sub(half_dim),
+                        center.add(half_dim),
+                        piece.r,
+                        piece.g,
+                        piece.b,
+                    );
+                }
             }
         }
     }

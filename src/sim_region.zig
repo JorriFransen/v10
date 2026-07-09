@@ -21,6 +21,7 @@ const entities_per_region = 4096;
 game_state: *v10.GameState,
 origin: World.Position,
 bounds: Rect,
+updateable_bounds: Rect,
 max_entity_count: usize,
 entities: []Entity,
 
@@ -67,21 +68,23 @@ pub const EntityHash = struct {
 pub const EntityFlags = packed struct(u32) {
     collides: bool = false,
     non_spatial: bool = false,
-    __reserved__: u29 = 0,
+    __reserved_0: u28 = 0,
     in_sim: bool = false,
+    __reserved_1: u1 = 0,
 };
 
 pub const Entity = struct {
     storage_index: EntityIndex = 0,
+    updatable: bool = false,
 
     type: EntityType = .null,
     flags: EntityFlags = .{},
 
     p: V2 = .zero,
-    d_p: V2 = .zero,
+    dp: V2 = .zero,
 
     z: f32 = 0,
-    d_z: f32 = 0,
+    dz: f32 = 0,
 
     size: V2 = .zero,
 
@@ -99,27 +102,31 @@ pub const Entity = struct {
 };
 
 pub const MoveSpec = struct {
-    unit_max_ddp: bool = false,
-    speed: f32 = 1,
+    unit_max_ddp: bool = true,
+    speed: f32 = 0,
     drag: f32 = 0,
 };
 
-pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin: World.Position, region_bounds: Rect) *SimRegion {
+pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin: World.Position, region_bounds_: Rect) *SimRegion {
     const world = game_state.world;
 
     const sim_region = sim_arena.pushMemory(SimRegion);
+
+    const update_safety_margin = 1;
+
     sim_region.* = .{
         .game_state = game_state,
         .origin = region_origin,
-        .bounds = region_bounds,
+        .bounds = region_bounds_.addRadius(update_safety_margin, update_safety_margin),
+        .updateable_bounds = region_bounds_,
         .max_entity_count = entities_per_region,
         .entities = sim_arena.pushArray(entities_per_region, Entity),
         .sim_entity_hash = @splat(std.mem.zeroes(EntityHash)),
     };
     sim_region.entities.len = 0;
 
-    const min_chunk_p = region_origin.offset(world, region_bounds.min);
-    const max_chunk_p = region_origin.offset(world, region_bounds.max);
+    const min_chunk_p = region_origin.offset(world, sim_region.bounds.min);
+    const max_chunk_p = region_origin.offset(world, sim_region.bounds.max);
 
     var chunk_y: i32 = min_chunk_p.chunk_y;
     while (chunk_y <= max_chunk_p.chunk_y) : (chunk_y += 1) {
@@ -133,7 +140,7 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *v10.GameState, region_origin:
                         const low = &game_state.low_entities[low_index];
                         if (!low.sim.flags.non_spatial) {
                             const sim_space_p = sim_region.getSimSpaceP(low);
-                            if (region_bounds.containsPoint(sim_space_p)) {
+                            if (math.isInRectangle(sim_region.bounds, sim_space_p)) {
                                 _ = addEntity(sim_region, low_index, low, sim_space_p);
                             }
                         }
@@ -227,8 +234,11 @@ inline fn loadEntityReference(this: *SimRegion, ref: *EntityReference) void {
         const entry = this.getHashFromStorageIndex(ref.index);
 
         if (entry.ptr == null) {
-            const low_entity = v10.getLowEntity(this.game_state, ref.index);
-            const ptr = this.addEntity(ref.index, low_entity, null);
+            const low_entity = v10.getLowEntity(this.game_state, ref.index).?;
+
+            const sim_space_p = this.getSimSpaceP(low_entity);
+            const ptr = this.addEntity(ref.index, low_entity, sim_space_p);
+
             assert(entry.ptr == ptr);
             assert(entry.index == ref.index);
         }
@@ -263,6 +273,7 @@ fn addEntityRaw(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*Stor
             }
 
             entity.storage_index = storage_index;
+            entity.updatable = false;
         } else {
             // Out of entities
             unreachable;
@@ -280,6 +291,7 @@ fn addEntity(this: *SimRegion, storage_index: EntityIndex, source_opt: ?*StoredE
 
         if (sim_p_opt) |sim_p| {
             dest.p = sim_p;
+            dest.updatable = math.isInRectangle(this.updateable_bounds, dest.p);
         } else {
             assert(source_opt != null);
             dest.p = this.getSimSpaceP(source_opt.?);
@@ -300,25 +312,44 @@ inline fn getSimSpaceP(this: *SimRegion, stored: *StoredEntity) V2 {
     return result;
 }
 
-pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
-    var ddp = raw_ddp;
+pub inline fn makeEntitySpatial(entity: *Entity, p: V2, dp: V2) void {
+    entity.flags.non_spatial = false;
+    entity.p = p;
+    entity.dp = dp;
+}
 
-    if (move_spec.unit_max_ddp) {
-        const ddp_length_sq = raw_ddp.lengthSquared();
-        ddp = if (ddp_length_sq > 1)
-            ddp.mul(1 / @sqrt(ddp_length_sq))
-        else
-            ddp;
-    }
+pub inline fn makeEntityNonSpatial(entity: *Entity) void {
+    entity.flags.non_spatial = true;
+    entity.p = invalid_p;
+}
+
+pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
+    assert(!entity.flags.non_spatial);
+
+    var ddp = blk: {
+        if (move_spec.unit_max_ddp) {
+            const ddp_length_sq = raw_ddp.lengthSquared();
+
+            if (ddp_length_sq > 1) {
+                break :blk raw_ddp.mul(1 / @sqrt(ddp_length_sq));
+            }
+        }
+
+        break :blk raw_ddp;
+    };
 
     ddp = ddp.mul(move_spec.speed);
-    ddp = ddp.add(entity.d_p.mul(-move_spec.drag));
+    ddp = ddp.add(entity.dp.mul(-move_spec.drag));
 
     var player_delta = V2.add(
         ddp.mul(0.5 * math.square(dt)),
-        entity.d_p.mul(dt),
+        entity.dp.mul(dt),
     );
-    entity.d_p = entity.d_p.add(ddp.mul(dt));
+    entity.dp = entity.dp.add(ddp.mul(dt));
+
+    const ddz = -9.8;
+    entity.z = @max(0, (0.5 * ddz * math.square(dt)) + (entity.dz * dt) + entity.z);
+    entity.dz = (ddz * dt) + entity.dz;
 
     var it_count: usize = 0;
     while (it_count < 4) : (it_count += 1) {
@@ -369,7 +400,7 @@ pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpe
         }
 
         if (hit_entity_opt) |_| {
-            entity.d_p = entity.d_p.sub(wall_normal.mul(entity.d_p.inner(wall_normal)));
+            entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
             player_delta = desired_position.sub(entity.p);
             player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
         } else {
@@ -378,14 +409,14 @@ pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpe
     }
 
     entity.facing_direction =
-        if (entity.d_p.x == 0 and entity.d_p.y == 0)
+        if (entity.dp.x == 0 and entity.dp.y == 0)
             entity.facing_direction
-        else if (@abs(entity.d_p.x) > @abs(entity.d_p.y))
-            if (entity.d_p.x > 0) .right else .left
-        else if (entity.d_p.y > 0) .up else .down;
+        else if (@abs(entity.dp.x) > @abs(entity.dp.y))
+            if (entity.dp.x > 0) .right else .left
+        else if (entity.dp.y > 0) .up else .down;
 }
 
-const test_wall_hh = false;
+const test_wall_hh = true;
 fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
     var hit = false;
 
