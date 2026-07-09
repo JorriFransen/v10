@@ -328,17 +328,17 @@ pub const Rect = struct {
     min: V2,
     max: V2,
 
-    pub fn minMax(min: V2, max: V2) Rect {
+    pub inline fn minMax(min: V2, max: V2) Rect {
         const result = Rect{ .min = min, .max = max };
         return result;
     }
 
-    pub fn minDim(min: V2, dim: V2) Rect {
+    pub inline fn minDim(min: V2, dim: V2) Rect {
         const result = Rect{ .min = min, .max = min.add(dim) };
         return result;
     }
 
-    pub fn centerHalfDim(center: V2, half_dim: V2) Rect {
+    pub inline fn centerHalfDim(center: V2, half_dim: V2) Rect {
         const result = Rect{
             .min = center.sub(half_dim),
             .max = center.add(half_dim),
@@ -346,7 +346,7 @@ pub const Rect = struct {
         return result;
     }
 
-    pub fn centerDim(center: V2, dim: V2) Rect {
+    pub inline fn centerDim(center: V2, dim: V2) Rect {
         const result = centerHalfDim(center, dim.mul(0.5));
         return result;
     }

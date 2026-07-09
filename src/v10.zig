@@ -72,6 +72,8 @@ pub const ControlledHero = struct {
 };
 
 pub const PairwiseCollisionRule = struct {
+    pub const double_entries = true;
+
     should_collide: bool,
     storage_index_a: EntityIndex,
     storage_index_b: EntityIndex,
@@ -105,7 +107,7 @@ pub const GameState = struct {
     sword: LoadedBitmap = .{},
 
     // Must be power of 2
-    collision_rule_hash: [256]?*PairwiseCollisionRule = @splat(null),
+    collision_rule_hash: [16]?*PairwiseCollisionRule = @splat(null),
     first_free_collision_rule: ?*PairwiseCollisionRule = null,
 };
 
@@ -258,11 +260,24 @@ fn drawHitpoints(entity: *Entity, piece_group: *EntityVisiblePieceGroup) void {
     }
 }
 
-pub fn addCollisionRule(game_state: *GameState, storage_index_a_: EntityIndex, storage_index_b_: EntityIndex, should_collide: bool) void {
-    const storage_index_a, const storage_index_b = if (storage_index_a_ > storage_index_b_)
+pub inline fn addCollisionRule(game_state: *GameState, storage_index_a: EntityIndex, storage_index_b: EntityIndex, should_collide: bool) void {
+    if (PairwiseCollisionRule.double_entries) {
+        addCollisionRuleRaw(game_state, storage_index_a, storage_index_b, should_collide);
+        addCollisionRuleRaw(game_state, storage_index_b, storage_index_a, should_collide);
+    } else {
+        addCollisionRuleRaw(game_state, storage_index_a, storage_index_b, should_collide);
+    }
+}
+
+pub fn addCollisionRuleRaw(game_state: *GameState, storage_index_a_: EntityIndex, storage_index_b_: EntityIndex, should_collide: bool) void {
+    const default_order = .{ storage_index_a_, storage_index_b_ };
+
+    const storage_index_a, const storage_index_b = if (PairwiseCollisionRule.double_entries)
+        default_order
+    else if (storage_index_a_ > storage_index_b_)
         .{ storage_index_b_, storage_index_a_ }
     else
-        .{ storage_index_a_, storage_index_b_ };
+        default_order;
 
     const hash_bucket = storage_index_a & (game_state.collision_rule_hash.len - 1);
     var rule_opt: ?*PairwiseCollisionRule = game_state.collision_rule_hash[hash_bucket];
@@ -298,19 +313,52 @@ pub fn addCollisionRule(game_state: *GameState, storage_index_a_: EntityIndex, s
 }
 
 pub fn clearCollisionRulesFor(game_state: *GameState, storage_index: EntityIndex) void {
-    for (&game_state.collision_rule_hash) |*entry| {
-        var rule_opt: *?*PairwiseCollisionRule = entry;
+    if (PairwiseCollisionRule.double_entries) {
+        const old_freelist_head = game_state.first_free_collision_rule;
 
-        while (rule_opt.*) |rule| {
-            if (rule.storage_index_a == storage_index or rule.storage_index_b == storage_index) {
-                const removed_rule = rule;
-                rule_opt.* = rule.next_in_hash;
+        removeCollisionRule(game_state, storage_index);
 
-                removed_rule.next_in_hash = game_state.first_free_collision_rule;
-                game_state.first_free_collision_rule = removed_rule;
-            } else {
-                rule_opt = &rule.next_in_hash;
+        var freelist_rule_opt = game_state.first_free_collision_rule;
+        while (freelist_rule_opt) |freelist_rule| {
+            assert(freelist_rule.storage_index_a == storage_index);
+
+            removeCollisionRule(game_state, freelist_rule.storage_index_b);
+
+            if (freelist_rule.next_in_hash == old_freelist_head) break;
+            freelist_rule_opt = freelist_rule.next_in_hash;
+        }
+    } else {
+        for (&game_state.collision_rule_hash) |*entry| {
+            var rule_opt: *?*PairwiseCollisionRule = entry;
+
+            while (rule_opt.*) |rule| {
+                if (rule.storage_index_a == storage_index or rule.storage_index_b == storage_index) {
+                    const removed_rule = rule;
+                    rule_opt.* = rule.next_in_hash;
+
+                    removed_rule.next_in_hash = game_state.first_free_collision_rule;
+                    game_state.first_free_collision_rule = removed_rule;
+                } else {
+                    rule_opt = &rule.next_in_hash;
+                }
             }
+        }
+    }
+}
+
+pub fn removeCollisionRule(game_state: *GameState, storage_index: EntityIndex) void {
+    const hash_bucket = storage_index & (game_state.collision_rule_hash.len - 1);
+    var rule_opt: *?*PairwiseCollisionRule = &game_state.collision_rule_hash[hash_bucket];
+
+    while (rule_opt.*) |rule| {
+        if (rule.storage_index_a == storage_index) {
+            const removed = rule;
+            rule_opt.* = rule.next_in_hash;
+
+            removed.next_in_hash = game_state.first_free_collision_rule;
+            game_state.first_free_collision_rule = removed;
+        } else {
+            rule_opt = &rule.next_in_hash;
         }
     }
 }
