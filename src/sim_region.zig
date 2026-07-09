@@ -88,6 +88,8 @@ pub const Entity = struct {
 
     size: V2 = .zero,
 
+    distance_limit: f32 = 0,
+
     facing_direction: FacingDirection = .down,
 
     t_bob: f32 = 0,
@@ -98,7 +100,6 @@ pub const Entity = struct {
     hitpoints: [16]HitPoint = @splat(.{}),
 
     sword: EntityReference = .{ .index = 0 },
-    distance_remaining: f32 = 0,
 };
 
 pub const MoveSpec = struct {
@@ -323,6 +324,13 @@ pub inline fn makeEntityNonSpatial(entity: *Entity) void {
     entity.p = invalid_p;
 }
 
+fn handleCollision(a: *Entity, b: *Entity) void {
+    if (a.type == .monster and b.type == .sword) {
+        a.hitpoint_max = if (a.hitpoint_max == 0) 0 else a.hitpoint_max - 1;
+        makeEntityNonSpatial(b);
+    }
+}
+
 pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
     assert(!entity.flags.non_spatial);
 
@@ -351,61 +359,94 @@ pub fn moveEntity(this: *SimRegion, entity: *Entity, dt: f32, move_spec: MoveSpe
     entity.z = @max(0, (0.5 * ddz * math.square(dt)) + (entity.dz * dt) + entity.z);
     entity.dz = (ddz * dt) + entity.dz;
 
+    var distance_remaining = entity.distance_limit;
+    if (distance_remaining == 0) {
+        distance_remaining = 10000;
+    }
+
     var it_count: usize = 0;
     while (it_count < 4) : (it_count += 1) {
         var t_min: f32 = 1;
-        var wall_normal: V2 = .zero;
-        var hit_entity_opt: ?*Entity = null;
 
-        const desired_position = entity.p.add(player_delta);
+        const player_delta_length = player_delta.length();
+        if (player_delta_length > 0) {
+            if (player_delta_length > distance_remaining) {
+                t_min = distance_remaining / player_delta_length;
+            }
 
-        if (entity.flags.collides and !entity.flags.non_spatial) {
-            for (this.entities) |*test_entity| {
-                if (entity != test_entity) {
-                    if (test_entity.flags.collides and !test_entity.flags.non_spatial) {
-                        const diameter = test_entity.size.add(entity.size);
-                        const min_corner = diameter.mul(-0.5);
-                        const max_corner = diameter.mul(0.5);
+            var wall_normal: V2 = .zero;
+            var hit_entity_opt: ?*Entity = null;
 
-                        const rel = entity.p.sub(test_entity.p);
+            const desired_position = entity.p.add(player_delta);
 
-                        if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v2(-1, 0);
-                            hit_entity_opt = test_entity;
-                        }
-                        if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v2(1, 0);
-                            hit_entity_opt = test_entity;
-                        }
-                        if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v2(0, -1);
-                            hit_entity_opt = test_entity;
-                        }
-                        if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v2(0, 1);
-                            hit_entity_opt = test_entity;
+            const stops_on_collision = entity.flags.collides;
+
+            if (!entity.flags.non_spatial) {
+                for (this.entities) |*test_entity| {
+                    if (entity != test_entity) {
+                        if (test_entity.flags.collides and !test_entity.flags.non_spatial) {
+                            const diameter = test_entity.size.add(entity.size);
+                            const min_corner = diameter.mul(-0.5);
+                            const max_corner = diameter.mul(0.5);
+
+                            const rel = entity.p.sub(test_entity.p);
+
+                            if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                                wall_normal = v2(-1, 0);
+                                hit_entity_opt = test_entity;
+                            }
+                            if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
+                                wall_normal = v2(1, 0);
+                                hit_entity_opt = test_entity;
+                            }
+                            if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                                wall_normal = v2(0, -1);
+                                hit_entity_opt = test_entity;
+                            }
+                            if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
+                                wall_normal = v2(0, 1);
+                                hit_entity_opt = test_entity;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if (test_wall_hh) {
-            // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
-            entity.p = entity.p.add(player_delta.mul(t_min));
-        } else {
-            const push_out: f32 = 0.0001;
-            const delta = player_delta.mul(t_min).add(wall_normal.mul(push_out));
-            entity.p = entity.p.add(delta);
-        }
+            if (test_wall_hh) {
+                // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
+                entity.p = entity.p.add(player_delta.mul(t_min));
+            } else {
+                const push_out: f32 = 0.0001;
+                const delta = player_delta.mul(t_min).add(wall_normal.mul(push_out));
+                entity.p = entity.p.add(delta);
+            }
+            distance_remaining -= t_min * player_delta_length;
 
-        if (hit_entity_opt) |_| {
-            entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
-            player_delta = desired_position.sub(entity.p);
-            player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
+            if (hit_entity_opt) |hit_entity| {
+                player_delta = desired_position.sub(entity.p);
+                if (stops_on_collision) {
+                    player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
+                    entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
+                }
+
+                var a = entity;
+                var b = hit_entity;
+                if (@intFromEnum(a.type) > @intFromEnum(b.type)) {
+                    const temp = a;
+                    a = b;
+                    b = temp;
+                }
+                handleCollision(a, b);
+            } else {
+                break;
+            }
         } else {
             break;
         }
+    }
+
+    if (entity.distance_limit != 0) {
+        entity.distance_limit = distance_remaining;
     }
 
     entity.facing_direction =

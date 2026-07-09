@@ -688,7 +688,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
                             if (con_hero.d_sword.x != 0 or con_hero.d_sword.y != 0) {
                                 if (entity.sword.ptr) |sword| if (sword.flags.non_spatial) {
-                                    sword.distance_remaining = 5;
+                                    sword.distance_limit = 5;
                                     SimRegion.makeEntitySpatial(sword, entity.p, con_hero.d_sword.mul(5));
                                 };
                             }
@@ -711,11 +711,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     move_spec = MoveSpec{ .unit_max_ddp = false, .speed = 0 };
                     ddp = V2.zero;
 
-                    const old_p = entity.p;
-                    const distance_traveled = entity.p.sub(old_p).length();
-
-                    entity.distance_remaining -= distance_traveled;
-                    if (entity.distance_remaining < 0) {
+                    if (entity.distance_limit == 0) {
                         SimRegion.makeEntityNonSpatial(entity);
                     }
 
