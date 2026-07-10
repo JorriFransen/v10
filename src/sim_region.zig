@@ -16,13 +16,15 @@ const World = @import("world.zig");
 const math = @import("math");
 const V2 = math.V2;
 const v2 = V2.init;
-const Rect = math.Rect;
+const V3 = math.V3;
+const v3 = V3.init;
+const Rect3 = math.Rect3;
 
 const entities_per_region = 4096;
 
 origin: World.Position,
-bounds: Rect,
-updateable_bounds: Rect,
+bounds: Rect3,
+updateable_bounds: Rect3,
 max_entity_count: usize,
 entities: []Entity,
 
@@ -81,11 +83,8 @@ pub const Entity = struct {
     type: EntityType = .null,
     flags: EntityFlags = .{},
 
-    p: V2 = .zero,
-    dp: V2 = .zero,
-
-    z: f32 = 0,
-    dz: f32 = 0,
+    p: V3 = .zero,
+    dp: V3 = .zero,
 
     size: V2 = .zero,
 
@@ -109,7 +108,7 @@ pub const MoveSpec = struct {
     drag: f32 = 0,
 };
 
-pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: World.Position, region_bounds_: Rect) *SimRegion {
+pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: World.Position, region_bounds_: Rect3) *SimRegion {
     const world = game_state.world;
 
     const sim_region = sim_arena.pushMemory(SimRegion);
@@ -118,7 +117,7 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: Wor
 
     sim_region.* = .{
         .origin = region_origin,
-        .bounds = region_bounds_.addRadius(update_safety_margin, update_safety_margin),
+        .bounds = region_bounds_.addRadius(V3.scalar(update_safety_margin)),
         .updateable_bounds = region_bounds_,
         .max_entity_count = entities_per_region,
         .entities = sim_arena.pushArray(entities_per_region, Entity),
@@ -141,7 +140,7 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: Wor
                         const low = &game_state.low_entities[low_index];
                         if (!low.sim.flags.non_spatial) {
                             const sim_space_p = sim_region.getSimSpaceP(game_state, low);
-                            if (math.isInRectangle(sim_region.bounds, sim_space_p)) {
+                            if (math.isInRectangle3(sim_region.bounds, sim_space_p)) {
                                 _ = sim_region.addEntity(game_state, low_index, low, sim_space_p);
                             }
                         }
@@ -284,7 +283,7 @@ fn addEntityRaw(this: *SimRegion, game_state: *GameState, storage_index: EntityI
     return entity_opt;
 }
 
-fn addEntity(this: *SimRegion, game_state: *GameState, storage_index: EntityIndex, source_opt: ?*LowEntity, sim_p_opt: ?V2) ?*Entity {
+fn addEntity(this: *SimRegion, game_state: *GameState, storage_index: EntityIndex, source_opt: ?*LowEntity, sim_p_opt: ?V3) ?*Entity {
     var entity: ?*Entity = null;
 
     if (this.addEntityRaw(game_state, storage_index, source_opt)) |dest| {
@@ -292,7 +291,7 @@ fn addEntity(this: *SimRegion, game_state: *GameState, storage_index: EntityInde
 
         if (sim_p_opt) |sim_p| {
             dest.p = sim_p;
-            dest.updatable = math.isInRectangle(this.updateable_bounds, dest.p);
+            dest.updatable = math.isInRectangle3(this.updateable_bounds, dest.p);
         } else {
             assert(source_opt != null);
             dest.p = this.getSimSpaceP(game_state, source_opt.?);
@@ -302,18 +301,17 @@ fn addEntity(this: *SimRegion, game_state: *GameState, storage_index: EntityInde
     return entity;
 }
 
-inline fn getSimSpaceP(this: *SimRegion, game_state: *GameState, stored: *LowEntity) V2 {
-    var result: V2 = invalid_p;
+inline fn getSimSpaceP(this: *SimRegion, game_state: *GameState, stored: *LowEntity) V3 {
+    var result: V3 = invalid_p;
 
     if (!stored.sim.flags.non_spatial) {
-        const diff = game_state.world.subtract(stored.p, this.origin);
-        result = diff.xy;
+        result = game_state.world.subtract(stored.p, this.origin);
     }
 
     return result;
 }
 
-pub inline fn makeEntitySpatial(entity: *Entity, p: V2, dp: V2) void {
+pub inline fn makeEntitySpatial(entity: *Entity, p: V3, dp: V3) void {
     entity.flags.non_spatial = false;
     entity.p = p;
     entity.dp = dp;
@@ -374,7 +372,7 @@ fn handleCollision(a_: *Entity, b_: *Entity) bool {
     return stops_on_collision;
 }
 
-pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V2) void {
+pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V3) void {
     assert(!entity.flags.non_spatial);
 
     var ddp = blk: {
@@ -392,15 +390,13 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
     ddp = ddp.mul(move_spec.speed);
     ddp = ddp.add(entity.dp.mul(-move_spec.drag));
 
-    var player_delta = V2.add(
+    ddp.z += -9.8;
+
+    var player_delta = V3.add(
         ddp.mul(0.5 * math.square(dt)),
         entity.dp.mul(dt),
     );
     entity.dp = entity.dp.add(ddp.mul(dt));
-
-    const ddz = -9.8;
-    entity.z = @max(0, (0.5 * ddz * math.square(dt)) + (entity.dz * dt) + entity.z);
-    entity.dz = (ddz * dt) + entity.dz;
 
     var distance_remaining = entity.distance_limit;
     if (distance_remaining == 0) {
@@ -417,7 +413,7 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
                 t_min = distance_remaining / player_delta_length;
             }
 
-            var wall_normal: V2 = .zero;
+            var wall_normal: V3 = .zero;
             var hit_entity_opt: ?*Entity = null;
 
             const desired_position = entity.p.add(player_delta);
@@ -425,26 +421,30 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
             if (!entity.flags.non_spatial) {
                 for (this.entities) |*test_entity| {
                     if (shouldCollide(game_state, entity, test_entity)) {
-                        const diameter = test_entity.size.add(entity.size);
-                        const min_corner = diameter.mul(-0.5);
-                        const max_corner = diameter.mul(0.5);
+                        const minkowski_diameter: V3 = .v2z(
+                            test_entity.size.add(entity.size),
+                            2 * game_state.world.tile_depth_in_meters,
+                        );
+
+                        const min_corner: V3 = minkowski_diameter.mul(-0.5);
+                        const max_corner: V3 = minkowski_diameter.mul(0.5);
 
                         const rel = entity.p.sub(test_entity.p);
 
                         if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v2(-1, 0);
+                            wall_normal = v3(-1, 0, 0);
                             hit_entity_opt = test_entity;
                         }
                         if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v2(1, 0);
+                            wall_normal = v3(1, 0, 0);
                             hit_entity_opt = test_entity;
                         }
                         if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v2(0, -1);
+                            wall_normal = v3(0, -1, 0);
                             hit_entity_opt = test_entity;
                         }
                         if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v2(0, 1);
+                            wall_normal = v3(0, 1, 0);
                             hit_entity_opt = test_entity;
                         }
                     }
@@ -478,6 +478,10 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         } else {
             break;
         }
+    }
+
+    if (entity.p.z < 0) {
+        entity.p.z = 0;
     }
 
     if (entity.distance_limit != 0) {
