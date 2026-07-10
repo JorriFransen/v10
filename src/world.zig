@@ -11,11 +11,15 @@ const LowEntity = v10.LowEntity;
 const math = @import("math");
 const V2 = math.V2;
 const v2 = V2.init;
+const V3 = math.V3;
+const v3 = V3.init;
 
 const World = @This();
 
 tile_side_in_meters: f32,
-chunk_side_in_meters: f32,
+tile_depth_in_meters: f32,
+chunk_dim_in_meters: V3,
+
 first_free_entity_block: ?*EntityBlock = null,
 chunk_hash: [4096]Chunk = undefined,
 
@@ -26,7 +30,12 @@ pub const tiles_per_chunk_side = 16;
 pub fn init(this: *World, tile_side_in_meters: f32) void {
     this.* = .{
         .tile_side_in_meters = tile_side_in_meters,
-        .chunk_side_in_meters = tiles_per_chunk_side * tile_side_in_meters,
+        .tile_depth_in_meters = tile_side_in_meters,
+        .chunk_dim_in_meters = v3(
+            tiles_per_chunk_side * tile_side_in_meters,
+            tiles_per_chunk_side * tile_side_in_meters,
+            tile_side_in_meters,
+        ),
         .first_free_entity_block = null,
     };
 
@@ -43,21 +52,16 @@ pub const Position = struct {
     chunk_z: i32,
 
     /// In meters, from the chunk center
-    _offset: V2 = .{},
+    _offset: V3 = .{},
 
     pub const zero: Position = .{ .chunk_x = 0, .chunk_y = 0, .chunk_z = 0, ._offset = .zero };
     pub const @"null": Position = .{ .chunk_x = chunk_x_uninitialized, .chunk_y = 0, .chunk_z = 0, ._offset = .zero };
-
-    pub const Delta = struct {
-        xy: V2,
-        z: f32,
-    };
 
     pub inline fn isValid(this: Position) bool {
         return this.chunk_x != @"null".chunk_x;
     }
 
-    pub fn offset(this: Position, world: *const World, offset_by: V2) Position {
+    pub fn offset(this: Position, world: *const World, offset_by: V3) Position {
         var result = this;
 
         result._offset = result._offset.add(offset_by);
@@ -66,33 +70,37 @@ pub const Position = struct {
         return result;
     }
 
-    pub inline fn recanonicalize(position: Position, world: *const World) Position {
+    pub fn recanonicalize(position: Position, world: *const World) Position {
         var result = position;
-        world.recanonicalizeCoord(&result.chunk_x, &result._offset.x);
-        world.recanonicalizeCoord(&result.chunk_y, &result._offset.y);
+        recanonicalizeCoord(&result.chunk_x, &result._offset.x, world.chunk_dim_in_meters.x);
+        recanonicalizeCoord(&result.chunk_y, &result._offset.y, world.chunk_dim_in_meters.y);
+        recanonicalizeCoord(&result.chunk_z, &result._offset.z, world.chunk_dim_in_meters.z);
         return result;
     }
 };
 
-pub inline fn recanonicalizeCoord(this: *const World, chunk: *i32, chunk_rel: *f32) void {
-    const offset: i32 = intrinsics.roundReal32ToInt32(chunk_rel.* / this.chunk_side_in_meters);
+pub fn recanonicalizeCoord(chunk: *i32, chunk_rel: *f32, chunk_size: f32) void {
+    const offset: i32 = intrinsics.roundReal32ToInt32(chunk_rel.* / chunk_size);
     chunk.* +%= @bitCast(offset);
-    chunk_rel.* -= @as(f32, @floatFromInt(offset)) * this.chunk_side_in_meters;
+    chunk_rel.* -= @as(f32, @floatFromInt(offset)) * chunk_size;
 
-    assert(this.isCanonical(chunk_rel.*));
+    assert(isCanonical(chunk_rel.*, chunk_size));
 }
 
-pub inline fn isCanonical(this: *const World, chunk_rel: f32) bool {
-    const epsilon = 0.0001;
+pub inline fn isCanonical(chunk_rel: f32, chunk_size: f32) bool {
+    const epsilon = if (hh_tile_mapping) 0.01 else 0.0001;
 
     const result =
-        chunk_rel >= -(0.5 * this.chunk_side_in_meters + epsilon) and
-        chunk_rel <= (0.5 * this.chunk_side_in_meters + epsilon);
+        chunk_rel >= -(0.5 * chunk_size + epsilon) and
+        chunk_rel <= (0.5 * chunk_size + epsilon);
     return result;
 }
 
-pub inline fn isCanonicalOffset(this: *const World, offset: V2) bool {
-    const result = this.isCanonical(offset.x) and this.isCanonical(offset.x);
+pub inline fn isCanonicalOffset(this: *const World, offset: V3) bool {
+    const result =
+        isCanonical(offset.x, this.chunk_dim_in_meters.x) and
+        isCanonical(offset.y, this.chunk_dim_in_meters.y) and
+        isCanonical(offset.z, this.chunk_dim_in_meters.z);
     return result;
 }
 
@@ -112,22 +120,16 @@ pub const Chunk = struct {
     next_in_hash: ?*Chunk = null,
 };
 
-pub inline fn subtract(this: *const World, a: Position, b: Position) Position.Delta {
-    var result: Position.Delta = undefined;
+pub inline fn subtract(this: *const World, a: Position, b: Position) V3 {
+    var result: V3 = undefined;
 
-    // const diff_x = @as(f64, @floatFromInt(a.chunk_x)) - @as(f64, @floatFromInt(b.chunk_x));
-    // const diff_y = @as(f64, @floatFromInt(a.chunk_y)) - @as(f64, @floatFromInt(b.chunk_y));
-    // const d_chunk_xy = v2(@floatCast(diff_x), @floatCast(diff_y));
-    const d_chunk_xy = v2(
+    const d_tile = v3(
         @as(f32, @floatFromInt(a.chunk_x)) - @as(f32, @floatFromInt(b.chunk_x)),
         @as(f32, @floatFromInt(a.chunk_y)) - @as(f32, @floatFromInt(b.chunk_y)),
+        @as(f32, @floatFromInt(a.chunk_z)) - @as(f32, @floatFromInt(b.chunk_z)),
     );
 
-    const d_chunk_z = @as(f32, @floatFromInt(a.chunk_z)) - @as(f32, @floatFromInt(b.chunk_z));
-
-    result.xy = d_chunk_xy.mul(this.chunk_side_in_meters).add(a._offset.sub(b._offset));
-
-    result.z = (this.chunk_side_in_meters * d_chunk_z);
+    result = this.chunk_dim_in_meters.hadamard(d_tile).add(a._offset.sub(b._offset));
 
     return result;
 }
@@ -281,44 +283,38 @@ pub fn changeEntityLocationRaw(this: *World, arena: *MemoryArena, low_index: Ent
     }
 }
 
-pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) World.Position {
-    if (false) {
-        // Exact hh macth
-        var result: Position = .zero;
+const hh_tile_mapping = true;
+pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) Position {
+    if (hh_tile_mapping) {
+        // hh match
+        const offset: V3 = .mul(.v3i(abs_tile_x, abs_tile_y, abs_tile_z), this.tile_side_in_meters);
+        const result = Position.zero.offset(this, offset);
 
-        result.chunk_x = @divTrunc(abs_tile_x, World.tiles_per_chunk_side);
-        result.chunk_y = @divTrunc(abs_tile_y, World.tiles_per_chunk_side);
-        result.chunk_z = @divTrunc(abs_tile_z, World.tiles_per_chunk_side);
-
-        if (abs_tile_x < 0) result.chunk_x -= 1;
-        if (abs_tile_y < 0) result.chunk_y -= 1;
-        if (abs_tile_z < 0) result.chunk_z -= 1;
-
-        const chunk_tiles = World.tiles_per_chunk_side;
-        const x_tiles: f32 = @floatFromInt((abs_tile_x - (chunk_tiles / 2)) - (result.chunk_x * chunk_tiles));
-        const y_tiles: f32 = @floatFromInt((abs_tile_y - (chunk_tiles / 2)) - (result.chunk_y * chunk_tiles));
-        result._offset = v2(x_tiles, y_tiles).mul(this.tile_side_in_meters);
-
-        assert(this.isCanonicalOffset(result._offset));
+        assert(isCanonicalOffset(this, result._offset));
 
         return result;
     } else {
-        const chunk_x = @divFloor(abs_tile_x, World.tiles_per_chunk_side);
-        const chunk_y = @divFloor(abs_tile_y, World.tiles_per_chunk_side);
+        const chunk_xy_tiles = World.tiles_per_chunk_side;
+        const chunk_z_tiles = 1;
 
-        const chunk_tiles = World.tiles_per_chunk_side;
-        const x_tiles: f32 = @floatFromInt((abs_tile_x - (chunk_tiles / 2)) - (chunk_x * chunk_tiles));
-        const y_tiles: f32 = @floatFromInt((abs_tile_y - (chunk_tiles / 2)) - (chunk_y * chunk_tiles));
-        const offset = v2(x_tiles, y_tiles).mul(this.tile_side_in_meters);
+        const chunk_x: i32 = @divFloor(abs_tile_x, chunk_xy_tiles);
+        const chunk_y: i32 = @divFloor(abs_tile_y, chunk_xy_tiles);
+        const chunk_z: i32 = @divFloor(abs_tile_z, chunk_z_tiles);
 
-        const result = World.Position{
+        const x_tiles: f32 = @floatFromInt((abs_tile_x - (chunk_xy_tiles / 2)) - (chunk_x * chunk_xy_tiles));
+        const y_tiles: f32 = @floatFromInt((abs_tile_y - (chunk_xy_tiles / 2)) - (chunk_y * chunk_xy_tiles));
+        const z_tiles: f32 = @floatFromInt((abs_tile_z - (chunk_z_tiles / 2)) - (chunk_z * chunk_z_tiles));
+
+        const offset = v3(x_tiles, y_tiles, z_tiles).mul(this.tile_side_in_meters);
+
+        const result: Position = .{
             .chunk_x = chunk_x,
             .chunk_y = chunk_y,
-            .chunk_z = abs_tile_z,
+            .chunk_z = chunk_z,
             ._offset = offset,
         };
 
-        assert(this.isCanonicalOffset(result._offset));
+        assert(isCanonicalOffset(this, result._offset));
 
         return result;
     }

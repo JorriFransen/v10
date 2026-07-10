@@ -49,11 +49,13 @@ pub const V2 = extern struct {
         return .{ .x = x, .y = y };
     }
 
+    pub const v2i = initSigned;
     pub inline fn initSigned(x: i32, y: i32) V2 {
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
     }
 
+    pub const v2u = initUnsigned;
     pub inline fn initUnsigned(x: u32, y: u32) V2 {
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
@@ -100,6 +102,12 @@ pub const V2 = extern struct {
         return result;
     }
 
+    pub inline fn hadamard(a: V2, b: V2) V2 {
+        const result: V2 = @bitCast(a.v() * b.v());
+        return result;
+    }
+
+    pub const dot = inner;
     pub inline fn inner(a: V2, b: V2) f32 {
         const result: f32 = @reduce(.Add, a.v() * b.v());
         return result;
@@ -135,13 +143,21 @@ pub const V3 = extern struct {
         return result;
     }
 
+    pub const v3i = initSigned;
     pub inline fn initSigned(x: i32, y: i32, z: i32) V3 {
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
         return result;
     }
 
+    pub const v3u = initUnsigned;
     pub inline fn initUnsigned(x: u32, y: u32, z: u32) V3 {
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
+        return result;
+    }
+
+    pub const v2z = initV2Z;
+    pub inline fn initV2Z(v2: V2, z: f32) V3 {
+        const result: V3 = .{ .x = v2.x, .y = v2.y, .z = z };
         return result;
     }
 
@@ -151,7 +167,7 @@ pub const V3 = extern struct {
     }
 
     pub inline fn v(this: V3) V {
-        const result: V3 = @bitCast(this);
+        const result: V = @bitCast(this);
         return result;
     }
 
@@ -186,8 +202,14 @@ pub const V3 = extern struct {
         return result;
     }
 
+    pub inline fn hadamard(a: V3, b: V3) V3 {
+        const result: V3 = @bitCast(a.v() * b.v());
+        return result;
+    }
+
+    pub const dot = inner;
     pub inline fn inner(a: V3, b: V3) f32 {
-        const result: f32 = @reduce(.add, a.v() * b.v());
+        const result: f32 = @reduce(.Add, a.v() * b.v());
         return result;
     }
 
@@ -198,6 +220,12 @@ pub const V3 = extern struct {
 
     pub inline fn lengthSquared(this: V3) f32 {
         const result: f32 = this.inner(this);
+        return result;
+    }
+
+    pub inline fn xy(this: V3) V2 {
+        var result: V2 = undefined;
+        result = @as(*V2, @ptrCast(@constCast(&this))).*;
         return result;
     }
 
@@ -222,11 +250,13 @@ pub const V4 = extern struct {
         return result;
     }
 
+    pub const v4i = initSigned;
     pub inline fn initSigned(x: i32, y: i32, z: i32, w: i32) V4 {
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
     }
 
+    pub const v4u = initUnsigned;
     pub inline fn initUnsigned(x: u32, y: u32, z: u32, w: u32) V4 {
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
@@ -238,7 +268,7 @@ pub const V4 = extern struct {
     }
 
     pub inline fn v(this: V4) V {
-        const result: V4 = @bitCast(this);
+        const result: V = @bitCast(this);
         return result;
     }
 
@@ -273,6 +303,12 @@ pub const V4 = extern struct {
         return result;
     }
 
+    pub inline fn hadamard(a: V4, b: V4) V4 {
+        const result: V4 = @bitCast(a.v() * b.v());
+        return result;
+    }
+
+    pub const dot = inner;
     pub inline fn inner(a: V4, b: V4) f32 {
         const result: f32 = @reduce(.add, a.v() * b.v());
         return result;
@@ -314,12 +350,24 @@ pub const V4 = extern struct {
     };
 };
 
-pub fn isInRectangle(rect: Rect, p: V2) bool {
+pub inline fn isInRectangle(rect: Rect, p: V2) bool {
     const result: bool =
         (p.x >= rect.min.x) and
         (p.y >= rect.min.y) and
         (p.x < rect.max.x) and
         (p.y < rect.max.y);
+
+    return result;
+}
+
+pub inline fn isInRectangle3(rect: Rect3, p: V3) bool {
+    const result: bool =
+        (p.x >= rect.min.x) and
+        (p.y >= rect.min.y) and
+        (p.z >= rect.min.z) and
+        (p.x < rect.max.x) and
+        (p.y < rect.max.y) and
+        (p.z < rect.max.z);
 
     return result;
 }
@@ -351,14 +399,57 @@ pub const Rect = struct {
         return result;
     }
 
-    pub inline fn addRadius(this: Rect, radius_w: f32, radius_h: f32) Rect {
-        const vr = V2.init(radius_w, radius_h);
-        const result: Rect = .{ .min = this.min.sub(vr), .max = this.max.add(vr) };
+    pub inline fn addRadius(this: Rect, radius: V2) Rect {
+        const result: Rect = .{
+            .min = this.min.sub(radius),
+            .max = this.max.add(radius),
+        };
         return result;
     }
 
     pub inline fn contains(this: Rect, p: V2) bool {
         const result = isInRectangle(this, p);
+        return result;
+    }
+};
+
+pub const Rect3 = struct {
+    min: V3,
+    max: V3,
+
+    pub inline fn minMax(min: V3, max: V3) Rect3 {
+        const result = Rect3{ .min = min, .max = max };
+        return result;
+    }
+
+    pub inline fn minDim(min: V3, dim: V3) Rect3 {
+        const result = Rect3{ .min = min, .max = min.add(dim) };
+        return result;
+    }
+
+    pub inline fn centerHalfDim(center: V3, half_dim: V3) Rect3 {
+        const result = Rect3{
+            .min = center.sub(half_dim),
+            .max = center.add(half_dim),
+        };
+        return result;
+    }
+
+    pub inline fn centerDim(center: V3, dim: V3) Rect3 {
+        const result = centerHalfDim(center, dim.mul(0.5));
+        return result;
+    }
+
+    pub inline fn addRadius(this: Rect3, radius: V3) Rect3 {
+        const result: Rect3 = .{
+            .min = this.min.sub(radius),
+            .max = this.max.add(radius),
+        };
+        return result;
+    }
+
+    pub inline fn contains(this: Rect3, p: V3) bool {
+        const result = isInRectangle3(this, p);
         return result;
     }
 };

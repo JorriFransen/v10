@@ -17,11 +17,11 @@ const entities = @import("entity.zig");
 const math = @import("math");
 const V2 = math.V2;
 const v2 = V2.init;
-const v2i = V2.initSigned;
-const v2u = V2.initUnsigned;
+const V3 = math.V3;
+const v3 = V3.init;
 const V4 = math.V4;
 const v4 = V4.init;
-const Rect = math.Rect;
+const Rect3 = math.Rect3;
 
 const assert = std.debug.assert;
 
@@ -152,7 +152,7 @@ pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_til
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
     const entity = addLowEntity(game_state, .wall, p);
 
-    entity.low.sim.size = V2.scalar(game_state.world.tile_side_in_meters);
+    entity.low.sim.dim = .v2z(.scalar(game_state.world.tile_side_in_meters), 0);
     entity.low.sim.flags.collides = true;
 
     return entity;
@@ -161,7 +161,7 @@ pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_til
 pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
     const entity = addLowEntity(game_state, .hero, game_state.camera_pos);
 
-    entity.low.sim.size = v2(1, 0.5);
+    entity.low.sim.dim = v3(1, 0.5, 0);
     entity.low.sim.flags.collides = true;
 
     initHitpoints(&entity.low.sim, 3);
@@ -181,7 +181,7 @@ pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_
     const entity = addLowEntity(game_state, .monster, p);
 
     initHitpoints(&entity.low.sim, 3);
-    entity.low.sim.size = v2(1, 0.5);
+    entity.low.sim.dim = v3(1, 0.5, 0);
     entity.low.sim.flags.collides = true;
 
     return entity;
@@ -191,7 +191,7 @@ pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
     const entity = addLowEntity(game_state, .familiar, p);
 
-    entity.low.sim.size = v2(1, 0.5);
+    entity.low.sim.dim = v3(1, 0.5, 0);
 
     return entity;
 }
@@ -199,7 +199,7 @@ pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs
 pub fn addSword(game_state: *GameState) AddLowEntityResult {
     const entity = addLowEntity(game_state, .sword, .null);
 
-    entity.low.sim.size = v2(1, 0.5);
+    entity.low.sim.dim = v3(1, 0.5, 0);
     entity.low.sim.flags.non_spatial = true;
 
     return entity;
@@ -462,9 +462,9 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: *const LoadedBitmap, px: f32
             const b: f32 = (1 - a) * db + a * sb;
 
             dest[0] = (ColorU8ARGB{
-                .r = @intFromFloat(r + 0.5),
-                .g = @intFromFloat(g + 0.5),
-                .b = @intFromFloat(b + 0.5),
+                .r = @intFromFloat(@max(0, r + 0.5)),
+                .g = @intFromFloat(@max(0, g + 0.5)),
+                .b = @intFromFloat(@max(0, b + 0.5)),
                 .a = 255,
             }).asU32();
 
@@ -720,8 +720,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 game_state.controlled_heroes[controller_index] = .{ .index = con_hero.index };
             }
         } else {
-            con_hero.dz = 0;
             con_hero.ddp = .zero;
+            con_hero.dz = 0;
             con_hero.d_sword = .zero;
 
             if (controller.is_analog) {
@@ -763,14 +763,15 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
     const tile_span_x = GameState.screen_tile_width * 3;
     const tile_span_y = GameState.screen_tile_height * 3;
-    const bound_dim = v2(tile_span_x, tile_span_y).mul(world.tile_side_in_meters);
-    const camera_bounds: Rect = .centerDim(V2.zero, bound_dim);
+    const tile_span_z = 1;
+    const bound_dim = v3(tile_span_x, tile_span_y, tile_span_z).mul(world.tile_side_in_meters);
+    const camera_bounds: Rect3 = .centerDim(V3.zero, bound_dim);
 
     var sim_arena = MemoryArena.init(game_memory.transient[0..game_memory.transient_len]);
-    const sim_region = SimRegion.begin(&sim_arena, game_state, game_state.camera_pos, camera_bounds);
+    const sim_region = SimRegion.begin(&sim_arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
 
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
-    drawRectangle(offscreen_buffer, V2.zero, v2u(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
+    drawRectangle(offscreen_buffer, V2.zero, .v2u(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
     // drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0, .{});
 
     const screen_center = v2(
@@ -783,10 +784,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         if (entity.updatable) {
             piece_group.count = 0;
 
-            const shadow_alpha = @max(0, 1 - entity.z);
+            const shadow_alpha = @max(0, 1 - entity.p.z);
 
             var move_spec: MoveSpec = .{};
-            var ddp: V2 = .zero;
+            var ddp: V3 = .zero;
 
             const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(entity.facing_direction)];
 
@@ -797,17 +798,17 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     for (&game_state.controlled_heroes) |*con_hero| {
                         if (con_hero.index == entity.storage_index) {
                             if (con_hero.dz != 0) {
-                                entity.dz = con_hero.dz;
+                                entity.dp.z = con_hero.dz;
                             }
 
                             move_spec = MoveSpec{ .speed = 50, .drag = 8 };
-                            ddp = con_hero.ddp;
+                            ddp = V3.v2z(con_hero.ddp, 0);
 
                             if (con_hero.d_sword.x != 0 or con_hero.d_sword.y != 0) {
                                 if (entity.sword.ptr) |sword| if (sword.flags.non_spatial) {
                                     sword.distance_limit = 5;
                                     addCollisionRule(game_state, entity.storage_index, sword.storage_index, false);
-                                    SimRegion.makeEntitySpatial(sword, entity.p, entity.dp.add(con_hero.d_sword.mul(5)));
+                                    SimRegion.makeEntitySpatial(sword, entity.p, entity.dp.add(.v2z(con_hero.d_sword.mul(5), 0)));
                                 };
                             }
                         }
@@ -827,7 +828,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
                 .sword => {
                     move_spec = MoveSpec{ .unit_max_ddp = false, .speed = 0 };
-                    ddp = V2.zero;
+                    ddp = V3.zero;
 
                     if (entity.distance_limit == 0) {
                         clearCollisionRulesFor(game_state, entity.storage_index);
@@ -852,7 +853,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                         }
                     }
 
-                    ddp = V2.zero;
+                    ddp = V3.zero;
                     if (closest_hero_opt) |hero| {
                         if (closest_hero_d_sq >= math.square(3)) {
                             const acceleration = 0.5;
@@ -891,7 +892,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 screen_center.x + (game_state.meters_to_pixels * entity.p.x),
                 screen_center.y - (game_state.meters_to_pixels * entity.p.y),
             );
-            const entity_z = game_state.meters_to_pixels * -entity.z;
+            const entity_z = game_state.meters_to_pixels * -entity.p.z;
 
             for (piece_group.pieces[0..piece_group.count]) |*piece| {
                 const center = v2(
