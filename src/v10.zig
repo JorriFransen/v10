@@ -71,9 +71,16 @@ pub const ControlledHero = struct {
     d_sword: V2 = .zero,
 };
 
-pub const PairwiseCollisionRule = struct {
-    pub const double_entries = true;
+pub const PairwiseCollisionFlag = packed struct(u32) {
+    should_collide: bool = false,
+    temporary: bool = false,
+    __reserved__: u30 = 0,
+};
 
+pub const PairwiseCollisionRule = struct {
+    pub const double_entries = false;
+
+    // flags: PairwiseCollisionFlag,
     should_collide: bool,
     storage_index_a: EntityIndex,
     storage_index_b: EntityIndex,
@@ -105,6 +112,7 @@ pub const GameState = struct {
 
     tree: LoadedBitmap = .{},
     sword: LoadedBitmap = .{},
+    stairwell: LoadedBitmap = .{},
 
     // Must be power of 2
     collision_rule_hash: [16]?*PairwiseCollisionRule = @splat(null),
@@ -201,6 +209,16 @@ pub fn addSword(game_state: *GameState) AddLowEntityResult {
 
     entity.low.sim.dim = v3(1, 0.5, 0);
     entity.low.sim.flags.non_spatial = true;
+
+    return entity;
+}
+
+pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const entity = addLowEntity(game_state, .stairwell, p);
+
+    entity.low.sim.dim.pxy().* = .scalar(game_state.world.tile_side_in_meters);
+    entity.low.sim.dim.z = game_state.world.tile_depth_in_meters;
 
     return entity;
 }
@@ -537,12 +555,13 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     const asset_prefix = "../../hh_assets/";
     // const asset_prefix = "";
 
-    const asset_load_begin = std.Io.Timestamp.now(thread_context.io, .real);
+    const asset_load_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
 
     game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_background.bmp");
     game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_shadow.bmp");
     game_state.tree = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tree00.bmp");
     game_state.sword = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/rock03.bmp");
+    game_state.stairwell = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/rock02.bmp");
 
     game_state.hero_bitmaps[0].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_head.bmp");
     game_state.hero_bitmaps[0].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_cape.bmp");
@@ -564,8 +583,10 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_torso.bmp");
     game_state.hero_bitmaps[3].alignment = v2(72, 182);
 
-    const asset_load_duration = asset_load_begin.untilNow(thread_context.io, .real);
+    const asset_load_duration = asset_load_begin_ts.untilNow(thread_context.io, .real);
     log.info("Asset loading took: {f}", .{asset_load_duration});
+
+    const world_build_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
 
     var next_random_number_index: usize = 0;
 
@@ -584,26 +605,26 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_up = false;
     var door_down = false;
 
-    for (0..2000) |_| {
+    for (0..2) |_| {
+        assert(next_random_number_index < Random.random_number_table.len);
+
         const random_number = Random.random_number_table[next_random_number_index];
         next_random_number_index += 1;
 
         const random_choice =
-            // if (door_up or door_down)
-            random_number % 2
-        // else
-        //     random_number % 3
-        ;
+            if (door_up or door_down)
+                random_number % 2
+            else
+                random_number % 3;
 
         var created_ladder = false;
 
         if (random_choice == 2) {
+            created_ladder = true;
             if (abs_tile_z == screen_base_z) {
                 door_up = true;
-                created_ladder = true;
             } else {
                 door_down = true;
-                created_ladder = true;
             }
         } else if (random_choice == 1) {
             door_right = true;
@@ -620,52 +641,34 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
                 const abs_tile_x: i32 = (screen_x * GameState.screen_tile_width) + tile_x;
                 const abs_tile_y: i32 = (screen_y * GameState.screen_tile_height) + tile_y;
 
-                var tile_value: u32 = 1;
+                var should_be_wall = false;
 
                 if ((tile_x == 0) and
                     (!door_left or (tile_y != (GameState.screen_tile_height / 2))))
                 {
-                    tile_value = 2;
+                    should_be_wall = true;
                 } else if ((tile_x == GameState.screen_tile_width - 1) and
                     (!door_right or (tile_y != (GameState.screen_tile_height / 2))))
                 {
-                    tile_value = 2;
+                    should_be_wall = true;
                 } else if ((tile_y == 0) and
                     (!door_bottom or (tile_x != (GameState.screen_tile_width / 2))))
                 {
-                    tile_value = 2;
+                    should_be_wall = true;
                 } else if ((tile_y == GameState.screen_tile_height - 1) and
                     (!door_top or (tile_x != (GameState.screen_tile_width / 2))))
                 {
-                    tile_value = 2;
+                    should_be_wall = true;
                 }
 
-                if (tile_x == 10 and tile_y == 6) {
-                    if (door_up) {
-                        tile_value = 3;
-                    } else if (door_down) {
-                        tile_value = 4;
+                if (should_be_wall) {
+                    _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
+                } else if (created_ladder) {
+                    if (tile_x == 10 and tile_y == 6) {
+                        _ = addStair(game_state, abs_tile_x, abs_tile_y, if (door_down) abs_tile_z - 1 else abs_tile_z);
                     }
                 }
-
-                _ = world.getChunk(0, 0, 0, .{});
-
-                if (tile_value == 2) {
-                    _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
-                }
             }
-        }
-
-        if (random_choice == 2) {
-            if (abs_tile_z == screen_base_z) {
-                abs_tile_z = screen_base_z + 1;
-            } else {
-                abs_tile_z = screen_base_z;
-            }
-        } else if (random_choice == 1) {
-            screen_x += 1;
-        } else {
-            screen_y += 1;
         }
 
         door_left = door_right;
@@ -681,6 +684,18 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
         door_right = false;
         door_top = false;
+
+        if (random_choice == 2) {
+            if (abs_tile_z == screen_base_z) {
+                abs_tile_z = screen_base_z + 1;
+            } else {
+                abs_tile_z = screen_base_z;
+            }
+        } else if (random_choice == 1) {
+            screen_x += 1;
+        } else {
+            screen_y += 1;
+        }
     }
 
     const cam_tile_x = (screen_base_x * GameState.screen_tile_width) + (GameState.screen_tile_width / 2);
@@ -689,12 +704,14 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     game_state.camera_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, cam_tile_z);
 
-    _ = addMonster(game_state, cam_tile_x + 2, cam_tile_y + 2, cam_tile_z);
+    _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
 
     _ = addFamiliar(game_state, cam_tile_x - 2, cam_tile_y + 2, cam_tile_z);
 
     // _ = addWall(game_state, -1, -1, 0);
 
+    const world_build_duration = world_build_begin_ts.untilNow(thread_context.io, .real);
+    log.info("World building took: {f}", .{world_build_duration});
 }
 
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void {
@@ -795,6 +812,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 .null => unreachable,
 
                 .hero => {
+                    // pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 1, 0, 1), .{});
+
                     for (&game_state.controlled_heroes) |*con_hero| {
                         if (con_hero.index == entity.storage_index) {
                             if (con_hero.dz != 0) {
@@ -881,6 +900,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     pushBitmap(&piece_group, &hero_bitmap.torso, V2.zero, 0, hero_bitmap.alignment, .{});
 
                     drawHitpoints(entity, &piece_group);
+                },
+
+                .stairwell => {
+                    // pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 0, 0, 1), .{});
+                    pushBitmap(&piece_group, &game_state.stairwell, V2.zero, 0, v2(37, 37), .{});
                 },
             }
 

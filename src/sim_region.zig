@@ -44,6 +44,7 @@ pub const EntityType = enum {
     familiar,
     monster,
     sword,
+    stairwell,
 };
 
 const FacingDirection = enum(u2) {
@@ -207,8 +208,12 @@ pub fn end(this: *SimRegion, game_state: *GameState) void {
 }
 
 fn entityOverlapsRectangle(p: V3, dim: V3, rect: Rect3) bool {
-    const minkowski_rect = rect.addRadius(dim.mul(0.5));
-    const result = math.isInRectangle3(minkowski_rect, p);
+    // const minkowski_rect = rect.addRadius(dim.mul(0.5));
+    // const result = math.isInRectangle3(minkowski_rect, p);
+    // return result;
+
+    const entity_rect: Rect3 = .centerDim(p, dim);
+    const result = entity_rect.intersects(rect);
     return result;
 }
 
@@ -368,11 +373,15 @@ fn shouldCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
     return result;
 }
 
-fn handleCollision(a_: *Entity, b_: *Entity) bool {
-    var stops_on_collision = true;
+fn handleCollision(game_state: *GameState, a_: *Entity, b_: *Entity, was_overlapping: bool) bool {
+    _ = was_overlapping;
+    var stops_on_collision = false;
 
     if (a_.type == .sword) {
+        _ = v10.addCollisionRule(game_state, a_.storage_index, b_.storage_index, false);
         stops_on_collision = false;
+    } else {
+        stops_on_collision = true;
     }
 
     const a: *Entity, const b: *Entity = if (@intFromEnum(a_.type) > @intFromEnum(b_.type))
@@ -384,6 +393,10 @@ fn handleCollision(a_: *Entity, b_: *Entity) bool {
         if (a.hitpoint_max > 0) {
             a.hitpoint_max -= 1;
         }
+    }
+
+    if (a.type == .hero and b.type == .stairwell) {
+        stops_on_collision = false;
     }
 
     return stops_on_collision;
@@ -422,8 +435,30 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         distance_remaining = 10000;
     }
 
-    var it_count: usize = 0;
-    while (it_count < 4) : (it_count += 1) {
+    var overlapping_count: usize = 0;
+    var overlapping_entities: [16]*Entity = undefined;
+
+    {
+        const entity_rect: Rect3 = .centerDim(entity.p, entity.dim);
+        for (this.entities) |*test_entity| {
+            if (shouldCollide(game_state, entity, test_entity)) {
+                const test_entity_rect: Rect3 = .centerDim(test_entity.p, test_entity.dim);
+
+                if (entity_rect.intersects(test_entity_rect)) {
+                    if (overlapping_count < overlapping_entities.len) {
+                        // if (v10.addCollisionRule(game_state, entity.storage_index, test_entity.storage_index, false)) {
+                        overlapping_entities[overlapping_count] = test_entity;
+                        overlapping_count += 1;
+                        // }
+                    } else {
+                        unreachable; // Too may overlapping entities
+                    }
+                }
+            }
+        }
+    }
+
+    for (0..4) |_| {
         var t_min: f32 = 1;
 
         const player_delta_length = player_delta.length();
@@ -467,26 +502,39 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
                 }
             }
 
-            if (test_wall_hh) {
-                // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
-                entity.p = entity.p.add(player_delta.mul(t_min));
-            } else {
-                const push_out: f32 = 0.0001;
-                const delta = player_delta.mul(t_min).add(wall_normal.mul(push_out));
-                entity.p = entity.p.add(delta);
-            }
+            entity.p = entity.p.add(player_delta.mul(t_min));
+
             distance_remaining -= t_min * player_delta_length;
 
             if (hit_entity_opt) |hit_entity| {
                 player_delta = desired_position.sub(entity.p);
 
-                const stops_on_collision = handleCollision(entity, hit_entity);
+                var overlap_index: usize = overlapping_count;
+
+                var test_overlap_index: usize = 0;
+                while (test_overlap_index < overlapping_count) : (test_overlap_index += 1) {
+                    if (hit_entity == overlapping_entities[test_overlap_index]) {
+                        overlap_index = test_overlap_index;
+                        break;
+                    }
+                }
+
+                const was_overlapping = overlap_index != overlapping_count;
+                const stops_on_collision = handleCollision(game_state, entity, hit_entity, was_overlapping);
 
                 if (stops_on_collision) {
                     player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
                     entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
                 } else {
-                    v10.addCollisionRule(game_state, entity.storage_index, hit_entity.storage_index, false);
+                    if (was_overlapping) {
+                        overlapping_count -= 1;
+                        overlapping_entities[overlap_index] = overlapping_entities[overlapping_count];
+                    } else if (overlapping_count < overlapping_entities.len) {
+                        overlapping_entities[overlapping_count] = hit_entity;
+                        overlapping_count += 1;
+                    } else {
+                        unreachable; // Too many overlapping entities
+                    }
                 }
             } else {
                 break;
@@ -513,7 +561,6 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         else if (entity.dp.y > 0) .up else .down;
 }
 
-const test_wall_hh = true;
 fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
     var hit = false;
 
@@ -523,13 +570,8 @@ fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t
         if (t_result >= 0 and t_min.* > t_result) {
             const y = test_y + (t_result * delta_y);
             if (y >= wall_min_y and y <= wall_max_y) {
-                if (test_wall_hh) {
-                    // Current hh version, gets stuck on edges perpendicular to the one the player is sliding along.
-                    const t_epsilon: f32 = 0.0001;
-                    t_min.* = @max(0, t_result - t_epsilon);
-                } else {
-                    t_min.* = t_result;
-                }
+                const t_epsilon: f32 = 0.0001;
+                t_min.* = @max(0, t_result - t_epsilon);
                 hit = true;
             }
         }

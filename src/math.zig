@@ -229,6 +229,11 @@ pub const V3 = extern struct {
         return result;
     }
 
+    pub inline fn pxy(this: *V3) *V2 {
+        const result: *V2 = @ptrCast(this);
+        return result;
+    }
+
     pub fn format(this: V3, writer: anytype) !void {
         try writer.print("[{}, {}, {}]", .{ this.x, this.y, this.z });
     }
@@ -360,15 +365,10 @@ pub inline fn isInRectangle(rect: Rect, p: V2) bool {
     return result;
 }
 
-pub inline fn isInRectangle3(rect: Rect3, p: V3) bool {
-    const result: bool =
-        (p.x >= rect.min.x) and
-        (p.y >= rect.min.y) and
-        (p.z >= rect.min.z) and
-        (p.x < rect.max.x) and
-        (p.y < rect.max.y) and
-        (p.z < rect.max.z);
-
+pub inline fn rectanglesIntersect(a: Rect, b: Rect) bool {
+    const result =
+        (a.max.x >= b.min.x and a.min.x <= b.max.x) and
+        (a.max.y >= b.min.y and a.min.y <= b.max.y);
     return result;
 }
 
@@ -411,7 +411,31 @@ pub const Rect = struct {
         const result = isInRectangle(this, p);
         return result;
     }
+
+    pub inline fn intersects(this: Rect, rect: Rect) bool {
+        return rectanglesIntersect(this, rect);
+    }
 };
+
+pub inline fn isInRectangle3(rect: Rect3, p: V3) bool {
+    const result: bool =
+        (p.x >= rect.min.x) and
+        (p.y >= rect.min.y) and
+        (p.z >= rect.min.z) and
+        (p.x < rect.max.x) and
+        (p.y < rect.max.y) and
+        (p.z < rect.max.z);
+
+    return result;
+}
+
+pub inline fn rectangles3Intersect(a: Rect3, b: Rect3) bool {
+    const result =
+        (a.max.x >= b.min.x and a.min.x <= b.max.x) and
+        (a.max.y >= b.min.y and a.min.y <= b.max.y) and
+        (a.max.z >= b.min.z and a.min.z <= b.max.z);
+    return result;
+}
 
 pub const Rect3 = struct {
     min: V3,
@@ -451,5 +475,9 @@ pub const Rect3 = struct {
     pub inline fn contains(this: Rect3, p: V3) bool {
         const result = isInRectangle3(this, p);
         return result;
+    }
+
+    pub inline fn intersects(this: Rect3, rect: Rect3) bool {
+        return rectangles3Intersect(this, rect);
     }
 };
