@@ -284,11 +284,11 @@ pub fn changeEntityLocationRaw(this: *World, arena: *MemoryArena, low_index: Ent
 }
 
 const hh_tile_mapping = true;
-pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) Position {
+pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32, additional_offset: V3) Position {
     if (hh_tile_mapping) {
         // hh match
         const offset: V3 = .mul(.v3i(abs_tile_x, abs_tile_y, abs_tile_z), this.tile_side_in_meters);
-        const result = Position.zero.offset(this, offset);
+        const result = Position.zero.offset(this, offset.add(additional_offset));
 
         assert(isCanonicalOffset(this, result._offset));
 

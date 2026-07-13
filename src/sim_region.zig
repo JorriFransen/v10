@@ -74,7 +74,8 @@ pub const EntityHash = struct {
 pub const EntityFlags = packed struct(u32) {
     collides: bool = false,
     non_spatial: bool = false,
-    __reserved_0: u28 = 0,
+    moveable: bool = false,
+    __reserved_0: u27 = 0,
     in_sim: bool = false,
     __reserved_1: u1 = 0,
 };
@@ -138,20 +139,23 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: Wor
     const min_chunk_p = region_origin.offset(world, sim_region.bounds.min);
     const max_chunk_p = region_origin.offset(world, sim_region.bounds.max);
 
-    var chunk_y: i32 = min_chunk_p.chunk_y;
-    while (chunk_y <= max_chunk_p.chunk_y) : (chunk_y += 1) {
-        var chunk_x: i32 = min_chunk_p.chunk_x;
-        while (chunk_x <= max_chunk_p.chunk_x) : (chunk_x += 1) {
-            if (world.getChunk(chunk_x, chunk_y, region_origin.chunk_z, .{})) |chunk| {
-                var block_opt: ?*World.EntityBlock = &chunk.first_entity_block;
+    var chunk_z: i32 = min_chunk_p.chunk_z;
+    while (chunk_z <= max_chunk_p.chunk_z) : (chunk_z += 1) {
+        var chunk_y: i32 = min_chunk_p.chunk_y;
+        while (chunk_y <= max_chunk_p.chunk_y) : (chunk_y += 1) {
+            var chunk_x: i32 = min_chunk_p.chunk_x;
+            while (chunk_x <= max_chunk_p.chunk_x) : (chunk_x += 1) {
+                if (world.getChunk(chunk_x, chunk_y, chunk_z, .{})) |chunk| {
+                    var block_opt: ?*World.EntityBlock = &chunk.first_entity_block;
 
-                while (block_opt) |block| : (block_opt = block.next) {
-                    for (block.entity_indices[0..block.entity_count]) |low_index| {
-                        const low = &game_state.low_entities[low_index];
-                        if (!low.sim.flags.non_spatial) {
-                            const sim_space_p = sim_region.getSimSpaceP(game_state, low);
-                            if (entityOverlapsRectangle(sim_space_p, low.sim.dim, sim_region.bounds)) {
-                                _ = sim_region.addEntity(game_state, low_index, low, sim_space_p);
+                    while (block_opt) |block| : (block_opt = block.next) {
+                        for (block.entity_indices[0..block.entity_count]) |low_index| {
+                            const low = &game_state.low_entities[low_index];
+                            if (!low.sim.flags.non_spatial) {
+                                const sim_space_p = sim_region.getSimSpaceP(game_state, low);
+                                if (entityOverlapsRectangle(sim_space_p, low.sim.dim, sim_region.bounds)) {
+                                    _ = sim_region.addEntity(game_state, low_index, low, sim_space_p);
+                                }
                             }
                         }
                     }
@@ -344,7 +348,33 @@ pub inline fn makeEntityNonSpatial(entity: *Entity) void {
     entity.p = invalid_p;
 }
 
-fn shouldCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
+fn canOverlap(game_state: *GameState, moving: *Entity, region: *Entity) bool {
+    _ = game_state;
+
+    var result = false;
+
+    if (moving != region) {
+        if (region.type == .stairwell) {
+            result = true;
+        }
+    }
+
+    return result;
+}
+
+fn handleOverlap(game_state: *GameState, moving: *Entity, region: *Entity, dt: f32, ground: *f32) void {
+    _ = game_state;
+    _ = dt;
+
+    if (region.type == .stairwell) {
+        const region_rect = Rect3.centerDim(region.p, region.dim);
+        const bary = region_rect.barycentric(moving.p).clamp01();
+
+        ground.* = math.lerp(region_rect.min.z, bary.y, region_rect.max.z);
+    }
+}
+
+fn canCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
     const a: *Entity, const b: *Entity = if (a_.storage_index > b_.storage_index)
         .{ b_, a_ }
     else
@@ -358,6 +388,12 @@ fn shouldCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
         }
     }
 
+    if ((a.type == .hero and b.type == .stairwell) or
+        (a.type == .stairwell and b.type == .hero))
+    {
+        result = false;
+    }
+
     const hash_bucket = a.storage_index & (game_state.collision_rule_hash.len - 1);
     var rule_opt: ?*PairwiseCollisionRule = game_state.collision_rule_hash[hash_bucket];
 
@@ -365,7 +401,7 @@ fn shouldCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
         if (rule.storage_index_a == a.storage_index and
             rule.storage_index_b == b.storage_index)
         {
-            result = rule.should_collide;
+            result = rule.can_collide;
             break;
         }
     }
@@ -373,8 +409,7 @@ fn shouldCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
     return result;
 }
 
-fn handleCollision(game_state: *GameState, a_: *Entity, b_: *Entity, was_overlapping: bool) bool {
-    _ = was_overlapping;
+fn handleCollision(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
     var stops_on_collision = false;
 
     if (a_.type == .sword) {
@@ -393,10 +428,6 @@ fn handleCollision(game_state: *GameState, a_: *Entity, b_: *Entity, was_overlap
         if (a.hitpoint_max > 0) {
             a.hitpoint_max -= 1;
         }
-    }
-
-    if (a.type == .hero and b.type == .stairwell) {
-        stops_on_collision = false;
     }
 
     return stops_on_collision;
@@ -435,29 +466,6 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         distance_remaining = 10000;
     }
 
-    var overlapping_count: usize = 0;
-    var overlapping_entities: [16]*Entity = undefined;
-
-    {
-        const entity_rect: Rect3 = .centerDim(entity.p, entity.dim);
-        for (this.entities) |*test_entity| {
-            if (shouldCollide(game_state, entity, test_entity)) {
-                const test_entity_rect: Rect3 = .centerDim(test_entity.p, test_entity.dim);
-
-                if (entity_rect.intersects(test_entity_rect)) {
-                    if (overlapping_count < overlapping_entities.len) {
-                        // if (v10.addCollisionRule(game_state, entity.storage_index, test_entity.storage_index, false)) {
-                        overlapping_entities[overlapping_count] = test_entity;
-                        overlapping_count += 1;
-                        // }
-                    } else {
-                        unreachable; // Too may overlapping entities
-                    }
-                }
-            }
-        }
-    }
-
     for (0..4) |_| {
         var t_min: f32 = 1;
 
@@ -474,7 +482,9 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
 
             if (!entity.flags.non_spatial) {
                 for (this.entities) |*test_entity| {
-                    if (shouldCollide(game_state, entity, test_entity)) {
+                    if (canCollide(game_state, entity, test_entity) and
+                        test_entity.p.z == entity.p.z)
+                    {
                         const minkowski_diameter = test_entity.dim.add(entity.dim);
 
                         const min_corner: V3 = minkowski_diameter.mul(-0.5);
@@ -509,32 +519,11 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
             if (hit_entity_opt) |hit_entity| {
                 player_delta = desired_position.sub(entity.p);
 
-                var overlap_index: usize = overlapping_count;
-
-                var test_overlap_index: usize = 0;
-                while (test_overlap_index < overlapping_count) : (test_overlap_index += 1) {
-                    if (hit_entity == overlapping_entities[test_overlap_index]) {
-                        overlap_index = test_overlap_index;
-                        break;
-                    }
-                }
-
-                const was_overlapping = overlap_index != overlapping_count;
-                const stops_on_collision = handleCollision(game_state, entity, hit_entity, was_overlapping);
+                const stops_on_collision = handleCollision(game_state, entity, hit_entity);
 
                 if (stops_on_collision) {
                     player_delta = player_delta.sub(wall_normal.mul(player_delta.inner(wall_normal)));
                     entity.dp = entity.dp.sub(wall_normal.mul(entity.dp.inner(wall_normal)));
-                } else {
-                    if (was_overlapping) {
-                        overlapping_count -= 1;
-                        overlapping_entities[overlap_index] = overlapping_entities[overlapping_count];
-                    } else if (overlapping_count < overlapping_entities.len) {
-                        overlapping_entities[overlapping_count] = hit_entity;
-                        overlapping_count += 1;
-                    } else {
-                        unreachable; // Too many overlapping entities
-                    }
                 }
             } else {
                 break;
@@ -544,8 +533,22 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         }
     }
 
-    if (entity.p.z < 0) {
-        entity.p.z = 0;
+    var ground: f32 = 0;
+    {
+        const entity_rect: Rect3 = .centerDim(entity.p, entity.dim);
+        for (this.entities) |*test_entity| {
+            if (canOverlap(game_state, entity, test_entity)) {
+                const test_entity_rect: Rect3 = .centerDim(test_entity.p, test_entity.dim);
+
+                if (entity_rect.intersects(test_entity_rect)) {
+                    handleOverlap(game_state, entity, test_entity, dt, &ground);
+                }
+            }
+        }
+    }
+
+    if (entity.p.z < ground) {
+        entity.p.z = ground;
         entity.dp.z = 0;
     }
 

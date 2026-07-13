@@ -11,6 +11,8 @@ pub const isPowerOfTwo = std.math.isPowerOfTwo;
 pub const shl = std.math.shl;
 pub const shr = std.math.shr;
 
+const math = @This();
+
 pub const Log2Int = std.math.Log2Int;
 
 pub inline fn square(x: f32) f32 {
@@ -19,6 +21,21 @@ pub inline fn square(x: f32) f32 {
 
 pub inline fn sqrt(x: f32) f32 {
     return @sqrt(x);
+}
+
+pub inline fn lerp(a: f32, t: f32, b: f32) f32 {
+    const result = ((1 - t) * a) + (t * b);
+    return result;
+}
+
+pub inline fn clamp(min: f32, value: f32, max: f32) f32 {
+    const result = @min(max, @max(min, value));
+    return result;
+}
+
+pub inline fn clamp01(value: f32) f32 {
+    const result = clamp(0, value, 1);
+    return result;
 }
 
 pub inline fn divCeil(numerator: anytype, denominator: @TypeOf(numerator)) @TypeOf(numerator) {
@@ -36,6 +53,25 @@ pub inline fn divCeil(numerator: anytype, denominator: @TypeOf(numerator)) @Type
     return std.math.divCeil(T, numerator, denominator) catch unreachable;
 }
 
+pub inline fn safeRatioN(numerator: f32, divisor: f32, n: f32) f32 {
+    var result: f32 = n;
+
+    if (divisor != 0) {
+        result = numerator / divisor;
+    }
+
+    return result;
+}
+
+pub inline fn safeRatio0(numerator: f32, divisor: f32) f32 {
+    const result = safeRatioN(numerator, divisor, 0);
+    return result;
+}
+
+pub inline fn safeRatio1(numerator: f32, divisor: f32) f32 {
+    const result = safeRatioN(numerator, divisor, 1);
+    return result;
+}
 pub const V2 = extern struct {
     x: f32 = 0,
     y: f32 = 0,
@@ -120,6 +156,15 @@ pub const V2 = extern struct {
 
     pub inline fn lengthSquared(this: V2) f32 {
         const result: f32 = this.inner(this);
+        return result;
+    }
+
+    pub inline fn clamp01(this: V2) V2 {
+        const min: V = @splat(0);
+        const max: V = @splat(1);
+
+        const result: V3 = @bitCast(@min(max, @max(min, this.v())));
+
         return result;
     }
 
@@ -234,6 +279,15 @@ pub const V3 = extern struct {
         return result;
     }
 
+    pub inline fn clamp01(this: V3) V3 {
+        const min: V = @splat(0);
+        const max: V = @splat(1);
+
+        const result: V3 = @bitCast(@min(max, @max(min, this.v())));
+
+        return result;
+    }
+
     pub fn format(this: V3, writer: anytype) !void {
         try writer.print("[{}, {}, {}]", .{ this.x, this.y, this.z });
     }
@@ -326,6 +380,15 @@ pub const V4 = extern struct {
 
     pub inline fn lengthSquared(this: V4) f32 {
         const result: f32 = this.inner(this);
+        return result;
+    }
+
+    pub inline fn clamp01(this: V4) V4 {
+        const min: V = @splat(0);
+        const max: V = @splat(1);
+
+        const result: V3 = @bitCast(@min(max, @max(min, this.v())));
+
         return result;
     }
 
@@ -437,6 +500,16 @@ pub inline fn rectangles3Intersect(a: Rect3, b: Rect3) bool {
     return result;
 }
 
+pub inline fn getBarycentric(a: Rect3, p: V3) V3 {
+    const result: V3 = .{
+        .x = safeRatio0(p.x - a.min.x, a.max.x - a.min.x),
+        .y = safeRatio0(p.y - a.min.y, a.max.y - a.min.y),
+        .z = safeRatio0(p.z - a.min.z, a.max.z - a.min.z),
+    };
+
+    return result;
+}
+
 pub const Rect3 = struct {
     min: V3,
     max: V3,
@@ -479,5 +552,10 @@ pub const Rect3 = struct {
 
     pub inline fn intersects(this: Rect3, rect: Rect3) bool {
         return rectangles3Intersect(this, rect);
+    }
+
+    pub inline fn barycentric(this: Rect3, p: V3) V3 {
+        const result = getBarycentric(this, p);
+        return result;
     }
 };

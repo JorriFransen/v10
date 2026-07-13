@@ -71,17 +71,10 @@ pub const ControlledHero = struct {
     d_sword: V2 = .zero,
 };
 
-pub const PairwiseCollisionFlag = packed struct(u32) {
-    should_collide: bool = false,
-    temporary: bool = false,
-    __reserved__: u30 = 0,
-};
-
 pub const PairwiseCollisionRule = struct {
     pub const double_entries = false;
 
-    // flags: PairwiseCollisionFlag,
-    should_collide: bool,
+    can_collide: bool,
     storage_index_a: EntityIndex,
     storage_index_b: EntityIndex,
 
@@ -157,7 +150,7 @@ pub fn addLowEntity(game_state: *GameState, entity_type: EntityType, p: World.Po
 }
 
 pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z, .zero);
     const entity = addLowEntity(game_state, .wall, p);
 
     entity.low.sim.dim = .v2z(.scalar(game_state.world.tile_side_in_meters), 0);
@@ -170,7 +163,10 @@ pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
     const entity = addLowEntity(game_state, .hero, game_state.camera_pos);
 
     entity.low.sim.dim = v3(1, 0.5, 0);
-    entity.low.sim.flags.collides = true;
+    entity.low.sim.flags = .{
+        .collides = true,
+        .moveable = true,
+    };
 
     initHitpoints(&entity.low.sim, 3);
 
@@ -185,19 +181,24 @@ pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
 }
 
 pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z, .zero);
     const entity = addLowEntity(game_state, .monster, p);
 
     initHitpoints(&entity.low.sim, 3);
     entity.low.sim.dim = v3(1, 0.5, 0);
-    entity.low.sim.flags.collides = true;
+    entity.low.sim.flags = .{
+        .collides = true,
+        .moveable = true,
+    };
 
     return entity;
 }
 
 pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z, .zero);
     const entity = addLowEntity(game_state, .familiar, p);
+
+    entity.low.sim.flags.moveable = true;
 
     entity.low.sim.dim = v3(1, 0.5, 0);
 
@@ -208,17 +209,25 @@ pub fn addSword(game_state: *GameState) AddLowEntityResult {
     const entity = addLowEntity(game_state, .sword, .null);
 
     entity.low.sim.dim = v3(1, 0.5, 0);
-    entity.low.sim.flags.non_spatial = true;
+    entity.low.sim.flags = .{
+        .moveable = true,
+        .non_spatial = true,
+    };
 
     return entity;
 }
 
 pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = game_state.world.chunkPositionFromTilePosition(
+        abs_tile_x,
+        abs_tile_y,
+        abs_tile_z,
+        v3(0, 0, 0.5 * game_state.world.tile_depth_in_meters),
+    );
     const entity = addLowEntity(game_state, .stairwell, p);
 
     entity.low.sim.dim.pxy().* = .scalar(game_state.world.tile_side_in_meters);
-    entity.low.sim.dim.z = game_state.world.tile_depth_in_meters;
+    entity.low.sim.dim.z = 1.2 * game_state.world.tile_depth_in_meters;
 
     return entity;
 }
@@ -324,7 +333,7 @@ pub fn addCollisionRuleRaw(game_state: *GameState, storage_index_a_: EntityIndex
     }
 
     if (found_opt) |found| {
-        found.should_collide = should_collide;
+        found.can_collide = should_collide;
         found.storage_index_a = storage_index_a;
         found.storage_index_b = storage_index_b;
     }
@@ -480,9 +489,9 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: *const LoadedBitmap, px: f32
             const b: f32 = (1 - a) * db + a * sb;
 
             dest[0] = (ColorU8ARGB{
-                .r = @intFromFloat(@max(0, r + 0.5)),
-                .g = @intFromFloat(@max(0, g + 0.5)),
-                .b = @intFromFloat(@max(0, b + 0.5)),
+                .r = @intFromFloat(math.clamp(0, r + 0.5, 255)),
+                .g = @intFromFloat(math.clamp(0, g + 0.5, 255)),
+                .b = @intFromFloat(math.clamp(0, b + 0.5, 255)),
                 .a = 255,
             }).asU32();
 
@@ -605,7 +614,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_up = false;
     var door_down = false;
 
-    for (0..2) |_| {
+    for (0..3) |_| {
         assert(next_random_number_index < Random.random_number_table.len);
 
         const random_number = Random.random_number_table[next_random_number_index];
@@ -702,7 +711,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     const cam_tile_y = (screen_base_y * GameState.screen_tile_height) + (GameState.screen_tile_height / 2);
     const cam_tile_z = screen_base_z;
 
-    game_state.camera_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, cam_tile_z);
+    game_state.camera_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, cam_tile_z, .zero);
 
     _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
 
@@ -903,12 +912,14 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .stairwell => {
-                    // pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 0, 0, 1), .{});
-                    pushBitmap(&piece_group, &game_state.stairwell, V2.zero, 0, v2(37, 37), .{});
+                    pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 1, 0, 1), .{});
+                    // pushBitmap(&piece_group, &game_state.stairwell, V2.zero, 0, v2(37, 37), .{});
                 },
             }
 
-            if (!entity.flags.non_spatial) {
+            if (!entity.flags.non_spatial and
+                entity.flags.moveable)
+            {
                 sim_region.moveEntity(game_state, entity, input.dt, move_spec, ddp);
             }
 
