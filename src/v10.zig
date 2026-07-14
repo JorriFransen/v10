@@ -233,12 +233,14 @@ pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_ti
     const dim: V3 = .{
         .x = game_state.world.tile_side_in_meters,
         .y = 2 * game_state.world.tile_side_in_meters,
-        .z = game_state.world.tile_depth_in_meters,
+        .z = 1.1 * game_state.world.tile_depth_in_meters,
     };
 
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
 
     const entity = addGroundedLowEntity(game_state, .stairwell, p, dim);
+
+    entity.low.sim.walkable_height = game_state.world.tile_depth_in_meters;
 
     entity.low.sim.flags = .{
         .collides = true,
@@ -825,7 +827,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         if (entity.updatable) {
             piece_group.count = 0;
 
-            const shadow_alpha = @max(0, 1 - entity.p.z);
+            const shadow_alpha = @max(0, 1 - (0.5 * entity.p.z - entity.dim.z));
 
             var move_spec: MoveSpec = .{};
             var ddp: V3 = .zero;
@@ -929,8 +931,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .stairwell => {
-                    pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
-                    // pushBitmap(&piece_group, &game_state.stairwell, V2.zero, 0, v2(37, 37), .{});
+                    pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
+                    pushRect(&piece_group, .zero, entity.dim.z, entity.dim.xy(), v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
                 },
             }
 
@@ -944,20 +946,22 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 entity.p.y != entities.invalid_p.y and
                 entity.p.z != entities.invalid_p.z)
             {
-                const z_fudge = 1 + (0.1 * entity.p.z);
-
-                const entity_ground_point = v2(
-                    screen_center.x + (game_state.meters_to_pixels * entity.p.x * z_fudge),
-                    screen_center.y - (game_state.meters_to_pixels * entity.p.y * z_fudge),
-                );
-
-                const entity_z = game_state.meters_to_pixels * -entity.p.z;
-                // const entity_z = 0;
+                const entity_base_p = entities.getEntityGroundPoint(entity);
 
                 for (piece_group.pieces[0..piece_group.count]) |*piece| {
+                    const z_fudge = 1 + (0.1 * (entity_base_p.z + piece.offset_z));
+
+                    const entity_ground_point = v2(
+                        screen_center.x + (game_state.meters_to_pixels * entity_base_p.x * z_fudge),
+                        screen_center.y - (game_state.meters_to_pixels * entity_base_p.y * z_fudge),
+                    );
+
+                    const entity_z = game_state.meters_to_pixels * -entity_base_p.z;
+                    // const entity_z = 0;
+
                     const center = v2(
                         entity_ground_point.x + piece.offset.x,
-                        entity_ground_point.y + piece.offset.y + piece.offset_z + (piece.entity_z_c * entity_z),
+                        entity_ground_point.y + piece.offset.y + (piece.entity_z_c * entity_z),
                     );
 
                     if (piece.bitmap) |bitmap| {
@@ -1004,7 +1008,7 @@ fn pushPiece(
     group.pieces[group.count] = .{
         .bitmap = bitmap,
         .offset = v2(offset.x, -offset.y).mul(group.game_state.meters_to_pixels).sub(@"align"),
-        .offset_z = offset_z * group.game_state.meters_to_pixels,
+        .offset_z = offset_z,
         .entity_z_c = entity_z_c,
         .r = c.r,
         .g = c.g,

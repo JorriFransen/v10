@@ -108,6 +108,9 @@ pub const Entity = struct {
     hitpoints: [16]HitPoint = @splat(.{}),
 
     sword: EntityReference = .{ .index = 0 },
+
+    // stairs
+    walkable_height: f32 = 0,
 };
 
 pub const MoveSpec = struct {
@@ -371,10 +374,7 @@ fn handleOverlap(game_state: *GameState, mover: *Entity, region: *Entity, dt: f3
     _ = dt;
 
     if (region.type == .stairwell) {
-        const region_rect = Rect3.centerDim(region.p, region.dim);
-        const bary = region_rect.barycentric(mover.p).clamp01();
-
-        ground.* = math.lerp(region_rect.min.z, bary.y, region_rect.max.z);
+        ground.* = _entities.getStairGround(region, _entities.getEntityGroundPoint(mover));
     }
 }
 
@@ -435,12 +435,14 @@ pub fn speculativeCollide(mover: *Entity, region: *Entity) bool {
     var result = true;
 
     if (region.type == .stairwell) {
-        const region_rect = Rect3.centerDim(region.p, region.dim);
-        const bary = region_rect.barycentric(mover.p).clamp01();
-
-        const ground = math.lerp(region_rect.min.z, bary.y, region_rect.max.z);
         const step_height: f32 = 0.1;
-        result = (@abs(mover.p.z - ground) > step_height) or (bary.y > 0.1) and (bary.y < 0.9);
+
+        // const ground_point = getEntityGroundPoint(mover);
+        // result = (@abs(ground_point.z - ground) > step_height) or (bary.y > 0.1) and (bary.y < 0.9);
+
+        const mover_ground_point = _entities.getEntityGroundPoint(mover);
+        const ground = _entities.getStairGround(region, mover_ground_point);
+        result = @abs(mover_ground_point.z - ground) > step_height;
     }
 
     return result;
@@ -580,6 +582,8 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
             }
         }
     }
+
+    ground += entity.p.z - _entities.getEntityGroundPoint(entity).z;
 
     if (entity.p.z <= ground or
         (entity.flags.z_supported and
