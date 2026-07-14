@@ -5,12 +5,12 @@ const MemoryArena = @import("arena.zig");
 const intrinsics = @import("intrinsics.zig");
 
 const v10 = @import("v10.zig");
-const EntityIndex = v10.EntityIndex;
 const LowEntity = v10.LowEntity;
 
+const Entity = @import("entity.zig");
+const EntityIndex = Entity.Index;
+
 const math = @import("math");
-const V2 = math.V2;
-const v2 = V2.init;
 const V3 = math.V3;
 const v3 = V3.init;
 

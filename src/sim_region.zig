@@ -8,14 +8,14 @@ const GameState = v10.GameState;
 const LowEntity = v10.LowEntity;
 const PairwiseCollisionRule = v10.PairwiseCollisionRule;
 
-const _entities = @import("entity.zig");
-const invalid_p = _entities.invalid_p;
+const Entity = @import("entity.zig");
+const EntityIndex = Entity.Index;
+const EntityReference = Entity.Reference;
+const invalid_p = Entity.invalid_p;
 
 const World = @import("world.zig");
 
 const math = @import("math");
-const V2 = math.V2;
-const v2 = V2.init;
 const V3 = math.V3;
 const v3 = V3.init;
 const Rect3 = math.Rect3;
@@ -35,82 +35,9 @@ sim_entity_hash: [entities_per_region]EntityHash,
 
 const SimRegion = @This();
 
-pub const EntityIndex = u32;
-
-pub const EntityType = enum {
-    null,
-    hero,
-    wall,
-    familiar,
-    monster,
-    sword,
-    stairwell,
-};
-
-const FacingDirection = enum(u2) {
-    right,
-    up,
-    left,
-    down,
-};
-
-pub const HitPoint = struct {
-    pub const max_amount = 4;
-
-    flags: u8 = 0,
-    amount: u8 = 0,
-};
-
-pub const EntityReference = union {
-    ptr: ?*Entity,
-    index: EntityIndex,
-};
-
 pub const EntityHash = struct {
     ptr: ?*Entity = null,
     index: EntityIndex = 0,
-};
-
-pub const EntityFlags = packed struct(u32) {
-    collides: bool = false,
-    non_spatial: bool = false,
-    moveable: bool = false,
-    z_supported: bool = false,
-
-    __reserved_0: u26 = 0,
-
-    in_sim: bool = false,
-
-    __reserved_1: u1 = 0,
-};
-
-pub const Entity = struct {
-    storage_index: EntityIndex = 0,
-    updatable: bool = false,
-
-    type: EntityType = .null,
-    flags: EntityFlags = .{},
-
-    p: V3 = .zero,
-    dp: V3 = .zero,
-
-    dim: V3 = .zero,
-
-    distance_limit: f32 = 0,
-
-    facing_direction: FacingDirection = .down,
-
-    t_bob: f32 = 0,
-
-    d_abs_tile_z: i32 = 0,
-
-    hitpoint_max: u32 = 0,
-    hitpoints: [16]HitPoint = @splat(.{}),
-
-    sword: EntityReference = .{ .index = 0 },
-
-    // stairs
-    walkable_height: f32 = 0,
 };
 
 pub const MoveSpec = struct {
@@ -374,7 +301,7 @@ fn handleOverlap(game_state: *GameState, mover: *Entity, region: *Entity, dt: f3
     _ = dt;
 
     if (region.type == .stairwell) {
-        ground.* = _entities.getStairGround(region, _entities.getEntityGroundPoint(mover));
+        ground.* = region.getStairGround(mover.getGroundPoint());
     }
 }
 
@@ -440,8 +367,8 @@ pub fn speculativeCollide(mover: *Entity, region: *Entity) bool {
         // const ground_point = getEntityGroundPoint(mover);
         // result = (@abs(ground_point.z - ground) > step_height) or (bary.y > 0.1) and (bary.y < 0.9);
 
-        const mover_ground_point = _entities.getEntityGroundPoint(mover);
-        const ground = _entities.getStairGround(region, mover_ground_point);
+        const mover_ground_point = mover.getGroundPoint();
+        const ground = region.getStairGround(mover_ground_point);
         result = @abs(mover_ground_point.z - ground) > step_height;
     }
 
@@ -583,7 +510,7 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         }
     }
 
-    ground += entity.p.z - _entities.getEntityGroundPoint(entity).z;
+    ground += entity.p.z - entity.getGroundPoint().z;
 
     if (entity.p.z <= ground or
         (entity.flags.z_supported and

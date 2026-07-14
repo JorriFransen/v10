@@ -1,18 +1,18 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const log = std.log.scoped(.v10);
-const options = @import("options");
+
 const common = @import("v10_common");
 const intrinsics = @import("intrinsics.zig");
 
 const SimRegion = @import("sim_region.zig");
-const Entity = SimRegion.Entity;
-pub const EntityIndex = SimRegion.EntityIndex;
-const EntityType = SimRegion.EntityType;
-const EntityReference = SimRegion.EntityReference;
-const HitPoint = SimRegion.HitPoint;
 const MoveSpec = SimRegion.MoveSpec;
 
-const entities = @import("entity.zig");
+const Entity = @import("entity.zig");
+const EntityIndex = Entity.Index;
+const EntityType = Entity.Type;
+const EntityReference = Entity.Reference;
+const HitPoint = Entity.HitPoint;
 
 const math = @import("math");
 const V2 = math.V2;
@@ -22,8 +22,6 @@ const v3 = V3.init;
 const V4 = math.V4;
 const v4 = V4.init;
 const Rect3 = math.Rect3;
-
-const assert = std.debug.assert;
 
 const Random = @import("random.zig");
 const MemoryArena = @import("arena.zig");
@@ -40,7 +38,7 @@ const os = @import("builtin").os.tag;
 pub const std_options = common.std_options;
 
 pub const LowEntity = struct {
-    sim: SimRegion.Entity = .{},
+    sim: Entity = .{},
     p: World.Position = .null,
 };
 
@@ -942,11 +940,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 sim_region.moveEntity(game_state, entity, input.dt, move_spec, ddp);
             }
 
-            if (entity.p.x != entities.invalid_p.x and
-                entity.p.y != entities.invalid_p.y and
-                entity.p.z != entities.invalid_p.z)
+            if (entity.p.x != Entity.invalid_p.x and
+                entity.p.y != Entity.invalid_p.y and
+                entity.p.z != Entity.invalid_p.z)
             {
-                const entity_base_p = entities.getEntityGroundPoint(entity);
+                const entity_base_p = entity.getGroundPoint();
 
                 for (piece_group.pieces[0..piece_group.count]) |*piece| {
                     const z_fudge = 1 + (0.1 * (entity_base_p.z + piece.offset_z));
