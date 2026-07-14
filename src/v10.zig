@@ -149,20 +149,32 @@ pub fn addLowEntity(game_state: *GameState, entity_type: EntityType, p: World.Po
     return result;
 }
 
-pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z, .zero);
-    const entity = addLowEntity(game_state, .wall, p);
+pub fn addGroundedLowEntity(game_state: *GameState, entity_type: EntityType, p: World.Position, dim: V3) AddLowEntityResult {
+    const offset_p = p.offset(game_state.world, v3(0, 0, 0.5 * dim.z));
+    const entity = addLowEntity(game_state, entity_type, offset_p);
+    entity.low.sim.dim = dim;
 
-    entity.low.sim.dim = .v2z(.scalar(game_state.world.tile_side_in_meters), 0);
+    return entity;
+}
+
+pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const dim: V3 = .{
+        .x = game_state.world.tile_side_in_meters,
+        .y = game_state.world.tile_side_in_meters,
+        .z = game_state.world.tile_depth_in_meters,
+    };
+    const entity = addGroundedLowEntity(game_state, .wall, p, dim);
+
     entity.low.sim.flags.collides = true;
 
     return entity;
 }
 
 pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
-    const entity = addLowEntity(game_state, .hero, game_state.camera_pos);
+    const dim = v3(1, 0.5, 1.2);
+    const entity = addGroundedLowEntity(game_state, .hero, game_state.camera_pos, dim);
 
-    entity.low.sim.dim = v3(1, 0.5, 0);
     entity.low.sim.flags = .{
         .collides = true,
         .moveable = true,
@@ -181,11 +193,12 @@ pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
 }
 
 pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z, .zero);
-    const entity = addLowEntity(game_state, .monster, p);
+    const dim = v3(1, 0.5, 0.5);
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const entity = addGroundedLowEntity(game_state, .monster, p, dim);
 
     initHitpoints(&entity.low.sim, 3);
-    entity.low.sim.dim = v3(1, 0.5, 0);
+    entity.low.sim.dim = v3(1, 0.5, 0.5);
     entity.low.sim.flags = .{
         .collides = true,
         .moveable = true,
@@ -195,12 +208,11 @@ pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_
 }
 
 pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z, .zero);
-    const entity = addLowEntity(game_state, .familiar, p);
+    const dim = v3(1, 0.5, 0.5);
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const entity = addGroundedLowEntity(game_state, .familiar, p, dim);
 
     entity.low.sim.flags.moveable = true;
-
-    entity.low.sim.dim = v3(1, 0.5, 0);
 
     return entity;
 }
@@ -208,7 +220,7 @@ pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs
 pub fn addSword(game_state: *GameState) AddLowEntityResult {
     const entity = addLowEntity(game_state, .sword, .null);
 
-    entity.low.sim.dim = v3(1, 0.5, 0);
+    entity.low.sim.dim = v3(1, 0.5, 0.1);
     entity.low.sim.flags = .{
         .moveable = true,
         .non_spatial = true,
@@ -218,22 +230,18 @@ pub fn addSword(game_state: *GameState) AddLowEntityResult {
 }
 
 pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(
-        abs_tile_x,
-        abs_tile_y,
-        abs_tile_z,
-        v3(0, 0, 0.5 * game_state.world.tile_depth_in_meters),
-    );
-    const entity = addLowEntity(game_state, .stairwell, p);
-
-    entity.low.sim.flags = .{
-        .collides = true,
-    };
-
-    entity.low.sim.dim = .{
+    const dim: V3 = .{
         .x = game_state.world.tile_side_in_meters,
         .y = 2 * game_state.world.tile_side_in_meters,
         .z = game_state.world.tile_depth_in_meters,
+    };
+
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+
+    const entity = addGroundedLowEntity(game_state, .stairwell, p, dim);
+
+    entity.low.sim.flags = .{
+        .collides = true,
     };
 
     return entity;
@@ -561,7 +569,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     game_state.world = game_state.world_arena.pushMemory(World);
     const world: *World = game_state.world;
 
-    world.init(1.4);
+    world.init(1.4, 3);
 
     const tile_size_in_pixels = 60;
     game_state.meters_to_pixels = tile_size_in_pixels / world.tile_side_in_meters;
@@ -718,7 +726,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     const cam_tile_y = (screen_base_y * GameState.screen_tile_height) + (GameState.screen_tile_height / 2);
     const cam_tile_z = screen_base_z;
 
-    game_state.camera_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, cam_tile_z, .zero);
+    game_state.camera_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, cam_tile_z);
 
     _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
 
@@ -804,7 +812,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const sim_region = SimRegion.begin(&sim_arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
 
     @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
-    drawRectangle(offscreen_buffer, V2.zero, .v2u(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
+    drawRectangle(offscreen_buffer, V2.zero, .u(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
     // drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0, .{});
 
     const screen_center = v2(

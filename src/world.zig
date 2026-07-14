@@ -27,14 +27,14 @@ const chunk_safe_margin = math.maxInt(i32) / 64;
 const chunk_x_uninitialized = math.maxInt(i32);
 pub const tiles_per_chunk_side = 16;
 
-pub fn init(this: *World, tile_side_in_meters: f32) void {
+pub fn init(this: *World, tile_side_in_meters: f32, tile_depth_in_meters: f32) void {
     this.* = .{
         .tile_side_in_meters = tile_side_in_meters,
-        .tile_depth_in_meters = tile_side_in_meters,
+        .tile_depth_in_meters = tile_depth_in_meters,
         .chunk_dim_in_meters = v3(
             tiles_per_chunk_side * tile_side_in_meters,
             tiles_per_chunk_side * tile_side_in_meters,
-            tile_side_in_meters,
+            tile_depth_in_meters,
         ),
         .first_free_entity_block = null,
     };
@@ -88,7 +88,7 @@ pub fn recanonicalizeCoord(chunk: *i32, chunk_rel: *f32, chunk_size: f32) void {
 }
 
 pub inline fn isCanonical(chunk_rel: f32, chunk_size: f32) bool {
-    const epsilon = if (hh_tile_mapping) 0.01 else 0.0001;
+    const epsilon = 0.01;
 
     const result =
         chunk_rel >= -(0.5 * chunk_size + epsilon) and
@@ -283,39 +283,12 @@ pub fn changeEntityLocationRaw(this: *World, arena: *MemoryArena, low_index: Ent
     }
 }
 
-const hh_tile_mapping = true;
-pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32, additional_offset: V3) Position {
-    if (hh_tile_mapping) {
-        // hh match
-        const offset: V3 = .mul(.v3i(abs_tile_x, abs_tile_y, abs_tile_z), this.tile_side_in_meters);
-        const result = Position.zero.offset(this, offset.add(additional_offset));
+pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) Position {
+    const tile_dim = v3(this.tile_side_in_meters, this.tile_side_in_meters, this.tile_depth_in_meters);
+    const offset = V3.i(abs_tile_x, abs_tile_y, abs_tile_z).hadamard(tile_dim);
+    const result = Position.zero.offset(this, offset);
 
-        assert(isCanonicalOffset(this, result._offset));
+    assert(isCanonicalOffset(this, result._offset));
 
-        return result;
-    } else {
-        const chunk_xy_tiles = World.tiles_per_chunk_side;
-        const chunk_z_tiles = 1;
-
-        const chunk_x: i32 = @divFloor(abs_tile_x, chunk_xy_tiles);
-        const chunk_y: i32 = @divFloor(abs_tile_y, chunk_xy_tiles);
-        const chunk_z: i32 = @divFloor(abs_tile_z, chunk_z_tiles);
-
-        const x_tiles: f32 = @floatFromInt((abs_tile_x - (chunk_xy_tiles / 2)) - (chunk_x * chunk_xy_tiles));
-        const y_tiles: f32 = @floatFromInt((abs_tile_y - (chunk_xy_tiles / 2)) - (chunk_y * chunk_xy_tiles));
-        const z_tiles: f32 = @floatFromInt((abs_tile_z - (chunk_z_tiles / 2)) - (chunk_z * chunk_z_tiles));
-
-        const offset = v3(x_tiles, y_tiles, z_tiles).mul(this.tile_side_in_meters);
-
-        const result: Position = .{
-            .chunk_x = chunk_x,
-            .chunk_y = chunk_y,
-            .chunk_z = chunk_z,
-            ._offset = offset,
-        };
-
-        assert(isCanonicalOffset(this, result._offset));
-
-        return result;
-    }
+    return result;
 }

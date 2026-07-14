@@ -85,13 +85,13 @@ pub const V2 = extern struct {
         return .{ .x = x, .y = y };
     }
 
-    pub const v2i = initSigned;
+    pub const i = initSigned;
     pub inline fn initSigned(x: i32, y: i32) V2 {
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
     }
 
-    pub const v2u = initUnsigned;
+    pub const u = initUnsigned;
     pub inline fn initUnsigned(x: u32, y: u32) V2 {
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
@@ -188,13 +188,13 @@ pub const V3 = extern struct {
         return result;
     }
 
-    pub const v3i = initSigned;
+    pub const i = initSigned;
     pub inline fn initSigned(x: i32, y: i32, z: i32) V3 {
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
         return result;
     }
 
-    pub const v3u = initUnsigned;
+    pub const u = initUnsigned;
     pub inline fn initUnsigned(x: u32, y: u32, z: u32) V3 {
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
         return result;
@@ -303,13 +303,13 @@ pub const V4 = extern struct {
         return result;
     }
 
-    pub const v4i = initSigned;
+    pub const i = initSigned;
     pub inline fn initSigned(x: i32, y: i32, z: i32, w: i32) V4 {
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
     }
 
-    pub const v4u = initUnsigned;
+    pub const u = initUnsigned;
     pub inline fn initUnsigned(x: u32, y: u32, z: u32, w: u32) V4 {
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
@@ -488,9 +488,9 @@ pub inline fn isInRectangle3(rect: Rect3, p: V3) bool {
 
 pub inline fn rectangles3Intersect(a: Rect3, b: Rect3) bool {
     const result =
-        (a.max.x >= b.min.x and a.min.x <= b.max.x) and
-        (a.max.y >= b.min.y and a.min.y <= b.max.y) and
-        (a.max.z >= b.min.z and a.min.z <= b.max.z);
+        !((a.max.x <= b.min.x or a.min.x >= b.max.x) or
+            (a.max.y <= b.min.y or a.min.y >= b.max.y) or
+            (a.max.z <= b.min.z or a.min.z >= b.max.z));
     return result;
 }
 

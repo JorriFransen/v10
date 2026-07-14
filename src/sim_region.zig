@@ -510,34 +510,36 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
 
                         const rel = entity.p.sub(test_entity.p);
 
-                        var t_min_test: f32 = t_min;
-                        var test_wall_normal: V3 = .zero;
-                        var hit_this = false;
+                        if (rel.z >= min_corner.z and rel.z < max_corner.z) {
+                            var t_min_test: f32 = t_min;
+                            var test_wall_normal: V3 = .zero;
+                            var hit_this = false;
 
-                        if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
-                            test_wall_normal = v3(-1, 0, 0);
-                            hit_this = true;
-                        }
-                        if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
-                            test_wall_normal = v3(1, 0, 0);
-                            hit_this = true;
-                        }
-                        if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
-                            test_wall_normal = v3(0, -1, 0);
-                            hit_this = true;
-                        }
-                        if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
-                            test_wall_normal = v3(0, 1, 0);
-                            hit_this = true;
-                        }
+                            if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
+                                test_wall_normal = v3(-1, 0, 0);
+                                hit_this = true;
+                            }
+                            if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
+                                test_wall_normal = v3(1, 0, 0);
+                                hit_this = true;
+                            }
+                            if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
+                                test_wall_normal = v3(0, -1, 0);
+                                hit_this = true;
+                            }
+                            if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
+                                test_wall_normal = v3(0, 1, 0);
+                                hit_this = true;
+                            }
 
-                        if (hit_this) {
-                            // const test_p = entity.p.add(player_delta.mul(t_min_test));
+                            if (hit_this) {
+                                // const test_p = entity.p.add(player_delta.mul(t_min_test));
 
-                            if (speculativeCollide(entity, test_entity)) {
-                                t_min = t_min_test;
-                                wall_normal = test_wall_normal;
-                                hit_entity_opt = test_entity;
+                                if (speculativeCollide(entity, test_entity)) {
+                                    t_min = t_min_test;
+                                    wall_normal = test_wall_normal;
+                                    hit_entity_opt = test_entity;
+                                }
                             }
                         }
                     }
