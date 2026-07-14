@@ -226,8 +226,15 @@ pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_ti
     );
     const entity = addLowEntity(game_state, .stairwell, p);
 
-    entity.low.sim.dim.pxy().* = .scalar(game_state.world.tile_side_in_meters);
-    entity.low.sim.dim.z = 1.2 * game_state.world.tile_depth_in_meters;
+    entity.low.sim.flags = .{
+        .collides = true,
+    };
+
+    entity.low.sim.dim = .{
+        .x = game_state.world.tile_side_in_meters,
+        .y = 2 * game_state.world.tile_side_in_meters,
+        .z = game_state.world.tile_depth_in_meters,
+    };
 
     return entity;
 }
@@ -614,7 +621,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_up = false;
     var door_down = false;
 
-    for (0..3) |_| {
+    for (0..2000) |_| {
         assert(next_random_number_index < Random.random_number_table.len);
 
         const random_number = Random.random_number_table[next_random_number_index];
@@ -673,7 +680,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
                 if (should_be_wall) {
                     _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
                 } else if (created_ladder) {
-                    if (tile_x == 10 and tile_y == 6) {
+                    if (tile_x == 10 and tile_y == 5) {
                         _ = addStair(game_state, abs_tile_x, abs_tile_y, if (door_down) abs_tile_z - 1 else abs_tile_z);
                     }
                 }
@@ -715,7 +722,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
 
-    _ = addFamiliar(game_state, cam_tile_x - 2, cam_tile_y + 2, cam_tile_z);
+    _ = addFamiliar(game_state, cam_tile_x - 1, cam_tile_y - 2, cam_tile_z);
 
     // _ = addWall(game_state, -1, -1, 0);
 
@@ -821,7 +828,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 .null => unreachable,
 
                 .hero => {
-                    // pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 1, 0, 1), .{});
+                    // pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 0, 0, 1), .{});
 
                     for (&game_state.controlled_heroes) |*con_hero| {
                         if (con_hero.index == entity.storage_index) {
@@ -871,12 +878,14 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     var closest_hero_opt: ?*Entity = null;
                     var closest_hero_d_sq: f32 = math.square(10);
 
-                    for (sim_region.entities) |*test_entity| {
-                        if (test_entity.type == .hero and closest_hero_d_sq > 0) {
-                            const test_d_sq = test_entity.p.sub(entity.p).lengthSquared();
-                            if (closest_hero_d_sq > test_d_sq) {
-                                closest_hero_opt = test_entity;
-                                closest_hero_d_sq = test_d_sq;
+                    if (false) {
+                        for (sim_region.entities) |*test_entity| {
+                            if (test_entity.type == .hero and closest_hero_d_sq > 0) {
+                                const test_d_sq = test_entity.p.sub(entity.p).lengthSquared();
+                                if (closest_hero_d_sq > test_d_sq) {
+                                    closest_hero_opt = test_entity;
+                                    closest_hero_d_sq = test_d_sq;
+                                }
                             }
                         }
                     }
@@ -912,7 +921,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .stairwell => {
-                    pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 1, 0, 1), .{});
+                    pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
                     // pushBitmap(&piece_group, &game_state.stairwell, V2.zero, 0, v2(37, 37), .{});
                 },
             }
@@ -923,31 +932,40 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 sim_region.moveEntity(game_state, entity, input.dt, move_spec, ddp);
             }
 
-            const entity_ground_point = v2(
-                screen_center.x + (game_state.meters_to_pixels * entity.p.x),
-                screen_center.y - (game_state.meters_to_pixels * entity.p.y),
-            );
-            const entity_z = game_state.meters_to_pixels * -entity.p.z;
+            if (entity.p.x != entities.invalid_p.x and
+                entity.p.y != entities.invalid_p.y and
+                entity.p.z != entities.invalid_p.z)
+            {
+                const z_fudge = 1 + (0.1 * entity.p.z);
 
-            for (piece_group.pieces[0..piece_group.count]) |*piece| {
-                const center = v2(
-                    entity_ground_point.x + piece.offset.x,
-                    entity_ground_point.y + piece.offset.y + piece.offset_z + (piece.entity_z_c * entity_z),
+                const entity_ground_point = v2(
+                    screen_center.x + (game_state.meters_to_pixels * entity.p.x * z_fudge),
+                    screen_center.y - (game_state.meters_to_pixels * entity.p.y * z_fudge),
                 );
 
-                if (piece.bitmap) |bitmap| {
-                    drawBitmap(offscreen_buffer, bitmap, center.x, center.y, piece.a);
-                } else {
-                    const dim = piece.dim.mul(game_state.meters_to_pixels);
-                    const half_dim = dim.mul(0.5);
-                    drawRectangle(
-                        offscreen_buffer,
-                        center.sub(half_dim),
-                        center.add(half_dim),
-                        piece.r,
-                        piece.g,
-                        piece.b,
+                const entity_z = game_state.meters_to_pixels * -entity.p.z;
+                // const entity_z = 0;
+
+                for (piece_group.pieces[0..piece_group.count]) |*piece| {
+                    const center = v2(
+                        entity_ground_point.x + piece.offset.x,
+                        entity_ground_point.y + piece.offset.y + piece.offset_z + (piece.entity_z_c * entity_z),
                     );
+
+                    if (piece.bitmap) |bitmap| {
+                        drawBitmap(offscreen_buffer, bitmap, center.x, center.y, piece.a);
+                    } else {
+                        const dim = piece.dim.mul(game_state.meters_to_pixels);
+                        const half_dim = dim.mul(0.5);
+                        drawRectangle(
+                            offscreen_buffer,
+                            center.sub(half_dim),
+                            center.add(half_dim),
+                            piece.r,
+                            piece.g,
+                            piece.b,
+                        );
+                    }
                 }
             }
         }

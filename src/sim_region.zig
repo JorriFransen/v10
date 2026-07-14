@@ -75,8 +75,12 @@ pub const EntityFlags = packed struct(u32) {
     collides: bool = false,
     non_spatial: bool = false,
     moveable: bool = false,
-    __reserved_0: u27 = 0,
+    z_supported: bool = false,
+
+    __reserved_0: u26 = 0,
+
     in_sim: bool = false,
+
     __reserved_1: u1 = 0,
 };
 
@@ -362,13 +366,13 @@ fn canOverlap(game_state: *GameState, moving: *Entity, region: *Entity) bool {
     return result;
 }
 
-fn handleOverlap(game_state: *GameState, moving: *Entity, region: *Entity, dt: f32, ground: *f32) void {
+fn handleOverlap(game_state: *GameState, mover: *Entity, region: *Entity, dt: f32, ground: *f32) void {
     _ = game_state;
     _ = dt;
 
     if (region.type == .stairwell) {
         const region_rect = Rect3.centerDim(region.p, region.dim);
-        const bary = region_rect.barycentric(moving.p).clamp01();
+        const bary = region_rect.barycentric(mover.p).clamp01();
 
         ground.* = math.lerp(region_rect.min.z, bary.y, region_rect.max.z);
     }
@@ -386,12 +390,6 @@ fn canCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
         if (!a.flags.non_spatial and !b.flags.non_spatial) {
             result = true;
         }
-    }
-
-    if ((a.type == .hero and b.type == .stairwell) or
-        (a.type == .stairwell and b.type == .hero))
-    {
-        result = false;
     }
 
     const hash_bucket = a.storage_index & (game_state.collision_rule_hash.len - 1);
@@ -433,8 +431,28 @@ fn handleCollision(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
     return stops_on_collision;
 }
 
+pub fn speculativeCollide(mover: *Entity, region: *Entity) bool {
+    var result = true;
+
+    if (region.type == .stairwell) {
+        const region_rect = Rect3.centerDim(region.p, region.dim);
+        const bary = region_rect.barycentric(mover.p).clamp01();
+
+        const ground = math.lerp(region_rect.min.z, bary.y, region_rect.max.z);
+        const step_height: f32 = 0.1;
+        result = (@abs(mover.p.z - ground) > step_height) or (bary.y > 0.1) and (bary.y < 0.9);
+    }
+
+    return result;
+}
+
 pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V3) void {
     assert(!entity.flags.non_spatial);
+
+    if (entity.type == .hero) {
+        const break_here = 5;
+        _ = break_here;
+    }
 
     var ddp = blk: {
         if (move_spec.unit_max_ddp) {
@@ -451,7 +469,9 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
     ddp = ddp.mul(move_spec.speed);
     ddp = ddp.add(entity.dp.mul(-move_spec.drag));
 
-    ddp.z += -9.8;
+    if (!entity.flags.z_supported) {
+        ddp.z += -9.8;
+    }
 
     var player_delta = V3.add(
         ddp.mul(0.5 * math.square(dt)),
@@ -482,9 +502,7 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
 
             if (!entity.flags.non_spatial) {
                 for (this.entities) |*test_entity| {
-                    if (canCollide(game_state, entity, test_entity) and
-                        test_entity.p.z == entity.p.z)
-                    {
+                    if (canCollide(game_state, entity, test_entity)) {
                         const minkowski_diameter = test_entity.dim.add(entity.dim);
 
                         const min_corner: V3 = minkowski_diameter.mul(-0.5);
@@ -492,21 +510,35 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
 
                         const rel = entity.p.sub(test_entity.p);
 
-                        if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v3(-1, 0, 0);
-                            hit_entity_opt = test_entity;
+                        var t_min_test: f32 = t_min;
+                        var test_wall_normal: V3 = .zero;
+                        var hit_this = false;
+
+                        if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
+                            test_wall_normal = v3(-1, 0, 0);
+                            hit_this = true;
                         }
-                        if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min, min_corner.y, max_corner.y)) {
-                            wall_normal = v3(1, 0, 0);
-                            hit_entity_opt = test_entity;
+                        if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
+                            test_wall_normal = v3(1, 0, 0);
+                            hit_this = true;
                         }
-                        if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v3(0, -1, 0);
-                            hit_entity_opt = test_entity;
+                        if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
+                            test_wall_normal = v3(0, -1, 0);
+                            hit_this = true;
                         }
-                        if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min, min_corner.x, max_corner.x)) {
-                            wall_normal = v3(0, 1, 0);
-                            hit_entity_opt = test_entity;
+                        if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
+                            test_wall_normal = v3(0, 1, 0);
+                            hit_this = true;
+                        }
+
+                        if (hit_this) {
+                            // const test_p = entity.p.add(player_delta.mul(t_min_test));
+
+                            if (speculativeCollide(entity, test_entity)) {
+                                t_min = t_min_test;
+                                wall_normal = test_wall_normal;
+                                hit_entity_opt = test_entity;
+                            }
                         }
                     }
                 }
@@ -547,9 +579,15 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         }
     }
 
-    if (entity.p.z < ground) {
+    if (entity.p.z <= ground or
+        (entity.flags.z_supported and
+            entity.dp.z == 0))
+    {
         entity.p.z = ground;
         entity.dp.z = 0;
+        entity.flags.z_supported = true;
+    } else {
+        entity.flags.z_supported = false;
     }
 
     if (entity.distance_limit != 0) {

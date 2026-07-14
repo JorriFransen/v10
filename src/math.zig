@@ -269,13 +269,7 @@ pub const V3 = extern struct {
     }
 
     pub inline fn xy(this: V3) V2 {
-        var result: V2 = undefined;
-        result = @as(*V2, @ptrCast(@constCast(&this))).*;
-        return result;
-    }
-
-    pub inline fn pxy(this: *V3) *V2 {
-        const result: *V2 = @ptrCast(this);
+        const result: V2 = .{ .x = this.x, .y = this.y };
         return result;
     }
 
