@@ -108,6 +108,14 @@ pub const GameState = struct {
     // Must be power of 2
     collision_rule_hash: [16]?*PairwiseCollisionRule = @splat(null),
     first_free_collision_rule: ?*PairwiseCollisionRule = null,
+
+    null_collision: *Entity.CollisionGroup = undefined,
+    sword_collision: *Entity.CollisionGroup = undefined,
+    stair_collision: *Entity.CollisionGroup = undefined,
+    player_collision: *Entity.CollisionGroup = undefined,
+    monster_collision: *Entity.CollisionGroup = undefined,
+    familiar_collision: *Entity.CollisionGroup = undefined,
+    wall_collision: *Entity.CollisionGroup = undefined,
 };
 
 pub const AddLowEntityResult = struct {
@@ -135,6 +143,7 @@ pub fn addLowEntity(game_state: *GameState, entity_type: EntityType, p: World.Po
     const low_entity = &game_state.low_entities[low_index];
     low_entity.* = .{};
     low_entity.sim.type = entity_type;
+    low_entity.sim.collision = game_state.null_collision;
     low_entity.p = .null;
 
     game_state.world.changeEntityLocation(&game_state.world_arena, low_index, low_entity, p);
@@ -147,22 +156,16 @@ pub fn addLowEntity(game_state: *GameState, entity_type: EntityType, p: World.Po
     return result;
 }
 
-pub fn addGroundedLowEntity(game_state: *GameState, entity_type: EntityType, p: World.Position, dim: V3) AddLowEntityResult {
-    const offset_p = p.offset(game_state.world, v3(0, 0, 0.5 * dim.z));
-    const entity = addLowEntity(game_state, entity_type, offset_p);
-    entity.low.sim.dim = dim;
+pub fn addGroundedLowEntity(game_state: *GameState, entity_type: EntityType, p: World.Position, collision: *Entity.CollisionGroup) AddLowEntityResult {
+    const entity = addLowEntity(game_state, entity_type, p);
+    entity.low.sim.collision = collision;
 
     return entity;
 }
 
 pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
-    const dim: V3 = .{
-        .x = game_state.world.tile_side_in_meters,
-        .y = game_state.world.tile_side_in_meters,
-        .z = game_state.world.tile_depth_in_meters,
-    };
-    const entity = addGroundedLowEntity(game_state, .wall, p, dim);
+    const entity = addGroundedLowEntity(game_state, .wall, p, game_state.wall_collision);
 
     entity.low.sim.flags.collides = true;
 
@@ -170,8 +173,7 @@ pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_til
 }
 
 pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
-    const dim = v3(1, 0.5, 1.2);
-    const entity = addGroundedLowEntity(game_state, .hero, game_state.camera_pos, dim);
+    const entity = addGroundedLowEntity(game_state, .hero, game_state.camera_pos, game_state.player_collision);
 
     entity.low.sim.flags = .{
         .collides = true,
@@ -191,12 +193,10 @@ pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
 }
 
 pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const dim = v3(1, 0.5, 0.5);
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
-    const entity = addGroundedLowEntity(game_state, .monster, p, dim);
+    const entity = addGroundedLowEntity(game_state, .monster, p, game_state.monster_collision);
 
     initHitpoints(&entity.low.sim, 3);
-    entity.low.sim.dim = v3(1, 0.5, 0.5);
     entity.low.sim.flags = .{
         .collides = true,
         .moveable = true,
@@ -206,9 +206,8 @@ pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_
 }
 
 pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const dim = v3(1, 0.5, 0.5);
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
-    const entity = addGroundedLowEntity(game_state, .familiar, p, dim);
+    const entity = addGroundedLowEntity(game_state, .familiar, p, game_state.familiar_collision);
 
     entity.low.sim.flags.moveable = true;
 
@@ -218,7 +217,7 @@ pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs
 pub fn addSword(game_state: *GameState) AddLowEntityResult {
     const entity = addLowEntity(game_state, .sword, .null);
 
-    entity.low.sim.dim = v3(1, 0.5, 0.1);
+    entity.low.sim.collision = game_state.sword_collision;
     entity.low.sim.flags = .{
         .moveable = true,
         .non_spatial = true,
@@ -228,16 +227,11 @@ pub fn addSword(game_state: *GameState) AddLowEntityResult {
 }
 
 pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const dim: V3 = .{
-        .x = game_state.world.tile_side_in_meters,
-        .y = 2 * game_state.world.tile_side_in_meters,
-        .z = 1.1 * game_state.world.tile_depth_in_meters,
-    };
-
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
 
-    const entity = addGroundedLowEntity(game_state, .stairwell, p, dim);
+    const entity = addGroundedLowEntity(game_state, .stairwell, p, game_state.stair_collision);
 
+    entity.low.sim.walkable_dim = entity.low.sim.collision.total_volume.dim.xy();
     entity.low.sim.walkable_height = game_state.world.tile_depth_in_meters;
 
     entity.low.sim.flags = .{
@@ -576,6 +570,24 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     _ = addLowEntity(game_state, .null, .null);
 
+    game_state.null_collision = .null(game_state);
+    game_state.sword_collision = .simpleGrounded(game_state, 1, 0.5, 0.1);
+    game_state.stair_collision = .simpleGrounded(
+        game_state,
+        game_state.world.tile_side_in_meters,
+        2 * game_state.world.tile_side_in_meters,
+        1.1 * game_state.world.tile_depth_in_meters,
+    );
+    game_state.player_collision = .simpleGrounded(game_state, 1, 0.5, 1.2);
+    game_state.monster_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
+    game_state.familiar_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
+    game_state.wall_collision = .simpleGrounded(
+        game_state,
+        world.tile_side_in_meters,
+        world.tile_side_in_meters,
+        world.tile_depth_in_meters,
+    );
+
     const asset_prefix = "../../hh_assets/";
     // const asset_prefix = "";
 
@@ -825,7 +837,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         if (entity.updatable) {
             piece_group.count = 0;
 
-            const shadow_alpha = @max(0, 1 - (0.5 * entity.p.z - entity.dim.z));
+            const shadow_alpha = @max(0, 1 - (0.5 * entity.p.z));
 
             var move_spec: MoveSpec = .{};
             var ddp: V3 = .zero;
@@ -929,8 +941,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .stairwell => {
-                    pushRect(&piece_group, .zero, 0, entity.dim.xy(), v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
-                    pushRect(&piece_group, .zero, entity.dim.z, entity.dim.xy(), v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
+                    pushRect(&piece_group, .zero, 0, entity.walkable_dim, v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
+                    pushRect(&piece_group, .zero, entity.walkable_height, entity.walkable_dim, v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
                 },
             }
 

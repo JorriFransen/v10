@@ -87,7 +87,7 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: Wor
                             const low = &game_state.low_entities[low_index];
                             if (!low.sim.flags.non_spatial) {
                                 const sim_space_p = sim_region.getSimSpaceP(game_state, low);
-                                if (entityOverlapsRectangle(sim_space_p, low.sim.dim, sim_region.bounds)) {
+                                if (entityOverlapsRectangle(sim_space_p, low.sim.collision.total_volume, sim_region.bounds)) {
                                     _ = sim_region.addEntity(game_state, low_index, low, sim_space_p);
                                 }
                             }
@@ -145,12 +145,12 @@ pub fn end(this: *SimRegion, game_state: *GameState) void {
     }
 }
 
-fn entityOverlapsRectangle(p: V3, dim: V3, rect: Rect3) bool {
-    // const minkowski_rect = rect.addRadius(dim.mul(0.5));
-    // const result = math.isInRectangle3(minkowski_rect, p);
+inline fn entityOverlapsRectangle(p: V3, volume: Entity.CollisionVolume, rect: Rect3) bool {
+    // const minkowski_rect = rect.addRadius(volume.dim.mul(0.5));
+    // const result = math.isInRectangle3(minkowski_rect, p.add(volume.offset));
     // return result;
 
-    const entity_rect: Rect3 = .centerDim(p, dim);
+    const entity_rect: Rect3 = .centerDim(p.add(volume.offset), volume.dim);
     const result = entity_rect.intersects(rect);
     return result;
 }
@@ -251,7 +251,7 @@ fn addEntity(this: *SimRegion, game_state: *GameState, storage_index: EntityInde
 
         if (sim_p_opt) |sim_p| {
             dest.p = sim_p;
-            dest.updatable = entityOverlapsRectangle(dest.p, dest.dim, this.updateable_bounds);
+            dest.updatable = entityOverlapsRectangle(dest.p, dest.collision.total_volume, this.updateable_bounds);
         } else {
             assert(source_opt != null);
             dest.p = this.getSimSpaceP(game_state, source_opt.?);
@@ -396,7 +396,10 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
     };
 
     ddp = ddp.mul(move_spec.speed);
-    ddp = ddp.add(entity.dp.mul(-move_spec.drag));
+
+    var drag = entity.dp.mul(-move_spec.drag);
+    drag.z = 0;
+    ddp = ddp.add(drag);
 
     if (!entity.flags.z_supported) {
         ddp.z += -9.8;
@@ -432,42 +435,48 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
             if (!entity.flags.non_spatial) {
                 for (this.entities) |*test_entity| {
                     if (canCollide(game_state, entity, test_entity)) {
-                        const minkowski_diameter = test_entity.dim.add(entity.dim);
+                        for (entity.collision.volumes) |*volume| {
+                            for (test_entity.collision.volumes) |*test_volume| {
+                                const minkowski_diameter = test_volume.dim.add(volume.dim);
 
-                        const min_corner: V3 = minkowski_diameter.mul(-0.5);
-                        const max_corner: V3 = minkowski_diameter.mul(0.5);
+                                const min_corner: V3 = minkowski_diameter.mul(-0.5);
+                                const max_corner: V3 = minkowski_diameter.mul(0.5);
 
-                        const rel = entity.p.sub(test_entity.p);
+                                const volume_p = entity.p.add(volume.offset);
+                                const test_p = test_entity.p.add(test_volume.offset);
+                                const rel = volume_p.sub(test_p);
 
-                        if (rel.z >= min_corner.z and rel.z < max_corner.z) {
-                            var t_min_test: f32 = t_min;
-                            var test_wall_normal: V3 = .zero;
-                            var hit_this = false;
+                                if (rel.z >= min_corner.z and rel.z < max_corner.z) {
+                                    var t_min_test: f32 = t_min;
+                                    var test_wall_normal: V3 = .zero;
+                                    var hit_this = false;
 
-                            if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
-                                test_wall_normal = v3(-1, 0, 0);
-                                hit_this = true;
-                            }
-                            if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
-                                test_wall_normal = v3(1, 0, 0);
-                                hit_this = true;
-                            }
-                            if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
-                                test_wall_normal = v3(0, -1, 0);
-                                hit_this = true;
-                            }
-                            if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
-                                test_wall_normal = v3(0, 1, 0);
-                                hit_this = true;
-                            }
+                                    if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
+                                        test_wall_normal = v3(-1, 0, 0);
+                                        hit_this = true;
+                                    }
+                                    if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
+                                        test_wall_normal = v3(1, 0, 0);
+                                        hit_this = true;
+                                    }
+                                    if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
+                                        test_wall_normal = v3(0, -1, 0);
+                                        hit_this = true;
+                                    }
+                                    if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
+                                        test_wall_normal = v3(0, 1, 0);
+                                        hit_this = true;
+                                    }
 
-                            if (hit_this) {
-                                // const test_p = entity.p.add(player_delta.mul(t_min_test));
+                                    if (hit_this) {
+                                        // const test_p = entity.p.add(player_delta.mul(t_min_test));
 
-                                if (speculativeCollide(entity, test_entity)) {
-                                    t_min = t_min_test;
-                                    wall_normal = test_wall_normal;
-                                    hit_entity_opt = test_entity;
+                                        if (speculativeCollide(entity, test_entity)) {
+                                            t_min = t_min_test;
+                                            wall_normal = test_wall_normal;
+                                            hit_entity_opt = test_entity;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -498,10 +507,10 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
 
     var ground: f32 = 0;
     {
-        const entity_rect: Rect3 = .centerDim(entity.p, entity.dim);
+        const entity_rect: Rect3 = .centerDim(entity.p.add(entity.collision.total_volume.offset), entity.collision.total_volume.dim);
         for (this.entities) |*test_entity| {
             if (canOverlap(game_state, entity, test_entity)) {
-                const test_entity_rect: Rect3 = .centerDim(test_entity.p, test_entity.dim);
+                const test_entity_rect: Rect3 = .centerDim(test_entity.p.add(test_entity.collision.total_volume.offset), test_entity.collision.total_volume.dim);
 
                 if (entity_rect.intersects(test_entity_rect)) {
                     handleOverlap(game_state, entity, test_entity, dt, &ground);

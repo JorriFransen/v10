@@ -163,7 +163,7 @@ pub const V2 = extern struct {
         const min: V = @splat(0);
         const max: V = @splat(1);
 
-        const result: V3 = @bitCast(@min(max, @max(min, this.v())));
+        const result: V2 = @bitCast(@min(max, @max(min, this.v())));
 
         return result;
     }
@@ -429,6 +429,15 @@ pub inline fn rectanglesIntersect(a: Rect, b: Rect) bool {
     return result;
 }
 
+pub inline fn getBarycentric(a: Rect, p: V2) V2 {
+    const result: V2 = .{
+        .x = safeRatio0(p.x - a.min.x, a.max.x - a.min.x),
+        .y = safeRatio0(p.y - a.min.y, a.max.y - a.min.y),
+    };
+
+    return result;
+}
+
 pub const Rect = struct {
     min: V2,
     max: V2,
@@ -472,6 +481,11 @@ pub const Rect = struct {
     pub inline fn intersects(this: Rect, rect: Rect) bool {
         return rectanglesIntersect(this, rect);
     }
+
+    pub inline fn barycentric(this: Rect, p: V2) V2 {
+        const result = getBarycentric(this, p);
+        return result;
+    }
 };
 
 pub inline fn isInRectangle3(rect: Rect3, p: V3) bool {
@@ -494,7 +508,7 @@ pub inline fn rectangles3Intersect(a: Rect3, b: Rect3) bool {
     return result;
 }
 
-pub inline fn getBarycentric(a: Rect3, p: V3) V3 {
+pub inline fn getBarycentric3(a: Rect3, p: V3) V3 {
     const result: V3 = .{
         .x = safeRatio0(p.x - a.min.x, a.max.x - a.min.x),
         .y = safeRatio0(p.y - a.min.y, a.max.y - a.min.y),
@@ -549,7 +563,7 @@ pub const Rect3 = struct {
     }
 
     pub inline fn barycentric(this: Rect3, p: V3) V3 {
-        const result = getBarycentric(this, p);
+        const result = getBarycentric3(this, p);
         return result;
     }
 };
