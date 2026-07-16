@@ -306,28 +306,30 @@ fn handleOverlap(game_state: *GameState, mover: *Entity, region: *Entity, dt: f3
 }
 
 fn canCollide(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
-    const a: *Entity, const b: *Entity = if (a_.storage_index > b_.storage_index)
-        .{ b_, a_ }
-    else
-        .{ a_, b_ };
-
     var result = false;
 
-    if (a != b) {
-        if (!a.flags.non_spatial and !b.flags.non_spatial) {
-            result = true;
-        }
-    }
+    if (a_ != b_) {
+        const a: *Entity, const b: *Entity = if (a_.storage_index > b_.storage_index)
+            .{ b_, a_ }
+        else
+            .{ a_, b_ };
 
-    const hash_bucket = a.storage_index & (game_state.collision_rule_hash.len - 1);
-    var rule_opt: ?*PairwiseCollisionRule = game_state.collision_rule_hash[hash_bucket];
+        if (a.flags.collides and b.flags.collides) {
+            if (!a.flags.non_spatial and !b.flags.non_spatial) {
+                result = true;
+            }
 
-    while (rule_opt) |rule| : (rule_opt = rule.next_in_hash) {
-        if (rule.storage_index_a == a.storage_index and
-            rule.storage_index_b == b.storage_index)
-        {
-            result = rule.can_collide;
-            break;
+            const hash_bucket = a.storage_index & (game_state.collision_rule_hash.len - 1);
+            var rule_opt: ?*PairwiseCollisionRule = game_state.collision_rule_hash[hash_bucket];
+
+            while (rule_opt) |rule| : (rule_opt = rule.next_in_hash) {
+                if (rule.storage_index_a == a.storage_index and
+                    rule.storage_index_b == b.storage_index)
+                {
+                    result = rule.can_collide;
+                    break;
+                }
+            }
         }
     }
 

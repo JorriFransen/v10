@@ -47,6 +47,8 @@ pub const Index = u32;
 
 pub const Type = enum {
     null,
+
+    space,
     hero,
     wall,
     familiar,
@@ -60,8 +62,9 @@ pub const EntityFlags = packed struct(u32) {
     non_spatial: bool = false,
     moveable: bool = false,
     z_supported: bool = false,
+    traversable: bool = false,
 
-    __reserved_0: u26 = 0,
+    __reserved_0: u25 = 0,
 
     in_sim: bool = false,
 

@@ -116,6 +116,7 @@ pub const GameState = struct {
     monster_collision: *Entity.CollisionGroup = undefined,
     familiar_collision: *Entity.CollisionGroup = undefined,
     wall_collision: *Entity.CollisionGroup = undefined,
+    standard_room_collision: *Entity.CollisionGroup = undefined,
 };
 
 pub const AddLowEntityResult = struct {
@@ -163,11 +164,22 @@ pub fn addGroundedLowEntity(game_state: *GameState, entity_type: EntityType, p: 
     return entity;
 }
 
-pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
-    const entity = addGroundedLowEntity(game_state, .wall, p, game_state.wall_collision);
+pub fn addStandardRoom(
+    game_state: *GameState,
+    center_tile_x: f32,
+    center_tile_y: f32,
+    min_tile_z: f32,
+) AddLowEntityResult {
+    const p = game_state.world.chunkPositionFromTilePosition(
+        @intFromFloat(center_tile_x),
+        @intFromFloat(center_tile_y),
+        @intFromFloat(min_tile_z),
+    );
+    const entity = addGroundedLowEntity(game_state, .space, p, game_state.standard_room_collision);
 
-    entity.low.sim.flags.collides = true;
+    entity.low.sim.flags = .{
+        .traversable = true,
+    };
 
     return entity;
 }
@@ -188,6 +200,15 @@ pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
     if (game_state.camera_following_entity_index == 0) {
         game_state.camera_following_entity_index = entity.low_index;
     }
+
+    return entity;
+}
+
+pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
+    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const entity = addGroundedLowEntity(game_state, .wall, p, game_state.wall_collision);
+
+    entity.low.sim.flags.collides = true;
 
     return entity;
 }
@@ -587,6 +608,12 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
         world.tile_side_in_meters,
         world.tile_depth_in_meters,
     );
+    game_state.standard_room_collision = .simpleGrounded(
+        game_state,
+        GameState.screen_tile_width * world.tile_side_in_meters,
+        GameState.screen_tile_height * world.tile_side_in_meters,
+        0.9 * world.tile_depth_in_meters,
+    );
 
     const asset_prefix = "../../hh_assets/";
     // const asset_prefix = "";
@@ -667,6 +694,13 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
         } else {
             door_top = true;
         }
+
+        _ = addStandardRoom(
+            game_state,
+            @as(f32, @floatFromInt(screen_x * GameState.screen_tile_width)) + (@as(f32, GameState.screen_tile_width) / 2),
+            @as(f32, @floatFromInt(screen_y * GameState.screen_tile_height)) + (@as(f32, GameState.screen_tile_height) / 2),
+            @floatFromInt(abs_tile_z),
+        );
 
         for (0..GameState.screen_tile_height) |tile_y_| {
             const tile_y: i32 = @intCast(tile_y_);
@@ -894,6 +928,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     pushBitmap(&piece_group, &game_state.sword, V2.zero, 0, v2(29, 10), .{});
                 },
 
+                .stairwell => {
+                    pushRectOutline(&piece_group, .zero, 0, entity.walkable_dim, v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
+                    pushRectOutline(&piece_group, .zero, entity.walkable_height, entity.walkable_dim, v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
+                },
+
                 .familiar => {
                     var closest_hero_opt: ?*Entity = null;
                     var closest_hero_d_sq: f32 = math.square(10);
@@ -940,9 +979,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     drawHitpoints(entity, &piece_group);
                 },
 
-                .stairwell => {
-                    pushRect(&piece_group, .zero, 0, entity.walkable_dim, v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
-                    pushRect(&piece_group, .zero, entity.walkable_height, entity.walkable_dim, v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
+                .space => {
+                    for (entity.collision.volumes) |*volume| {
+                        pushRectOutline(&piece_group, volume.offset.xy(), 0, volume.dim.xy(), v4(0, 0.5, 1, 1), .{});
+                    }
                 },
             }
 
@@ -1048,6 +1088,16 @@ inline fn pushRect(group: *EntityVisiblePieceGroup, offset: V2, offset_z: f32, d
         o.entity_z_c,
         color,
     );
+}
+
+inline fn pushRectOutline(group: *EntityVisiblePieceGroup, offset: V2, offset_z: f32, dim: V2, color: V4, o: PushRectOptions) void {
+    const thickness = 0.1;
+
+    pushPiece(group, null, offset.sub(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + thickness, thickness), .zero, o.entity_z_c, color);
+    pushPiece(group, null, offset.add(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + thickness, thickness), .zero, o.entity_z_c, color);
+
+    pushPiece(group, null, offset.sub(v2(0.5 * dim.x, 0)), offset_z, v2(thickness, dim.y + thickness), .zero, o.entity_z_c, color);
+    pushPiece(group, null, offset.add(v2(0.5 * dim.x, 0)), offset_z, v2(thickness, dim.y + thickness), .zero, o.entity_z_c, color);
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
