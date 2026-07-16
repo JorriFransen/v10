@@ -45,6 +45,30 @@ pub const MoveSpec = struct {
     speed: f32 = 0,
     drag: f32 = 0,
 };
+const TestWall = struct {
+    x: f32,
+    rel_x: f32,
+    rel_y: f32,
+    delta_x: f32,
+    delta_y: f32,
+    min_y: f32,
+    max_y: f32,
+
+    normal: V3,
+
+    pub inline fn init(x: f32, rel_x: f32, rel_y: f32, delta_x: f32, delta_y: f32, min_y: f32, max_y: f32, normal: V3) @This() {
+        return .{
+            .x = x,
+            .rel_x = rel_x,
+            .rel_y = rel_y,
+            .delta_x = delta_x,
+            .delta_y = delta_y,
+            .min_y = min_y,
+            .max_y = max_y,
+            .normal = normal,
+        };
+    }
+};
 
 pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: World.Position, bounds: Rect3, dt: f32) *SimRegion {
     const world = game_state.world;
@@ -377,10 +401,34 @@ pub fn speculativeCollide(mover: *Entity, region: *Entity) bool {
     return result;
 }
 
+pub fn EntitiesOverlapEpsilon(entity: *const Entity, test_entity: *const Entity, epsilon: V3) bool {
+    var result = false;
+
+    volume_loop: for (entity.collision.volumes) |*volume| {
+        const entity_rect: Rect3 = .centerDim(entity.p.add(volume.offset), volume.dim.add(epsilon));
+
+        for (test_entity.collision.volumes) |*test_volume| {
+            const test_entity_rect: Rect3 = .centerDim(test_entity.p.add(test_volume.offset), test_volume.dim);
+
+            if (entity_rect.intersects(test_entity_rect)) {
+                result = true;
+                break :volume_loop;
+            }
+        }
+    }
+
+    return result;
+}
+
+pub inline fn EntitiesOverlap(entity: *const Entity, test_entity: *const Entity) bool {
+    const result = EntitiesOverlapEpsilon(entity, test_entity, .zero);
+    return result;
+}
+
 pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt: f32, move_spec: MoveSpec, raw_ddp: V3) void {
     assert(!entity.flags.non_spatial);
 
-    if (entity.type == .hero) {
+    if (entity.type == .hero and raw_ddp.lengthSquared() > 0) {
         const break_here = 5;
         _ = break_here;
     }
@@ -422,6 +470,7 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
 
     for (0..4) |_| {
         var t_min: f32 = 1;
+        var t_max: f32 = 0;
 
         const player_delta_length = player_delta.length();
         if (player_delta_length > 0) {
@@ -429,54 +478,92 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
                 t_min = distance_remaining / player_delta_length;
             }
 
-            var wall_normal: V3 = .zero;
-            var hit_entity_opt: ?*Entity = null;
+            var wall_normal_min: V3 = .zero;
+            var wall_normal_max: V3 = .zero;
+            var hit_entity_min_opt: ?*Entity = null;
+            var hit_entity_max_opt: ?*Entity = null;
 
             const desired_position = entity.p.add(player_delta);
 
-            if (!entity.flags.non_spatial) {
-                for (this.entities) |*test_entity| {
-                    if (canCollide(game_state, entity, test_entity)) {
-                        for (entity.collision.volumes) |*volume| {
-                            for (test_entity.collision.volumes) |*test_volume| {
-                                const minkowski_diameter = test_volume.dim.add(volume.dim);
+            for (this.entities) |*test_entity| {
+                const overlap_epsilon: V3 = .scalar(0.001);
 
-                                const min_corner: V3 = minkowski_diameter.mul(-0.5);
-                                const max_corner: V3 = minkowski_diameter.mul(0.5);
+                if ((test_entity.flags.traversable and EntitiesOverlapEpsilon(entity, test_entity, overlap_epsilon)) or
+                    canCollide(game_state, entity, test_entity))
+                {
+                    for (entity.collision.volumes) |*volume| {
+                        for (test_entity.collision.volumes) |*test_volume| {
+                            const minkowski_diameter = test_volume.dim.add(volume.dim);
 
-                                const volume_p = entity.p.add(volume.offset);
-                                const test_p = test_entity.p.add(test_volume.offset);
-                                const rel = volume_p.sub(test_p);
+                            const min_corner: V3 = minkowski_diameter.mul(-0.5);
+                            const max_corner: V3 = minkowski_diameter.mul(0.5);
 
-                                if (rel.z >= min_corner.z and rel.z < max_corner.z) {
-                                    var t_min_test: f32 = t_min;
+                            const volume_p = entity.p.add(volume.offset);
+                            const test_p = test_entity.p.add(test_volume.offset);
+                            const rel = volume_p.sub(test_p);
+
+                            const walls = [_]TestWall{
+                                .init(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, min_corner.y, max_corner.y, v3(-1, 0, 0)),
+                                .init(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, min_corner.y, max_corner.y, v3(1, 0, 0)),
+                                .init(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, min_corner.x, max_corner.x, v3(0, -1, 0)),
+                                .init(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, min_corner.x, max_corner.x, v3(0, 1, 0)),
+                            };
+
+                            const t_epsilon: f32 = 0.001;
+
+                            if (rel.z >= min_corner.z and rel.z < max_corner.z) {
+                                if (test_entity.flags.traversable) {
                                     var test_wall_normal: V3 = .zero;
+
+                                    var t_max_test: f32 = t_max;
                                     var hit_this = false;
 
-                                    if (testWall(min_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
-                                        test_wall_normal = v3(-1, 0, 0);
-                                        hit_this = true;
+                                    for (&walls) |*wall| {
+                                        if (wall.delta_x != 0) {
+                                            const t_result = (wall.x - wall.rel_x) / wall.delta_x;
+
+                                            if (t_result >= 0 and t_max_test < t_result) {
+                                                const y = wall.rel_y + (t_result * wall.delta_y);
+                                                if (y >= wall.min_y and y <= wall.max_y) {
+                                                    t_max_test = @max(0, t_result - t_epsilon);
+                                                    test_wall_normal = wall.normal;
+                                                    hit_this = true;
+                                                }
+                                            }
+                                        }
                                     }
-                                    if (testWall(max_corner.x, rel.x, rel.y, player_delta.x, player_delta.y, &t_min_test, min_corner.y, max_corner.y)) {
-                                        test_wall_normal = v3(1, 0, 0);
-                                        hit_this = true;
+
+                                    if (hit_this) {
+                                        t_max = t_max_test;
+                                        wall_normal_max = test_wall_normal;
+                                        hit_entity_max_opt = test_entity;
                                     }
-                                    if (testWall(min_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
-                                        test_wall_normal = v3(0, -1, 0);
-                                        hit_this = true;
-                                    }
-                                    if (testWall(max_corner.y, rel.y, rel.x, player_delta.y, player_delta.x, &t_min_test, min_corner.x, max_corner.x)) {
-                                        test_wall_normal = v3(0, 1, 0);
-                                        hit_this = true;
+                                } else {
+                                    var t_min_test: f32 = t_min;
+                                    var hit_this = false;
+                                    var test_wall_normal: V3 = .zero;
+
+                                    for (&walls) |*wall| {
+                                        if (wall.delta_x != 0) {
+                                            const t_result = (wall.x - wall.rel_x) / wall.delta_x;
+
+                                            if (t_result >= 0 and t_min_test > t_result) {
+                                                const y = wall.rel_y + (t_result * wall.delta_y);
+                                                if (y >= wall.min_y and y <= wall.max_y) {
+                                                    t_min_test = @max(0, t_result - t_epsilon);
+                                                    test_wall_normal = wall.normal;
+                                                    hit_this = true;
+                                                }
+                                            }
+                                        }
                                     }
 
                                     if (hit_this) {
                                         // const test_p = entity.p.add(player_delta.mul(t_min_test));
-
                                         if (speculativeCollide(entity, test_entity)) {
                                             t_min = t_min_test;
-                                            wall_normal = test_wall_normal;
-                                            hit_entity_opt = test_entity;
+                                            wall_normal_min = test_wall_normal;
+                                            hit_entity_min_opt = test_entity;
                                         }
                                     }
                                 }
@@ -486,9 +573,23 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
                 }
             }
 
-            entity.p = entity.p.add(player_delta.mul(t_min));
+            var t_stop: f32 = undefined;
+            var hit_entity_opt: ?*Entity = null;
+            var wall_normal: V3 = .zero;
 
-            distance_remaining -= t_min * player_delta_length;
+            if (t_min < t_max) {
+                t_stop = t_min;
+                hit_entity_opt = hit_entity_min_opt;
+                wall_normal = wall_normal_min;
+            } else {
+                t_stop = t_max;
+                hit_entity_opt = hit_entity_max_opt;
+                wall_normal = wall_normal_max;
+            }
+
+            entity.p = entity.p.add(player_delta.mul(t_stop));
+
+            distance_remaining -= t_stop * player_delta_length;
 
             if (hit_entity_opt) |hit_entity| {
                 player_delta = desired_position.sub(entity.p);
@@ -509,14 +610,9 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
 
     var ground: f32 = 0;
     {
-        const entity_rect: Rect3 = .centerDim(entity.p.add(entity.collision.total_volume.offset), entity.collision.total_volume.dim);
         for (this.entities) |*test_entity| {
-            if (canOverlap(game_state, entity, test_entity)) {
-                const test_entity_rect: Rect3 = .centerDim(test_entity.p.add(test_entity.collision.total_volume.offset), test_entity.collision.total_volume.dim);
-
-                if (entity_rect.intersects(test_entity_rect)) {
-                    handleOverlap(game_state, entity, test_entity, dt, &ground);
-                }
+            if (canOverlap(game_state, entity, test_entity) and EntitiesOverlap(entity, test_entity)) {
+                handleOverlap(game_state, entity, test_entity, dt, &ground);
             }
         }
     }
@@ -546,7 +642,16 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
         else if (entity.dp.y > 0) .up else .down;
 }
 
-fn testWall(wall_x: f32, test_x: f32, test_y: f32, delta_x: f32, delta_y: f32, t_min: *f32, wall_min_y: f32, wall_max_y: f32) bool {
+fn testWall(
+    wall_x: f32,
+    test_x: f32,
+    test_y: f32,
+    delta_x: f32,
+    delta_y: f32,
+    t_min: *f32,
+    wall_min_y: f32,
+    wall_max_y: f32,
+) bool {
     var hit = false;
 
     if (delta_x != 0) {

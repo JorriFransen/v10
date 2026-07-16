@@ -230,7 +230,10 @@ pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs
     const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
     const entity = addGroundedLowEntity(game_state, .familiar, p, game_state.familiar_collision);
 
-    entity.low.sim.flags.moveable = true;
+    entity.low.sim.flags = .{
+        .collides = true,
+        .moveable = true,
+    };
 
     return entity;
 }
@@ -240,6 +243,7 @@ pub fn addSword(game_state: *GameState) AddLowEntityResult {
 
     entity.low.sim.collision = game_state.sword_collision;
     entity.low.sim.flags = .{
+        .collides = true,
         .moveable = true,
         .non_spatial = true,
     };
@@ -668,7 +672,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_up = false;
     var door_down = false;
 
-    for (0..2000) |_| {
+    for (0..2000) |screen_index| {
         assert(next_random_number_index < Random.random_number_table.len);
 
         const random_number = Random.random_number_table[next_random_number_index];
@@ -732,7 +736,9 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
                 }
 
                 if (should_be_wall) {
-                    _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
+                    if (screen_index == 0) {
+                        _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
+                    }
                 } else if (created_ladder) {
                     if (tile_x == 10 and tile_y == 5) {
                         _ = addStair(game_state, abs_tile_x, abs_tile_y, if (door_down) abs_tile_z - 1 else abs_tile_z);
