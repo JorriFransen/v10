@@ -97,6 +97,10 @@ pub const GameState = struct {
     low_entity_count: u32 = 0,
     low_entities: [100_000]LowEntity = @splat(.{}),
 
+    grass: [2]LoadedBitmap = @splat(.{}),
+    stone: [4]LoadedBitmap = @splat(.{}),
+    tuft: [3]LoadedBitmap = @splat(.{}),
+
     backdrop: LoadedBitmap = .{},
     hero_shadow: LoadedBitmap = .{},
     hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
@@ -624,6 +628,16 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     const asset_load_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
 
+    game_state.grass[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass00.bmp");
+    game_state.grass[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass01.bmp");
+    game_state.stone[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground00.bmp");
+    game_state.stone[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground01.bmp");
+    game_state.stone[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground02.bmp");
+    game_state.stone[3] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground03.bmp");
+    game_state.tuft[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft00.bmp");
+    game_state.tuft[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft01.bmp");
+    game_state.tuft[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft02.bmp");
+
     game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_background.bmp");
     game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_shadow.bmp");
     game_state.tree = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tree00.bmp");
@@ -673,9 +687,9 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_down = false;
 
     for (0..2000) |screen_index| {
-        assert(next_random_number_index < Random.random_number_table.len);
+        assert(next_random_number_index < Random.number_table.len);
 
-        const random_number = Random.random_number_table[next_random_number_index];
+        const random_number = Random.number_table[next_random_number_index];
         next_random_number_index += 1;
 
         const random_choice =
@@ -863,9 +877,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     var sim_arena = MemoryArena.init(game_memory.transient[0..game_memory.transient_len]);
     const sim_region = SimRegion.begin(&sim_arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
 
-    @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
+    // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     drawRectangle(offscreen_buffer, V2.zero, .u(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
     // drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0, .{});
+
+    drawTestGround(game_state, offscreen_buffer);
 
     const screen_center = v2(
         @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
@@ -1042,6 +1058,67 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     sim_region.end(game_state);
 }
 
+fn drawTestGround(game_state: *GameState, buffer: *OffscreenBuffer) void {
+    var random_number_index: usize = 0;
+
+    const center = V2.u(buffer.width, buffer.height).mul(0.5);
+
+    for (0..100) |_| {
+        const r_stamp_type = Random.number_table[random_number_index] % 2;
+        random_number_index += 1;
+
+        var stamp: *const LoadedBitmap = undefined;
+        if (r_stamp_type == 1) {
+            const stamp_index = Random.number_table[random_number_index] % game_state.grass.len;
+            random_number_index += 1;
+
+            stamp = &game_state.grass[stamp_index];
+        } else {
+            const stamp_index = Random.number_table[random_number_index] % game_state.stone.len;
+            random_number_index += 1;
+
+            stamp = &game_state.stone[stamp_index];
+        }
+
+        const radius: f32 = 5;
+        const bitmap_center = V2.u(stamp.width, stamp.height).mul(0.5);
+
+        const rx = Random.number_table[random_number_index];
+        random_number_index += 1;
+        const ry = Random.number_table[random_number_index];
+        random_number_index += 1;
+        const offset: V2 = v2(
+            2 * (@as(f32, @floatFromInt(rx)) / @as(f32, @floatFromInt(Random.max))) - 1,
+            2 * (@as(f32, @floatFromInt(ry)) / @as(f32, @floatFromInt(Random.max))) - 1,
+        ).mul(game_state.meters_to_pixels * radius);
+
+        const p = center.add(offset).sub(bitmap_center);
+        drawBitmap(buffer, stamp, p.x, p.y, 1);
+    }
+
+    for (0..100) |_| {
+        const stamp_index = Random.number_table[random_number_index] % game_state.tuft.len;
+        random_number_index += 1;
+
+        const stamp = &game_state.tuft[stamp_index];
+
+        const radius: f32 = 5;
+        const bitmap_center = V2.u(stamp.width, stamp.height).mul(0.5);
+
+        const rx = Random.number_table[random_number_index];
+        random_number_index += 1;
+        const ry = Random.number_table[random_number_index];
+        random_number_index += 1;
+        const offset: V2 = v2(
+            2 * (@as(f32, @floatFromInt(rx)) / @as(f32, @floatFromInt(Random.max))) - 1,
+            2 * (@as(f32, @floatFromInt(ry)) / @as(f32, @floatFromInt(Random.max))) - 1,
+        ).mul(game_state.meters_to_pixels * radius);
+
+        const p = center.add(offset).sub(bitmap_center);
+        drawBitmap(buffer, stamp, p.x, p.y, 1);
+    }
+}
+
 const PushPieceOptions = struct {
     alpha: f32 = 1,
     entity_z_c: f32 = 1,
@@ -1198,9 +1275,11 @@ pub const DEBUG = struct {
                         intrinsics.rotateLeft(c & alpha_mask, @intCast(alpha_shift));
                 }
             }
-        }
 
-        log.debug("Loaded bmp: {s} ({},{})", .{ filename, result.width, result.height });
+            log.debug("Loaded bmp: {s} ({},{})", .{ filename, result.width, result.height });
+        } else {
+            log.debug("Failed to load bmp: {s} ({},{})", .{ filename, result.width, result.height });
+        }
 
         return result;
     }
