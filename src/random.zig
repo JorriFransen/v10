@@ -1,7 +1,74 @@
-pub const max = 0x05f5c21f;
-pub const min = 0x000025a0;
+const std = @import("std");
+const assert = std.debug.assert;
 
-pub const number_table = [_]u32{
+const math = @import("math");
+
+pub const max_number = 0x05f5c21f;
+pub const min_number = 0x000025a0;
+
+pub const Series = struct {
+    index: u32,
+
+    pub fn init(s: u32) Series {
+        const result = seed(s);
+        return result;
+    }
+
+    pub fn seed(s: u32) Series {
+        const result: Series = .{ .index = @intCast(s % number_table.len) };
+        return result;
+    }
+
+    pub inline fn nextU32(this: *Series) u32 {
+        const result = number_table[this.index];
+        this.index += 1;
+
+        if (this.index >= number_table.len) {
+            this.index = 0;
+        }
+
+        return result;
+    }
+
+    pub inline fn randomChoice(this: *Series, n: u32) u32 {
+        const result = this.nextU32() % n;
+        return result;
+    }
+
+    pub inline fn randomBool(this: *Series) bool {
+        const random_int = this.randomChoice(2);
+        const result = if (random_int != 0) true else false;
+        return result;
+    }
+
+    pub inline fn randomUnilateral(this: *Series) f32 {
+        const divisor: f32 = 1.0 / @as(f32, @floatFromInt(max_number));
+        const result: f32 = divisor * @as(f32, @floatFromInt(this.nextU32()));
+        return result;
+    }
+
+    pub inline fn randomBilateral(this: *Series) f32 {
+        const result = 2 * this.randomUnilateral() - 1;
+        return result;
+    }
+
+    pub inline fn randomBetweenFloat(this: *Series, min: f32, max: f32) f32 {
+        const result = math.lerp(min, this.randomUnilateral(), max);
+        return result;
+    }
+
+    pub inline fn randomBetweenInt(this: *Series, min: i32, max: i32) i32 {
+        assert(max > min);
+
+        const range: u32 = (max +% 1) -% min;
+        const rem: i32 = @intCast(this.nextU32() % range);
+        const result = min +% rem;
+
+        return result;
+    }
+};
+
+const number_table = [_]u32{
     0x4f0143b, 0x3402005, 0x26f2b01, 0x22796b6, 0x57343bb, 0x2d9954e, 0x06f9425, 0x1789180,
     0x57d8fab, 0x5365d9c, 0x0e9ec55, 0x2a623e0, 0x366e05d, 0x3759f45, 0x1b4d151, 0x35a5411,
     0x59e734b, 0x211c9e4, 0x1b0df4d, 0x50d423d, 0x3b18f5b, 0x5066bed, 0x0aa03be, 0x2b66c73,

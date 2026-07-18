@@ -64,12 +64,12 @@ inline fn getSecondsElapsed(start: win32.LARGE_INTEGER, end: win32.LARGE_INTEGER
 }
 
 pub const Win32OffscreenBuffer = struct {
-    memory: []u8,
+    info: win32.BITMAPINFO,
+    memory_opt: ?[*]u8,
     width: i32,
     height: i32,
     pitch: i32,
     bytes_per_pixel: i32,
-    info: win32.BITMAPINFO,
 };
 
 pub const WindowDimensions = struct {
@@ -548,29 +548,27 @@ pub fn windowsEntry(
             const transient_storage_size = mem.GiB * 1;
             const total_size = permanent_storage_size + transient_storage_size;
 
-            const perm: ?[*]u8 = @ptrCast(win32.VirtualAlloc(
+            const perm_opt: ?[*]u8 = win32.VirtualAlloc(
                 base_address,
                 total_size,
                 win32.MEM_RESERVE | win32.MEM_COMMIT,
                 win32.PAGE_READWRITE,
-            ));
+            );
 
-            const trans: ?[*]u8 = if (perm) |p|
+            const trans_opt: ?[*]u8 = if (perm_opt) |p|
                 @as([*]u8, @ptrCast(p)) + permanent_storage_size
             else
                 null;
 
-            shared_state.game_memory_block = perm.?[0..total_size];
+            shared_state.game_memory_block = if (perm_opt) |p| p[0..total_size] else &.{};
 
-            log.info("perm:  {*}", .{perm});
-            log.info("trans: {*}", .{trans});
+            log.info("perm:  {*}", .{perm_opt});
+            log.info("trans: {*}", .{trans_opt});
 
             var game_memory: Memory = .{
                 .initialized = false,
-                .permanent = perm.?,
-                .permanent_len = permanent_storage_size,
-                .transient = trans.?,
-                .transient_len = transient_storage_size,
+                .permanent = if (perm_opt) |p| p[0..permanent_storage_size] else &.{},
+                .transient = if (trans_opt) |t| t[0..transient_storage_size] else &.{},
 
                 .debug = .{
                     .readEntireFile = &DEBUG.readEntireFile,
@@ -599,7 +597,7 @@ pub fn windowsEntry(
                 }
             }
 
-            if (dib_allocated and audio_frames != null and perm != null and trans != null) {
+            if (dib_allocated and audio_frames != null and perm_opt != null and trans_opt != null) {
                 xinput.load();
 
                 var input: [2]Input = @splat(.{});
@@ -772,12 +770,10 @@ pub fn windowsEntry(
                         }
 
                         var game_offscreen_buffer: OffscreenBuffer = .{
-                            .memory = global_back_buffer.memory.ptr,
-                            .memory_len = global_back_buffer.memory.len,
+                            .memory = global_back_buffer.memory_opt.?,
                             .width = @intCast(global_back_buffer.width),
                             .height = @intCast(global_back_buffer.height),
                             .pitch = global_back_buffer.pitch,
-                            .bytes_per_pixel = global_back_buffer.bytes_per_pixel,
                         };
 
                         if (shared_state.input_recording_index > 0) {
@@ -836,8 +832,7 @@ pub fn windowsEntry(
                             const frames_to_write: u32 = bytes_to_write / @sizeOf(AudioOutput.Frame);
 
                             var game_sound_output_buffer: AudioBuffer = .{
-                                .frames = audio_output.buffer.ptr,
-                                .frames_len = frames_to_write,
+                                .frames = audio_output.buffer[0..frames_to_write],
                                 .frames_per_second = audio_fps,
                             };
 
@@ -1000,19 +995,19 @@ pub fn mainWindowCallback(window: win32.HWND, message: c_uint, wparam: win32.WPA
 }
 
 fn resizeDibSection(buffer: *Win32OffscreenBuffer, width: c_int, height: c_int) bool {
-    if (buffer.memory.len > 0) {
-        _ = win32.VirtualFree(buffer.memory.ptr, 0, win32.MEM_RELEASE);
+    if (buffer.memory_opt) |m| {
+        _ = win32.VirtualFree(m, 0, win32.MEM_RELEASE);
     }
 
     const bytes_per_pixel = 4;
-    buffer.width = width;
-    buffer.height = height;
+    buffer.width = @intCast(width);
+    buffer.height = @intCast(height);
     buffer.pitch = buffer.width * bytes_per_pixel;
     buffer.bytes_per_pixel = bytes_per_pixel;
 
     buffer.info = win32.BITMAPINFO{ .bmiHeader = .{
-        .biWidth = buffer.width,
-        .biHeight = -buffer.height,
+        .biWidth = @intCast(buffer.width),
+        .biHeight = -@as(win32.LONG, @intCast(buffer.height)),
         .biPlanes = 1,
         .biBitCount = 32,
         .biCompression = win32.BI_RGB,
@@ -1025,7 +1020,7 @@ fn resizeDibSection(buffer: *Win32OffscreenBuffer, width: c_int, height: c_int) 
         win32.MEM_RESERVE | win32.MEM_COMMIT,
         win32.PAGE_READWRITE,
     );
-    buffer.memory = @as([*]u8, @ptrCast(memory))[0..bitmap_memory_size];
+    buffer.memory_opt = @as([*]u8, @ptrCast(memory));
     return memory != null;
 }
 
@@ -1039,10 +1034,15 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     //     _ = win32.SetStretchBltMode(dc, 0);
     // }
 
-    if (window_width >= buffer.width * 2 and window_height >= buffer.height * 2) {
-        _ = win32.PatBlt(dc, 2 * buffer.width, 0, window_width - (2 * buffer.width), window_height, win32.BLACKNESS);
-        _ = win32.PatBlt(dc, 0, 2 * buffer.height, 2 * buffer.width, window_height - (2 * buffer.height), win32.BLACKNESS);
-        win32.StretchDIBits(dc, 0, 0, 2 * buffer.width, 2 * buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+    const buffer_width: c_int = @intCast(buffer.width);
+    const buffer_height: c_int = @intCast(buffer.height);
+
+    const buffer_mem = buffer.memory_opt.?;
+
+    if (window_width >= buffer_width * 2 and window_height >= buffer_height * 2) {
+        _ = win32.PatBlt(dc, 2 * buffer_width, 0, window_width - (2 * buffer_width), window_height, win32.BLACKNESS);
+        _ = win32.PatBlt(dc, 0, 2 * buffer_height, 2 * buffer_width, window_height - (2 * buffer_height), win32.BLACKNESS);
+        win32.StretchDIBits(dc, 0, 0, 2 * buffer_width, 2 * buffer_height, 0, 0, buffer_width, buffer_height, buffer_mem, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
     } else {
 
         // TODO: Offset mouse position by this
@@ -1050,11 +1050,11 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
         const offset_y = 10;
 
         _ = win32.PatBlt(dc, 0, 0, window_width, offset_y, win32.BLACKNESS);
-        _ = win32.PatBlt(dc, 0, offset_y + buffer.height, window_width, window_height - (offset_y + buffer.height), win32.BLACKNESS);
+        _ = win32.PatBlt(dc, 0, offset_y + buffer_height, window_width, window_height - (offset_y + buffer_height), win32.BLACKNESS);
         _ = win32.PatBlt(dc, 0, 0, offset_x, window_height, win32.BLACKNESS);
-        _ = win32.PatBlt(dc, offset_x + buffer.width, 0, window_width - (offset_x + buffer.width), window_height, win32.BLACKNESS);
+        _ = win32.PatBlt(dc, offset_x + buffer_width, 0, window_width - (offset_x + buffer_width), window_height, win32.BLACKNESS);
 
-        win32.StretchDIBits(dc, offset_x, offset_y, buffer.width, buffer.height, 0, 0, buffer.width, buffer.height, buffer.memory.ptr, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+        win32.StretchDIBits(dc, offset_x, offset_y, buffer_width, buffer_height, 0, 0, buffer_width, buffer_height, buffer_mem, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
     }
 }
 
@@ -1137,9 +1137,8 @@ pub fn toggleFullscreen(window: win32.HWND) void {
 }
 
 pub const DEBUG = struct {
-    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) common.DEBUG.ReadFileResult {
-        assert(std.mem.span(path).len == path_len);
-        var result = common.DEBUG.ReadFileResult{};
+    pub fn readEntireFile(thread_context: *ThreadContext, path: [:0]const u8) common.DEBUG.ReadFileResult {
+        var result: []u8 = &.{};
 
         const handle = win32.CreateFileA(path, win32.GENERIC_READ, win32.FILE_SHARE_READ, null, win32.OPEN_EXISTING, 0, null);
 
@@ -1153,10 +1152,9 @@ pub const DEBUG = struct {
                     if (win32.ReadFile(handle, alloc_res, file_size_32, &bytes_read, null) != .FALSE and
                         file_size_32 == bytes_read)
                     {
-                        result.size = file_size_32;
-                        result.content = alloc_res;
+                        result = alloc_res[0..file_size_32];
                     } else {
-                        freeFileMemory(thread_context, alloc_res, file_size_32);
+                        freeFileMemory(thread_context, alloc_res[0..file_size_32]);
                     }
                 }
             } else {
@@ -1171,9 +1169,8 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: [*]const u8, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *ThreadContext, path: [:0]const u8, memory: []const u8) bool {
         _ = thread_context;
-        assert(std.mem.span(path).len == path_len);
 
         var result = false;
 
@@ -1182,9 +1179,9 @@ pub const DEBUG = struct {
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var written: win32.DWORD = undefined;
 
-            const memory_size_32 = safeTruncateU64(size);
+            const memory_size_32 = safeTruncateU64(memory.len);
 
-            if (win32.WriteFile(handle, memory, memory_size_32, &written, null) != .FALSE) {
+            if (win32.WriteFile(handle, memory.ptr, memory_size_32, &written, null) != .FALSE) {
                 result = true;
             } else {
                 log.warn("Failed to write file: '{s}'", .{path});
@@ -1198,20 +1195,22 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn freeFileMemory(thread_context: *ThreadContext, memory: ?[*]const u8, size: usize) callconv(.c) void {
+    pub fn freeFileMemory(thread_context: *ThreadContext, memory: []const u8) void {
         _ = thread_context;
-        if (memory) |m| {
-            assert(size > 0);
-            _ = win32.VirtualFree(m, 0, win32.MEM_DECOMMIT);
+
+        if (memory.len > 0) {
+            _ = win32.VirtualFree(memory.ptr, 0, win32.MEM_DECOMMIT);
         }
     }
 
-    pub fn drawVertical(buffer: *Win32OffscreenBuffer, x: i32, c_top: i32, c_bottom: i32, color: u32) callconv(.c) void {
+    pub fn drawVertical(buffer: *Win32OffscreenBuffer, x: i32, c_top: i32, c_bottom: i32, color: u32) void {
         const top = if (c_top <= 0) 0 else c_top;
-        const bottom = if (c_bottom > buffer.height) buffer.height else c_bottom;
+        const bottom = if (c_bottom > buffer.height) buffer.height else @as(u32, @intCast(c_bottom));
 
         if (x >= 0 and x < buffer.width) {
-            var cursor: [*]u8 = buffer.memory.ptr + @as(usize, @intCast((x * buffer.bytes_per_pixel) + (top * buffer.pitch)));
+            var cursor: [*]u8 = buffer.memory.ptr +
+                @as(usize, @intCast((x * @as(i32, @intCast(buffer.bytes_per_pixel))) +
+                    (top * @as(i32, @intCast(buffer.pitch)))));
 
             for (@intCast(top)..@intCast(bottom + 1)) |_| {
                 const pixel: *u32 = @ptrCast(@alignCast(cursor));
@@ -1221,7 +1220,7 @@ pub const DEBUG = struct {
         }
     }
 
-    pub fn drawAudioBufferMarker(buffer: *Win32OffscreenBuffer, audio_output: *AudioOutput, c: f32, pad_x: i32, top: i32, bottom: i32, value: win32.DWORD, color: u32) callconv(.c) void {
+    pub fn drawAudioBufferMarker(buffer: *Win32OffscreenBuffer, audio_output: *AudioOutput, c: f32, pad_x: i32, top: i32, bottom: i32, value: win32.DWORD, color: u32) void {
         _ = audio_output;
         const real_x: f32 = c * @as(f32, @floatFromInt(value));
         const x = pad_x + @as(i32, @intFromFloat(real_x));
@@ -1286,18 +1285,6 @@ pub const DEBUG = struct {
         flip_write_cursor: win32.DWORD = 0,
     };
 };
-
-comptime {
-    if (options.internal_build) {
-        for (@typeInfo(DEBUG).@"struct".decls) |decl| {
-            const decl_type = @TypeOf(@field(DEBUG, decl.name));
-            const decl_type_info = @typeInfo(decl_type);
-            if (decl_type_info == .@"fn") {
-                @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
-            }
-        }
-    }
-}
 
 inline fn safeTruncateU64(value: u64) u32 {
     assert(value <= math.maxInt(u32));

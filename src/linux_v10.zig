@@ -171,7 +171,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         -1,
         0,
     )) |mapped| {
-        global_back_buffer.memory = mapped;
+        global_back_buffer.memory = mapped.ptr;
         linux.mprotect(mapped, .{ .READ = true, .WRITE = true }) catch |e| {
             log.err("mprotect call failed during back buffer resize", .{});
             return e;
@@ -335,8 +335,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var game_memory = Memory{
         .initialized = false,
-        .permanent_len = permanent_storage_size,
-        .transient_len = transient_storage_size,
         .debug = .{
             .readEntireFile = &DEBUG.readEntireFile,
             .freeFileMemory = &DEBUG.freeFileMemory,
@@ -357,9 +355,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
             return e;
         };
 
-        game_memory.permanent = all_memory.ptr;
-        game_memory.transient = all_memory[permanent_storage_size..].ptr;
-        assert(game_memory.transient_len == transient_storage_size);
+        game_memory.permanent = all_memory[0..permanent_storage_size];
+        game_memory.transient = all_memory[permanent_storage_size..];
+        assert(game_memory.transient.len == transient_storage_size);
 
         wld.shared_state.game_memory_block = all_memory;
     } else |_| {
@@ -673,13 +671,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 }
             }
 
+            assert(OffscreenBuffer.bytes_per_pixel == bytes_per_pixel);
             var game_offscreen_buffer = OffscreenBuffer{
-                .memory = global_back_buffer.memory.ptr,
-                .memory_len = global_back_buffer.memory.len,
+                .memory = global_back_buffer.memory,
                 .width = back_buffer_width,
                 .height = back_buffer_height,
                 .pitch = global_back_buffer.pitch,
-                .bytes_per_pixel = bytes_per_pixel,
             };
 
             if (wld.shared_state.input_recording_index > 0) {
@@ -752,8 +749,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             const frames: []AudioOutput.Frame = @ptrCast(@alignCast(pulse.buffer[byte_to_lock .. byte_to_lock + bytes_to_write]));
 
                             var game_sound_output_buffer: AudioBuffer = .{
-                                .frames = frames.ptr,
-                                .frames_len = frames.len,
+                                .frames = frames,
                                 .frames_per_second = @intCast(audio_output.frames_per_second),
                             };
 
@@ -762,16 +758,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             var frames: []AudioOutput.Frame = @ptrCast(@alignCast(pulse.buffer[byte_to_lock..]));
 
                             var game_sound_output_buffer: AudioBuffer = .{
-                                .frames = frames.ptr,
-                                .frames_len = frames.len,
+                                .frames = frames,
                                 .frames_per_second = @intCast(audio_output.frames_per_second),
                             };
 
                             getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
 
                             frames = @ptrCast(@alignCast(pulse.buffer[0 .. bytes_to_write - bytes_to_end]));
-                            game_sound_output_buffer.frames = frames.ptr;
-                            game_sound_output_buffer.frames_len = frames.len;
+                            game_sound_output_buffer.frames = frames;
 
                             getAudioFrames(&thread_context, &game_memory, &game_sound_output_buffer);
                         }
@@ -879,7 +873,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 }
 
 const LinuxOffscreenBuffer = struct {
-    memory: []align(std.heap.page_size_min) u8 = &.{},
+    memory: [*]u8 = undefined,
     width: i32 = 0,
     height: i32 = 0,
     pitch: i32 = 0,
@@ -1430,25 +1424,23 @@ fn aquireFreeBuffer() ?*WlBuffer {
 }
 
 pub const DEBUG = struct {
-    pub fn readEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) common.DEBUG.ReadFileResult {
-        assert(std.mem.span(path).len == path_len);
-        var result = common.DEBUG.ReadFileResult{};
+    pub fn readEntireFile(thread_context: *ThreadContext, path: [:0]const u8) common.DEBUG.ReadFileResult {
+        var result: []u8 = &.{};
 
         if (linux.open(path, .{ .ACCMODE = .RDONLY }, 0)) |fd| {
             var stat: linux.Stat = undefined;
 
             // TODO: Use statx here! statx needs absolute paths or a dir fd...
-            if (linux.stat(std.mem.span(path), &stat)) {
+            if (linux.stat(path, &stat)) {
                 const file_size: usize = @intCast(stat.st_size);
 
                 if (linux.mmap(null, file_size, .{}, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0)) |mapped| {
                     if (linux.mprotect(mapped, .{ .READ = true, .WRITE = true })) {
                         if (linux.read(fd, mapped)) |read| {
                             assert(read.len == file_size);
-                            result.size = read.len;
-                            result.content = read.ptr;
+                            result = read;
                         } else |e| {
-                            freeFileMemory(thread_context, mapped.ptr, file_size);
+                            freeFileMemory(thread_context, mapped);
                             log.warn("File read failed: '{s}', error: {}", .{ path, e });
                         }
                     } else |e| {
@@ -1471,17 +1463,15 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn writeEntireFile(thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, ptr: [*]const u8, size: usize) callconv(.c) bool {
+    pub fn writeEntireFile(thread_context: *ThreadContext, path: [:0]const u8, data: []const u8) bool {
         _ = thread_context;
-        assert(std.mem.span(path).len == path_len);
         var result = false;
 
         const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
 
         if (linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, permissions)) |fd| {
-            const buf = ptr[0..size];
-            if (linux.write(fd, buf)) |written| {
-                result = written == size;
+            if (linux.write(fd, data)) |written| {
+                result = written == data.len;
             } else |e| {
                 log.err("Failed to write to file: '{s}', error: {}", .{ path, e });
             }
@@ -1495,13 +1485,12 @@ pub const DEBUG = struct {
         return result;
     }
 
-    pub fn freeFileMemory(thread_context: *ThreadContext, ptr: ?[*]const u8, size: usize) callconv(.c) void {
+    pub fn freeFileMemory(thread_context: *ThreadContext, memory: []const u8) void {
         _ = thread_context;
 
-        if (ptr) |m| {
-            assert(size > 0);
-            const memory: []align(linux.page_size) const u8 = @alignCast(m[0..size]);
-            linux.munmap(memory) catch |e| {
+        if (memory.len > 0) {
+            const memory_aligned: []align(linux.page_size) const u8 = @alignCast(memory);
+            linux.munmap(memory_aligned) catch |e| {
                 log.err("Failed to free file memory, error: {}", .{e});
             };
         }
@@ -1510,7 +1499,7 @@ pub const DEBUG = struct {
     // TODO: Streaming, cancel-able version
     // - If this needs to support pasting (like ctrl-v), this result needs to be
     //    kept around, and associated with the data offer.
-    pub fn readClipboard() callconv(.c) void {
+    pub fn readClipboard() void {
         if (wld.active_selection_offer) |offer| {
             assert(wld.selection_mime != null);
 
@@ -1539,7 +1528,7 @@ pub const DEBUG = struct {
         }
     }
 
-    pub fn readDnd() callconv(.c) void {
+    pub fn readDnd() void {
         if (wld.active_dnd_offer) |offer| {
             assert(wld.dnd_mime != null);
 
@@ -1568,18 +1557,6 @@ pub const DEBUG = struct {
         }
     }
 };
-
-comptime {
-    if (options.internal_build) {
-        for (@typeInfo(DEBUG).@"struct".decls) |decl| {
-            const decl_type = @TypeOf(@field(DEBUG, decl.name));
-            const decl_type_info = @typeInfo(decl_type);
-            if (decl_type_info == .@"fn") {
-                @export(&@field(DEBUG, decl.name), .{ .name = decl.name, .linkage = .strong });
-            }
-        }
-    }
-}
 
 fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, interface_name: []const u8, version: u32) void {
     const wli: *WlInitData = @ptrCast(@alignCast(data));
@@ -2213,10 +2190,12 @@ const PulseContext = struct {
                 if (rc == 0 and buf_ptr_opt != null) {
                     const buf_ptr = buf_ptr_opt.?;
 
+                    const frame_count = buf_length / @sizeOf(AudioOutput.Frame);
+                    const frames = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(buf_ptr)))[0..frame_count];
+
                     const sound_buffer = AudioBuffer{
+                        .frames = frames,
                         .frames_per_second = audio_output.frames_per_second,
-                        .frames = @ptrCast(@alignCast(buf_ptr)),
-                        .frames_len = buf_length / @sizeOf(AudioOutput.Frame),
                     };
                     getAudioFrames(impl.thread_context, impl.game_memory, &sound_buffer);
 

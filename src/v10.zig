@@ -103,7 +103,7 @@ pub const GameState = struct {
 
     backdrop: LoadedBitmap = .{},
     hero_shadow: LoadedBitmap = .{},
-    hero_bitmaps: [4]HeroBitmaps = std.mem.zeroes([4]HeroBitmaps),
+    hero_bitmaps: [4]HeroBitmaps = @splat(.{}),
 
     tree: LoadedBitmap = .{},
     sword: LoadedBitmap = .{},
@@ -121,6 +121,8 @@ pub const GameState = struct {
     familiar_collision: *Entity.CollisionGroup = undefined,
     wall_collision: *Entity.CollisionGroup = undefined,
     standard_room_collision: *Entity.CollisionGroup = undefined,
+
+    ground_buffer: LoadedBitmap = .{},
 };
 
 pub const AddLowEntityResult = struct {
@@ -430,7 +432,7 @@ pub fn removeCollisionRule(game_state: *GameState, storage_index: EntityIndex) v
 
 pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32, b: f32) void {
     const pitch: usize = @intCast(buffer.pitch);
-    const bpp: usize = @intCast(buffer.bytes_per_pixel);
+    const bpp: usize = @intCast(OffscreenBuffer.bytes_per_pixel);
 
     const buffer_width_f: f32 = @floatFromInt(buffer.width);
     const buffer_height_f: f32 = @floatFromInt(buffer.height);
@@ -458,9 +460,8 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32,
     }
 }
 
-pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: *const LoadedBitmap, px: f32, py: f32, c_alpha: f32) void {
-    const pitch: usize = @intCast(buffer.pitch);
-    const bpp: usize = @intCast(buffer.bytes_per_pixel);
+pub fn drawBitmap(buffer: *LoadedBitmap, bitmap: *const LoadedBitmap, px: f32, py: f32, c_alpha: f32) void {
+    const bpp = LoadedBitmap.bytes_per_pixel;
 
     const real_x: f32 = px;
     const real_y: f32 = py;
@@ -470,13 +471,13 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: *const LoadedBitmap, px: f32
     var max_x: i32 = min_x + @as(i32, @intCast(bitmap.width));
     var max_y: i32 = min_y + @as(i32, @intCast(bitmap.height));
 
-    var source_offset_x: u32 = 0;
+    var source_offset_x: i32 = 0;
     if (min_x < 0) {
         source_offset_x = @intCast(-min_x);
         min_x = 0;
     }
 
-    var source_offset_y: u32 = 0;
+    var source_offset_y: i32 = 0;
     if (min_y < 0) {
         source_offset_y = @intCast(-min_y);
         min_y = 0;
@@ -490,62 +491,68 @@ pub fn drawBitmap(buffer: *OffscreenBuffer, bitmap: *const LoadedBitmap, px: f32
         max_y = @intCast(buffer.height);
     }
 
-    const minx: u32 = @intCast(min_x);
-    const miny: u32 = @intCast(min_y);
-    const maxx: u32 = @intCast(@max(0, max_x));
-    const maxy: u32 = @intCast(@max(0, max_y));
+    max_x = @intCast(@max(0, max_x));
+    max_y = @intCast(@max(0, max_y));
 
     // TEMPORARY
-    if (bitmap.pixels.len == 0) return;
+    if (bitmap.width == 0 or bitmap.height == 0) return;
     // TEMPORARY
 
-    var source_row: [*]align(1) u32 = bitmap.pixels.ptr + (bitmap.width * (bitmap.height - 1)) + source_offset_x - (bitmap.width * source_offset_y);
-    var dest_row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
+    const source_offset: usize = @bitCast(@as(isize, @intCast(source_offset_y * bitmap.pitch + bpp * source_offset_x)));
+    var source_row: [*]u8 = @as([*]u8, @ptrCast(bitmap.memory)) + source_offset;
 
-    var y: usize = @intCast(miny);
-    while (y < maxy) : (y += 1) {
-        var source: [*]align(1) u32 = source_row;
+    const dest_offset: usize = @bitCast(@as(isize, @intCast((min_x * bpp) + (min_y * buffer.pitch))));
+    var dest_row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + dest_offset;
+
+    var y: usize = @intCast(min_y);
+    while (y < max_y) : (y += 1) {
+        var source: [*]align(1) u32 = @ptrCast(source_row);
         var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
 
-        var x: usize = @intCast(minx);
-        while (x < maxx) : (x += 1) {
+        var x: usize = @intCast(min_x);
+        while (x < max_x) : (x += 1) {
             const sc = ColorU8ARGB.fromU32(source[0]);
             const dc = ColorU8ARGB.fromU32(dest[0]);
 
-            const a: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * c_alpha);
+            const sa: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * c_alpha);
 
             const sr: f32 = sc.r;
             const sg: f32 = sc.g;
             const sb: f32 = sc.b;
 
+            const da: f32 = dc.a;
             const dr: f32 = dc.r;
             const dg: f32 = dc.g;
             const db: f32 = dc.b;
 
-            const r: f32 = (1 - a) * dr + a * sr;
-            const g: f32 = (1 - a) * dg + a * sg;
-            const b: f32 = (1 - a) * db + a * sb;
+            const a: f32 = @max(da, 255 * sa);
+            const r: f32 = (1 - sa) * dr + sa * sr;
+            const g: f32 = (1 - sa) * dg + sa * sg;
+            const b: f32 = (1 - sa) * db + sa * sb;
 
             dest[0] = (ColorU8ARGB{
                 .r = @intFromFloat(math.clamp(0, r + 0.5, 255)),
                 .g = @intFromFloat(math.clamp(0, g + 0.5, 255)),
                 .b = @intFromFloat(math.clamp(0, b + 0.5, 255)),
-                .a = 255,
+                .a = @intFromFloat(math.clamp(0, a + 0.5, 255)),
             }).asU32();
 
             source += 1;
             dest += 1;
         }
 
-        dest_row += @intCast(buffer.pitch);
-        source_row -= bitmap.width;
+        dest_row += @bitCast(@as(isize, @intCast(buffer.pitch)));
+        source_row += @bitCast(@as(isize, @intCast(bitmap.pitch)));
     }
 }
 
 pub const LoadedBitmap = struct {
-    width: u32 = 0,
-    height: u32 = 0,
-    pixels: []align(1) u32 = &.{},
+    width: i32 = 0,
+    height: i32 = 0,
+    pitch: i32 = 0,
+    memory: [*]align(1) u32 = undefined,
+
+    pub const bytes_per_pixel = 4;
 };
 
 pub const HeroBitmaps = struct {
@@ -561,9 +568,9 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     // const tone_volume = 4000;
     // const wave_period = @as(f32, @floatFromInt(buffer.frames_per_second)) / game_state.tone_hz;
 
-    assert(buffer.frames_len >= 0);
+    assert(buffer.frames.len >= 0);
 
-    for (buffer.frames[0..buffer.frames_len]) |*frame| {
+    for (buffer.frames) |*frame| {
         // const sine_value: f32 = intrinsics.sin(game_state.t_sine);
         // const sample_value: i16 = @intFromFloat(@as(f32, @floatFromInt(tone_volume)) * sine_value);
         // sample_value = 0;
@@ -577,15 +584,15 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
 }
 
 pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
-    assert(@sizeOf(GameState) <= game_memory.permanent_len);
+    assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
-    assert(@sizeOf(GameState) <= game_memory.transient_len);
+    assert(@sizeOf(GameState) <= game_memory.transient.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
     game_state.* = .{};
 
     const game_state_size = @sizeOf(GameState);
-    const world_arena_size = game_memory.permanent_len - game_state_size;
+    const world_arena_size = game_memory.permanent.len - game_state_size;
 
     game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
 
@@ -630,10 +637,12 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     game_state.grass[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass00.bmp");
     game_state.grass[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass01.bmp");
+
     game_state.stone[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground00.bmp");
     game_state.stone[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground01.bmp");
     game_state.stone[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground02.bmp");
     game_state.stone[3] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground03.bmp");
+
     game_state.tuft[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft00.bmp");
     game_state.tuft[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft01.bmp");
     game_state.tuft[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft02.bmp");
@@ -669,7 +678,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     const world_build_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
 
-    var next_random_number_index: usize = 0;
+    var series = Random.Series.seed(1234);
 
     const screen_base_x: i32 = 0;
     const screen_base_y: i32 = 0;
@@ -687,27 +696,18 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_down = false;
 
     for (0..2000) |screen_index| {
-        assert(next_random_number_index < Random.number_table.len);
-
-        const random_number = Random.number_table[next_random_number_index];
-        next_random_number_index += 1;
-
-        const random_choice =
-            if (door_up or door_down)
-                random_number % 2
-            else
-                random_number % 3;
+        const door_direction = series.randomChoice(if (door_up or door_down) 2 else 3);
 
         var created_ladder = false;
 
-        if (random_choice == 2) {
+        if (door_direction == 2) {
             created_ladder = true;
             if (abs_tile_z == screen_base_z) {
                 door_up = true;
             } else {
                 door_down = true;
             }
-        } else if (random_choice == 1) {
+        } else if (door_direction == 1) {
             door_right = true;
         } else {
             door_top = true;
@@ -775,13 +775,13 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
         door_right = false;
         door_top = false;
 
-        if (random_choice == 2) {
+        if (door_direction == 2) {
             if (abs_tile_z == screen_base_z) {
                 abs_tile_z = screen_base_z + 1;
             } else {
                 abs_tile_z = screen_base_z;
             }
-        } else if (random_choice == 1) {
+        } else if (door_direction == 1) {
             screen_x += 1;
         } else {
             screen_y += 1;
@@ -796,16 +796,22 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
 
-    _ = addFamiliar(game_state, cam_tile_x - 1, cam_tile_y - 2, cam_tile_z);
+    for (0..10) |_| {
+        const fox = series.randomBetweenInt(-7, 7);
+        const foy = series.randomBetweenInt(-3, -1);
+        log.debug("fox,foy: {},{}", .{ fox, foy });
+        _ = addFamiliar(game_state, cam_tile_x + fox, cam_tile_y + foy, cam_tile_z);
+    }
 
-    // _ = addWall(game_state, -1, -1, 0);
+    game_state.ground_buffer = makeEmptyBitmap(&game_state.world_arena, 512, 512);
+    drawTestGround(game_state, &game_state.ground_buffer);
 
     const world_build_duration = world_build_begin_ts.untilNow(thread_context.io, .real);
     log.info("World building took: {f}", .{world_build_duration});
 }
 
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void {
-    assert(@sizeOf(GameState) <= game_memory.transient_len);
+    assert(@sizeOf(GameState) <= game_memory.transient.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
     if (!game_memory.initialized) {
@@ -874,14 +880,20 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const bound_dim = v3(tile_span_x, tile_span_y, tile_span_z).mul(world.tile_side_in_meters);
     const camera_bounds: Rect3 = .centerDim(V3.zero, bound_dim);
 
-    var sim_arena = MemoryArena.init(game_memory.transient[0..game_memory.transient_len]);
+    var sim_arena = MemoryArena.init(game_memory.transient);
     const sim_region = SimRegion.begin(&sim_arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
 
-    // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
-    drawRectangle(offscreen_buffer, V2.zero, .u(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
-    // drawBitmap(offscreen_buffer, game_state.backdrop, 0, 0, .{});
+    var draw_buffer_: LoadedBitmap = .{
+        .width = offscreen_buffer.width,
+        .height = offscreen_buffer.height,
+        .pitch = offscreen_buffer.pitch,
+        .memory = @ptrCast(offscreen_buffer.memory),
+    };
+    const draw_buffer = &draw_buffer_;
 
-    drawTestGround(game_state, offscreen_buffer);
+    // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
+    drawRectangle(offscreen_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
+    drawBitmap(draw_buffer, &game_state.ground_buffer, 0, 0, 1);
 
     const screen_center = v2(
         @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
@@ -951,8 +963,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .stairwell => {
-                    pushRectOutline(&piece_group, .zero, 0, entity.walkable_dim, v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
-                    pushRectOutline(&piece_group, .zero, entity.walkable_height, entity.walkable_dim, v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
+                    pushRect(&piece_group, .zero, 0, entity.walkable_dim, v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
+                    pushRect(&piece_group, .zero, entity.walkable_height, entity.walkable_dim, v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
                 },
 
                 .familiar => {
@@ -1002,9 +1014,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .space => {
-                    for (entity.collision.volumes) |*volume| {
-                        pushRectOutline(&piece_group, volume.offset.xy(), 0, volume.dim.xy(), v4(0, 0.5, 1, 1), .{});
-                    }
+                    // for (entity.collision.volumes) |*volume| {
+                    //     pushRectOutline(&piece_group, volume.offset.xy(), 0, volume.dim.xy(), v4(0, 0.5, 1, 1), .{});
+                    // }
                 },
             }
 
@@ -1037,7 +1049,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     );
 
                     if (piece.bitmap) |bitmap| {
-                        drawBitmap(offscreen_buffer, bitmap, center.x, center.y, piece.a);
+                        drawBitmap(draw_buffer, bitmap, center.x, center.y, piece.a);
                     } else {
                         const dim = piece.dim.mul(game_state.meters_to_pixels);
                         const half_dim = dim.mul(0.5);
@@ -1058,38 +1070,25 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     sim_region.end(game_state);
 }
 
-fn drawTestGround(game_state: *GameState, buffer: *OffscreenBuffer) void {
-    var random_number_index: usize = 0;
+fn drawTestGround(game_state: *GameState, buffer: *LoadedBitmap) void {
+    var series = Random.Series.seed(1234);
 
-    const center = V2.u(buffer.width, buffer.height).mul(0.5);
+    const center = V2.i(buffer.width, buffer.height).mul(0.5);
 
     for (0..100) |_| {
-        const r_stamp_type = Random.number_table[random_number_index] % 2;
-        random_number_index += 1;
-
         var stamp: *const LoadedBitmap = undefined;
-        if (r_stamp_type == 1) {
-            const stamp_index = Random.number_table[random_number_index] % game_state.grass.len;
-            random_number_index += 1;
-
-            stamp = &game_state.grass[stamp_index];
+        if (series.randomBool()) {
+            stamp = &game_state.grass[series.randomChoice(game_state.grass.len)];
         } else {
-            const stamp_index = Random.number_table[random_number_index] % game_state.stone.len;
-            random_number_index += 1;
-
-            stamp = &game_state.stone[stamp_index];
+            stamp = &game_state.stone[series.randomChoice(game_state.stone.len)];
         }
 
         const radius: f32 = 5;
-        const bitmap_center = V2.u(stamp.width, stamp.height).mul(0.5);
+        const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
 
-        const rx = Random.number_table[random_number_index];
-        random_number_index += 1;
-        const ry = Random.number_table[random_number_index];
-        random_number_index += 1;
         const offset: V2 = v2(
-            2 * (@as(f32, @floatFromInt(rx)) / @as(f32, @floatFromInt(Random.max))) - 1,
-            2 * (@as(f32, @floatFromInt(ry)) / @as(f32, @floatFromInt(Random.max))) - 1,
+            series.randomBilateral(),
+            series.randomBilateral(),
         ).mul(game_state.meters_to_pixels * radius);
 
         const p = center.add(offset).sub(bitmap_center);
@@ -1097,26 +1096,35 @@ fn drawTestGround(game_state: *GameState, buffer: *OffscreenBuffer) void {
     }
 
     for (0..100) |_| {
-        const stamp_index = Random.number_table[random_number_index] % game_state.tuft.len;
-        random_number_index += 1;
-
-        const stamp = &game_state.tuft[stamp_index];
+        const stamp = &game_state.tuft[series.randomChoice(game_state.tuft.len)];
 
         const radius: f32 = 5;
-        const bitmap_center = V2.u(stamp.width, stamp.height).mul(0.5);
+        const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
 
-        const rx = Random.number_table[random_number_index];
-        random_number_index += 1;
-        const ry = Random.number_table[random_number_index];
-        random_number_index += 1;
         const offset: V2 = v2(
-            2 * (@as(f32, @floatFromInt(rx)) / @as(f32, @floatFromInt(Random.max))) - 1,
-            2 * (@as(f32, @floatFromInt(ry)) / @as(f32, @floatFromInt(Random.max))) - 1,
+            series.randomBilateral(),
+            series.randomBilateral(),
         ).mul(game_state.meters_to_pixels * radius);
 
         const p = center.add(offset).sub(bitmap_center);
         drawBitmap(buffer, stamp, p.x, p.y, 1);
     }
+}
+
+pub fn makeEmptyBitmap(arena: *MemoryArena, width: i32, height: i32) LoadedBitmap {
+    const pixel_count: usize = @intCast(width * height);
+    const byte_size: usize = pixel_count * LoadedBitmap.bytes_per_pixel;
+
+    const result: LoadedBitmap = .{
+        .width = width,
+        .height = height,
+        .pitch = width * LoadedBitmap.bytes_per_pixel,
+        .memory = @ptrCast(arena.pushArray(byte_size, u8).ptr),
+    };
+
+    @memset(result.memory[0..pixel_count], 0);
+
+    return result;
 }
 
 const PushPieceOptions = struct {
@@ -1216,9 +1224,9 @@ pub const DEBUG = struct {
     pub fn loadBMP(pd: *const common.DEBUG, thread_context: *ThreadContext, filename: [:0]const u8) LoadedBitmap {
         var result: LoadedBitmap = .{};
 
-        const read_result = pd.readEntireFile(thread_context, filename, filename.len);
-        if (read_result.size != 0) {
-            const content = read_result.slice();
+        const read_result = pd.readEntireFile(thread_context, filename);
+        if (read_result.len != 0) {
+            const content = read_result;
 
             assert(content.len >= @sizeOf(BitmapHeader));
             const header: *BitmapHeader = @ptrCast(@alignCast(content));
@@ -1228,11 +1236,8 @@ pub const DEBUG = struct {
             const magic: [2]u8 = @bitCast(header.file_type);
             assert(std.mem.eql(u8, magic[0..], "BM"));
 
-            const pixel_count: u32 = @intCast(header.width * header.height);
-
             assert(header.bits_per_pixel == 32); // TODO: account for scan line alignment
-            result.pixels = @as([*]align(1) u32, @ptrCast(content.ptr + header.bitmap_offset))[0..pixel_count];
-            assert(result.pixels.len == pixel_count);
+            result.memory = @ptrCast(content.ptr + header.bitmap_offset);
             result.width = @intCast(header.width);
             result.height = @intCast(header.height);
 
@@ -1265,7 +1270,8 @@ pub const DEBUG = struct {
                 const blue_shift = 0 - @as(i32, @intCast(blue_scan.index));
                 const alpha_shift = 24 - @as(i32, @intCast(alpha_scan.index));
 
-                for (result.pixels) |*pixel| {
+                for (0..@intCast(result.width * result.height)) |i| {
+                    const pixel: *align(1) u32 = &result.memory[i];
                     const c = pixel.*;
 
                     pixel.* =
@@ -1280,6 +1286,9 @@ pub const DEBUG = struct {
         } else {
             log.debug("Failed to load bmp: {s} ({},{})", .{ filename, result.width, result.height });
         }
+
+        result.pitch = -result.width * LoadedBitmap.bytes_per_pixel;
+        result.memory = @ptrCast(@as([*]u8, @ptrCast(result.memory)) + @as(usize, @bitCast(@as(isize, -result.pitch * (result.height - 1)))));
 
         return result;
     }

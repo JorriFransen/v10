@@ -73,24 +73,23 @@ pub const ThreadContext = struct {
 pub const FN_updateAndRender = *const fn (thread_context: *const ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void;
 pub const FN_getAudioFrames = *const fn (thread_context: *const ThreadContext, memory: *Memory, sound_buffer: *const AudioBuffer) callconv(.c) void;
 
-pub const OffscreenBuffer = extern struct {
+pub const OffscreenBuffer = struct {
     memory: [*]u8,
-    memory_len: usize,
-    width: u32,
-    height: u32,
+    width: i32,
+    height: i32,
     pitch: i32,
-    bytes_per_pixel: i32,
+
+    pub const bytes_per_pixel = 4;
 };
 
-pub const AudioBuffer = extern struct {
+pub const AudioBuffer = struct {
     pub const Sample = i16;
     pub const Frame = struct {
         left: Sample = 0,
         right: Sample = 0,
     };
 
-    frames: [*]Frame,
-    frames_len: usize,
+    frames: []Frame,
     frames_per_second: u32,
 };
 
@@ -99,7 +98,7 @@ pub const ButtonState = extern struct {
     ended_down: bool = false,
 };
 
-pub const ControllerInput = extern struct {
+pub const ControllerInput = struct {
     is_connected: bool = false,
     is_analog: bool = false,
 
@@ -133,7 +132,7 @@ pub const ControllerInput = extern struct {
     },
 };
 
-pub const DebugMouseInput = extern struct {
+pub const DebugMouseInput = struct {
     buttons: extern union {
         array: [5]ButtonState,
         named: extern struct {
@@ -156,36 +155,27 @@ pub const DebugMouseInput = extern struct {
     z: i32 = 0,
 };
 
-pub const Input = extern struct {
+pub const Input = struct {
     debug_mouse: DebugMouseInput = undefined,
 
     dt: f32 = 0,
     controllers: [5]ControllerInput = @splat(std.mem.zeroes(ControllerInput)),
 };
 
-pub const Memory = extern struct {
+pub const Memory = struct {
     initialized: bool = false,
-    permanent: [*]u8 = &.{},
-    permanent_len: usize,
-    transient: [*]u8 = &.{},
-    transient_len: usize,
+    permanent: []u8 = &.{},
+    transient: []u8 = &.{},
 
     debug: DEBUG,
 };
 
-pub const DEBUG = extern struct {
-    pub const ReadFileResult = extern struct {
-        size: usize = 0,
-        content: *anyopaque = undefined,
+pub const DEBUG = struct {
+    pub const ReadFileResult = []u8;
 
-        pub inline fn slice(this: ReadFileResult) []u8 {
-            return @as([*]u8, @ptrCast(this.content))[0..this.size];
-        }
-    };
-
-    readEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize) callconv(.c) ReadFileResult = undefined,
-    freeFileMemory: *const fn (thread_context: *ThreadContext, memory: ?[*]const u8, size: usize) callconv(.c) void = undefined,
-    writeEntireFile: *const fn (thread_context: *ThreadContext, path: [*:0]const u8, path_len: usize, memory: [*]const u8, size: usize) callconv(.c) bool = undefined,
+    readEntireFile: *const fn (thread_context: *ThreadContext, path: [:0]const u8) ReadFileResult = undefined,
+    freeFileMemory: *const fn (thread_context: *ThreadContext, memory: []const u8) void = undefined,
+    writeEntireFile: *const fn (thread_context: *ThreadContext, path: [:0]const u8, data: []const u8) bool = undefined,
 };
 
 pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8 {
