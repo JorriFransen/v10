@@ -30,7 +30,7 @@ pub inline fn atan2(y: anytype, x: @TypeOf(y)) @TypeOf(y) {
 pub fn BitScanResult(comptime T: type) type {
     const int_info = @typeInfo(T);
     if (int_info != .int) @compileError("Expected integer type");
-    const IndexType = @Int(.unsigned, math.log2(@bitSizeOf(T)) + 1);
+    const IndexType = @Int(.unsigned, math.log2(@bitSizeOf(T)));
     return struct {
         found: bool = false,
         index: IndexType = 0,
@@ -45,7 +45,8 @@ pub inline fn findLSBSet(x: anytype) BitScanResult(@TypeOf(x)) {
     }
 
     return if (x != 0)
-        .{ .found = true, .index = @ctz(x) }
+        // The type of @ctz here is one bit larger than the type of index, but the x!=0 guard makes this safe.
+        .{ .found = true, .index = @intCast(@ctz(x)) }
     else
         .{ .found = false };
 }

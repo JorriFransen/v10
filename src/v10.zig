@@ -291,7 +291,7 @@ pub const ColorU8ARGB = packed struct(u32) {
             .r = @intFromFloat(rf * 255),
             .g = @intFromFloat(gf * 255),
             .b = @intFromFloat(bf * 255),
-            .a = 255,
+            .a = 0,
         };
     }
 };
@@ -430,7 +430,7 @@ pub fn removeCollisionRule(game_state: *GameState, storage_index: EntityIndex) v
     }
 }
 
-pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32, b: f32) void {
+pub fn drawRectangle(buffer: *LoadedBitmap, min: V2, max: V2, r: f32, g: f32, b: f32) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(OffscreenBuffer.bytes_per_pixel);
 
@@ -446,7 +446,7 @@ pub fn drawRectangle(buffer: *OffscreenBuffer, min: V2, max: V2, r: f32, g: f32,
 
     const color = ColorU8ARGB.fromF32RGB(r, g, b);
 
-    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
+    var row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + (minx * bpp) + (miny * pitch);
     var y: usize = @intCast(miny);
     while (y < maxy) : (y += 1) {
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
@@ -507,35 +507,43 @@ pub fn drawBitmap(buffer: *LoadedBitmap, bitmap: *const LoadedBitmap, px: f32, p
     var y: usize = @intCast(min_y);
     while (y < max_y) : (y += 1) {
         var source: [*]align(1) u32 = @ptrCast(source_row);
-        var dest: [*]u32 = @ptrCast(@alignCast(dest_row));
+        var dest: [*]align(1) u32 = @ptrCast(dest_row);
 
         var x: usize = @intCast(min_x);
         while (x < max_x) : (x += 1) {
             const sc = ColorU8ARGB.fromU32(source[0]);
             const dc = ColorU8ARGB.fromU32(dest[0]);
 
-            const sa: f32 = (@as(f32, @floatFromInt(sc.a)) / 255 * c_alpha);
-
-            const sr: f32 = sc.r;
-            const sg: f32 = sc.g;
-            const sb: f32 = sc.b;
+            const sa: f32 = sc.a;
+            const rsa: f32 = (sa / 255) * c_alpha;
+            const sr: f32 = c_alpha * sc.r;
+            const sg: f32 = c_alpha * sc.g;
+            const sb: f32 = c_alpha * sc.b;
 
             const da: f32 = dc.a;
             const dr: f32 = dc.r;
             const dg: f32 = dc.g;
             const db: f32 = dc.b;
+            const rda: f32 = (da / 255);
 
-            const a: f32 = @max(da, 255 * sa);
-            const r: f32 = (1 - sa) * dr + sa * sr;
-            const g: f32 = (1 - sa) * dg + sa * sg;
-            const b: f32 = (1 - sa) * db + sa * sb;
+            const inv_rsa: f32 = 1 - rsa;
+            const a: f32 = 255 * (rsa + rda - (rsa * rda));
+            const r: f32 = inv_rsa * dr + sr;
+            const g: f32 = inv_rsa * dg + sg;
+            const b: f32 = inv_rsa * db + sb;
 
-            dest[0] = (ColorU8ARGB{
-                .r = @intFromFloat(math.clamp(0, r + 0.5, 255)),
-                .g = @intFromFloat(math.clamp(0, g + 0.5, 255)),
-                .b = @intFromFloat(math.clamp(0, b + 0.5, 255)),
-                .a = @intFromFloat(math.clamp(0, a + 0.5, 255)),
-            }).asU32();
+            // dest[0] = (ColorU8ARGB{
+            //     .r = @intFromFloat(r + 0.5),
+            //     .g = @intFromFloat(g + 0.5),
+            //     .b = @intFromFloat(b + 0.5),
+            //     .a = @intFromFloat(a + 0.5),
+            // }).asU32();
+
+            dest[0] =
+                @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24 |
+                @as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16 |
+                @as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8 |
+                @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0;
 
             source += 1;
             dest += 1;
@@ -796,7 +804,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
 
     _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
 
-    for (0..10) |_| {
+    for (0..1) |_| {
         const fox = series.randomBetweenInt(-7, 7);
         const foy = series.randomBetweenInt(-3, -1);
         log.debug("fox,foy: {},{}", .{ fox, foy });
@@ -892,7 +900,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const draw_buffer = &draw_buffer_;
 
     // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
-    drawRectangle(offscreen_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
+    drawRectangle(draw_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
+
     drawBitmap(draw_buffer, &game_state.ground_buffer, 0, 0, 1);
 
     const screen_center = v2(
@@ -1054,7 +1063,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                         const dim = piece.dim.mul(game_state.meters_to_pixels);
                         const half_dim = dim.mul(0.5);
                         drawRectangle(
-                            offscreen_buffer,
+                            draw_buffer,
                             center.sub(half_dim),
                             center.add(half_dim),
                             piece.r,
@@ -1071,6 +1080,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 }
 
 fn drawTestGround(game_state: *GameState, buffer: *LoadedBitmap) void {
+    drawRectangle(buffer, .zero, .i(buffer.width, buffer.height), 0, 0, 0);
+
     var series = Random.Series.seed(1234);
 
     const center = V2.i(buffer.width, buffer.height).mul(0.5);
@@ -1262,25 +1273,36 @@ pub const DEBUG = struct {
             assert(blue_scan.found);
             assert(alpha_scan.found);
 
-            if (red_scan.index != 16 or green_scan.index != 8 or
-                blue_scan.index != 0 or alpha_scan.index != 24)
-            {
-                const red_shift = 16 - @as(i32, @intCast(red_scan.index));
-                const green_shift = 8 - @as(i32, @intCast(green_scan.index));
-                const blue_shift = 0 - @as(i32, @intCast(blue_scan.index));
-                const alpha_shift = 24 - @as(i32, @intCast(alpha_scan.index));
+            // if (red_scan.index != 16 or green_scan.index != 8 or
+            //     blue_scan.index != 0 or alpha_scan.index != 24)
+            // {
+            const red_shift_down = red_scan.index;
+            const green_shift_down = green_scan.index;
+            const blue_shift_down = blue_scan.index;
+            const alpha_shift_down = alpha_scan.index;
 
-                for (0..@intCast(result.width * result.height)) |i| {
-                    const pixel: *align(1) u32 = &result.memory[i];
-                    const c = pixel.*;
+            for (0..@intCast(result.width * result.height)) |i| {
+                const pixel: *align(1) u32 = &result.memory[i];
+                const c = pixel.*;
 
-                    pixel.* =
-                        intrinsics.rotateLeft(c & red_mask, @intCast(red_shift)) |
-                        intrinsics.rotateLeft(c & green_mask, @intCast(green_shift)) |
-                        intrinsics.rotateLeft(c & blue_mask, @intCast(blue_shift)) |
-                        intrinsics.rotateLeft(c & alpha_mask, @intCast(alpha_shift));
-                }
+                const a: f32 = @floatFromInt((c & alpha_mask) >> alpha_shift_down);
+                var r: f32 = @floatFromInt((c & red_mask) >> red_shift_down);
+                var g: f32 = @floatFromInt((c & green_mask) >> green_shift_down);
+                var b: f32 = @floatFromInt((c & blue_mask) >> blue_shift_down);
+
+                const an: f32 = a / 255;
+
+                r = r * an;
+                g = g * an;
+                b = b * an;
+
+                pixel.* =
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16 |
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8 |
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0 |
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24;
             }
+            // }
 
             log.debug("Loaded bmp: {s} ({},{})", .{ filename, result.width, result.height });
         } else {
