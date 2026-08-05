@@ -285,6 +285,26 @@ pub const V3 = extern struct {
     pub fn format(this: V3, writer: anytype) !void {
         try writer.print("[{}, {}, {}]", .{ this.x, this.y, this.z });
     }
+
+    pub inline fn color(this: V3) Color {
+        return @bitCast(this);
+    }
+
+    pub const Color = extern struct {
+        r: f32,
+        g: f32,
+        b: f32,
+
+        pub fn init(r: f32, g: f32, b: f32) Color {
+            const result: Color = .{ .r = r, .g = g, .b = b };
+            return result;
+        }
+
+        pub inline fn v3(this: Color) V3 {
+            const result: V3 = @bitCast(this);
+            return result;
+        }
+    };
 };
 
 pub const V4 = extern struct {
@@ -473,6 +493,14 @@ pub const Rect = struct {
         return result;
     }
 
+    pub inline fn offset(this: Rect, d: V2) Rect {
+        const result: Rect = .{
+            .min = this.min.add(d),
+            .max = this.max.add(d),
+        };
+        return result;
+    }
+
     pub inline fn contains(this: Rect, p: V2) bool {
         const result = isInRectangle(this, p);
         return result;
@@ -549,6 +577,14 @@ pub const Rect3 = struct {
         const result: Rect3 = .{
             .min = this.min.sub(radius),
             .max = this.max.add(radius),
+        };
+        return result;
+    }
+
+    pub inline fn offset(this: Rect3, d: V3) Rect3 {
+        const result: Rect3 = .{
+            .min = this.min.add(d),
+            .max = this.max.add(d),
         };
         return result;
     }

@@ -86,15 +86,17 @@ pub const GroundBuffer = struct {
 };
 
 pub const GameState = struct {
-    const screen_tile_width: i32 = 17;
-    const screen_tile_height: i32 = 9;
+    const screen_tile_width = 17;
+    const screen_tile_height = 9;
     const controller_count = @typeInfo(@FieldType(Input, "controllers")).array.len;
 
     world_arena: MemoryArena = undefined,
-
     world: *World = undefined,
 
+    typical_floor_height: f32 = 0,
+
     meters_to_pixels: f32 = 0,
+    pixels_to_meters: f32 = 0,
 
     camera_following_entity_index: EntityIndex = 0,
     camera_pos: World.Position = .zero,
@@ -190,7 +192,8 @@ pub fn addStandardRoom(
     center_tile_y: f32,
     min_tile_z: f32,
 ) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(
+    const p = chunkPositionFromTilePosition(
+        game_state.world,
         @intFromFloat(center_tile_x),
         @intFromFloat(center_tile_y),
         @intFromFloat(min_tile_z),
@@ -225,7 +228,7 @@ pub fn addPlayer(game_state: *GameState) AddLowEntityResult {
 }
 
 pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = chunkPositionFromTilePosition(game_state.world, abs_tile_x, abs_tile_y, abs_tile_z);
     const entity = addGroundedLowEntity(game_state, .wall, p, game_state.wall_collision);
 
     entity.low.sim.flags.collides = true;
@@ -234,7 +237,7 @@ pub fn addWall(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_til
 }
 
 pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = chunkPositionFromTilePosition(game_state.world, abs_tile_x, abs_tile_y, abs_tile_z);
     const entity = addGroundedLowEntity(game_state, .monster, p, game_state.monster_collision);
 
     initHitpoints(&entity.low.sim, 3);
@@ -247,7 +250,7 @@ pub fn addMonster(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_
 }
 
 pub fn addFamiliar(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = chunkPositionFromTilePosition(game_state.world, abs_tile_x, abs_tile_y, abs_tile_z);
     const entity = addGroundedLowEntity(game_state, .familiar, p, game_state.familiar_collision);
 
     entity.low.sim.flags = .{
@@ -272,12 +275,12 @@ pub fn addSword(game_state: *GameState) AddLowEntityResult {
 }
 
 pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) AddLowEntityResult {
-    const p = game_state.world.chunkPositionFromTilePosition(abs_tile_x, abs_tile_y, abs_tile_z);
+    const p = chunkPositionFromTilePosition(game_state.world, abs_tile_x, abs_tile_y, abs_tile_z);
 
     const entity = addGroundedLowEntity(game_state, .stairwell, p, game_state.stair_collision);
 
     entity.low.sim.walkable_dim = entity.low.sim.collision.total_volume.dim.xy();
-    entity.low.sim.walkable_height = game_state.world.tile_depth_in_meters;
+    entity.low.sim.walkable_height = game_state.typical_floor_height;
 
     entity.low.sim.flags = .{
         .collides = true,
@@ -474,6 +477,21 @@ pub fn drawRectangle(buffer: *LoadedBitmap, min: V2, max: V2, r: f32, g: f32, b:
     }
 }
 
+pub const DrawRectangleOutlineOptions = struct {
+    r: f32 = 2,
+};
+
+pub inline fn drawRectangleOutline(buffer: *LoadedBitmap, min: V2, max: V2, color: V3, o: DrawRectangleOutlineOptions) void {
+    const vr: V2 = .scalar(o.r);
+    const c = color.color();
+
+    drawRectangle(buffer, v2(min.x, min.y).sub(vr), v2(max.x, min.y).add(vr), c.r, c.g, c.b);
+    drawRectangle(buffer, v2(min.x, max.y).sub(vr), v2(max.x, max.y).add(vr), c.r, c.g, c.b);
+
+    drawRectangle(buffer, v2(min.x, min.y).sub(vr), v2(min.x, max.y).add(vr), c.r, c.g, c.b);
+    drawRectangle(buffer, v2(max.x, min.y).sub(vr), v2(max.x, max.y).add(vr), c.r, c.g, c.b);
+}
+
 pub fn drawBitmap(buffer: *LoadedBitmap, bitmap: *const LoadedBitmap, px: f32, py: f32, c_alpha: f32) void {
     const bpp = LoadedBitmap.bytes_per_pixel;
 
@@ -606,7 +624,7 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     }
 }
 
-pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
+pub fn init(thread_context: *ThreadContext, game_memory: *Memory, ground_buffer_width: f32, ground_buffer_height: f32) void {
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
@@ -620,35 +638,44 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     game_state.world = game_state.world_arena.pushMemory(World);
     const world: *World = game_state.world;
 
-    world.init(1.4, 3);
+    game_state.typical_floor_height = 3;
+    game_state.meters_to_pixels = 42;
+    game_state.pixels_to_meters = 1 / game_state.meters_to_pixels;
 
-    const tile_size_in_pixels = 60;
-    game_state.meters_to_pixels = tile_size_in_pixels / world.tile_side_in_meters;
+    const world_chunk_dim_in_meters = v3(
+        game_state.pixels_to_meters * ground_buffer_width,
+        game_state.pixels_to_meters * ground_buffer_height,
+        game_state.typical_floor_height,
+    );
+
+    world.init(world_chunk_dim_in_meters);
 
     _ = addLowEntity(game_state, .null, .null);
+
+    const tile_side_in_meters = 1.4;
 
     game_state.null_collision = .null(game_state);
     game_state.sword_collision = .simpleGrounded(game_state, 1, 0.5, 0.1);
     game_state.stair_collision = .simpleGrounded(
         game_state,
-        game_state.world.tile_side_in_meters,
-        2 * game_state.world.tile_side_in_meters,
-        1.1 * game_state.world.tile_depth_in_meters,
+        tile_side_in_meters,
+        2 * tile_side_in_meters,
+        1.1 * game_state.typical_floor_height,
     );
     game_state.player_collision = .simpleGrounded(game_state, 1, 0.5, 1.2);
     game_state.monster_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
     game_state.familiar_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
     game_state.wall_collision = .simpleGrounded(
         game_state,
-        world.tile_side_in_meters,
-        world.tile_side_in_meters,
-        world.tile_depth_in_meters,
+        tile_side_in_meters,
+        tile_side_in_meters,
+        game_state.typical_floor_height,
     );
     game_state.standard_room_collision = .simpleGrounded(
         game_state,
-        GameState.screen_tile_width * world.tile_side_in_meters,
-        GameState.screen_tile_height * world.tile_side_in_meters,
-        0.9 * world.tile_depth_in_meters,
+        GameState.screen_tile_width * tile_side_in_meters,
+        GameState.screen_tile_height * tile_side_in_meters,
+        0.9 * game_state.typical_floor_height,
     );
 
     const asset_prefix = "../../hh_assets/";
@@ -812,7 +839,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     const cam_tile_y = (screen_base_y * GameState.screen_tile_height) + (GameState.screen_tile_height / 2);
     const cam_tile_z = screen_base_z;
 
-    game_state.camera_pos = game_state.world.chunkPositionFromTilePosition(cam_tile_x, cam_tile_y, cam_tile_z);
+    game_state.camera_pos = chunkPositionFromTilePosition(game_state.world, cam_tile_x, cam_tile_y, cam_tile_z);
 
     _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
 
@@ -827,12 +854,28 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     log.info("World building took: {f}", .{world_build_duration});
 }
 
+pub fn chunkPositionFromTilePosition(world: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) World.Position {
+    const tile_side_in_meters: f32 = 1.4;
+    const tile_depth_in_meters: f32 = 3;
+
+    const tile_dim = v3(tile_side_in_meters, tile_side_in_meters, tile_depth_in_meters);
+    const offset = V3.i(abs_tile_x, abs_tile_y, abs_tile_z).hadamard(tile_dim);
+    const result = World.Position.zero.offset(world, offset);
+
+    assert(World.isCanonicalOffset(world, result._offset));
+
+    return result;
+}
+
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void {
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
+    const ground_buffer_width = 256;
+    const ground_buffer_height = 256;
+
     if (!game_memory.initialized) {
-        init(thread_context, game_memory);
+        init(thread_context, game_memory, ground_buffer_width, ground_buffer_height);
         game_memory.initialized = true;
     }
 
@@ -843,9 +886,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     if (!tran_state.initialized) {
         tran_state.arena = .init(game_memory.transient[transient_state_size..][0..transient_arena_size]);
 
-        const ground_buffer_width = 256;
-        const ground_buffer_height = 256;
-
         tran_state.ground_buffers = tran_state.arena.pushArray(128, GroundBuffer);
 
         for (tran_state.ground_buffers) |*ground_buffer| {
@@ -853,8 +893,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             tran_state.ground_bitmap_template = makeEmptyBitmap(&tran_state.arena, ground_buffer_width, ground_buffer_height);
             ground_buffer.data = @ptrCast(@alignCast(tran_state.ground_bitmap_template.data));
         }
-
-        fillGroundChunk(tran_state, game_state, &tran_state.ground_buffers[0], game_state.camera_pos);
 
         tran_state.initialized = true;
     }
@@ -914,15 +952,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     }
 
-    const tile_span_x = GameState.screen_tile_width * 3;
-    const tile_span_y = GameState.screen_tile_height * 3;
-    const tile_span_z = 1;
-    const bound_dim = v3(tile_span_x, tile_span_y, tile_span_z).mul(world.tile_side_in_meters);
-    const camera_bounds: Rect3 = .centerDim(V3.zero, bound_dim);
-
-    const sim_memory = TemporaryMemory.begin(&tran_state.arena);
-    const sim_region = SimRegion.begin(sim_memory.arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
-
     assert(offscreen_buffer.pitch >= offscreen_buffer.width);
     const offscreen_buffer_data = offscreen_buffer.memory[0 .. @as(usize, @intCast(offscreen_buffer.pitch * offscreen_buffer.height)) * OffscreenBuffer.bytes_per_pixel];
 
@@ -942,6 +971,63 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
         @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
     );
+
+    const screen_width_meters = @as(f32, @floatFromInt(draw_buffer.width)) * game_state.pixels_to_meters;
+    const screen_height_meters = @as(f32, @floatFromInt(draw_buffer.height)) * game_state.pixels_to_meters;
+
+    const camera_bounds_meters = Rect3.centerDim(.zero, v3(screen_width_meters, screen_height_meters, 0));
+    {
+        const min_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.min);
+        const max_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.max);
+
+        var chunk_z: i32 = min_chunk_p.chunk_z;
+        while (chunk_z <= max_chunk_p.chunk_z) : (chunk_z += 1) {
+            var chunk_y: i32 = min_chunk_p.chunk_y;
+            while (chunk_y <= max_chunk_p.chunk_y) : (chunk_y += 1) {
+                var chunk_x: i32 = min_chunk_p.chunk_x;
+                while (chunk_x <= max_chunk_p.chunk_x) : (chunk_x += 1) {
+                    const chunk_center_p = World.getCenteredChunkPoint(chunk_x, chunk_y, chunk_z);
+                    const rel_p = world.subtract(chunk_center_p, game_state.camera_pos);
+
+                    const screen_p = v2(
+                        screen_center.x + game_state.meters_to_pixels * rel_p.x,
+                        screen_center.y - game_state.meters_to_pixels * rel_p.y,
+                    );
+                    const screen_dim = world.chunk_dim_in_meters.xy().mul(game_state.meters_to_pixels);
+
+                    var found = false;
+                    var empty_buffer_opt: ?*GroundBuffer = null;
+
+                    for (tran_state.ground_buffers) |*ground_buffer| {
+                        if (world.areInSameChunk(ground_buffer.p, chunk_center_p)) {
+                            found = true;
+                            break;
+                        } else if (!ground_buffer.p.isValid()) {
+                            empty_buffer_opt = ground_buffer;
+                        }
+                    }
+
+                    if (!found) if (empty_buffer_opt) |empty_buffer| {
+                        fillGroundChunk(tran_state, game_state, empty_buffer, chunk_center_p);
+                    };
+
+                    drawRectangleOutline(
+                        draw_buffer,
+                        screen_p.sub(screen_dim.mul(0.5)),
+                        screen_p.add(screen_dim.mul(0.5)),
+                        v3(1, 1, 0),
+                        .{},
+                    );
+                }
+            }
+        }
+    }
+
+    const sim_bounds_extension: V3 = .scalar(15);
+    const sim_bounds = camera_bounds_meters.addRadius(sim_bounds_extension);
+
+    const sim_memory = TemporaryMemory.begin(&tran_state.arena);
+    const sim_region = SimRegion.begin(sim_memory.arena, game_state, game_state.camera_pos, sim_bounds, input.dt);
 
     for (tran_state.ground_buffers) |*ground_buffer| {
         if (ground_buffer.p.isValid()) {
@@ -1265,11 +1351,11 @@ inline fn pushRect(group: *EntityVisiblePieceGroup, offset: V2, offset_z: f32, d
 inline fn pushRectOutline(group: *EntityVisiblePieceGroup, offset: V2, offset_z: f32, dim: V2, color: V4, o: PushRectOptions) void {
     const thickness = 0.1;
 
-    pushPiece(group, null, offset.sub(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + thickness, thickness), .zero, o.entity_z_c, color);
-    pushPiece(group, null, offset.add(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + thickness, thickness), .zero, o.entity_z_c, color);
+    pushPiece(group, null, offset.sub(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x, thickness), .zero, o.entity_z_c, color);
+    pushPiece(group, null, offset.add(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x, thickness), .zero, o.entity_z_c, color);
 
-    pushPiece(group, null, offset.sub(v2(0.5 * dim.x, 0)), offset_z, v2(thickness, dim.y + thickness), .zero, o.entity_z_c, color);
-    pushPiece(group, null, offset.add(v2(0.5 * dim.x, 0)), offset_z, v2(thickness, dim.y + thickness), .zero, o.entity_z_c, color);
+    pushPiece(group, null, offset.sub(v2(0.5 * dim.x, 0)), offset_z, v2(thickness, dim.y), .zero, o.entity_z_c, color);
+    pushPiece(group, null, offset.add(v2(0.5 * dim.x, 0)), offset_z, v2(thickness, dim.y), .zero, o.entity_z_c, color);
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {

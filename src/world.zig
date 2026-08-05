@@ -16,8 +16,6 @@ const v3 = V3.init;
 
 const World = @This();
 
-tile_side_in_meters: f32,
-tile_depth_in_meters: f32,
 chunk_dim_in_meters: V3,
 
 first_free_entity_block: ?*EntityBlock = null,
@@ -25,17 +23,18 @@ chunk_hash: [4096]Chunk = undefined,
 
 const chunk_safe_margin = math.maxInt(i32) / 64;
 const chunk_x_uninitialized = math.maxInt(i32);
-pub const tiles_per_chunk_side = 16;
+pub const tiles_per_chunk_side = 8;
 
-pub fn init(this: *World, tile_side_in_meters: f32, tile_depth_in_meters: f32) void {
+pub fn init(this: *World, chunk_dim_in_meters: V3) void {
     this.* = .{
-        .tile_side_in_meters = tile_side_in_meters,
-        .tile_depth_in_meters = tile_depth_in_meters,
-        .chunk_dim_in_meters = v3(
-            tiles_per_chunk_side * tile_side_in_meters,
-            tiles_per_chunk_side * tile_side_in_meters,
-            tile_depth_in_meters,
-        ),
+        // .tile_side_in_meters = tile_side_in_meters,
+        // .tile_depth_in_meters = tile_depth_in_meters,
+        // .chunk_dim_in_meters = v3(
+        //     tiles_per_chunk_side * tile_side_in_meters,
+        //     tiles_per_chunk_side * tile_side_in_meters,
+        //     tile_depth_in_meters,
+        // ),
+        .chunk_dim_in_meters = chunk_dim_in_meters,
         .first_free_entity_block = null,
     };
 
@@ -79,6 +78,11 @@ pub const Position = struct {
     }
 };
 
+pub inline fn getCenteredChunkPoint(chunk_x: i32, chunk_y: i32, chunk_z: i32) Position {
+    const result: Position = .{ .chunk_x = chunk_x, .chunk_y = chunk_y, .chunk_z = chunk_z };
+    return result;
+}
+
 pub fn recanonicalizeCoord(chunk: *i32, chunk_rel: *f32, chunk_size: f32) void {
     const offset: i32 = intrinsics.roundReal32ToInt32(chunk_rel.* / chunk_size);
     chunk.* +%= @bitCast(offset);
@@ -118,6 +122,11 @@ pub const Chunk = struct {
     first_entity_block: EntityBlock = .{},
 
     next_in_hash: ?*Chunk = null,
+
+    pub inline fn centerPos(this: Chunk) Position {
+        const result = getCenteredChunkPoint(this.x, this.y, this.z);
+        return result;
+    }
 };
 
 pub inline fn subtract(this: *const World, a: Position, b: Position) V3 {
@@ -281,14 +290,4 @@ pub fn changeEntityLocationRaw(this: *World, arena: *MemoryArena, low_index: Ent
             block.entity_count += 1;
         }
     }
-}
-
-pub fn chunkPositionFromTilePosition(this: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) Position {
-    const tile_dim = v3(this.tile_side_in_meters, this.tile_side_in_meters, this.tile_depth_in_meters);
-    const offset = V3.i(abs_tile_x, abs_tile_y, abs_tile_z).hadamard(tile_dim);
-    const result = Position.zero.offset(this, offset);
-
-    assert(isCanonicalOffset(this, result._offset));
-
-    return result;
 }
