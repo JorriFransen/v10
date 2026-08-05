@@ -122,6 +122,7 @@ pub const GameState = struct {
     wall_collision: *Entity.CollisionGroup = undefined,
     standard_room_collision: *Entity.CollisionGroup = undefined,
 
+    ground_buffer_p: World.Position = .zero,
     ground_buffer: LoadedBitmap = .{},
 };
 
@@ -591,7 +592,7 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     }
 }
 
-pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
+pub fn init(thread_context: *ThreadContext, game_memory: *Memory, buffer: *OffscreenBuffer) void {
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
     assert(@sizeOf(GameState) <= game_memory.transient.len);
@@ -703,8 +704,9 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     var door_up = false;
     var door_down = false;
 
-    for (0..2000) |screen_index| {
-        const door_direction = series.randomChoice(if (door_up or door_down) 2 else 3);
+    for (0..2000) |_| {
+        // const door_direction = series.randomChoice(if (door_up or door_down) 2 else 3);
+        const door_direction = series.randomChoice(2);
 
         var created_ladder = false;
 
@@ -758,9 +760,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
                 }
 
                 if (should_be_wall) {
-                    if (screen_index == 0) {
-                        _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
-                    }
+                    _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
                 } else if (created_ladder) {
                     if (tile_x == 10 and tile_y == 5) {
                         _ = addStair(game_state, abs_tile_x, abs_tile_y, if (door_down) abs_tile_z - 1 else abs_tile_z);
@@ -811,8 +811,16 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
         _ = addFamiliar(game_state, cam_tile_x + fox, cam_tile_y + foy, cam_tile_z);
     }
 
-    game_state.ground_buffer = makeEmptyBitmap(&game_state.world_arena, 512, 512);
-    drawTestGround(game_state, &game_state.ground_buffer);
+    const screen_width: f32 = @floatFromInt(buffer.width);
+    const screen_height: f32 = @floatFromInt(buffer.height);
+    // const max_z_scale: f32 = 0.5;
+    const ground_overscan: f32 = 1.5;
+    const ground_buffer_width: i32 = intrinsics.roundReal32ToInt32(ground_overscan * screen_width);
+    const ground_buffer_height: i32 = intrinsics.roundReal32ToInt32(ground_overscan * screen_height);
+
+    game_state.ground_buffer = makeEmptyBitmap(&game_state.world_arena, ground_buffer_width, ground_buffer_height);
+    game_state.ground_buffer_p = game_state.camera_pos;
+    drawGroundChunk(game_state, &game_state.ground_buffer, game_state.ground_buffer_p);
 
     const world_build_duration = world_build_begin_ts.untilNow(thread_context.io, .real);
     log.info("World building took: {f}", .{world_build_duration});
@@ -823,7 +831,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
     if (!game_memory.initialized) {
-        init(thread_context, game_memory);
+        init(thread_context, game_memory, offscreen_buffer);
         game_memory.initialized = true;
     }
 
@@ -891,6 +899,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     var sim_arena = MemoryArena.init(game_memory.transient);
     const sim_region = SimRegion.begin(&sim_arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
 
+    const screen_center = v2(
+        @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
+        @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
+    );
+
     var draw_buffer_: LoadedBitmap = .{
         .width = offscreen_buffer.width,
         .height = offscreen_buffer.height,
@@ -902,12 +915,15 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     drawRectangle(draw_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
 
-    drawBitmap(draw_buffer, &game_state.ground_buffer, 0, 0, 1);
-
-    const screen_center = v2(
-        @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
-        @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
+    var ground_p: V2 = v2(
+        screen_center.x - 0.5 * @as(f32, @floatFromInt(game_state.ground_buffer.width)),
+        screen_center.y - 0.5 * @as(f32, @floatFromInt(game_state.ground_buffer.height)),
     );
+    var delta = world.subtract(game_state.ground_buffer_p, game_state.camera_pos);
+    delta.y = -delta.y;
+    ground_p = ground_p.add(delta.xy().mul(game_state.meters_to_pixels));
+
+    drawBitmap(draw_buffer, &game_state.ground_buffer, ground_p.x + delta.x, ground_p.y, 1);
 
     var piece_group: EntityVisiblePieceGroup = .{ .game_state = game_state };
     for (sim_region.entities) |*entity| {
@@ -1079,14 +1095,17 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     sim_region.end(game_state);
 }
 
-fn drawTestGround(game_state: *GameState, buffer: *LoadedBitmap) void {
+fn drawGroundChunk(game_state: *GameState, buffer: *LoadedBitmap, chunk_p: World.Position) void {
     drawRectangle(buffer, .zero, .i(buffer.width, buffer.height), 0, 0, 0);
 
-    var series = Random.Series.seed(1234);
+    var series = Random.Series.seed(@bitCast(139 *% chunk_p.chunk_x +% 593 *% chunk_p.chunk_y +% 329 *% chunk_p.chunk_z));
 
-    const center = V2.i(buffer.width, buffer.height).mul(0.5);
+    const width: f32 = @floatFromInt(buffer.width);
+    const height: f32 = @floatFromInt(buffer.height);
 
-    for (0..100) |_| {
+    // const center = v2(width, height).mul(0.5);
+
+    for (0..1000) |_| {
         var stamp: *const LoadedBitmap = undefined;
         if (series.randomBool()) {
             stamp = &game_state.grass[series.randomChoice(game_state.grass.len)];
@@ -1094,30 +1113,29 @@ fn drawTestGround(game_state: *GameState, buffer: *LoadedBitmap) void {
             stamp = &game_state.stone[series.randomChoice(game_state.stone.len)];
         }
 
-        const radius: f32 = 5;
         const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
 
         const offset: V2 = v2(
-            series.randomBilateral(),
-            series.randomBilateral(),
-        ).mul(game_state.meters_to_pixels * radius);
+            width * series.randomUnilateral(),
+            height * series.randomUnilateral(),
+        );
 
-        const p = center.add(offset).sub(bitmap_center);
+        const p = offset.sub(bitmap_center);
         drawBitmap(buffer, stamp, p.x, p.y, 1);
     }
 
-    for (0..100) |_| {
+    for (0..1000) |_| {
         const stamp = &game_state.tuft[series.randomChoice(game_state.tuft.len)];
 
-        const radius: f32 = 5;
         const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
 
         const offset: V2 = v2(
-            series.randomBilateral(),
-            series.randomBilateral(),
-        ).mul(game_state.meters_to_pixels * radius);
+            width * series.randomUnilateral(),
+            height * series.randomUnilateral(),
+        );
 
-        const p = center.add(offset).sub(bitmap_center);
+        const p = offset.sub(bitmap_center);
+
         drawBitmap(buffer, stamp, p.x, p.y, 1);
     }
 }
