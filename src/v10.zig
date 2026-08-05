@@ -25,6 +25,7 @@ const Rect3 = math.Rect3;
 
 const Random = @import("random.zig");
 const MemoryArena = @import("arena.zig");
+const TemporaryMemory = MemoryArena.TemporaryMemory;
 const World = @import("world.zig");
 
 const ThreadContext = common.ThreadContext;
@@ -79,12 +80,18 @@ pub const PairwiseCollisionRule = struct {
     next_in_hash: ?*PairwiseCollisionRule = null,
 };
 
+pub const GroundBuffer = struct {
+    p: World.Position = .zero,
+    data: []u32,
+};
+
 pub const GameState = struct {
     const screen_tile_width: i32 = 17;
     const screen_tile_height: i32 = 9;
     const controller_count = @typeInfo(@FieldType(Input, "controllers")).array.len;
 
     world_arena: MemoryArena = undefined,
+
     world: *World = undefined,
 
     meters_to_pixels: f32 = 0,
@@ -121,9 +128,15 @@ pub const GameState = struct {
     familiar_collision: *Entity.CollisionGroup = undefined,
     wall_collision: *Entity.CollisionGroup = undefined,
     standard_room_collision: *Entity.CollisionGroup = undefined,
+};
 
-    ground_buffer_p: World.Position = .zero,
-    ground_buffer: LoadedBitmap = .{},
+pub const TransientState = struct {
+    initialized: bool = false,
+
+    arena: MemoryArena = undefined,
+
+    ground_bitmap_template: LoadedBitmap = .{},
+    ground_buffers: []GroundBuffer = &.{},
 };
 
 pub const AddLowEntityResult = struct {
@@ -560,6 +573,7 @@ pub const LoadedBitmap = struct {
     height: i32 = 0,
     pitch: i32 = 0,
     memory: [*]align(1) u32 = undefined,
+    data: []align(1) u32 = &.{},
 
     pub const bytes_per_pixel = 4;
 };
@@ -592,10 +606,8 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     }
 }
 
-pub fn init(thread_context: *ThreadContext, game_memory: *Memory, buffer: *OffscreenBuffer) void {
+pub fn init(thread_context: *ThreadContext, game_memory: *Memory) void {
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
-
-    assert(@sizeOf(GameState) <= game_memory.transient.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
     game_state.* = .{};
@@ -603,7 +615,7 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory, buffer: *Offsc
     const game_state_size = @sizeOf(GameState);
     const world_arena_size = game_memory.permanent.len - game_state_size;
 
-    game_state.world_arena = .init(game_memory.permanent[game_state_size .. game_state_size + world_arena_size]);
+    game_state.world_arena = .init(game_memory.permanent[game_state_size..][0..world_arena_size]);
 
     game_state.world = game_state.world_arena.pushMemory(World);
     const world: *World = game_state.world;
@@ -811,28 +823,40 @@ pub fn init(thread_context: *ThreadContext, game_memory: *Memory, buffer: *Offsc
         _ = addFamiliar(game_state, cam_tile_x + fox, cam_tile_y + foy, cam_tile_z);
     }
 
-    const screen_width: f32 = @floatFromInt(buffer.width);
-    const screen_height: f32 = @floatFromInt(buffer.height);
-    // const max_z_scale: f32 = 0.5;
-    const ground_overscan: f32 = 1.5;
-    const ground_buffer_width: i32 = intrinsics.roundReal32ToInt32(ground_overscan * screen_width);
-    const ground_buffer_height: i32 = intrinsics.roundReal32ToInt32(ground_overscan * screen_height);
-
-    game_state.ground_buffer = makeEmptyBitmap(&game_state.world_arena, ground_buffer_width, ground_buffer_height);
-    game_state.ground_buffer_p = game_state.camera_pos;
-    drawGroundChunk(game_state, &game_state.ground_buffer, game_state.ground_buffer_p);
-
     const world_build_duration = world_build_begin_ts.untilNow(thread_context.io, .real);
     log.info("World building took: {f}", .{world_build_duration});
 }
 
 pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void {
-    assert(@sizeOf(GameState) <= game_memory.transient.len);
+    assert(@sizeOf(GameState) <= game_memory.permanent.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
     if (!game_memory.initialized) {
-        init(thread_context, game_memory, offscreen_buffer);
+        init(thread_context, game_memory);
         game_memory.initialized = true;
+    }
+
+    assert(@sizeOf(TransientState) <= game_memory.transient.len);
+    const tran_state: *TransientState = @ptrCast(@alignCast(game_memory.transient));
+    const transient_state_size = @sizeOf(TransientState);
+    const transient_arena_size = game_memory.transient.len - transient_state_size;
+    if (!tran_state.initialized) {
+        tran_state.arena = .init(game_memory.transient[transient_state_size..][0..transient_arena_size]);
+
+        const ground_buffer_width = 256;
+        const ground_buffer_height = 256;
+
+        tran_state.ground_buffers = tran_state.arena.pushArray(128, GroundBuffer);
+
+        for (tran_state.ground_buffers) |*ground_buffer| {
+            ground_buffer.p = .null;
+            tran_state.ground_bitmap_template = makeEmptyBitmap(&tran_state.arena, ground_buffer_width, ground_buffer_height);
+            ground_buffer.data = @ptrCast(@alignCast(tran_state.ground_bitmap_template.data));
+        }
+
+        fillGroundChunk(tran_state, game_state, &tran_state.ground_buffers[0], game_state.camera_pos);
+
+        tran_state.initialized = true;
     }
 
     const world: *World = game_state.world;
@@ -896,34 +920,44 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const bound_dim = v3(tile_span_x, tile_span_y, tile_span_z).mul(world.tile_side_in_meters);
     const camera_bounds: Rect3 = .centerDim(V3.zero, bound_dim);
 
-    var sim_arena = MemoryArena.init(game_memory.transient);
-    const sim_region = SimRegion.begin(&sim_arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
+    const sim_memory = TemporaryMemory.begin(&tran_state.arena);
+    const sim_region = SimRegion.begin(sim_memory.arena, game_state, game_state.camera_pos, camera_bounds, input.dt);
 
-    const screen_center = v2(
-        @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
-        @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
-    );
+    assert(offscreen_buffer.pitch >= offscreen_buffer.width);
+    const offscreen_buffer_data = offscreen_buffer.memory[0 .. @as(usize, @intCast(offscreen_buffer.pitch * offscreen_buffer.height)) * OffscreenBuffer.bytes_per_pixel];
 
     var draw_buffer_: LoadedBitmap = .{
         .width = offscreen_buffer.width,
         .height = offscreen_buffer.height,
         .pitch = offscreen_buffer.pitch,
-        .memory = @ptrCast(offscreen_buffer.memory),
+        .memory = @ptrCast(offscreen_buffer_data.ptr),
+        .data = @ptrCast(offscreen_buffer_data),
     };
     const draw_buffer = &draw_buffer_;
 
     // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
     drawRectangle(draw_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 0.5, 0.5, 0.5);
 
-    var ground_p: V2 = v2(
-        screen_center.x - 0.5 * @as(f32, @floatFromInt(game_state.ground_buffer.width)),
-        screen_center.y - 0.5 * @as(f32, @floatFromInt(game_state.ground_buffer.height)),
+    const screen_center = v2(
+        @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
+        @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
     );
-    var delta = world.subtract(game_state.ground_buffer_p, game_state.camera_pos);
-    delta.y = -delta.y;
-    ground_p = ground_p.add(delta.xy().mul(game_state.meters_to_pixels));
 
-    drawBitmap(draw_buffer, &game_state.ground_buffer, ground_p.x + delta.x, ground_p.y, 1);
+    for (tran_state.ground_buffers) |*ground_buffer| {
+        if (ground_buffer.p.isValid()) {
+            var bitmap = tran_state.ground_bitmap_template;
+            bitmap.data = ground_buffer.data;
+            bitmap.memory = ground_buffer.data.ptr;
+
+            const delta = world.subtract(ground_buffer.p, game_state.camera_pos).mul(game_state.meters_to_pixels);
+            const ground_p: V2 = v2(
+                screen_center.x + delta.x - 0.5 * @as(f32, @floatFromInt(bitmap.width)),
+                screen_center.y - delta.y - 0.5 * @as(f32, @floatFromInt(bitmap.height)),
+            );
+
+            drawBitmap(draw_buffer, &bitmap, ground_p.x, ground_p.y, 1);
+        }
+    }
 
     var piece_group: EntityVisiblePieceGroup = .{ .game_state = game_state };
     for (sim_region.entities) |*entity| {
@@ -1093,19 +1127,28 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     sim_region.end(game_state);
+
+    sim_memory.end();
+
+    game_state.world_arena.check();
+    tran_state.arena.check();
 }
 
-fn drawGroundChunk(game_state: *GameState, buffer: *LoadedBitmap, chunk_p: World.Position) void {
-    drawRectangle(buffer, .zero, .i(buffer.width, buffer.height), 0, 0, 0);
+fn fillGroundChunk(trans_state: *TransientState, game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p: World.Position) void {
+    var bitmap = trans_state.ground_bitmap_template;
+    bitmap.data = ground_buffer.data;
+    bitmap.memory = ground_buffer.data.ptr;
+
+    ground_buffer.p = chunk_p;
+
+    const width: f32 = @floatFromInt(bitmap.width);
+    const height: f32 = @floatFromInt(bitmap.height);
+
+    drawRectangle(&bitmap, .zero, v2(width, height), 0, 0, 0);
 
     var series = Random.Series.seed(@bitCast(139 *% chunk_p.chunk_x +% 593 *% chunk_p.chunk_y +% 329 *% chunk_p.chunk_z));
 
-    const width: f32 = @floatFromInt(buffer.width);
-    const height: f32 = @floatFromInt(buffer.height);
-
-    // const center = v2(width, height).mul(0.5);
-
-    for (0..1000) |_| {
+    for (0..100) |_| {
         var stamp: *const LoadedBitmap = undefined;
         if (series.randomBool()) {
             stamp = &game_state.grass[series.randomChoice(game_state.grass.len)];
@@ -1121,10 +1164,10 @@ fn drawGroundChunk(game_state: *GameState, buffer: *LoadedBitmap, chunk_p: World
         );
 
         const p = offset.sub(bitmap_center);
-        drawBitmap(buffer, stamp, p.x, p.y, 1);
+        drawBitmap(&bitmap, stamp, p.x, p.y, 1);
     }
 
-    for (0..1000) |_| {
+    for (0..100) |_| {
         const stamp = &game_state.tuft[series.randomChoice(game_state.tuft.len)];
 
         const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
@@ -1135,25 +1178,34 @@ fn drawGroundChunk(game_state: *GameState, buffer: *LoadedBitmap, chunk_p: World
         );
 
         const p = offset.sub(bitmap_center);
-
-        drawBitmap(buffer, stamp, p.x, p.y, 1);
+        drawBitmap(&bitmap, stamp, p.x, p.y, 1);
     }
 }
 
 pub fn makeEmptyBitmap(arena: *MemoryArena, width: i32, height: i32) LoadedBitmap {
-    const pixel_count: usize = @intCast(width * height);
-    const byte_size: usize = pixel_count * LoadedBitmap.bytes_per_pixel;
+    const byte_size: usize = @as(usize, @intCast(width * height)) * LoadedBitmap.bytes_per_pixel;
+
+    const data = arena.pushArray(byte_size, u8);
 
     const result: LoadedBitmap = .{
         .width = width,
         .height = height,
         .pitch = width * LoadedBitmap.bytes_per_pixel,
-        .memory = @ptrCast(arena.pushArray(byte_size, u8).ptr),
+        .memory = @ptrCast(data.ptr),
+        .data = @ptrCast(data),
     };
 
-    @memset(result.memory[0..pixel_count], 0);
-
     return result;
+}
+
+pub inline fn makeEmptyBitmapClear(arena: *MemoryArena, width: i32, height: i32) LoadedBitmap {
+    const result = makeEmptyBitmap(arena, width, height);
+    clearBitmap(&result);
+    return result;
+}
+
+pub inline fn clearBitmap(bitmap: *LoadedBitmap) void {
+    @memset(bitmap.data, 0);
 }
 
 const PushPieceOptions = struct {
@@ -1267,6 +1319,7 @@ pub const DEBUG = struct {
 
             assert(header.bits_per_pixel == 32); // TODO: account for scan line alignment
             result.memory = @ptrCast(content.ptr + header.bitmap_offset);
+            result.data = result.memory[0..@intCast(header.width * header.height)];
             result.width = @intCast(header.width);
             result.height = @intCast(header.height);
 
@@ -1299,8 +1352,7 @@ pub const DEBUG = struct {
             const blue_shift_down = blue_scan.index;
             const alpha_shift_down = alpha_scan.index;
 
-            for (0..@intCast(result.width * result.height)) |i| {
-                const pixel: *align(1) u32 = &result.memory[i];
+            for (result.data) |*pixel| {
                 const c = pixel.*;
 
                 const a: f32 = @floatFromInt((c & alpha_mask) >> alpha_shift_down);
