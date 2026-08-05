@@ -99,10 +99,13 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: Wor
 
     var chunk_z: i32 = min_chunk_p.chunk_z;
     while (chunk_z <= max_chunk_p.chunk_z) : (chunk_z += 1) {
+        //
         var chunk_y: i32 = min_chunk_p.chunk_y;
         while (chunk_y <= max_chunk_p.chunk_y) : (chunk_y += 1) {
+            //
             var chunk_x: i32 = min_chunk_p.chunk_x;
             while (chunk_x <= max_chunk_p.chunk_x) : (chunk_x += 1) {
+                //
                 if (world.getChunk(chunk_x, chunk_y, chunk_z, .{})) |chunk| {
                     var block_opt: ?*World.EntityBlock = &chunk.first_entity_block;
 

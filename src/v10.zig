@@ -624,236 +624,6 @@ pub fn outputSound(game_state: *GameState, buffer: *AudioBuffer) void {
     }
 }
 
-pub fn init(thread_context: *ThreadContext, game_memory: *Memory, ground_buffer_width: f32, ground_buffer_height: f32) void {
-    assert(@sizeOf(GameState) <= game_memory.permanent.len);
-    const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
-
-    game_state.* = .{};
-
-    const game_state_size = @sizeOf(GameState);
-    const world_arena_size = game_memory.permanent.len - game_state_size;
-
-    game_state.world_arena = .init(game_memory.permanent[game_state_size..][0..world_arena_size]);
-
-    game_state.world = game_state.world_arena.pushMemory(World);
-    const world: *World = game_state.world;
-
-    game_state.typical_floor_height = 3;
-    game_state.meters_to_pixels = 42;
-    game_state.pixels_to_meters = 1 / game_state.meters_to_pixels;
-
-    const world_chunk_dim_in_meters = v3(
-        game_state.pixels_to_meters * ground_buffer_width,
-        game_state.pixels_to_meters * ground_buffer_height,
-        game_state.typical_floor_height,
-    );
-
-    world.init(world_chunk_dim_in_meters);
-
-    _ = addLowEntity(game_state, .null, .null);
-
-    const tile_side_in_meters = 1.4;
-
-    game_state.null_collision = .null(game_state);
-    game_state.sword_collision = .simpleGrounded(game_state, 1, 0.5, 0.1);
-    game_state.stair_collision = .simpleGrounded(
-        game_state,
-        tile_side_in_meters,
-        2 * tile_side_in_meters,
-        1.1 * game_state.typical_floor_height,
-    );
-    game_state.player_collision = .simpleGrounded(game_state, 1, 0.5, 1.2);
-    game_state.monster_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
-    game_state.familiar_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
-    game_state.wall_collision = .simpleGrounded(
-        game_state,
-        tile_side_in_meters,
-        tile_side_in_meters,
-        game_state.typical_floor_height,
-    );
-    game_state.standard_room_collision = .simpleGrounded(
-        game_state,
-        GameState.screen_tile_width * tile_side_in_meters,
-        GameState.screen_tile_height * tile_side_in_meters,
-        0.9 * game_state.typical_floor_height,
-    );
-
-    const asset_prefix = "../../hh_assets/";
-    // const asset_prefix = "";
-
-    const asset_load_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
-
-    game_state.grass[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass00.bmp");
-    game_state.grass[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass01.bmp");
-
-    game_state.stone[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground00.bmp");
-    game_state.stone[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground01.bmp");
-    game_state.stone[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground02.bmp");
-    game_state.stone[3] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground03.bmp");
-
-    game_state.tuft[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft00.bmp");
-    game_state.tuft[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft01.bmp");
-    game_state.tuft[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft02.bmp");
-
-    game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_background.bmp");
-    game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_shadow.bmp");
-    game_state.tree = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tree00.bmp");
-    game_state.sword = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/rock03.bmp");
-    game_state.stairwell = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/rock02.bmp");
-
-    game_state.hero_bitmaps[0].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_head.bmp");
-    game_state.hero_bitmaps[0].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_cape.bmp");
-    game_state.hero_bitmaps[0].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_torso.bmp");
-    game_state.hero_bitmaps[0].alignment = v2(72, 182);
-
-    game_state.hero_bitmaps[1].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_back_head.bmp");
-    game_state.hero_bitmaps[1].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_back_cape.bmp");
-    game_state.hero_bitmaps[1].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_back_torso.bmp");
-    game_state.hero_bitmaps[1].alignment = v2(72, 182);
-
-    game_state.hero_bitmaps[2].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_left_head.bmp");
-    game_state.hero_bitmaps[2].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_left_cape.bmp");
-    game_state.hero_bitmaps[2].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_left_torso.bmp");
-    game_state.hero_bitmaps[2].alignment = v2(72, 182);
-
-    game_state.hero_bitmaps[3].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_head.bmp");
-    game_state.hero_bitmaps[3].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_cape.bmp");
-    game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_torso.bmp");
-    game_state.hero_bitmaps[3].alignment = v2(72, 182);
-
-    const asset_load_duration = asset_load_begin_ts.untilNow(thread_context.io, .real);
-    log.info("Asset loading took: {f}", .{asset_load_duration});
-
-    const world_build_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
-
-    var series = Random.Series.seed(1234);
-
-    const screen_base_x: i32 = 0;
-    const screen_base_y: i32 = 0;
-    const screen_base_z: i32 = 0;
-
-    var screen_x: i32 = screen_base_x;
-    var screen_y: i32 = screen_base_y;
-    var abs_tile_z: i32 = screen_base_z;
-
-    var door_left = false;
-    var door_right = false;
-    var door_top = false;
-    var door_bottom = false;
-    var door_up = false;
-    var door_down = false;
-
-    for (0..2000) |_| {
-        // const door_direction = series.randomChoice(if (door_up or door_down) 2 else 3);
-        const door_direction = series.randomChoice(2);
-
-        var created_ladder = false;
-
-        if (door_direction == 2) {
-            created_ladder = true;
-            if (abs_tile_z == screen_base_z) {
-                door_up = true;
-            } else {
-                door_down = true;
-            }
-        } else if (door_direction == 1) {
-            door_right = true;
-        } else {
-            door_top = true;
-        }
-
-        _ = addStandardRoom(
-            game_state,
-            @as(f32, @floatFromInt(screen_x * GameState.screen_tile_width)) + (@as(f32, GameState.screen_tile_width) / 2),
-            @as(f32, @floatFromInt(screen_y * GameState.screen_tile_height)) + (@as(f32, GameState.screen_tile_height) / 2),
-            @floatFromInt(abs_tile_z),
-        );
-
-        for (0..GameState.screen_tile_height) |tile_y_| {
-            const tile_y: i32 = @intCast(tile_y_);
-
-            for (0..GameState.screen_tile_width) |tile_x_| {
-                const tile_x: i32 = @intCast(tile_x_);
-
-                const abs_tile_x: i32 = (screen_x * GameState.screen_tile_width) + tile_x;
-                const abs_tile_y: i32 = (screen_y * GameState.screen_tile_height) + tile_y;
-
-                var should_be_wall = false;
-
-                if ((tile_x == 0) and
-                    (!door_left or (tile_y != (GameState.screen_tile_height / 2))))
-                {
-                    should_be_wall = true;
-                } else if ((tile_x == GameState.screen_tile_width - 1) and
-                    (!door_right or (tile_y != (GameState.screen_tile_height / 2))))
-                {
-                    should_be_wall = true;
-                } else if ((tile_y == 0) and
-                    (!door_bottom or (tile_x != (GameState.screen_tile_width / 2))))
-                {
-                    should_be_wall = true;
-                } else if ((tile_y == GameState.screen_tile_height - 1) and
-                    (!door_top or (tile_x != (GameState.screen_tile_width / 2))))
-                {
-                    should_be_wall = true;
-                }
-
-                if (should_be_wall) {
-                    _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
-                } else if (created_ladder) {
-                    if (tile_x == 10 and tile_y == 5) {
-                        _ = addStair(game_state, abs_tile_x, abs_tile_y, if (door_down) abs_tile_z - 1 else abs_tile_z);
-                    }
-                }
-            }
-        }
-
-        door_left = door_right;
-        door_bottom = door_top;
-
-        if (created_ladder) {
-            door_down = !door_down;
-            door_up = !door_up;
-        } else {
-            door_down = false;
-            door_up = false;
-        }
-
-        door_right = false;
-        door_top = false;
-
-        if (door_direction == 2) {
-            if (abs_tile_z == screen_base_z) {
-                abs_tile_z = screen_base_z + 1;
-            } else {
-                abs_tile_z = screen_base_z;
-            }
-        } else if (door_direction == 1) {
-            screen_x += 1;
-        } else {
-            screen_y += 1;
-        }
-    }
-
-    const cam_tile_x = (screen_base_x * GameState.screen_tile_width) + (GameState.screen_tile_width / 2);
-    const cam_tile_y = (screen_base_y * GameState.screen_tile_height) + (GameState.screen_tile_height / 2);
-    const cam_tile_z = screen_base_z;
-
-    game_state.camera_pos = chunkPositionFromTilePosition(game_state.world, cam_tile_x, cam_tile_y, cam_tile_z);
-
-    _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
-
-    for (0..1) |_| {
-        const fox = series.randomBetweenInt(-7, 7);
-        const foy = series.randomBetweenInt(-3, -1);
-        log.debug("fox,foy: {},{}", .{ fox, foy });
-        _ = addFamiliar(game_state, cam_tile_x + fox, cam_tile_y + foy, cam_tile_z);
-    }
-
-    const world_build_duration = world_build_begin_ts.untilNow(thread_context.io, .real);
-    log.info("World building took: {f}", .{world_build_duration});
-}
-
 pub fn chunkPositionFromTilePosition(world: *const World, abs_tile_x: i32, abs_tile_y: i32, abs_tile_z: i32) World.Position {
     const tile_side_in_meters: f32 = 1.4;
     const tile_depth_in_meters: f32 = 3;
@@ -875,7 +645,231 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const ground_buffer_height = 256;
 
     if (!game_memory.initialized) {
-        init(thread_context, game_memory, ground_buffer_width, ground_buffer_height);
+        game_state.* = .{};
+
+        const game_state_size = @sizeOf(GameState);
+        const world_arena_size = game_memory.permanent.len - game_state_size;
+
+        game_state.world_arena = .init(game_memory.permanent[game_state_size..][0..world_arena_size]);
+
+        game_state.world = game_state.world_arena.pushMemory(World);
+        const world: *World = game_state.world;
+
+        game_state.typical_floor_height = 3;
+        game_state.meters_to_pixels = 42;
+        game_state.pixels_to_meters = 1 / game_state.meters_to_pixels;
+
+        const world_chunk_dim_in_meters = v3(
+            game_state.pixels_to_meters * ground_buffer_width,
+            game_state.pixels_to_meters * ground_buffer_height,
+            game_state.typical_floor_height,
+        );
+
+        world.init(world_chunk_dim_in_meters);
+
+        _ = addLowEntity(game_state, .null, .null);
+
+        const tile_side_in_meters = 1.4;
+
+        game_state.null_collision = .null(game_state);
+        game_state.sword_collision = .simpleGrounded(game_state, 1, 0.5, 0.1);
+        game_state.stair_collision = .simpleGrounded(
+            game_state,
+            tile_side_in_meters,
+            2 * tile_side_in_meters,
+            1.1 * game_state.typical_floor_height,
+        );
+        game_state.player_collision = .simpleGrounded(game_state, 1, 0.5, 1.2);
+        game_state.monster_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
+        game_state.familiar_collision = .simpleGrounded(game_state, 1, 0.5, 0.5);
+        game_state.wall_collision = .simpleGrounded(
+            game_state,
+            tile_side_in_meters,
+            tile_side_in_meters,
+            game_state.typical_floor_height,
+        );
+        game_state.standard_room_collision = .simpleGrounded(
+            game_state,
+            GameState.screen_tile_width * tile_side_in_meters,
+            GameState.screen_tile_height * tile_side_in_meters,
+            0.9 * game_state.typical_floor_height,
+        );
+
+        const asset_prefix = "../../hh_assets/";
+        // const asset_prefix = "";
+
+        const asset_load_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
+
+        game_state.grass[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass00.bmp");
+        game_state.grass[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass01.bmp");
+
+        game_state.stone[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground00.bmp");
+        game_state.stone[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground01.bmp");
+        game_state.stone[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground02.bmp");
+        game_state.stone[3] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/ground03.bmp");
+
+        game_state.tuft[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft00.bmp");
+        game_state.tuft[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft01.bmp");
+        game_state.tuft[2] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tuft02.bmp");
+
+        game_state.backdrop = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_background.bmp");
+        game_state.hero_shadow = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_shadow.bmp");
+        game_state.tree = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/tree00.bmp");
+        game_state.sword = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/rock03.bmp");
+        game_state.stairwell = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/rock02.bmp");
+
+        game_state.hero_bitmaps[0].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_head.bmp");
+        game_state.hero_bitmaps[0].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_cape.bmp");
+        game_state.hero_bitmaps[0].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_right_torso.bmp");
+        game_state.hero_bitmaps[0].alignment = v2(72, 182);
+
+        game_state.hero_bitmaps[1].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_back_head.bmp");
+        game_state.hero_bitmaps[1].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_back_cape.bmp");
+        game_state.hero_bitmaps[1].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_back_torso.bmp");
+        game_state.hero_bitmaps[1].alignment = v2(72, 182);
+
+        game_state.hero_bitmaps[2].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_left_head.bmp");
+        game_state.hero_bitmaps[2].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_left_cape.bmp");
+        game_state.hero_bitmaps[2].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_left_torso.bmp");
+        game_state.hero_bitmaps[2].alignment = v2(72, 182);
+
+        game_state.hero_bitmaps[3].head = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_head.bmp");
+        game_state.hero_bitmaps[3].cape = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_cape.bmp");
+        game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_torso.bmp");
+        game_state.hero_bitmaps[3].alignment = v2(72, 182);
+
+        const asset_load_duration = asset_load_begin_ts.untilNow(thread_context.io, .real);
+        log.info("Asset loading took: {f}", .{asset_load_duration});
+
+        const world_build_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
+
+        var series = Random.Series.seed(1234);
+
+        const screen_base_x: i32 = 0;
+        const screen_base_y: i32 = 0;
+        const screen_base_z: i32 = 0;
+
+        var screen_x: i32 = screen_base_x;
+        var screen_y: i32 = screen_base_y;
+        var abs_tile_z: i32 = screen_base_z;
+
+        var door_left = false;
+        var door_right = false;
+        var door_top = false;
+        var door_bottom = false;
+        var door_up = false;
+        var door_down = false;
+
+        for (0..2000) |_| {
+            // const door_direction = series.randomChoice(if (door_up or door_down) 2 else 3);
+            const door_direction = series.randomChoice(2);
+
+            var created_ladder = false;
+
+            if (door_direction == 2) {
+                created_ladder = true;
+                if (abs_tile_z == screen_base_z) {
+                    door_up = true;
+                } else {
+                    door_down = true;
+                }
+            } else if (door_direction == 1) {
+                door_right = true;
+            } else {
+                door_top = true;
+            }
+
+            _ = addStandardRoom(
+                game_state,
+                @as(f32, @floatFromInt(screen_x * GameState.screen_tile_width)) + (@as(f32, GameState.screen_tile_width) / 2),
+                @as(f32, @floatFromInt(screen_y * GameState.screen_tile_height)) + (@as(f32, GameState.screen_tile_height) / 2),
+                @floatFromInt(abs_tile_z),
+            );
+
+            for (0..GameState.screen_tile_height) |tile_y_| {
+                const tile_y: i32 = @intCast(tile_y_);
+
+                for (0..GameState.screen_tile_width) |tile_x_| {
+                    const tile_x: i32 = @intCast(tile_x_);
+
+                    const abs_tile_x: i32 = (screen_x * GameState.screen_tile_width) + tile_x;
+                    const abs_tile_y: i32 = (screen_y * GameState.screen_tile_height) + tile_y;
+
+                    var should_be_wall = false;
+
+                    if ((tile_x == 0) and
+                        (!door_left or (tile_y != (GameState.screen_tile_height / 2))))
+                    {
+                        should_be_wall = true;
+                    } else if ((tile_x == GameState.screen_tile_width - 1) and
+                        (!door_right or (tile_y != (GameState.screen_tile_height / 2))))
+                    {
+                        should_be_wall = true;
+                    } else if ((tile_y == 0) and
+                        (!door_bottom or (tile_x != (GameState.screen_tile_width / 2))))
+                    {
+                        should_be_wall = true;
+                    } else if ((tile_y == GameState.screen_tile_height - 1) and
+                        (!door_top or (tile_x != (GameState.screen_tile_width / 2))))
+                    {
+                        should_be_wall = true;
+                    }
+
+                    if (should_be_wall) {
+                        _ = addWall(game_state, abs_tile_x, abs_tile_y, abs_tile_z);
+                    } else if (created_ladder) {
+                        if (tile_x == 10 and tile_y == 5) {
+                            _ = addStair(game_state, abs_tile_x, abs_tile_y, if (door_down) abs_tile_z - 1 else abs_tile_z);
+                        }
+                    }
+                }
+            }
+
+            door_left = door_right;
+            door_bottom = door_top;
+
+            if (created_ladder) {
+                door_down = !door_down;
+                door_up = !door_up;
+            } else {
+                door_down = false;
+                door_up = false;
+            }
+
+            door_right = false;
+            door_top = false;
+
+            if (door_direction == 2) {
+                if (abs_tile_z == screen_base_z) {
+                    abs_tile_z = screen_base_z + 1;
+                } else {
+                    abs_tile_z = screen_base_z;
+                }
+            } else if (door_direction == 1) {
+                screen_x += 1;
+            } else {
+                screen_y += 1;
+            }
+        }
+
+        const cam_tile_x = (screen_base_x * GameState.screen_tile_width) + (GameState.screen_tile_width / 2);
+        const cam_tile_y = (screen_base_y * GameState.screen_tile_height) + (GameState.screen_tile_height / 2);
+        const cam_tile_z = screen_base_z;
+
+        game_state.camera_pos = chunkPositionFromTilePosition(game_state.world, cam_tile_x, cam_tile_y, cam_tile_z);
+
+        _ = addMonster(game_state, cam_tile_x - 3, cam_tile_y + 2, cam_tile_z);
+
+        for (0..1) |_| {
+            const fox = series.randomBetweenInt(-7, 7);
+            const foy = series.randomBetweenInt(-3, -1);
+            log.debug("fox,foy: {},{}", .{ fox, foy });
+            _ = addFamiliar(game_state, cam_tile_x + fox, cam_tile_y + foy, cam_tile_z);
+        }
+
+        const world_build_duration = world_build_begin_ts.untilNow(thread_context.io, .real);
+        log.info("World building took: {f}", .{world_build_duration});
+
         game_memory.initialized = true;
     }
 
@@ -886,7 +880,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     if (!tran_state.initialized) {
         tran_state.arena = .init(game_memory.transient[transient_state_size..][0..transient_arena_size]);
 
-        tran_state.ground_buffers = tran_state.arena.pushArray(128, GroundBuffer);
+        tran_state.ground_buffers = tran_state.arena.pushArray(32, GroundBuffer);
 
         for (tran_state.ground_buffers) |*ground_buffer| {
             ground_buffer.p = .null;
@@ -895,6 +889,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
 
         tran_state.initialized = true;
+    }
+
+    if (input.executable_reloaded) {
+        for (tran_state.ground_buffers) |*ground_buffer| {
+            ground_buffer.p = .null;
+        }
     }
 
     const world: *World = game_state.world;
@@ -976,58 +976,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const screen_height_meters = @as(f32, @floatFromInt(draw_buffer.height)) * game_state.pixels_to_meters;
 
     const camera_bounds_meters = Rect3.centerDim(.zero, v3(screen_width_meters, screen_height_meters, 0));
-    {
-        const min_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.min);
-        const max_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.max);
-
-        var chunk_z: i32 = min_chunk_p.chunk_z;
-        while (chunk_z <= max_chunk_p.chunk_z) : (chunk_z += 1) {
-            var chunk_y: i32 = min_chunk_p.chunk_y;
-            while (chunk_y <= max_chunk_p.chunk_y) : (chunk_y += 1) {
-                var chunk_x: i32 = min_chunk_p.chunk_x;
-                while (chunk_x <= max_chunk_p.chunk_x) : (chunk_x += 1) {
-                    const chunk_center_p = World.getCenteredChunkPoint(chunk_x, chunk_y, chunk_z);
-                    const rel_p = world.subtract(chunk_center_p, game_state.camera_pos);
-
-                    const screen_p = v2(
-                        screen_center.x + game_state.meters_to_pixels * rel_p.x,
-                        screen_center.y - game_state.meters_to_pixels * rel_p.y,
-                    );
-                    const screen_dim = world.chunk_dim_in_meters.xy().mul(game_state.meters_to_pixels);
-
-                    var found = false;
-                    var empty_buffer_opt: ?*GroundBuffer = null;
-
-                    for (tran_state.ground_buffers) |*ground_buffer| {
-                        if (world.areInSameChunk(ground_buffer.p, chunk_center_p)) {
-                            found = true;
-                            break;
-                        } else if (!ground_buffer.p.isValid()) {
-                            empty_buffer_opt = ground_buffer;
-                        }
-                    }
-
-                    if (!found) if (empty_buffer_opt) |empty_buffer| {
-                        fillGroundChunk(tran_state, game_state, empty_buffer, chunk_center_p);
-                    };
-
-                    drawRectangleOutline(
-                        draw_buffer,
-                        screen_p.sub(screen_dim.mul(0.5)),
-                        screen_p.add(screen_dim.mul(0.5)),
-                        v3(1, 1, 0),
-                        .{},
-                    );
-                }
-            }
-        }
-    }
-
-    const sim_bounds_extension: V3 = .scalar(15);
-    const sim_bounds = camera_bounds_meters.addRadius(sim_bounds_extension);
-
-    const sim_memory = TemporaryMemory.begin(&tran_state.arena);
-    const sim_region = SimRegion.begin(sim_memory.arena, game_state, game_state.camera_pos, sim_bounds, input.dt);
 
     for (tran_state.ground_buffers) |*ground_buffer| {
         if (ground_buffer.p.isValid()) {
@@ -1044,6 +992,75 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             drawBitmap(draw_buffer, &bitmap, ground_p.x, ground_p.y, 1);
         }
     }
+
+    chunk_fill_blk: {
+        const min_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.min);
+        const max_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.max);
+
+        const screen_dim = world.chunk_dim_in_meters.xy().mul(game_state.meters_to_pixels);
+
+        var chunk_z: i32 = min_chunk_p.chunk_z;
+        while (chunk_z <= max_chunk_p.chunk_z) : (chunk_z += 1) {
+            //
+            var chunk_y: i32 = min_chunk_p.chunk_y;
+            while (chunk_y <= max_chunk_p.chunk_y) : (chunk_y += 1) {
+                //
+                var chunk_x: i32 = min_chunk_p.chunk_x;
+                while (chunk_x <= max_chunk_p.chunk_x) : (chunk_x += 1) {
+                    //
+                    const chunk_center_p = World.getCenteredChunkPoint(chunk_x, chunk_y, chunk_z);
+                    const rel_p = world.subtract(chunk_center_p, game_state.camera_pos);
+
+                    const screen_p = v2(
+                        screen_center.x + game_state.meters_to_pixels * rel_p.x,
+                        screen_center.y - game_state.meters_to_pixels * rel_p.y,
+                    );
+
+                    var furthest_buffer_length_sq: f32 = 0;
+                    var furthest_buffer_opt: ?*GroundBuffer = null;
+
+                    for (tran_state.ground_buffers) |*ground_buffer| {
+                        if (world.areInSameChunk(ground_buffer.p, chunk_center_p)) {
+                            furthest_buffer_opt = null;
+                            break;
+                        } else if (ground_buffer.p.isValid()) {
+                            const gb_rel_p = world.subtract(ground_buffer.p, game_state.camera_pos);
+                            const buffer_length_sq = gb_rel_p.xy().lengthSquared();
+
+                            if (furthest_buffer_length_sq < buffer_length_sq) {
+                                furthest_buffer_length_sq = buffer_length_sq;
+                                furthest_buffer_opt = ground_buffer;
+                            }
+                        } else {
+                            furthest_buffer_length_sq = math.maxFloat(f32);
+                            furthest_buffer_opt = ground_buffer;
+                            break;
+                        }
+                    }
+
+                    if (furthest_buffer_opt) |empty_buffer| {
+                        fillGroundChunk(tran_state, game_state, empty_buffer, chunk_center_p);
+                        break :chunk_fill_blk;
+                    }
+
+                    // drawRectangleOutline(
+                    //     draw_buffer,
+                    //     screen_p.sub(screen_dim.mul(0.5)),
+                    //     screen_p.add(screen_dim.mul(0.5)),
+                    //     v3(1, 1, 0),
+                    //     .{},
+                    // );
+                    _ = .{ screen_dim, screen_p };
+                }
+            }
+        }
+    }
+
+    const sim_bounds_extension: V3 = .scalar(15);
+    const sim_bounds = camera_bounds_meters.addRadius(sim_bounds_extension);
+
+    const sim_memory = TemporaryMemory.begin(&tran_state.arena);
+    const sim_region = SimRegion.begin(sim_memory.arena, game_state, game_state.camera_pos, sim_bounds, input.dt);
 
     var piece_group: EntityVisiblePieceGroup = .{ .game_state = game_state };
     for (sim_region.entities) |*entity| {
@@ -1230,41 +1247,69 @@ fn fillGroundChunk(trans_state: *TransientState, game_state: *GameState, ground_
     const width: f32 = @floatFromInt(bitmap.width);
     const height: f32 = @floatFromInt(bitmap.height);
 
-    drawRectangle(&bitmap, .zero, v2(width, height), 0, 0, 0);
+    for (0..3) |y| {
+        const chunk_offset_y = -1 + @as(i32, @intCast(y));
 
-    var series = Random.Series.seed(@bitCast(139 *% chunk_p.chunk_x +% 593 *% chunk_p.chunk_y +% 329 *% chunk_p.chunk_z));
+        for (0..3) |x| {
+            const chunk_offset_x = -1 + @as(i32, @intCast(x));
 
-    for (0..100) |_| {
-        var stamp: *const LoadedBitmap = undefined;
-        if (series.randomBool()) {
-            stamp = &game_state.grass[series.randomChoice(game_state.grass.len)];
-        } else {
-            stamp = &game_state.stone[series.randomChoice(game_state.stone.len)];
+            const chunk_x = chunk_p.chunk_x + chunk_offset_x;
+            const chunk_y = chunk_p.chunk_y + chunk_offset_y;
+            const chunk_z = chunk_p.chunk_z;
+
+            var series = Random.Series.seed(@bitCast(139 *% chunk_x +% 593 *% chunk_y +% 329 *% chunk_z));
+
+            const center = v2(width, -height).hadamard(.i(chunk_offset_x, chunk_offset_y));
+
+            for (0..100) |_| {
+                var stamp: *const LoadedBitmap = undefined;
+                if (series.randomBool()) {
+                    stamp = &game_state.grass[series.randomChoice(game_state.grass.len)];
+                } else {
+                    stamp = &game_state.stone[series.randomChoice(game_state.stone.len)];
+                }
+
+                const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
+
+                const offset: V2 = v2(
+                    width * series.randomUnilateral(),
+                    height * series.randomUnilateral(),
+                );
+
+                const p = center.add(offset).sub(bitmap_center);
+                drawBitmap(&bitmap, stamp, p.x, p.y, 1);
+            }
         }
-
-        const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
-
-        const offset: V2 = v2(
-            width * series.randomUnilateral(),
-            height * series.randomUnilateral(),
-        );
-
-        const p = offset.sub(bitmap_center);
-        drawBitmap(&bitmap, stamp, p.x, p.y, 1);
     }
 
-    for (0..100) |_| {
-        const stamp = &game_state.tuft[series.randomChoice(game_state.tuft.len)];
+    for (0..3) |y| {
+        const chunk_offset_y = -1 + @as(i32, @intCast(y));
 
-        const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
+        for (0..3) |x| {
+            const chunk_offset_x = -1 + @as(i32, @intCast(x));
 
-        const offset: V2 = v2(
-            width * series.randomUnilateral(),
-            height * series.randomUnilateral(),
-        );
+            const chunk_x = chunk_p.chunk_x + chunk_offset_x;
+            const chunk_y = chunk_p.chunk_y + chunk_offset_y;
+            const chunk_z = chunk_p.chunk_z;
 
-        const p = offset.sub(bitmap_center);
-        drawBitmap(&bitmap, stamp, p.x, p.y, 1);
+            var series = Random.Series.seed(@bitCast(139 *% chunk_x +% 593 *% chunk_y +% 329 *% chunk_z));
+
+            const center = v2(width, -height).hadamard(.i(chunk_offset_x, chunk_offset_y));
+
+            for (0..30) |_| {
+                const stamp = &game_state.tuft[series.randomChoice(game_state.tuft.len)];
+
+                const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
+
+                const offset: V2 = v2(
+                    width * series.randomUnilateral(),
+                    height * series.randomUnilateral(),
+                );
+
+                const p = center.add(offset).sub(bitmap_center);
+                drawBitmap(&bitmap, stamp, p.x, p.y, 1);
+            }
+        }
     }
 }
 

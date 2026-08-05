@@ -158,6 +158,7 @@ pub const DebugMouseInput = struct {
 pub const Input = struct {
     debug_mouse: DebugMouseInput = undefined,
 
+    executable_reloaded: bool = false,
     dt: f32 = 0,
     controllers: [5]ControllerInput = @splat(std.mem.zeroes(ControllerInput)),
 };
@@ -295,7 +296,8 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
             const win32 = @import("win32");
             var data: win32.FILE_ATTRIBUTE_DATA = undefined;
             if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data).toBool()) {
-                result = @as(u64, @bitCast(data.last_write_time));
+                const lwt = win32.LARGE_INTEGER{ .u = .{ .low_part = data.last_write_time.low_date_time, .high_part = @bitCast(data.last_write_time.high_date_time) } };
+                result = @intCast(lwt.quad_part);
             }
         },
 

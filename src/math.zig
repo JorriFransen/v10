@@ -5,6 +5,8 @@ pub const tau = std.math.tau;
 
 pub const maxInt = std.math.maxInt;
 pub const minInt = std.math.minInt;
+pub const maxFloat = std.math.floatMax;
+pub const minFloat = std.math.floatMin;
 pub const atan2 = std.math.atan2;
 pub const log2 = std.math.log2;
 pub const isPowerOfTwo = std.math.isPowerOfTwo;

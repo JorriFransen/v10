@@ -620,20 +620,18 @@ pub fn windowsEntry(
                 var last_cycle_count = arch.rdtsc();
 
                 while (global_running) {
-                    const new_dll_write_time = common.getLastWriteTime(io, source_dll_name);
-                    if (new_dll_write_time > game_code.last_write_time) {
-                        var __dummy__: win32.FILE_ATTRIBUTE_DATA = undefined;
-
-                        // This isn't required with the zig build system, but it's easy to support
-                        if (win32.GetFileAttributesExA(gamecode_lock_file_name, .standard, &__dummy__).toBool()) {
-                            game_code.unload();
-
-                            _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
-                            game_code = GameCode.load(io, temp_dll_name);
-                        }
-                    }
-
                     new_input.dt = target_seconds_per_frame;
+
+                    new_input.executable_reloaded = false;
+                    const new_dll_write_time = common.getLastWriteTime(io, source_dll_name);
+
+                    if (new_dll_write_time > game_code.last_write_time) {
+                        game_code.unload();
+
+                        _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
+                        game_code = GameCode.load(io, temp_dll_name);
+                        new_input.executable_reloaded = true;
+                    }
 
                     const keyboard_controller = &new_input.controllers[0];
                     const old_keyboard_controller = &old_input.controllers[0];

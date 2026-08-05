@@ -506,13 +506,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     log.info("starting main loop", .{});
     while (running) {
+        wld.new_input.dt = target_seconds_per_frame;
+
+        wld.new_input.executable_reloaded = false;
         const new_lib_write_time = common.getLastWriteTime(io, game_lib_name);
+
         if (new_lib_write_time > game_code.last_write_time) {
             game_code.unload();
             game_code = GameCode.load(io, game_lib_name);
+            wld.new_input.executable_reloaded = true;
         }
-
-        wld.new_input.dt = target_seconds_per_frame;
 
         const keyboard_controller = &wld.new_input.controllers[0];
         const old_keyboard_controller = &wld.old_input.controllers[0];
