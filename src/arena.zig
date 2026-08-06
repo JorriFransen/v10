@@ -1,6 +1,7 @@
 const std = @import("std");
-
 const assert = std.debug.assert;
+
+const math = @import("math");
 
 const MemoryArena = @This();
 
@@ -16,19 +17,31 @@ pub fn init(mem: []u8) MemoryArena {
 }
 
 pub inline fn pushMemory(this: *MemoryArena, comptime T: type) *T {
-    assert(this.memory.len - this.used >= @sizeOf(T));
+    const size = @sizeOf(T);
+    const aligned_used = alignForward(this.used, @alignOf(T));
 
-    const result: *T = @ptrCast(@alignCast(this.memory.ptr + this.used));
-    this.used += @sizeOf(T);
+    assert(this.memory.len - aligned_used >= size);
+
+    const result: *T = @ptrCast(@alignCast(this.memory.ptr + aligned_used));
+    this.used = aligned_used + size;
     return result;
 }
 
 pub inline fn pushArray(this: *MemoryArena, len: usize, comptime T: type) []T {
     const size: usize = @sizeOf(T) * len;
-    assert(this.memory.len - this.used >= size);
+    const aligned_used = alignForward(this.used, @alignOf(T));
+    assert(this.memory.len - aligned_used >= size);
 
-    const result: []T = @as([*]T, @ptrCast(@alignCast(this.memory.ptr + this.used)))[0..len];
-    this.used += size;
+    const result: []T = @as([*]T, @ptrCast(@alignCast(this.memory.ptr + aligned_used)))[0..len];
+    this.used = aligned_used + size;
+    return result;
+}
+
+inline fn alignForward(addr: usize, alignment: usize) usize {
+    assert(alignment > 0 and math.isPowerOfTwo(alignment));
+
+    const am1 = alignment - 1;
+    const result = (addr + am1) & ~(am1);
     return result;
 }
 

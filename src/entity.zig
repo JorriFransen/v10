@@ -124,7 +124,14 @@ pub const HitPoint = struct {
 };
 
 pub fn getGroundPoint(entity: *const Entity) V3 {
-    const result = entity.p;
+    const result = getGroundPointForP(entity, entity.p);
+    return result;
+}
+
+pub fn getGroundPointForP(entity: *const Entity, p: V3) V3 {
+    _ = entity;
+
+    const result = p;
     return result;
 }
 
