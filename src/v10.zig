@@ -37,8 +37,6 @@ const OffscreenBuffer = common.OffscreenBuffer;
 const AudioBuffer = common.AudioBuffer;
 
 const RenderGroup = @import("render_group.zig");
-const Basis = RenderGroup.Basis;
-const EntityVisiblePiece = RenderGroup.EntityVisiblePiece;
 
 const os = @import("builtin").os.tag;
 
@@ -274,30 +272,6 @@ pub fn addStair(game_state: *GameState, abs_tile_x: i32, abs_tile_y: i32, abs_ti
     return entity;
 }
 
-pub const ColorU8ARGB = packed struct(u32) {
-    b: u8,
-    g: u8,
-    r: u8,
-    a: u8,
-
-    pub inline fn asU32(this: ColorU8ARGB) u32 {
-        return @bitCast(this);
-    }
-
-    pub inline fn fromU32(int: u32) ColorU8ARGB {
-        return @bitCast(int);
-    }
-
-    pub inline fn fromF32RGB(rf: f32, gf: f32, bf: f32) ColorU8ARGB {
-        return .{
-            .r = @intFromFloat(rf * 255),
-            .g = @intFromFloat(gf * 255),
-            .b = @intFromFloat(bf * 255),
-            .a = 0,
-        };
-    }
-};
-
 fn initHitpoints(entity: *Entity, count: u32) void {
     assert(count <= entity.hitpoints.len);
     entity.hitpoint_max = count;
@@ -307,7 +281,7 @@ fn initHitpoints(entity: *Entity, count: u32) void {
     );
 }
 
-fn drawHitpoints(entity: *Entity, piece_group: *RenderGroup) void {
+fn drawHitpoints(entity: *Entity, render_group: *RenderGroup) void {
     if (entity.hitpoint_max >= 1) {
         const health_dim = v2(0.2, 0.2);
         const spacing_x = health_dim.x * 1.5;
@@ -323,7 +297,7 @@ fn drawHitpoints(entity: *Entity, piece_group: *RenderGroup) void {
                 color = v4(0.2, 0.2, 0.2, 1);
             }
 
-            piece_group.pushRect(hit_p, 0, health_dim, color, .{ .entity_z_c = 0 });
+            render_group.pushRect(hit_p, 0, health_dim, color, .{ .entity_z_c = 0 });
             hit_p.x += spacing_x;
         }
     }
@@ -429,145 +403,6 @@ pub fn removeCollisionRule(game_state: *GameState, storage_index: EntityIndex) v
         } else {
             rule_opt = &rule.next_in_hash;
         }
-    }
-}
-
-pub fn drawRectangle(buffer: *LoadedBitmap, min: V2, max: V2, r: f32, g: f32, b: f32) void {
-    const pitch: usize = @intCast(buffer.pitch);
-    const bpp: usize = @intCast(OffscreenBuffer.bytes_per_pixel);
-
-    const buffer_width_f: f32 = @floatFromInt(buffer.width);
-    const buffer_height_f: f32 = @floatFromInt(buffer.height);
-
-    const minx: usize = @round(@min(@max(min.x, 0), buffer_width_f));
-    const miny: usize = @round(@min(@max(min.y, 0), buffer_height_f));
-    const maxx: usize = @round(@min(@max(max.x, 0), buffer_width_f));
-    const maxy: usize = @round(@min(@max(max.y, 0), buffer_height_f));
-
-    assert(bpp == @sizeOf(u32));
-
-    const color = ColorU8ARGB.fromF32RGB(r, g, b);
-
-    var row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + (minx * bpp) + (miny * pitch);
-    var y: usize = @intCast(miny);
-    while (y < maxy) : (y += 1) {
-        var pixel: [*]u32 = @ptrCast(@alignCast(row));
-        var x: usize = @intCast(minx);
-        while (x < maxx) : (x += 1) {
-            pixel[0] = color.asU32();
-            pixel += 1;
-        }
-
-        row += pitch;
-    }
-}
-
-pub const DrawRectangleOutlineOptions = struct {
-    r: f32 = 2,
-};
-
-pub inline fn drawRectangleOutline(buffer: *LoadedBitmap, min: V2, max: V2, color: V3, o: DrawRectangleOutlineOptions) void {
-    const vr: V2 = .scalar(o.r);
-    const c = color.color();
-
-    drawRectangle(buffer, v2(min.x, min.y).sub(vr), v2(max.x, min.y).add(vr), c.r, c.g, c.b);
-    drawRectangle(buffer, v2(min.x, max.y).sub(vr), v2(max.x, max.y).add(vr), c.r, c.g, c.b);
-
-    drawRectangle(buffer, v2(min.x, min.y).sub(vr), v2(min.x, max.y).add(vr), c.r, c.g, c.b);
-    drawRectangle(buffer, v2(max.x, min.y).sub(vr), v2(max.x, max.y).add(vr), c.r, c.g, c.b);
-}
-
-pub fn drawBitmap(buffer: *LoadedBitmap, bitmap: *const LoadedBitmap, px: f32, py: f32, c_alpha: f32) void {
-    const bpp = LoadedBitmap.bytes_per_pixel;
-
-    const real_x: f32 = px;
-    const real_y: f32 = py;
-
-    var min_x: i32 = @round(real_x);
-    var min_y: i32 = @round(real_y);
-    var max_x: i32 = min_x + @as(i32, @intCast(bitmap.width));
-    var max_y: i32 = min_y + @as(i32, @intCast(bitmap.height));
-
-    var source_offset_x: i32 = 0;
-    if (min_x < 0) {
-        source_offset_x = @intCast(-min_x);
-        min_x = 0;
-    }
-
-    var source_offset_y: i32 = 0;
-    if (min_y < 0) {
-        source_offset_y = @intCast(-min_y);
-        min_y = 0;
-    }
-
-    if (max_x > buffer.width) {
-        max_x = @intCast(buffer.width);
-    }
-
-    if (max_y > buffer.height) {
-        max_y = @intCast(buffer.height);
-    }
-
-    max_x = @intCast(@max(0, max_x));
-    max_y = @intCast(@max(0, max_y));
-
-    // TEMPORARY
-    if (bitmap.width == 0 or bitmap.height == 0) return;
-    // TEMPORARY
-
-    const source_offset: usize = @bitCast(@as(isize, @intCast(source_offset_y * bitmap.pitch + bpp * source_offset_x)));
-    var source_row: [*]u8 = @as([*]u8, @ptrCast(bitmap.memory)) + source_offset;
-
-    const dest_offset: usize = @bitCast(@as(isize, @intCast((min_x * bpp) + (min_y * buffer.pitch))));
-    var dest_row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + dest_offset;
-
-    var y: usize = @intCast(min_y);
-    while (y < max_y) : (y += 1) {
-        var source: [*]align(1) u32 = @ptrCast(source_row);
-        var dest: [*]align(1) u32 = @ptrCast(dest_row);
-
-        var x: usize = @intCast(min_x);
-        while (x < max_x) : (x += 1) {
-            const sc = ColorU8ARGB.fromU32(source[0]);
-            const dc = ColorU8ARGB.fromU32(dest[0]);
-
-            const sa: f32 = sc.a;
-            const rsa: f32 = (sa / 255) * c_alpha;
-            const sr: f32 = c_alpha * sc.r;
-            const sg: f32 = c_alpha * sc.g;
-            const sb: f32 = c_alpha * sc.b;
-
-            const da: f32 = dc.a;
-            const dr: f32 = dc.r;
-            const dg: f32 = dc.g;
-            const db: f32 = dc.b;
-            const rda: f32 = (da / 255);
-
-            const inv_rsa: f32 = 1 - rsa;
-            const a: f32 = 255 * (rsa + rda - (rsa * rda));
-            const r: f32 = inv_rsa * dr + sr;
-            const g: f32 = inv_rsa * dg + sg;
-            const b: f32 = inv_rsa * db + sb;
-
-            // dest[0] = (ColorU8ARGB{
-            //     .r = @intFromFloat(r + 0.5),
-            //     .g = @intFromFloat(g + 0.5),
-            //     .b = @intFromFloat(b + 0.5),
-            //     .a = @intFromFloat(a + 0.5),
-            // }).asU32();
-
-            dest[0] =
-                @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24 |
-                @as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16 |
-                @as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8 |
-                @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0;
-
-            source += 1;
-            dest += 1;
-        }
-
-        dest_row += @bitCast(@as(isize, @intCast(buffer.pitch)));
-        source_row += @bitCast(@as(isize, @intCast(bitmap.pitch)));
     }
 }
 
@@ -954,12 +789,13 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     const draw_buffer = &draw_buffer_;
 
     // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
-    drawRectangle(draw_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 1, 0, 1);
+    RenderGroup.drawRectangle(draw_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 1, 0, 1);
 
     const screen_center = v2(
         @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
         @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
     );
+    _ = screen_center;
 
     const screen_width_meters = @as(f32, @floatFromInt(draw_buffer.width)) * game_state.pixels_to_meters;
     const screen_height_meters = @as(f32, @floatFromInt(draw_buffer.height)) * game_state.pixels_to_meters;
@@ -1019,7 +855,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                         fillGroundChunk(game_state, empty_buffer, chunk_center_p);
                     }
 
-                    // piece_group.pushRectOutline(rel_p.xy(), rel_p.z, screen_dim, v4(1, 1, 0, 1), .{});
+                    // render_group.pushRectOutline(rel_p.xy(), rel_p.z, screen_dim, v4(1, 1, 0, 1), .{});
                     _ = .{ rel_p, screen_dim };
                 }
             }
@@ -1039,7 +875,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             var move_spec: MoveSpec = .{};
             var ddp: V3 = .zero;
 
-            const basis = render_memory.arena.push(Basis);
+            const basis = render_memory.arena.push(RenderGroup.Basis);
             basis.* = .{ .p = .zero };
             render_group.default_basis = basis;
 
@@ -1163,42 +999,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         }
     }
 
-    var base_address: usize = 0;
-    while (base_address < render_group.push_buffer_size) : (base_address += @sizeOf(EntityVisiblePiece)) {
-        const piece: *EntityVisiblePiece = @ptrCast(@alignCast(&render_group.push_buffer[base_address]));
-
-        const entity_base_p = piece.basis.p;
-
-        const z_fudge = 1 + (0.1 * (entity_base_p.z + piece.offset_z));
-
-        const entity_ground_point = v2(
-            screen_center.x + (game_state.meters_to_pixels * entity_base_p.x * z_fudge),
-            screen_center.y - (game_state.meters_to_pixels * entity_base_p.y * z_fudge),
-        );
-
-        const entity_z = game_state.meters_to_pixels * -entity_base_p.z;
-        // const entity_z = 0;
-
-        const center = v2(
-            entity_ground_point.x + piece.offset.x,
-            entity_ground_point.y + piece.offset.y + (piece.entity_z_c * entity_z),
-        );
-
-        if (piece.bitmap) |bitmap| {
-            drawBitmap(draw_buffer, bitmap, center.x, center.y, piece.a);
-        } else {
-            const dim = piece.dim.mul(game_state.meters_to_pixels);
-            const half_dim = dim.mul(0.5);
-            drawRectangle(
-                draw_buffer,
-                center.sub(half_dim),
-                center.add(half_dim),
-                piece.r,
-                piece.g,
-                piece.b,
-            );
-        }
-    }
+    render_group.toOutput(draw_buffer);
 
     sim_region.end(game_state);
 
@@ -1247,7 +1048,7 @@ fn fillGroundChunk(game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p
                 );
 
                 const p = center.add(offset).sub(bitmap_center);
-                drawBitmap(bitmap, stamp, p.x, p.y, 1);
+                RenderGroup.drawBitmap(bitmap, stamp, p.x, p.y, 1);
             }
         }
     }
@@ -1277,7 +1078,7 @@ fn fillGroundChunk(game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p
                 );
 
                 const p = center.add(offset).sub(bitmap_center);
-                drawBitmap(bitmap, stamp, p.x, p.y, 1);
+                RenderGroup.drawBitmap(bitmap, stamp, p.x, p.y, 1);
             }
         }
     }
