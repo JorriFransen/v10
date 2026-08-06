@@ -367,7 +367,7 @@ pub fn addCollisionRuleRaw(game_state: *GameState, storage_index_a_: EntityIndex
         if (found_opt) |found| {
             game_state.first_free_collision_rule = found.next_in_hash;
         } else {
-            found_opt = game_state.world_arena.pushMemory(PairwiseCollisionRule);
+            found_opt = game_state.world_arena.push(PairwiseCollisionRule);
         }
 
         found_opt.?.next_in_hash = game_state.collision_rule_hash[hash_bucket];
@@ -637,7 +637,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
 
         game_state.world_arena = .init(game_memory.permanent[game_state_size..][0..world_arena_size]);
 
-        game_state.world = game_state.world_arena.pushMemory(World);
+        game_state.world = game_state.world_arena.push(World);
         const world: *World = game_state.world;
 
         game_state.typical_floor_height = 3;
@@ -1039,7 +1039,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             var move_spec: MoveSpec = .{};
             var ddp: V3 = .zero;
 
-            const basis = render_memory.arena.pushMemory(Basis);
+            const basis = render_memory.arena.push(Basis);
             basis.* = .{ .p = .zero };
             render_group.default_basis = basis;
 
@@ -1266,7 +1266,7 @@ fn fillGroundChunk(game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p
 
             const center = v2(width, -height).hadamard(.i(chunk_offset_x, chunk_offset_y));
 
-            for (0..50) |_| {
+            for (0..30) |_| {
                 const stamp = &game_state.tuft[series.randomChoice(game_state.tuft.len)];
 
                 const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);

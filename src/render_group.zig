@@ -35,6 +35,8 @@ pub const EntityVisiblePiece = struct {
     dim: V2,
 };
 
+const push_buffer_align = 8;
+
 default_basis: *Basis,
 meters_to_pixels: f32,
 count: u32 = 0,
@@ -42,9 +44,9 @@ push_buffer_size: usize = 0,
 push_buffer: []u8 = &.{},
 
 pub fn init(arena: *MemoryArena, max_push_buffer_size: usize, meters_to_pixels: f32) *RenderGroup {
-    const result = arena.pushMemory(RenderGroup);
+    const result = arena.push(RenderGroup);
     const buffer_memory = arena.pushArray(max_push_buffer_size, u8);
-    const default_basis = arena.pushMemory(Basis);
+    const default_basis = arena.push(Basis);
 
     default_basis.* = .{ .p = .zero };
 
@@ -65,6 +67,7 @@ pub inline fn pushRenderElement(this: *RenderGroup, size: usize) *anyopaque {
 
     if ((this.push_buffer_size + size) < this.push_buffer.len) {
         result = &this.push_buffer[this.push_buffer_size];
+        assert(std.mem.isAligned(@intFromPtr(result), push_buffer_align));
         this.push_buffer_size += size;
     } else {
         unreachable;

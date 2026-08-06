@@ -16,23 +16,38 @@ pub fn init(mem: []u8) MemoryArena {
     };
 }
 
-pub inline fn pushMemory(this: *MemoryArena, comptime T: type) *T {
-    const size = @sizeOf(T);
-    const aligned_used = alignForward(this.used, @alignOf(T));
-
-    assert(this.memory.len - aligned_used >= size);
-
-    const result: *T = @ptrCast(@alignCast(this.memory.ptr + aligned_used));
-    this.used = aligned_used + size;
+pub inline fn push(this: *MemoryArena, comptime T: type) *T {
+    const result: *T = @ptrCast(this.pushSizeAligned(@sizeOf(T), @alignOf(T)));
     return result;
 }
 
 pub inline fn pushArray(this: *MemoryArena, len: usize, comptime T: type) []T {
-    const size: usize = @sizeOf(T) * len;
-    const aligned_used = alignForward(this.used, @alignOf(T));
+    const size = len * @sizeOf(T);
+    const result: []T = @ptrCast(this.pushSizeAligned(size, @alignOf(T))[0..size]);
+    return result;
+}
+
+pub inline fn pushSize(this: *MemoryArena, size: usize) [*]u8 {
+    const result = this.pushSizeAligned(size, 1);
+    return result;
+}
+
+pub inline fn pushAligned(this: *MemoryArena, comptime T: type, comptime alignment: u29) *align(alignment) T {
+    const result: *align(alignment) T = @ptrCast(this.pushSizeAligned(@sizeOf(T), alignment));
+    return result;
+}
+
+pub inline fn pushArrayAligned(this: *MemoryArena, len: usize, comptime T: type, comptime alignment: u29) []align(alignment) T {
+    const size = len * @sizeOf(T);
+    const result: []align(alignment) T = @ptrCast(this.pushSizeAligned(size, alignment)[0..size]);
+    return result;
+}
+
+pub inline fn pushSizeAligned(this: *MemoryArena, size: usize, comptime alignment: u29) [*]align(alignment) u8 {
+    const aligned_used = alignForward(this.used, alignment);
     assert(this.memory.len - aligned_used >= size);
 
-    const result: []T = @as([*]T, @ptrCast(@alignCast(this.memory.ptr + aligned_used)))[0..len];
+    const result = @as([*]align(alignment) u8, @ptrCast(@alignCast(this.memory.ptr + aligned_used)));
     this.used = aligned_used + size;
     return result;
 }

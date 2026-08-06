@@ -73,7 +73,7 @@ const TestWall = struct {
 pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: World.Position, bounds: Rect3, dt: f32) *SimRegion {
     const world = game_state.world;
 
-    const sim_region = sim_arena.pushMemory(SimRegion);
+    const sim_region = sim_arena.push(SimRegion);
 
     {
         sim_region.max_entity_radius = 5;
