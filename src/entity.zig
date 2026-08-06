@@ -86,7 +86,7 @@ pub const CollisionGroup = struct {
     volumes: []CollisionVolume,
 
     pub fn @"null"(game_state: *GameState) *CollisionGroup {
-        const group = game_state.world_arena.pushMemory(CollisionGroup);
+        const group = game_state.world_arena.push(CollisionGroup);
 
         group.volumes = &.{};
         group.total_volume = .{ .offset = .zero, .dim = .zero };
@@ -95,7 +95,7 @@ pub const CollisionGroup = struct {
     }
 
     pub fn simpleGrounded(game_state: *GameState, x: f32, y: f32, z: f32) *CollisionGroup {
-        const group = game_state.world_arena.pushMemory(CollisionGroup);
+        const group = game_state.world_arena.push(CollisionGroup);
 
         const volume_count = 1;
         group.volumes = game_state.world_arena.pushArray(volume_count, CollisionVolume);
@@ -124,7 +124,14 @@ pub const HitPoint = struct {
 };
 
 pub fn getGroundPoint(entity: *const Entity) V3 {
-    const result = entity.p;
+    const result = getGroundPointForP(entity, entity.p);
+    return result;
+}
+
+pub fn getGroundPointForP(entity: *const Entity, p: V3) V3 {
+    _ = entity;
+
+    const result = p;
     return result;
 }
 

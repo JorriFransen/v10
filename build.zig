@@ -288,6 +288,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
         .root_source_file = b.path(src_path ++ "/v10.zig"),
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
+            .{ .module = engine.modules.memory, .name = "mem" },
             .{ .module = engine.modules.math, .name = "math" },
             .{ .module = engine.modules.common, .name = "v10_common" },
         },

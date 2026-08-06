@@ -172,7 +172,7 @@ pub fn getChunk(this: *World, chunk_x: i32, chunk_y: i32, chunk_z: i32, options:
 
         if (options.arena) |arena| {
             if (chunk.x != chunk_x_uninitialized and chunk.next_in_hash == null) {
-                const new_chunk = arena.pushMemory(Chunk);
+                const new_chunk = arena.push(Chunk);
                 new_chunk.x = chunk_x_uninitialized;
                 chunk.next_in_hash = new_chunk;
                 chunk = new_chunk;
@@ -276,7 +276,7 @@ pub fn changeEntityLocationRaw(this: *World, arena: *MemoryArena, low_index: Ent
                 if (old_block_opt) |old_block| {
                     this.first_free_entity_block = old_block.next;
                 } else {
-                    old_block_opt = arena.pushMemory(EntityBlock);
+                    old_block_opt = arena.push(EntityBlock);
                 }
                 const old_block = old_block_opt.?;
 

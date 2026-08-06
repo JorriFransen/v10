@@ -73,7 +73,7 @@ const TestWall = struct {
 pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: World.Position, bounds: Rect3, dt: f32) *SimRegion {
     const world = game_state.world;
 
-    const sim_region = sim_arena.pushMemory(SimRegion);
+    const sim_region = sim_arena.push(SimRegion);
 
     {
         sim_region.max_entity_radius = 5;
@@ -387,15 +387,13 @@ fn handleCollision(game_state: *GameState, a_: *Entity, b_: *Entity) bool {
     return stops_on_collision;
 }
 
-pub fn speculativeCollide(mover: *Entity, region: *Entity) bool {
+pub fn speculativeCollide(mover: *Entity, region: *Entity, test_p: V3) bool {
     var result = true;
 
     if (region.type == .stairwell) {
         const step_height: f32 = 0.1;
 
-        // const ground_point = getEntityGroundPoint(mover);
-        // result = (@abs(ground_point.z - ground) > step_height) or (bary.y > 0.1) and (bary.y < 0.9);
-
+        _ = test_p;
         const mover_ground_point = mover.getGroundPoint();
         const ground = region.getStairGround(mover_ground_point);
         result = @abs(mover_ground_point.z - ground) > step_height;
@@ -562,8 +560,8 @@ pub fn moveEntity(this: *SimRegion, game_state: *GameState, entity: *Entity, dt:
                                     }
 
                                     if (hit_this) {
-                                        // const test_p = entity.p.add(player_delta.mul(t_min_test));
-                                        if (speculativeCollide(entity, test_entity)) {
+                                        const spec_test_p = entity.p.add(player_delta.mul(t_min_test));
+                                        if (speculativeCollide(entity, test_entity, spec_test_p)) {
                                             t_min = t_min_test;
                                             wall_normal_min = test_wall_normal;
                                             hit_entity_min_opt = test_entity;
