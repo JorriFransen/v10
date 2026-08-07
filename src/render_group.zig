@@ -7,7 +7,11 @@ const GameState = v10.GameState;
 
 const MemoryArena = @import("arena.zig");
 
+const common = @import("v10_common");
+const intrinsics = @import("intrinsics.zig");
+
 const math = @import("math");
+const Color = math.Color;
 const V2 = math.V2;
 const v2 = V2.init;
 const V3 = math.V3;
@@ -15,6 +19,8 @@ const V4 = math.V4;
 const v4 = V4.init;
 
 const RenderGroup = @This();
+
+const push_buffer_align = 8;
 
 pub const Basis = extern struct {
     p: V3,
@@ -34,19 +40,17 @@ pub const EntryHeader = extern struct {
         EntryClear,
         EntryBitmap,
         EntryRectangle,
+        EntryRectangleOutline,
         // Names must match struct names!
     };
 
-    type: @This().Type,
+    type: Type align(push_buffer_align),
 };
 
 pub const EntryClear = extern struct {
     header: EntryHeader,
 
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
+    color: Color,
 };
 
 pub const EntryBitmap = extern struct {
@@ -55,26 +59,25 @@ pub const EntryBitmap = extern struct {
     entity_basis: EntityBasis,
     bitmap: *const LoadedBitmap,
 
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
+    color: Color,
 };
 
 pub const EntryRectangle = extern struct {
     header: EntryHeader,
-
     entity_basis: EntityBasis,
 
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
-
+    color: Color,
     dim: V2,
 };
 
-const push_buffer_align = 8;
+pub const EntryRectangleOutline = extern struct {
+    header: EntryHeader,
+    entity_basis: EntityBasis,
+
+    color: Color,
+    dim: V2,
+    thickness: f32,
+};
 
 default_basis: *Basis,
 meters_to_pixels: f32,
@@ -99,7 +102,7 @@ pub fn init(arena: *MemoryArena, max_push_buffer_size: usize, meters_to_pixels: 
     return result;
 }
 
-pub inline fn pushRenderElement(this: *RenderGroup, comptime T: type) ?*T {
+pub inline fn pushRenderElement(this: *RenderGroup, comptime T: type) ?*align(4) T {
     const size = @sizeOf(T);
 
     var result: ?*EntryHeader = null;
@@ -107,6 +110,7 @@ pub inline fn pushRenderElement(this: *RenderGroup, comptime T: type) ?*T {
     if ((this.push_buffer_size + size) < this.push_buffer.len) {
         result = @ptrCast(@alignCast(&this.push_buffer[this.push_buffer_size]));
         const header = result.?;
+
         assert(std.mem.isAligned(@intFromPtr(header), push_buffer_align));
 
         header.type = comptime blk: {
@@ -123,6 +127,12 @@ pub inline fn pushRenderElement(this: *RenderGroup, comptime T: type) ?*T {
     return @ptrCast(@alignCast(result));
 }
 
+pub inline fn clear(this: *RenderGroup, color: Color) void {
+    if (this.pushRenderElement(EntryClear)) |piece| {
+        piece.color = color;
+    }
+}
+
 pub inline fn pushPiece(
     this: *RenderGroup,
     bitmap: *const LoadedBitmap,
@@ -130,20 +140,15 @@ pub inline fn pushPiece(
     offset_z: f32,
     @"align": V2,
     entity_z_c: f32,
-    color: V4,
+    color: Color,
 ) void {
     if (this.pushRenderElement(EntryBitmap)) |piece| {
-        const c = color.color();
-
         piece.entity_basis.basis = this.default_basis;
         piece.entity_basis.offset = v2(offset.x, -offset.y).mul(this.meters_to_pixels).sub(@"align");
         piece.entity_basis.offset_z = offset_z;
         piece.entity_basis.entity_z_c = entity_z_c;
         piece.bitmap = bitmap;
-        piece.r = c.r;
-        piece.g = c.g;
-        piece.b = c.b;
-        piece.a = c.a;
+        piece.color = color;
     }
 }
 
@@ -153,48 +158,56 @@ const PushBitmapOptions = struct {
 };
 
 pub inline fn pushBitmap(this: *RenderGroup, bitmap: *const LoadedBitmap, offset: V2, offset_z: f32, @"align": V2, o: PushBitmapOptions) void {
-    this.pushPiece(bitmap, offset, offset_z, @"align", o.entity_z_c, v4(1, 1, 1, o.alpha));
+    this.pushPiece(bitmap, offset, offset_z, @"align", o.entity_z_c, .rgba(1, 1, 1, o.alpha));
 }
 
 const PushRectOptions = struct {
     entity_z_c: f32 = 1,
 };
 
-pub inline fn pushRect(this: *RenderGroup, offset: V2, offset_z: f32, dim: V2, color: V4, o: PushRectOptions) void {
+pub inline fn pushRect(this: *RenderGroup, offset: V2, offset_z: f32, dim: V2, color: Color, o: PushRectOptions) void {
     if (this.pushRenderElement(EntryRectangle)) |piece| {
-        const c = color.color();
-
         const half_dim = dim.mul(this.meters_to_pixels * 0.5);
 
         piece.entity_basis.basis = this.default_basis;
         piece.entity_basis.offset = v2(offset.x, -offset.y).mul(this.meters_to_pixels).sub(half_dim);
         piece.entity_basis.offset_z = offset_z;
         piece.entity_basis.entity_z_c = o.entity_z_c;
-        piece.r = c.r;
-        piece.g = c.g;
-        piece.b = c.b;
-        piece.a = c.a;
+        piece.color = color;
         piece.dim = dim.mul(this.meters_to_pixels);
     }
 }
 
-pub inline fn pushRectOutline(this: *RenderGroup, offset: V2, offset_z: f32, dim: V2, color: V4, o: PushRectOptions) void {
-    const t: f32 = 0.1;
+const PushRectOutlineOptions = struct {
+    entity_z_c: f32 = 1,
+    thickness: f32 = 0.1,
+};
 
-    this.pushRect(offset.sub(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + t, t), color, o);
-    this.pushRect(offset.add(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + t, t), color, o);
+pub inline fn pushRectOutline(this: *RenderGroup, offset: V2, offset_z: f32, dim: V2, color: Color, o: PushRectOutlineOptions) void {
+    const t: f32 = o.thickness;
 
-    this.pushRect(offset.sub(v2(0.5 * dim.x, 0)), offset_z, v2(t, dim.y + t), color, o);
-    this.pushRect(offset.add(v2(0.5 * dim.x, 0)), offset_z, v2(t, dim.y + t), color, o);
+    if (false) {
+        this.pushRect(offset.sub(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + t, t), color, .{ .entity_z_c = o.entity_z_c });
+        this.pushRect(offset.add(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + t, t), color, .{ .entity_z_c = o.entity_z_c });
 
-    // pushPiece(this, null, offset.sub(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + t, t), .zero, o.entity_z_c, color);
-    // pushPiece(this, null, offset.add(v2(0, 0.5 * dim.y)), offset_z, v2(dim.x + t, t), .zero, o.entity_z_c, color);
-    //
-    // pushPiece(this, null, offset.sub(v2(0.5 * dim.x, 0)), offset_z, v2(t, dim.y + t), .zero, o.entity_z_c, color);
-    // pushPiece(this, null, offset.add(v2(0.5 * dim.x, 0)), offset_z, v2(t, dim.y + t), .zero, o.entity_z_c, color);
+        this.pushRect(offset.sub(v2(0.5 * dim.x, 0)), offset_z, v2(t, dim.y + t), color, .{ .entity_z_c = o.entity_z_c });
+        this.pushRect(offset.add(v2(0.5 * dim.x, 0)), offset_z, v2(t, dim.y + t), color, .{ .entity_z_c = o.entity_z_c });
+    } else {
+        if (this.pushRenderElement(EntryRectangleOutline)) |piece| {
+            const half_dim = dim.mul(this.meters_to_pixels * 0.5);
+
+            piece.entity_basis.basis = this.default_basis;
+            piece.entity_basis.offset = v2(offset.x, -offset.y).mul(this.meters_to_pixels).sub(half_dim);
+            piece.entity_basis.offset_z = offset_z;
+            piece.entity_basis.entity_z_c = o.entity_z_c;
+            piece.color = color;
+            piece.dim = dim.mul(this.meters_to_pixels);
+            piece.thickness = t * this.meters_to_pixels;
+        }
+    }
 }
 
-pub fn GetEntityBasisP(this: *const RenderGroup, entity_basis: *const EntityBasis, screen_center: V2) V2 {
+pub fn GetEntityBasisP(this: *const RenderGroup, entity_basis: *align(4) const EntityBasis, screen_center: V2) V2 {
     const entity_base_p = entity_basis.basis.p;
 
     const z_fudge = 1 + (0.1 * (entity_base_p.z + entity_basis.offset_z));
@@ -229,14 +242,17 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
             .EntryClear => {
                 const entry: *EntryClear = @alignCast(@fieldParentPtr("header", header));
 
+                drawRectangle(output_target, .zero, .i(output_target.width, output_target.height), entry.color);
+
                 base_address += @sizeOf(@TypeOf(entry.*));
             },
 
             .EntryBitmap => {
                 const entry: *EntryBitmap = @alignCast(@fieldParentPtr("header", header));
+
                 const p = this.GetEntityBasisP(&entry.entity_basis, output_center);
 
-                drawBitmap(output_target, entry.bitmap, p.x, p.y, entry.a);
+                drawBitmap(output_target, entry.bitmap, p.x, p.y, entry.color.a);
 
                 base_address += @sizeOf(@TypeOf(entry.*));
             },
@@ -245,14 +261,29 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
                 const entry: *EntryRectangle = @alignCast(@fieldParentPtr("header", header));
                 const p = this.GetEntityBasisP(&entry.entity_basis, output_center);
 
-                drawRectangle(
-                    output_target,
-                    p,
-                    p.add(entry.dim),
-                    entry.r,
-                    entry.g,
-                    entry.b,
-                );
+                drawRectangle(output_target, p, p.add(entry.dim), entry.color);
+
+                base_address += @sizeOf(@TypeOf(entry.*));
+            },
+
+            .EntryRectangleOutline => {
+                const entry: *EntryRectangleOutline = @alignCast(@fieldParentPtr("header", header));
+                const p = this.GetEntityBasisP(&entry.entity_basis, output_center);
+
+                const t = entry.thickness;
+                const ht = entry.thickness / 2;
+
+                const tl = p.add(v2(-ht, -ht));
+                const tl_h_max = p.add(v2(entry.dim.x + ht, ht));
+                const tl_v_max = tl.add(v2(t, entry.dim.y));
+
+                drawRectangle(output_target, tl, tl_h_max, entry.color);
+                drawRectangle(output_target, tl.add(v2(0, entry.dim.y)), tl_h_max.add(v2(0, entry.dim.y)), entry.color);
+
+                drawRectangle(output_target, tl, tl_v_max, entry.color);
+                drawRectangle(output_target, tl.add(v2(entry.dim.x, 0)), tl_v_max.add(v2(entry.dim.x, 0)), entry.color);
+
+                _ = .{ tl, tl_h_max, tl_v_max };
 
                 base_address += @sizeOf(@TypeOf(entry.*));
             },
@@ -260,7 +291,7 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
     }
 }
 
-pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, r: f32, g: f32, b: f32) void {
+pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, color: Color) void {
     const pitch: usize = @intCast(buffer.pitch);
     const bpp: usize = @intCast(LoadedBitmap.bytes_per_pixel);
 
@@ -274,7 +305,11 @@ pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, r: f32, g: f
 
     assert(bpp == @sizeOf(u32));
 
-    const color = ColorU8ARGB.fromF32RGB(r, g, b);
+    const color_u32: u32 =
+        (intrinsics.roundReal32ToUInt32(color.a * 255) << 24) |
+        (intrinsics.roundReal32ToUInt32(color.r * 255) << 16) |
+        (intrinsics.roundReal32ToUInt32(color.g * 255) << 8) |
+        (intrinsics.roundReal32ToUInt32(color.b * 255) << 0);
 
     var row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + (minx * bpp) + (miny * pitch);
     var y: usize = @intCast(miny);
@@ -282,7 +317,7 @@ pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, r: f32, g: f
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
         var x: usize = @intCast(minx);
         while (x < maxx) : (x += 1) {
-            pixel[0] = color.asU32();
+            pixel[0] = color_u32;
             pixel += 1;
         }
 
@@ -296,20 +331,20 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
     const real_x: f32 = px;
     const real_y: f32 = py;
 
-    var min_x: i32 = @round(real_x);
-    var min_y: i32 = @round(real_y);
+    var min_x: i32 = intrinsics.roundReal32ToInt32(real_x);
+    var min_y: i32 = intrinsics.roundReal32ToInt32(real_y);
     var max_x: i32 = min_x + @as(i32, @intCast(bitmap.width));
     var max_y: i32 = min_y + @as(i32, @intCast(bitmap.height));
 
     var source_offset_x: i32 = 0;
     if (min_x < 0) {
-        source_offset_x = @intCast(-min_x);
+        source_offset_x = -%min_x;
         min_x = 0;
     }
 
     var source_offset_y: i32 = 0;
     if (min_y < 0) {
-        source_offset_y = @intCast(-min_y);
+        source_offset_y = -%min_y;
         min_y = 0;
     }
 
@@ -328,10 +363,10 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
     if (bitmap.width == 0 or bitmap.height == 0) return;
     // TEMPORARY
 
-    const source_offset: usize = @bitCast(@as(isize, @intCast(source_offset_y * bitmap.pitch + bpp * source_offset_x)));
+    const source_offset: usize = @bitCast(@as(isize, @intCast(source_offset_y *% bitmap.pitch +% bpp *% source_offset_x)));
     var source_row: [*]u8 = @as([*]u8, @ptrCast(bitmap.memory)) + source_offset;
 
-    const dest_offset: usize = @bitCast(@as(isize, @intCast((min_x * bpp) + (min_y * buffer.pitch))));
+    const dest_offset: usize = @bitCast(@as(isize, @intCast((min_x *% bpp) +% (min_y *% buffer.pitch))));
     var dest_row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + dest_offset;
 
     var y: usize = @intCast(min_y);
@@ -341,19 +376,16 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
 
         var x: usize = @intCast(min_x);
         while (x < max_x) : (x += 1) {
-            const sc = ColorU8ARGB.fromU32(source[0]);
-            const dc = ColorU8ARGB.fromU32(dest[0]);
-
-            const sa: f32 = sc.a;
+            const sa: f32 = @floatFromInt((source[0] >> 24) & 0xff);
             const rsa: f32 = (sa / 255) * c_alpha;
-            const sr: f32 = c_alpha * sc.r;
-            const sg: f32 = c_alpha * sc.g;
-            const sb: f32 = c_alpha * sc.b;
+            const sr: f32 = c_alpha * @as(f32, @floatFromInt((source[0] >> 16) & 0xff));
+            const sg: f32 = c_alpha * @as(f32, @floatFromInt((source[0] >> 8) & 0xff));
+            const sb: f32 = c_alpha * @as(f32, @floatFromInt((source[0] >> 0) & 0xff));
 
-            const da: f32 = dc.a;
-            const dr: f32 = dc.r;
-            const dg: f32 = dc.g;
-            const db: f32 = dc.b;
+            const da: f32 = @floatFromInt((dest[0] >> 24) & 0xff);
+            const dr: f32 = @floatFromInt((dest[0] >> 16) & 0xff);
+            const dg: f32 = @floatFromInt((dest[0] >> 8) & 0xff);
+            const db: f32 = @floatFromInt((dest[0] >> 0) & 0xff);
             const rda: f32 = (da / 255);
 
             const inv_rsa: f32 = 1 - rsa;
@@ -361,13 +393,6 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
             const r: f32 = inv_rsa * dr + sr;
             const g: f32 = inv_rsa * dg + sg;
             const b: f32 = inv_rsa * db + sb;
-
-            // dest[0] = (ColorU8ARGB{
-            //     .r = @intFromFloat(r + 0.5),
-            //     .g = @intFromFloat(g + 0.5),
-            //     .b = @intFromFloat(b + 0.5),
-            //     .a = @intFromFloat(a + 0.5),
-            // }).asU32();
 
             dest[0] =
                 @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24 |
@@ -383,27 +408,3 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
         source_row += @bitCast(@as(isize, @intCast(bitmap.pitch)));
     }
 }
-
-pub const ColorU8ARGB = packed struct(u32) {
-    b: u8,
-    g: u8,
-    r: u8,
-    a: u8,
-
-    pub inline fn asU32(this: ColorU8ARGB) u32 {
-        return @bitCast(this);
-    }
-
-    pub inline fn fromU32(int: u32) ColorU8ARGB {
-        return @bitCast(int);
-    }
-
-    pub inline fn fromF32RGB(rf: f32, gf: f32, bf: f32) ColorU8ARGB {
-        return .{
-            .r = @intFromFloat(rf * 255),
-            .g = @intFromFloat(gf * 255),
-            .b = @intFromFloat(bf * 255),
-            .a = 0,
-        };
-    }
-};

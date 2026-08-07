@@ -287,26 +287,6 @@ pub const V3 = extern struct {
     pub fn format(this: V3, writer: anytype) !void {
         try writer.print("[{}, {}, {}]", .{ this.x, this.y, this.z });
     }
-
-    pub inline fn color(this: V3) Color {
-        return @bitCast(this);
-    }
-
-    pub const Color = extern struct {
-        r: f32,
-        g: f32,
-        b: f32,
-
-        pub fn init(r: f32, g: f32, b: f32) Color {
-            const result: Color = .{ .r = r, .g = g, .b = b };
-            return result;
-        }
-
-        pub inline fn v3(this: Color) V3 {
-            const result: V3 = @bitCast(this);
-            return result;
-        }
-    };
 };
 
 pub const V4 = extern struct {
@@ -399,6 +379,16 @@ pub const V4 = extern struct {
         return result;
     }
 
+    pub inline fn xy(this: V4) V2 {
+        const result: V2 = .{ .x = this.x, .y = this.y };
+        return result;
+    }
+
+    pub inline fn xyz(this: V4) V3 {
+        const result: V3 = .{ .x = this.x, .y = this.y, .z = this.z };
+        return result;
+    }
+
     pub inline fn clamp01(this: V4) V4 {
         const min: V = @splat(0);
         const max: V = @splat(1);
@@ -415,23 +405,33 @@ pub const V4 = extern struct {
     pub inline fn color(this: V4) Color {
         return @bitCast(this);
     }
+};
 
-    pub const Color = extern struct {
-        r: f32,
-        g: f32,
-        b: f32,
-        a: f32,
+pub const Color = extern struct {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
 
-        pub fn init(r: f32, g: f32, b: f32, a: f32) Color {
-            const result: Color = .{ .r = r, .g = g, .b = b, .a = a };
-            return result;
-        }
+    pub inline fn rgba(r: f32, g: f32, b: f32, a: f32) Color {
+        const result: Color = .{ .r = r, .g = g, .b = b, .a = a };
+        return result;
+    }
 
-        pub inline fn v4(this: Color) V4 {
-            const result: V4 = @bitCast(this);
-            return result;
-        }
-    };
+    pub inline fn rgb(r: f32, g: f32, b: f32) Color {
+        const result: Color = .{ .r = r, .g = g, .b = b, .a = 1 };
+        return result;
+    }
+
+    pub inline fn v4(this: Color) V4 {
+        const result: V4 = @bitCast(this);
+        return result;
+    }
+
+    pub inline fn v3(this: Color) V3 {
+        const result: V3 = this.v4().xyz();
+        return result;
+    }
 };
 
 pub inline fn isInRectangle(rect: Rect, p: V2) bool {

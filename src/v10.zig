@@ -16,6 +16,7 @@ const EntityReference = Entity.Reference;
 const HitPoint = Entity.HitPoint;
 
 const math = @import("math");
+const Color = math.Color;
 const V2 = math.V2;
 const v2 = V2.init;
 const V3 = math.V3;
@@ -55,8 +56,6 @@ pub const ControlledHero = struct {
 };
 
 pub const PairwiseCollisionRule = struct {
-    pub const double_entries = false;
-
     can_collide: bool,
     storage_index_a: EntityIndex,
     storage_index_b: EntityIndex,
@@ -292,32 +291,26 @@ fn drawHitpoints(entity: *Entity, render_group: *RenderGroup) void {
         );
 
         for (entity.hitpoints[0..entity.hitpoint_max]) |*hit_point| {
-            var color = v4(1, 0, 0, 1);
+            var color: Color = .rgba(1, 0, 0, 0.5);
             if (hit_point.amount == 0) {
-                color = v4(0.2, 0.2, 0.2, 1);
+                color = .rgba(0.2, 0.2, 0.2, 1);
             }
 
             render_group.pushRect(hit_p, 0, health_dim, color, .{ .entity_z_c = 0 });
+
             hit_p.x += spacing_x;
         }
     }
 }
 
 pub inline fn addCollisionRule(game_state: *GameState, storage_index_a: EntityIndex, storage_index_b: EntityIndex, should_collide: bool) void {
-    if (PairwiseCollisionRule.double_entries) {
-        addCollisionRuleRaw(game_state, storage_index_a, storage_index_b, should_collide);
-        addCollisionRuleRaw(game_state, storage_index_b, storage_index_a, should_collide);
-    } else {
-        addCollisionRuleRaw(game_state, storage_index_a, storage_index_b, should_collide);
-    }
+    addCollisionRuleRaw(game_state, storage_index_a, storage_index_b, should_collide);
 }
 
 pub fn addCollisionRuleRaw(game_state: *GameState, storage_index_a_: EntityIndex, storage_index_b_: EntityIndex, should_collide: bool) void {
     const default_order = .{ storage_index_a_, storage_index_b_ };
 
-    const storage_index_a, const storage_index_b = if (PairwiseCollisionRule.double_entries)
-        default_order
-    else if (storage_index_a_ > storage_index_b_)
+    const storage_index_a, const storage_index_b = if (storage_index_a_ > storage_index_b_)
         .{ storage_index_b_, storage_index_a_ }
     else
         default_order;
@@ -356,34 +349,18 @@ pub fn addCollisionRuleRaw(game_state: *GameState, storage_index_a_: EntityIndex
 }
 
 pub fn clearCollisionRulesFor(game_state: *GameState, storage_index: EntityIndex) void {
-    if (PairwiseCollisionRule.double_entries) {
-        const old_freelist_head = game_state.first_free_collision_rule;
+    for (&game_state.collision_rule_hash) |*entry| {
+        var rule_opt: *?*PairwiseCollisionRule = entry;
 
-        removeCollisionRule(game_state, storage_index);
+        while (rule_opt.*) |rule| {
+            if (rule.storage_index_a == storage_index or rule.storage_index_b == storage_index) {
+                const removed_rule = rule;
+                rule_opt.* = rule.next_in_hash;
 
-        var freelist_rule_opt = game_state.first_free_collision_rule;
-        while (freelist_rule_opt) |freelist_rule| {
-            assert(freelist_rule.storage_index_a == storage_index);
-
-            removeCollisionRule(game_state, freelist_rule.storage_index_b);
-
-            if (freelist_rule.next_in_hash == old_freelist_head) break;
-            freelist_rule_opt = freelist_rule.next_in_hash;
-        }
-    } else {
-        for (&game_state.collision_rule_hash) |*entry| {
-            var rule_opt: *?*PairwiseCollisionRule = entry;
-
-            while (rule_opt.*) |rule| {
-                if (rule.storage_index_a == storage_index or rule.storage_index_b == storage_index) {
-                    const removed_rule = rule;
-                    rule_opt.* = rule.next_in_hash;
-
-                    removed_rule.next_in_hash = game_state.first_free_collision_rule;
-                    game_state.first_free_collision_rule = removed_rule;
-                } else {
-                    rule_opt = &rule.next_in_hash;
-                }
+                removed_rule.next_in_hash = game_state.first_free_collision_rule;
+                game_state.first_free_collision_rule = removed_rule;
+            } else {
+                rule_opt = &rule.next_in_hash;
             }
         }
     }
@@ -788,8 +765,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     };
     const draw_buffer = &draw_buffer_;
 
-    // @memset(@as([]u32, @ptrCast(@alignCast(offscreen_buffer.memory[0..offscreen_buffer.memory_len]))), 0xff00ff);
-    RenderGroup.drawRectangle(draw_buffer, V2.zero, .i(offscreen_buffer.width, offscreen_buffer.height), 1, 0, 1);
+    render_group.clear(.rgba(1, 0, 1, 1));
 
     const screen_center = v2(
         @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
@@ -816,6 +792,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const max_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.max);
 
         const screen_dim = world.chunk_dim_in_meters.xy();
+
+        var fill_count: i32 = 0;
 
         var chunk_z: i32 = min_chunk_p.chunk_z;
         while (chunk_z <= max_chunk_p.chunk_z) : (chunk_z += 1) {
@@ -851,11 +829,14 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                         }
                     }
 
-                    if (furthest_buffer_opt) |empty_buffer| {
-                        fillGroundChunk(game_state, empty_buffer, chunk_center_p);
+                    if (fill_count == 0) {
+                        if (furthest_buffer_opt) |empty_buffer| {
+                            fillGroundChunk(game_state, tran_state, empty_buffer, chunk_center_p);
+                            fill_count += 1;
+                        }
                     }
 
-                    // render_group.pushRectOutline(rel_p.xy(), rel_p.z, screen_dim, v4(1, 1, 0, 1), .{});
+                    render_group.pushRectOutline(rel_p.xy(), 0, screen_dim, .rgb(1, 1, 0), .{});
                     _ = .{ rel_p, screen_dim };
                 }
             }
@@ -932,8 +913,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .stairwell => {
-                    render_group.pushRect(.zero, 0, entity.walkable_dim, v4(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
-                    render_group.pushRect(.zero, entity.walkable_height, entity.walkable_dim, v4(1, 1, 0, 1), .{ .entity_z_c = 0 });
+                    render_group.pushRect(.zero, 0, entity.walkable_dim, .rgba(1, 0.5, 0, 1), .{ .entity_z_c = 0 });
+                    render_group.pushRect(.zero, entity.walkable_height, entity.walkable_dim, .rgba(1, 1, 0, 1), .{ .entity_z_c = 0 });
                 },
 
                 .familiar => {
@@ -983,9 +964,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                 },
 
                 .space => {
-                    // for (entity.collision.volumes) |*volume| {
-                    //     render_group.pushRectOutline(volume.offset.xy(), 0, volume.dim.xy(), v4(0, 0.5, 1, 1), .{});
-                    // }
+                    for (entity.collision.volumes) |*volume| {
+                        render_group.pushRectOutline(volume.offset.xy(), 0, volume.dim.xy(), .rgb(0, 0.5, 1), .{});
+                    }
                 },
             }
 
@@ -1010,7 +991,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     tran_state.arena.check();
 }
 
-fn fillGroundChunk(game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p: World.Position) void {
+fn fillGroundChunk(game_state: *GameState, tran_state: *TransientState, ground_buffer: *GroundBuffer, chunk_p: World.Position) void {
+    const ground_memory = tran_state.arena.beginTemporaryMemory();
+
+    const render_group = RenderGroup.init(ground_memory.arena, mem.MiB, 1);
+    render_group.clear(.rgb(0.5, 0.5, 0));
+
     const bitmap = &ground_buffer.bitmap;
 
     ground_buffer.p = chunk_p;
@@ -1048,7 +1034,9 @@ fn fillGroundChunk(game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p
                 );
 
                 const p = center.add(offset).sub(bitmap_center);
-                RenderGroup.drawBitmap(bitmap, stamp, p.x, p.y, 1);
+
+                // render_group.pushBitmap(stamp, v2(p.x - width / 2, -p.y + height / 2), 0, .zero, .{});
+                render_group.pushBitmap(stamp, p, 0, .zero, .{});
             }
         }
     }
@@ -1067,7 +1055,7 @@ fn fillGroundChunk(game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p
 
             const center = v2(width, -height).hadamard(.i(chunk_offset_x, chunk_offset_y));
 
-            for (0..30) |_| {
+            for (0..50) |_| {
                 const stamp = &game_state.tuft[series.randomChoice(game_state.tuft.len)];
 
                 const bitmap_center = V2.i(stamp.width, stamp.height).mul(0.5);
@@ -1078,10 +1066,15 @@ fn fillGroundChunk(game_state: *GameState, ground_buffer: *GroundBuffer, chunk_p
                 );
 
                 const p = center.add(offset).sub(bitmap_center);
-                RenderGroup.drawBitmap(bitmap, stamp, p.x, p.y, 1);
+
+                // render_group.pushBitmap(stamp, v2(p.x - width / 2, -p.y + height / 2), 0, .zero, .{});
+                render_group.pushBitmap(stamp, p, 0, .zero, .{});
             }
         }
     }
+
+    render_group.toOutput(bitmap);
+    ground_memory.end();
 }
 
 pub fn makeEmptyBitmap(arena: *MemoryArena, width: i32, height: i32) LoadedBitmap {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const math = @import("math");
+const common = @import("v10_common");
 
 const MemoryArena = @This();
 
@@ -44,19 +44,11 @@ pub inline fn pushArrayAligned(this: *MemoryArena, len: usize, comptime T: type,
 }
 
 pub inline fn pushSizeAligned(this: *MemoryArena, size: usize, comptime alignment: u29) [*]align(alignment) u8 {
-    const aligned_used = alignForward(this.used, alignment);
+    const aligned_used = common.alignForward(this.used, alignment);
     assert(this.memory.len - aligned_used >= size);
 
     const result = @as([*]align(alignment) u8, @ptrCast(@alignCast(this.memory.ptr + aligned_used)));
     this.used = aligned_used + size;
-    return result;
-}
-
-inline fn alignForward(addr: usize, alignment: usize) usize {
-    assert(alignment > 0 and math.isPowerOfTwo(alignment));
-
-    const am1 = alignment - 1;
-    const result = (addr + am1) & ~(am1);
     return result;
 }
 

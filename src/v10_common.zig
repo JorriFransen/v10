@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
 
+const math = @import("math");
 const mem = @import("mem");
 const options = @import("options");
 const DynLib = @import("dynlib");
@@ -337,4 +338,12 @@ pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Write
             });
         }
     }
+}
+
+pub inline fn alignForward(addr: usize, alignment: usize) usize {
+    assert(alignment > 0 and math.isPowerOfTwo(alignment));
+
+    const am1 = alignment - 1;
+    const result = (addr + am1) & ~(am1);
+    return result;
 }

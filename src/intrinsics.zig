@@ -92,7 +92,15 @@ pub inline fn signOf(v: anytype) @TypeOf(v) {
 }
 
 pub inline fn roundReal32ToInt32(r: f32) i32 {
+    @setRuntimeSafety(false);
     const rounded: f32 = @round(r);
-    const result: i32 = @trunc(rounded);
+    const result: i32 = @intFromFloat(rounded);
+    return result;
+}
+
+pub inline fn roundReal32ToUInt32(r: f32) u32 {
+    @setRuntimeSafety(false);
+    const rounded: f32 = @round(r);
+    const result: u32 = @intFromFloat(rounded);
     return result;
 }

@@ -86,6 +86,7 @@ pub fn build(b: *Build) !void {
         .imports = &.{
             .{ .name = "options", .module = options_module },
             .{ .name = "mem", .module = mem_module },
+            .{ .name = "math", .module = math_module },
             .{ .name = "dynlib", .module = dynlib_module },
         },
     });
