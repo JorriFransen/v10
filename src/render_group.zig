@@ -167,7 +167,7 @@ pub inline fn pushRect(this: *RenderGroup, offset: V2, offset_z: f32, dim: V2, c
         const half_dim = dim.mul(this.meters_to_pixels * 0.5);
 
         piece.entity_basis.basis = this.default_basis;
-        piece.entity_basis.offset = v2(offset.x, -offset.y).mul(this.meters_to_pixels).add(half_dim);
+        piece.entity_basis.offset = v2(offset.x, -offset.y).mul(this.meters_to_pixels).sub(half_dim);
         piece.entity_basis.offset_z = offset_z;
         piece.entity_basis.entity_z_c = o.entity_z_c;
         piece.r = c.r;
