@@ -155,6 +155,11 @@ pub const V2 = extern struct {
         return result;
     }
 
+    pub inline fn perp(this: V2) V2 {
+        const result: V2 = .{ .x = -this.y, .y = this.x };
+        return result;
+    }
+
     pub inline fn length(this: V2) f32 {
         const result: f32 = sqrt(this.lengthSquared());
         return result;

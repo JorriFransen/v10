@@ -319,22 +319,28 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
             .EntryCoordinateSystem => {
                 const entry: *EntryCoordinateSystem = @alignCast(@fieldParentPtr("header", header));
 
+                const v_max = entry.origin.add(entry.x_axis).add(entry.y_axis);
+                drawRectangleSlowly(output_target, entry.origin, entry.x_axis, entry.y_axis, entry.color);
+
+                const color = Color.rgb(1, 1, 0);
                 const op = entry.origin;
                 const dim = v2(2, 2);
 
-                drawRectangle(output_target, op.sub(dim), op.add(dim), entry.color);
+                drawRectangle(output_target, op.sub(dim), op.add(dim), color);
 
                 const xp = entry.origin.add(entry.x_axis);
-                drawRectangle(output_target, xp.sub(dim), xp.add(dim), entry.color);
+                drawRectangle(output_target, xp.sub(dim), xp.add(dim), color);
 
                 const yp = entry.origin.add(entry.y_axis);
-                drawRectangle(output_target, yp.sub(dim), yp.add(dim), entry.color);
+                drawRectangle(output_target, yp.sub(dim), yp.add(dim), color);
 
-                for (entry.points) |point| {
-                    var p = point;
-                    p = entry.origin.add(entry.x_axis.mul(p.x).add(entry.y_axis.mul(p.y)));
-                    drawRectangle(output_target, p.sub(dim), p.add(dim), entry.color);
-                }
+                drawRectangle(output_target, v_max.sub(dim), v_max.add(dim), color);
+
+                // for (entry.points) |point| {
+                //     var p = point;
+                //     p = entry.origin.add(entry.x_axis.mul(p.x).add(entry.y_axis.mul(p.y)));
+                //     drawRectangle(output_target, p.sub(dim), p.add(dim), entry.color);
+                // }
 
                 base_address += @sizeOf(@TypeOf(entry.*));
             },
@@ -363,12 +369,80 @@ pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, color: Color
         (intrinsics.roundReal32ToUInt32(color.b * 255) << 0);
 
     var row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + (minx * bpp) + (miny * pitch);
-    var y: usize = @intCast(miny);
-    while (y < maxy) : (y += 1) {
+
+    for (miny..maxy) |_| {
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
-        var x: usize = @intCast(minx);
-        while (x < maxx) : (x += 1) {
+
+        for (minx..maxx) |_| {
             pixel[0] = color_u32;
+            pixel += 1;
+        }
+
+        row += pitch;
+    }
+}
+
+pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, y_axis: V2, color: Color) void {
+    const bpp: usize = LoadedBitmap.bytes_per_pixel;
+    const pitch: usize = @intCast(buffer.pitch);
+
+    const color_u32: u32 =
+        (intrinsics.roundReal32ToUInt32(color.a * 255) << 24) |
+        (intrinsics.roundReal32ToUInt32(color.r * 255) << 16) |
+        (intrinsics.roundReal32ToUInt32(color.g * 255) << 8) |
+        (intrinsics.roundReal32ToUInt32(color.b * 255) << 0);
+
+    const width_max = buffer.width - 1;
+    const height_max = buffer.height - 1;
+
+    var y_min: i32 = height_max;
+    var y_max: i32 = 0;
+    var x_min: i32 = width_max;
+    var x_max: i32 = 0;
+
+    const p: [4]V2 = .{ origin, origin.add(x_axis), origin.add(x_axis).add(y_axis), origin.add(y_axis) };
+    inline for (p) |@"test"| {
+        const floor_x: i32 = @floor(@"test".x);
+        const ceil_x: i32 = @ceil(@"test".x);
+        const floor_y: i32 = @floor(@"test".y);
+        const ceil_y: i32 = @ceil(@"test".y);
+
+        if (y_min > floor_y) y_min = floor_y;
+        if (x_min > floor_x) x_min = floor_x;
+        if (y_max < ceil_y) y_max = ceil_y;
+        if (x_max < ceil_x) x_max = ceil_x;
+    }
+
+    if (x_min < 0) x_min = 0;
+    if (y_min < 0) y_min = 0;
+    if (x_max > width_max) x_max = width_max;
+    if (y_max > height_max) y_max = height_max;
+
+    const minx: usize = @intCast(x_min);
+    const miny: usize = @intCast(y_min);
+    const maxx: usize = @intCast(x_max);
+    const maxy: usize = @intCast(y_max);
+
+    var row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + (minx * bpp) + (miny * pitch);
+
+    for (miny..maxy + 1) |y| {
+        var pixel: [*]u32 = @ptrCast(@alignCast(row));
+
+        for (minx..maxx + 1) |x| {
+            const pixel_p = V2.u(x, y);
+
+            const edge0 = pixel_p.sub(origin).inner(x_axis.perp().neg());
+            const edge1 = pixel_p.sub(origin.add(x_axis)).inner(y_axis.perp().neg());
+            const edge2 = pixel_p.sub(origin.add(x_axis).add(y_axis)).inner(x_axis.perp());
+            const edge3 = pixel_p.sub(origin.add(y_axis)).inner(y_axis.perp());
+
+            if (edge0 < 0 and
+                edge1 < 0 and
+                edge2 < 0 and
+                edge3 < 0)
+            {
+                pixel[0] = color_u32;
+            }
             pixel += 1;
         }
 

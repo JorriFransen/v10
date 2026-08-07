@@ -830,7 +830,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                         }
                     }
 
-                    if (fill_count == 0) {
+                    if (fill_count < 5) {
                         if (furthest_buffer_opt) |empty_buffer| {
                             fillGroundChunk(game_state, tran_state, empty_buffer, chunk_center_p);
                             fill_count += 1;
@@ -982,11 +982,12 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     game_state.time += input.dt;
-    const angle = game_state.time;
+    const angle: f32 = game_state.time;
 
-    const origin = screen_center.add(v2(@sin(angle), 0).mul(10));
-    const x_axis = v2(@cos(angle), @sin(angle)).mul(100 + 25 * @cos(4.2 * angle));
-    const y_axis = v2(@cos(angle + 1), @sin(angle + 1)).mul(100 + 50 * @sin(3.9 * angle));
+    const origin = screen_center;
+    const x_axis = v2(@cos(angle), @sin(angle)).mul(50 + (50 * @cos(angle)));
+    // const y_axis = x_axis.perp();
+    const y_axis = v2(@cos(angle + 1), @sin(angle + 1)).mul(50 + (50 * @cos(angle)));
 
     const cs = render_group.coordinateSystem(origin, x_axis, y_axis, .rgb(
         0.5 + 0.5 * @sin(angle),
