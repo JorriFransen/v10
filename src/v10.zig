@@ -113,6 +113,8 @@ pub const GameState = struct {
     familiar_collision: *Entity.CollisionGroup = undefined,
     wall_collision: *Entity.CollisionGroup = undefined,
     standard_room_collision: *Entity.CollisionGroup = undefined,
+
+    time: f32 = 0,
 };
 
 pub const TransientState = struct {
@@ -689,11 +691,11 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         tran_state.initialized = true;
     }
 
-    if (input.executable_reloaded) {
-        for (tran_state.ground_buffers) |*ground_buffer| {
-            ground_buffer.p = .null;
-        }
-    }
+    // if (input.executable_reloaded) {
+    //     for (tran_state.ground_buffers) |*ground_buffer| {
+    //         ground_buffer.p = .null;
+    //     }
+    // }
 
     const world: *World = game_state.world;
 
@@ -771,7 +773,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         @floatFromInt(@divTrunc(offscreen_buffer.width, 2)),
         @floatFromInt(@divTrunc(offscreen_buffer.height, 2)),
     );
-    _ = screen_center;
 
     const screen_width_meters = @as(f32, @floatFromInt(draw_buffer.width)) * game_state.pixels_to_meters;
     const screen_height_meters = @as(f32, @floatFromInt(draw_buffer.height)) * game_state.pixels_to_meters;
@@ -977,6 +978,27 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             }
 
             basis.p = entity.getGroundPoint();
+        }
+    }
+
+    game_state.time += input.dt;
+    const angle = game_state.time;
+
+    const origin = screen_center.add(v2(@sin(angle), 0).mul(10));
+    const x_axis = v2(@cos(angle), @sin(angle)).mul(100 + 25 * @cos(4.2 * angle));
+    const y_axis = v2(@cos(angle + 1), @sin(angle + 1)).mul(100 + 50 * @sin(3.9 * angle));
+
+    const cs = render_group.coordinateSystem(origin, x_axis, y_axis, .rgb(
+        0.5 + 0.5 * @sin(angle),
+        0.5 + 0.5 * @sin(2.9 * angle),
+        0.5 + 0.5 * @cos(9.9 * angle),
+    ));
+
+    var p_index: usize = 0;
+    for (0..4) |x| {
+        for (0..4) |y| {
+            cs.?.points[p_index] = V2.u(x, y).mul(0.25);
+            p_index += 1;
         }
     }
 

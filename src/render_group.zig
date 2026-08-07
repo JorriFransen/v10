@@ -41,6 +41,7 @@ pub const EntryHeader = extern struct {
         EntryBitmap,
         EntryRectangle,
         EntryRectangleOutline,
+        EntryCoordinateSystem,
         // Names must match struct names!
     };
 
@@ -51,6 +52,18 @@ pub const EntryClear = extern struct {
     header: EntryHeader,
 
     color: Color,
+};
+
+pub const EntryCoordinateSystem = extern struct {
+    header: EntryHeader,
+
+    origin: V2,
+    x_axis: V2,
+    y_axis: V2,
+
+    color: Color,
+
+    points: [16]V2,
 };
 
 pub const EntryBitmap = extern struct {
@@ -102,7 +115,7 @@ pub fn init(arena: *MemoryArena, max_push_buffer_size: usize, meters_to_pixels: 
     return result;
 }
 
-pub inline fn pushRenderElement(this: *RenderGroup, comptime T: type) ?*align(4) T {
+pub inline fn pushRenderElement(this: *RenderGroup, comptime T: type) ?*T {
     const size = @sizeOf(T);
 
     var result: ?*EntryHeader = null;
@@ -131,6 +144,21 @@ pub inline fn clear(this: *RenderGroup, color: Color) void {
     if (this.pushRenderElement(EntryClear)) |piece| {
         piece.color = color;
     }
+}
+
+pub inline fn coordinateSystem(this: *RenderGroup, origin: V2, x_axis: V2, y_axis: V2, color: Color) ?*EntryCoordinateSystem {
+    var result: ?*EntryCoordinateSystem = null;
+
+    if (this.pushRenderElement(EntryCoordinateSystem)) |entry| {
+        entry.origin = origin;
+        entry.x_axis = x_axis;
+        entry.y_axis = y_axis;
+        entry.color = color;
+
+        result = entry;
+    }
+
+    return result;
 }
 
 pub inline fn pushPiece(
@@ -207,7 +235,7 @@ pub inline fn pushRectOutline(this: *RenderGroup, offset: V2, offset_z: f32, dim
     }
 }
 
-pub fn GetEntityBasisP(this: *const RenderGroup, entity_basis: *align(4) const EntityBasis, screen_center: V2) V2 {
+pub fn GetEntityBasisP(this: *const RenderGroup, entity_basis: *const EntityBasis, screen_center: V2) V2 {
     const entity_base_p = entity_basis.basis.p;
 
     const z_fudge = 1 + (0.1 * (entity_base_p.z + entity_basis.offset_z));
@@ -284,6 +312,29 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
                 drawRectangle(output_target, tl.add(v2(entry.dim.x, 0)), tl_v_max.add(v2(entry.dim.x, 0)), entry.color);
 
                 _ = .{ tl, tl_h_max, tl_v_max };
+
+                base_address += @sizeOf(@TypeOf(entry.*));
+            },
+
+            .EntryCoordinateSystem => {
+                const entry: *EntryCoordinateSystem = @alignCast(@fieldParentPtr("header", header));
+
+                const op = entry.origin;
+                const dim = v2(2, 2);
+
+                drawRectangle(output_target, op.sub(dim), op.add(dim), entry.color);
+
+                const xp = entry.origin.add(entry.x_axis);
+                drawRectangle(output_target, xp.sub(dim), xp.add(dim), entry.color);
+
+                const yp = entry.origin.add(entry.y_axis);
+                drawRectangle(output_target, yp.sub(dim), yp.add(dim), entry.color);
+
+                for (entry.points) |point| {
+                    var p = point;
+                    p = entry.origin.add(entry.x_axis.mul(p.x).add(entry.y_axis.mul(p.y)));
+                    drawRectangle(output_target, p.sub(dim), p.add(dim), entry.color);
+                }
 
                 base_address += @sizeOf(@TypeOf(entry.*));
             },

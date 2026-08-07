@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 
 pub const pi = std.math.pi;
 pub const tau = std.math.tau;
@@ -7,7 +8,6 @@ pub const maxInt = std.math.maxInt;
 pub const minInt = std.math.minInt;
 pub const maxFloat = std.math.floatMax;
 pub const minFloat = std.math.floatMin;
-pub const atan2 = std.math.atan2;
 pub const log2 = std.math.log2;
 pub const isPowerOfTwo = std.math.isPowerOfTwo;
 pub const shl = std.math.shl;
@@ -23,6 +23,15 @@ pub inline fn square(x: f32) f32 {
 
 pub inline fn sqrt(x: f32) f32 {
     return @sqrt(x);
+}
+
+pub inline fn atan2(y: anytype, x: @TypeOf(y)) @TypeOf(y) {
+    comptime {
+        const float_info = @typeInfo(@TypeOf(y));
+        if (float_info != .float) @compileError("Expected float type");
+    }
+
+    return math.atan2(x, y);
 }
 
 pub inline fn lerp(a: f32, t: f32, b: f32) f32 {
@@ -88,13 +97,25 @@ pub const V2 = extern struct {
     }
 
     pub const i = initSigned;
-    pub inline fn initSigned(x: i32, y: i32) V2 {
+    pub inline fn initSigned(x: anytype, y: @TypeOf(x)) V2 {
+        comptime {
+            const t_info = @typeInfo(@TypeOf(x));
+            assert(t_info == .int);
+            assert(t_info.int.signedness == .signed);
+        }
+
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
     }
 
     pub const u = initUnsigned;
-    pub inline fn initUnsigned(x: u32, y: u32) V2 {
+    pub inline fn initUnsigned(x: anytype, y: @TypeOf(x)) V2 {
+        comptime {
+            const t_info = @typeInfo(@TypeOf(x));
+            assert(t_info == .int);
+            assert(t_info.int.signedness == .unsigned);
+        }
+
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
     }
@@ -191,13 +212,25 @@ pub const V3 = extern struct {
     }
 
     pub const i = initSigned;
-    pub inline fn initSigned(x: i32, y: i32, z: i32) V3 {
+    pub inline fn initSigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x)) V3 {
+        comptime {
+            const t_info = @typeInfo(@TypeOf(x));
+            assert(t_info == .int);
+            assert(t_info.int.signedness == .signed);
+        }
+
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
         return result;
     }
 
     pub const u = initUnsigned;
-    pub inline fn initUnsigned(x: u32, y: u32, z: u32) V3 {
+    pub inline fn initUnsigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x)) V3 {
+        comptime {
+            const t_info = @typeInfo(@TypeOf(x));
+            assert(t_info == .int);
+            assert(t_info.int.signedness == .unsigned);
+        }
+
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
         return result;
     }
@@ -306,13 +339,25 @@ pub const V4 = extern struct {
     }
 
     pub const i = initSigned;
-    pub inline fn initSigned(x: i32, y: i32, z: i32, w: i32) V4 {
+    pub inline fn initSigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x), w: @TypeOf(x)) V4 {
+        comptime {
+            const t_info = @typeInfo(@TypeOf(x));
+            assert(t_info == .int);
+            assert(t_info.int.signedness == .signed);
+        }
+
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
     }
 
     pub const u = initUnsigned;
-    pub inline fn initUnsigned(x: u32, y: u32, z: u32, w: u32) V4 {
+    pub inline fn initUnsigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x), w: @TypeOf(x)) V4 {
+        comptime {
+            const t_info = @typeInfo(@TypeOf(x));
+            assert(t_info == .int);
+            assert(t_info.int.signedness == .unsigned);
+        }
+
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
     }

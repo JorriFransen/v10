@@ -1,32 +1,5 @@
 const math = @import("math");
 
-pub inline fn sin(angle: anytype) @TypeOf(angle) {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(angle));
-        if (float_info != .float) @compileError("Expected float type");
-    }
-
-    return @sin(angle);
-}
-
-pub inline fn cos(angle: anytype) @TypeOf(angle) {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(angle));
-        if (float_info != .float) @compileError("Expected float type");
-    }
-
-    return @cos(angle);
-}
-
-pub inline fn atan2(y: anytype, x: @TypeOf(y)) @TypeOf(y) {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(y));
-        if (float_info != .float) @compileError("Expected float type");
-    }
-
-    return math.atan2(x, y);
-}
-
 pub fn BitScanResult(comptime T: type) type {
     const int_info = @typeInfo(T);
     if (int_info != .int) @compileError("Expected integer type");
