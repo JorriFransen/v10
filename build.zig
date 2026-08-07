@@ -46,9 +46,17 @@ pub fn build(b: *Build) !void {
         .root_source_file = b.path(src_path ++ "/dynlib.zig"),
     });
 
+    const meta_module = b.createModule(.{
+        .optimize = optimize,
+        .root_source_file = b.path(src_path ++ "/meta.zig"),
+    });
+
     const math_module = b.createModule(.{
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/math.zig"),
+        .imports = &.{
+            .{ .name = "meta", .module = meta_module },
+        },
     });
 
     const linux_module = b.createModule(.{
@@ -107,6 +115,7 @@ pub fn build(b: *Build) !void {
         .dynlib = dynlib_module,
         .clip = clip_module,
         .math = math_module,
+        .meta = meta_module,
         .xml = b.createModule(.{
             .optimize = optimize,
             .root_source_file = b.path(src_path ++ "/xml.zig"),
@@ -157,6 +166,7 @@ const Modules = struct {
     xml: *Build.Module,
     clip: *Build.Module,
     math: *Build.Module,
+    meta: *Build.Module,
 
     // This should really be shared/common?
     common: *Build.Module,
@@ -291,6 +301,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
             .{ .module = engine.modules.options, .name = "options" },
             .{ .module = engine.modules.memory, .name = "mem" },
             .{ .module = engine.modules.math, .name = "math" },
+            .{ .module = engine.modules.meta, .name = "meta" },
             .{ .module = engine.modules.common, .name = "v10_common" },
         },
     });

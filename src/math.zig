@@ -1,6 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const meta = @import("meta");
+
 pub const pi = std.math.pi;
 pub const tau = std.math.tau;
 
@@ -26,10 +28,7 @@ pub inline fn sqrt(x: f32) f32 {
 }
 
 pub inline fn atan2(y: anytype, x: @TypeOf(y)) @TypeOf(y) {
-    comptime {
-        const float_info = @typeInfo(@TypeOf(y));
-        if (float_info != .float) @compileError("Expected float type");
-    }
+    meta.expectFloat(y);
 
     return math.atan2(x, y);
 }
@@ -51,15 +50,7 @@ pub inline fn clamp01(value: f32) f32 {
 
 pub inline fn divCeil(numerator: anytype, denominator: @TypeOf(numerator)) @TypeOf(numerator) {
     const T = @TypeOf(numerator);
-    comptime {
-        const t_info = @typeInfo(T);
-        switch (t_info) {
-            .comptime_float, .float, .comptime_int, .int => {},
-            else => {
-                @compileError("Unsupported type for divCeil");
-            },
-        }
-    }
+    meta.expectTypeIds(numerator, &.{ .float, .comptime_float, .int, .comptime_int });
 
     return std.math.divCeil(T, numerator, denominator) catch unreachable;
 }
@@ -98,11 +89,7 @@ pub const V2 = extern struct {
 
     pub const i = initSigned;
     pub inline fn initSigned(x: anytype, y: @TypeOf(x)) V2 {
-        comptime {
-            const t_info = @typeInfo(@TypeOf(x));
-            assert(t_info == .int);
-            assert(t_info.int.signedness == .signed);
-        }
+        meta.expectSigned(x);
 
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
@@ -110,11 +97,7 @@ pub const V2 = extern struct {
 
     pub const u = initUnsigned;
     pub inline fn initUnsigned(x: anytype, y: @TypeOf(x)) V2 {
-        comptime {
-            const t_info = @typeInfo(@TypeOf(x));
-            assert(t_info == .int);
-            assert(t_info.int.signedness == .unsigned);
-        }
+        meta.expectUnsigned(x);
 
         const result: V2 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) };
         return result;
@@ -213,11 +196,7 @@ pub const V3 = extern struct {
 
     pub const i = initSigned;
     pub inline fn initSigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x)) V3 {
-        comptime {
-            const t_info = @typeInfo(@TypeOf(x));
-            assert(t_info == .int);
-            assert(t_info.int.signedness == .signed);
-        }
+        meta.expectSigned(x);
 
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
         return result;
@@ -225,11 +204,7 @@ pub const V3 = extern struct {
 
     pub const u = initUnsigned;
     pub inline fn initUnsigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x)) V3 {
-        comptime {
-            const t_info = @typeInfo(@TypeOf(x));
-            assert(t_info == .int);
-            assert(t_info.int.signedness == .unsigned);
-        }
+        meta.expectUnsigned(x);
 
         const result: V3 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z) };
         return result;
@@ -340,11 +315,7 @@ pub const V4 = extern struct {
 
     pub const i = initSigned;
     pub inline fn initSigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x), w: @TypeOf(x)) V4 {
-        comptime {
-            const t_info = @typeInfo(@TypeOf(x));
-            assert(t_info == .int);
-            assert(t_info.int.signedness == .signed);
-        }
+        meta.expectSigned(x);
 
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
@@ -352,11 +323,7 @@ pub const V4 = extern struct {
 
     pub const u = initUnsigned;
     pub inline fn initUnsigned(x: anytype, y: @TypeOf(x), z: @TypeOf(x), w: @TypeOf(x)) V4 {
-        comptime {
-            const t_info = @typeInfo(@TypeOf(x));
-            assert(t_info == .int);
-            assert(t_info.int.signedness == .unsigned);
-        }
+        meta.expectUnsigned(x);
 
         const result: V4 = .{ .x = @floatFromInt(x), .y = @floatFromInt(y), .z = @floatFromInt(z), .w = @floatFromInt(w) };
         return result;
