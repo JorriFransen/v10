@@ -38,6 +38,13 @@ pub inline fn lerp(a: f32, t: f32, b: f32) f32 {
     return result;
 }
 
+pub inline fn lerp4(a: V4.V, t: f32, b: V4.V) V4.V {
+    const one_v: V4.V = @splat(1);
+    const t_v: V4.V = @splat(t);
+    const result = ((one_v - t_v) * a) + (t_v * b);
+    return result;
+}
+
 pub inline fn clamp(min: f32, value: f32, max: f32) f32 {
     const result = @min(max, @max(min, value));
     return result;
@@ -311,7 +318,7 @@ pub const V4 = extern struct {
     pub const zero = scalar(0);
     pub const one = scalar(1);
 
-    pub const V = @Vector(3, f32);
+    pub const V = @Vector(4, f32);
 
     pub inline fn init(x: f32, y: f32, z: f32, w: f32) V4 {
         const result: V4 = .{ .x = x, .y = y, .z = z, .w = w };
@@ -440,6 +447,11 @@ pub const Color = extern struct {
         return result;
     }
 
+    pub inline fn v(this: Color) V4.V {
+        const result: V4.V = @bitCast(this);
+        return result;
+    }
+
     pub inline fn v4(this: Color) V4 {
         const result: V4 = @bitCast(this);
         return result;
@@ -447,6 +459,11 @@ pub const Color = extern struct {
 
     pub inline fn v3(this: Color) V3 {
         const result: V3 = this.v4().xyz();
+        return result;
+    }
+
+    pub inline fn lerp(a: Color, t: f32, b: Color) Color {
+        const result: Color = @bitCast(lerp4(a.v(), t, b.v()));
         return result;
     }
 };

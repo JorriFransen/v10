@@ -1,5 +1,4 @@
 const std = @import("std");
-const assert = std.debug.assert;
 
 const v10 = @import("v10.zig");
 const LoadedBitmap = v10.LoadedBitmap;
@@ -62,8 +61,7 @@ pub const EntryCoordinateSystem = extern struct {
     y_axis: V2,
 
     color: Color,
-
-    points: [16]V2,
+    texture: *const LoadedBitmap,
 };
 
 pub const EntryBitmap = extern struct {
@@ -146,7 +144,7 @@ pub inline fn clear(this: *RenderGroup, color: Color) void {
     }
 }
 
-pub inline fn coordinateSystem(this: *RenderGroup, origin: V2, x_axis: V2, y_axis: V2, color: Color) ?*EntryCoordinateSystem {
+pub inline fn coordinateSystem(this: *RenderGroup, origin: V2, x_axis: V2, y_axis: V2, color: Color, texture: *const LoadedBitmap) ?*EntryCoordinateSystem {
     var result: ?*EntryCoordinateSystem = null;
 
     if (this.pushRenderElement(EntryCoordinateSystem)) |entry| {
@@ -154,6 +152,7 @@ pub inline fn coordinateSystem(this: *RenderGroup, origin: V2, x_axis: V2, y_axi
         entry.x_axis = x_axis;
         entry.y_axis = y_axis;
         entry.color = color;
+        entry.texture = texture;
 
         result = entry;
     }
@@ -319,9 +318,9 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
             .EntryCoordinateSystem => {
                 const entry: *EntryCoordinateSystem = @alignCast(@fieldParentPtr("header", header));
 
-                const v_max = entry.origin.add(entry.x_axis).add(entry.y_axis);
-                drawRectangleSlowly(output_target, entry.origin, entry.x_axis, entry.y_axis, entry.color);
+                drawRectangleSlowly(output_target, entry.origin, entry.x_axis, entry.y_axis, entry.color, entry.texture);
 
+                const v_max = entry.origin.add(entry.x_axis).add(entry.y_axis);
                 const color = Color.rgb(1, 1, 0);
                 const op = entry.origin;
                 const dim = v2(2, 2);
@@ -335,12 +334,6 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
                 drawRectangle(output_target, yp.sub(dim), yp.add(dim), color);
 
                 drawRectangle(output_target, v_max.sub(dim), v_max.add(dim), color);
-
-                // for (entry.points) |point| {
-                //     var p = point;
-                //     p = entry.origin.add(entry.x_axis.mul(p.x).add(entry.y_axis.mul(p.y)));
-                //     drawRectangle(output_target, p.sub(dim), p.add(dim), entry.color);
-                // }
 
                 base_address += @sizeOf(@TypeOf(entry.*));
             },
@@ -368,7 +361,7 @@ pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, color: Color
         (intrinsics.roundReal32ToUInt32(color.g * 255) << 8) |
         (intrinsics.roundReal32ToUInt32(color.b * 255) << 0);
 
-    var row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + (minx * bpp) + (miny * pitch);
+    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
 
     for (miny..maxy) |_| {
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
@@ -382,15 +375,14 @@ pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, color: Color
     }
 }
 
-pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, y_axis: V2, color: Color) void {
-    const bpp: usize = LoadedBitmap.bytes_per_pixel;
-    const pitch: usize = @intCast(buffer.pitch);
+pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, y_axis: V2, color: Color, texture: *const LoadedBitmap) void {
+    const bpp = LoadedBitmap.bytes_per_pixel;
+    assert(buffer.pitch > 0);
+    const buffer_pitch: usize = @intCast(buffer.pitch);
+    const texture_pitch: usize = @bitCast(@as(isize, @intCast(texture.pitch)));
 
-    const color_u32: u32 =
-        (intrinsics.roundReal32ToUInt32(color.a * 255) << 24) |
-        (intrinsics.roundReal32ToUInt32(color.r * 255) << 16) |
-        (intrinsics.roundReal32ToUInt32(color.g * 255) << 8) |
-        (intrinsics.roundReal32ToUInt32(color.b * 255) << 0);
+    const inv_x_axis_length_sq = 1 / x_axis.lengthSquared();
+    const inv_y_axis_length_sq = 1 / y_axis.lengthSquared();
 
     const width_max = buffer.width - 1;
     const height_max = buffer.height - 1;
@@ -423,30 +415,111 @@ pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, 
     const maxx: usize = @intCast(x_max);
     const maxy: usize = @intCast(y_max);
 
-    var row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + (minx * bpp) + (miny * pitch);
+    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * buffer_pitch);
 
-    for (miny..maxy + 1) |y| {
+    for (miny..maxy + 1) |target_y| {
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
 
-        for (minx..maxx + 1) |x| {
-            const pixel_p = V2.u(x, y);
+        for (minx..maxx + 1) |target_x| {
+            const pixel_p = V2.u(target_x, target_y);
+            const d = pixel_p.sub(origin);
 
-            const edge0 = pixel_p.sub(origin).inner(x_axis.perp().neg());
-            const edge1 = pixel_p.sub(origin.add(x_axis)).inner(y_axis.perp().neg());
-            const edge2 = pixel_p.sub(origin.add(x_axis).add(y_axis)).inner(x_axis.perp());
-            const edge3 = pixel_p.sub(origin.add(y_axis)).inner(y_axis.perp());
+            const edge0 = d.inner(x_axis.perp().neg());
+            const edge1 = d.sub(x_axis).inner(y_axis.perp().neg());
+            const edge2 = d.sub(x_axis).sub(y_axis).inner(x_axis.perp());
+            const edge3 = d.sub(y_axis).inner(y_axis.perp());
 
             if (edge0 < 0 and
                 edge1 < 0 and
                 edge2 < 0 and
                 edge3 < 0)
             {
-                pixel[0] = color_u32;
+                const u = inv_x_axis_length_sq * d.inner(x_axis);
+                const v = inv_y_axis_length_sq * d.inner(y_axis);
+
+                assert(u >= 0 and u <= 1);
+                assert(v >= 0 and v <= 1);
+
+                const tx: f32 = u * @as(f32, @floatFromInt(texture.width - 2));
+                const ty: f32 = v * @as(f32, @floatFromInt(texture.height - 2));
+
+                const x: i32 = @trunc(tx);
+                const y: i32 = @trunc(ty);
+
+                const fx: f32 = tx - @as(f32, @floatFromInt(x));
+                const fy: f32 = ty - @as(f32, @floatFromInt(y));
+
+                assert(x >= 0 and x < texture.width);
+                assert(y >= 0 and y < texture.height);
+
+                const texel_offset: usize = @bitCast(@as(isize, @intCast((y * texture.pitch) + (x * bpp))));
+                const texel_ptr: [*]u8 = @ptrCast(texture.memory + texel_offset);
+                const texel_ptr_a: *align(1) u32 = @ptrCast(texel_ptr);
+                const texel_ptr_b: *align(1) u32 = @ptrCast(texel_ptr + bpp);
+                const texel_ptr_c: *align(1) u32 = @ptrCast(texel_ptr + texture_pitch);
+                const texel_ptr_d: *align(1) u32 = @ptrCast(texel_ptr + texture_pitch + bpp);
+
+                const texel_a: Color = .rgba(
+                    @as(f32, @floatFromInt((texel_ptr_a.* >> 16) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_a.* >> 8) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_a.* >> 0) & 0xff)),
+                    @floatFromInt((texel_ptr_a.* >> 24) & 0xff),
+                );
+                const texel_b: Color = .rgba(
+                    @as(f32, @floatFromInt((texel_ptr_b.* >> 16) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_b.* >> 8) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_b.* >> 0) & 0xff)),
+                    @floatFromInt((texel_ptr_b.* >> 24) & 0xff),
+                );
+                const texel_c: Color = .rgba(
+                    @as(f32, @floatFromInt((texel_ptr_c.* >> 16) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_c.* >> 8) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_c.* >> 0) & 0xff)),
+                    @floatFromInt((texel_ptr_c.* >> 24) & 0xff),
+                );
+                const texel_d: Color = .rgba(
+                    @as(f32, @floatFromInt((texel_ptr_d.* >> 16) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_d.* >> 8) & 0xff)),
+                    @as(f32, @floatFromInt((texel_ptr_d.* >> 0) & 0xff)),
+                    @floatFromInt((texel_ptr_d.* >> 24) & 0xff),
+                );
+
+                const texel = Color.lerp(
+                    Color.lerp(texel_a, fx, texel_b),
+                    fy,
+                    Color.lerp(texel_c, fx, texel_d),
+                );
+
+                const sa: f32 = texel.a;
+                const sr: f32 = texel.r;
+                const sg: f32 = texel.g;
+                const sb: f32 = texel.b;
+
+                const rsa: f32 = (sa / 255) * color.a;
+
+                const da: f32 = @floatFromInt((pixel[0] >> 24) & 0xff);
+                const dr: f32 = @floatFromInt((pixel[0] >> 16) & 0xff);
+                const dg: f32 = @floatFromInt((pixel[0] >> 8) & 0xff);
+                const db: f32 = @floatFromInt((pixel[0] >> 0) & 0xff);
+                const rda: f32 = (da / 255);
+
+                const inv_rsa: f32 = 1 - rsa;
+                const a: f32 = 255 * (rsa + rda - (rsa * rda));
+                const r: f32 = inv_rsa * dr + sr;
+                const g: f32 = inv_rsa * dg + sg;
+                const b: f32 = inv_rsa * db + sb;
+
+                pixel[0] =
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24 |
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16 |
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8 |
+                    @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0;
             }
+
             pixel += 1;
         }
 
-        row += pitch;
+        row += buffer_pitch;
     }
 }
 
@@ -484,15 +557,13 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
     max_x = @intCast(@max(0, max_x));
     max_y = @intCast(@max(0, max_y));
 
-    // TEMPORARY
-    if (bitmap.width == 0 or bitmap.height == 0) return;
-    // TEMPORARY
-
-    const source_offset: usize = @bitCast(@as(isize, @intCast(source_offset_y *% bitmap.pitch +% bpp *% source_offset_x)));
-    var source_row: [*]u8 = @as([*]u8, @ptrCast(bitmap.memory)) + source_offset;
+    const source_offset_i: isize = @as(isize, @intCast(source_offset_y *% bitmap.pitch +% bpp *% source_offset_x));
+    // assert(source_offset_i >= 0);
+    const source_offset: usize = @bitCast(source_offset_i);
+    var source_row: [*]u8 = bitmap.memory + source_offset;
 
     const dest_offset: usize = @bitCast(@as(isize, @intCast((min_x *% bpp) +% (min_y *% buffer.pitch))));
-    var dest_row: [*]u8 = @as([*]u8, @ptrCast(buffer.memory)) + dest_offset;
+    var dest_row: [*]u8 = buffer.memory + dest_offset;
 
     var y: usize = @intCast(min_y);
     while (y < max_y) : (y += 1) {
@@ -531,5 +602,13 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
 
         dest_row += @bitCast(@as(isize, @intCast(buffer.pitch)));
         source_row += @bitCast(@as(isize, @intCast(bitmap.pitch)));
+    }
+}
+
+pub fn assert(cond: bool) void {
+    if (!cond) {
+        @branchHint(.cold);
+        std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
+        @breakpoint();
     }
 }

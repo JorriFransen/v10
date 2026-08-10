@@ -389,8 +389,7 @@ pub const LoadedBitmap = struct {
     width: i32 = 0,
     height: i32 = 0,
     pitch: i32 = 0,
-    memory: [*]align(1) u32 = undefined,
-    data: []align(1) u32 = &.{},
+    memory: [*]u8 = undefined,
 
     pub const bytes_per_pixel = 4;
 };
@@ -763,7 +762,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         .height = offscreen_buffer.height,
         .pitch = offscreen_buffer.pitch,
         .memory = @ptrCast(offscreen_buffer_data.ptr),
-        .data = @ptrCast(offscreen_buffer_data),
     };
     const draw_buffer = &draw_buffer_;
 
@@ -793,8 +791,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const max_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.max);
 
         const screen_dim = world.chunk_dim_in_meters.xy();
-
-        var fill_count: i32 = 0;
 
         var chunk_z: i32 = min_chunk_p.chunk_z;
         while (chunk_z <= max_chunk_p.chunk_z) : (chunk_z += 1) {
@@ -830,11 +826,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                         }
                     }
 
-                    if (fill_count < 5) {
-                        if (furthest_buffer_opt) |empty_buffer| {
-                            fillGroundChunk(game_state, tran_state, empty_buffer, chunk_center_p);
-                            fill_count += 1;
-                        }
+                    if (furthest_buffer_opt) |empty_buffer| {
+                        fillGroundChunk(game_state, tran_state, empty_buffer, chunk_center_p);
                     }
 
                     render_group.pushRectOutline(rel_p.xy(), 0, screen_dim, .rgb(1, 1, 0), .{});
@@ -982,26 +975,20 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     game_state.time += input.dt;
-    const angle: f32 = game_state.time;
+    const angle: f32 = 0.1 * game_state.time;
+    // const disp = 100 * @cos(5 * angle);
 
     const origin = screen_center;
-    const x_axis = v2(@cos(angle), @sin(angle)).mul(50 + (50 * @cos(angle)));
-    // const y_axis = x_axis.perp();
-    const y_axis = v2(@cos(angle + 1), @sin(angle + 1)).mul(50 + (50 * @cos(angle)));
+    const x_axis = v2(@cos(angle), @sin(angle)).mul(100);
+    const y_axis = x_axis.perp();
 
-    const cs = render_group.coordinateSystem(origin, x_axis, y_axis, .rgb(
-        0.5 + 0.5 * @sin(angle),
-        0.5 + 0.5 * @sin(2.9 * angle),
-        0.5 + 0.5 * @cos(9.9 * angle),
-    ));
-
-    var p_index: usize = 0;
-    for (0..4) |x| {
-        for (0..4) |y| {
-            cs.?.points[p_index] = V2.u(x, y).mul(0.25);
-            p_index += 1;
-        }
-    }
+    _ = render_group.coordinateSystem(
+        origin.sub(x_axis.add(y_axis).mul(0.5)),
+        x_axis,
+        y_axis,
+        .rgb(0.5 + 0.5 * @sin(angle), 0.5 + 0.5 * @sin(2.9 * angle), 0.5 + 0.5 * @cos(9.9 * angle)),
+        &game_state.tree,
+    );
 
     render_group.toOutput(draw_buffer);
 
@@ -1110,7 +1097,6 @@ pub fn makeEmptyBitmap(arena: *MemoryArena, width: i32, height: i32) LoadedBitma
         .height = height,
         .pitch = width * LoadedBitmap.bytes_per_pixel,
         .memory = @ptrCast(data.ptr),
-        .data = @ptrCast(data),
     };
 
     return result;
@@ -1122,8 +1108,11 @@ pub inline fn makeEmptyBitmapClear(arena: *MemoryArena, width: i32, height: i32)
     return result;
 }
 
-pub inline fn clearBitmap(bitmap: *LoadedBitmap) void {
-    @memset(bitmap.data, 0);
+pub inline fn clearBitmap(bitmap: *const LoadedBitmap) void {
+    assert(bitmap.pitch > 0);
+
+    const total_size: usize = @intCast(bitmap.width * bitmap.height * LoadedBitmap.bytes_per_pixel);
+    @memset(bitmap.memory[0..total_size], 0);
 }
 
 pub export fn getAudioFrames(thread_context: *ThreadContext, game_memory: *Memory, sound_buffer: *AudioBuffer) callconv(.c) void {
@@ -1173,7 +1162,6 @@ pub const DEBUG = struct {
 
             assert(header.bits_per_pixel == 32); // TODO: account for scan line alignment
             result.memory = @ptrCast(content.ptr + header.bitmap_offset);
-            result.data = result.memory[0..@intCast(header.width * header.height)];
             result.width = @intCast(header.width);
             result.height = @intCast(header.height);
 
@@ -1198,15 +1186,14 @@ pub const DEBUG = struct {
             assert(blue_scan.found);
             assert(alpha_scan.found);
 
-            // if (red_scan.index != 16 or green_scan.index != 8 or
-            //     blue_scan.index != 0 or alpha_scan.index != 24)
-            // {
             const red_shift_down = red_scan.index;
             const green_shift_down = green_scan.index;
             const blue_shift_down = blue_scan.index;
             const alpha_shift_down = alpha_scan.index;
 
-            for (result.data) |*pixel| {
+            const total_size: usize = @intCast(header.width * header.height * LoadedBitmap.bytes_per_pixel);
+            const pixels: []align(1) u32 = @ptrCast(result.memory[0..total_size]);
+            for (pixels) |*pixel| {
                 const c = pixel.*;
 
                 const a: f32 = @floatFromInt((c & alpha_mask) >> alpha_shift_down);
@@ -1226,7 +1213,6 @@ pub const DEBUG = struct {
                     @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0 |
                     @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24;
             }
-            // }
 
             log.debug("Loaded bmp: {s} ({},{})", .{ filename, result.width, result.height });
         } else {

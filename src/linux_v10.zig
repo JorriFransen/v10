@@ -346,7 +346,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         base_address,
         total_size,
         .{},
-        .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = fixed },
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED_NOREPLACE = fixed },
         -1,
         0,
     )) |all_memory| {

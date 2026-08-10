@@ -10,6 +10,7 @@ var use_llvm: bool = false;
 var tools_optimize: OptimizeMode = .ReleaseSafe;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
+// TODO: pulsePull requires locking during gamecode reload
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
 var cross_compile = false;
 
@@ -297,6 +298,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/v10.zig"),
+        .link_libc = true,
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
             .{ .module = engine.modules.memory, .name = "mem" },
