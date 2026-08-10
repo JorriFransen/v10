@@ -12,6 +12,10 @@ pub inline fn matchType(comptime T: type, comptime type_ids: []const std.lang.Ty
     }
 }
 
+pub inline fn matchPtrType(comptime T: type) bool {
+    return matchType(T, &.{.pointer});
+}
+
 pub inline fn matchFloatType(comptime T: type) bool {
     return matchType(T, &.{ .float, .comptime_float });
 }
@@ -51,6 +55,16 @@ pub inline fn matchUnsigned(x: anytype) bool {
 pub inline fn expectTypeIds(x: anytype, comptime type_ids: []const std.lang.TypeId) void {
     if (!matchTypeIds(x, type_ids))
         @compileError(std.fmt.comptimePrint("Expected one of: '{any}', got: '{}'", .{ type_ids, std.meta.activeTag(@typeInfo(@TypeOf(x))) }));
+}
+
+pub inline fn expectPtr(x: anytype) void {
+    if (!matchPtrType(@TypeOf(x)))
+        @compileError("Expected pointer type");
+}
+
+pub inline fn expectPtrType(comptime T: type) void {
+    if (!matchPtrType(T))
+        @compileError("Expected pointer type");
 }
 
 pub inline fn expectFloat(x: anytype) void {

@@ -1220,7 +1220,7 @@ pub const DEBUG = struct {
         }
 
         result.pitch = -result.width * LoadedBitmap.bytes_per_pixel;
-        result.memory = @ptrCast(@as([*]u8, @ptrCast(result.memory)) + @as(usize, @bitCast(@as(isize, -result.pitch * (result.height - 1)))));
+        result.memory = intrinsics.ptrOffset(result.memory, -result.pitch * (result.height - 1));
 
         return result;
     }

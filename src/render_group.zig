@@ -342,18 +342,17 @@ pub fn toOutput(this: *RenderGroup, output_target: *const LoadedBitmap) void {
 }
 
 pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, color: Color) void {
-    const pitch: usize = @intCast(buffer.pitch);
-    const bpp: usize = @intCast(LoadedBitmap.bytes_per_pixel);
+    const bpp = LoadedBitmap.bytes_per_pixel;
 
-    const buffer_width_f: f32 = @floatFromInt(buffer.width);
-    const buffer_height_f: f32 = @floatFromInt(buffer.height);
+    var min_x: i32 = intrinsics.roundReal32ToInt32(min.x);
+    var min_y: i32 = intrinsics.roundReal32ToInt32(min.y);
+    var max_x: i32 = intrinsics.roundReal32ToInt32(max.x);
+    var max_y: i32 = intrinsics.roundReal32ToInt32(max.y);
 
-    const minx: usize = @round(@min(@max(min.x, 0), buffer_width_f));
-    const miny: usize = @round(@min(@max(min.y, 0), buffer_height_f));
-    const maxx: usize = @round(@min(@max(max.x, 0), buffer_width_f));
-    const maxy: usize = @round(@min(@max(max.y, 0), buffer_height_f));
-
-    assert(bpp == @sizeOf(u32));
+    if (min_x < 0) min_x = 0;
+    if (min_y < 0) min_y = 0;
+    if (max_x > buffer.width) max_x = buffer.width;
+    if (max_y > buffer.height) max_y = buffer.height;
 
     const color_u32: u32 =
         (intrinsics.roundReal32ToUInt32(color.a * 255) << 24) |
@@ -361,25 +360,24 @@ pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, color: Color
         (intrinsics.roundReal32ToUInt32(color.g * 255) << 8) |
         (intrinsics.roundReal32ToUInt32(color.b * 255) << 0);
 
-    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * pitch);
+    var row = intrinsics.ptrOffset(buffer.memory, (min_y * buffer.pitch) + (min_x * bpp));
 
-    for (miny..maxy) |_| {
+    var y: i32 = min_y;
+    while (y < max_y) : (y += 1) {
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
 
-        for (minx..maxx) |_| {
+        var x: i32 = min_x;
+        while (x < max_x) : (x += 1) {
             pixel[0] = color_u32;
             pixel += 1;
         }
 
-        row += pitch;
+        row = intrinsics.ptrOffset(row, buffer.pitch);
     }
 }
 
 pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, y_axis: V2, color: Color, texture: *const LoadedBitmap) void {
     const bpp = LoadedBitmap.bytes_per_pixel;
-    assert(buffer.pitch > 0);
-    const buffer_pitch: usize = @intCast(buffer.pitch);
-    const texture_pitch: usize = @bitCast(@as(isize, @intCast(texture.pitch)));
 
     const inv_x_axis_length_sq = 1 / x_axis.lengthSquared();
     const inv_y_axis_length_sq = 1 / y_axis.lengthSquared();
@@ -410,18 +408,17 @@ pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, 
     if (x_max > width_max) x_max = width_max;
     if (y_max > height_max) y_max = height_max;
 
-    const minx: usize = @intCast(x_min);
-    const miny: usize = @intCast(y_min);
-    const maxx: usize = @intCast(x_max);
-    const maxy: usize = @intCast(y_max);
+    var row = intrinsics.ptrOffset(buffer.memory, (x_min * bpp) + (y_min * buffer.pitch));
 
-    var row: [*]u8 = buffer.memory + (minx * bpp) + (miny * buffer_pitch);
-
-    for (miny..maxy + 1) |target_y| {
+    var target_y: i32 = y_min;
+    while (target_y < y_max) : (target_y += 1) {
+        //
         var pixel: [*]u32 = @ptrCast(@alignCast(row));
 
-        for (minx..maxx + 1) |target_x| {
-            const pixel_p = V2.u(target_x, target_y);
+        var target_x: i32 = x_min;
+        while (target_x < x_max) : (target_x += 1) {
+            //
+            const pixel_p = V2.i(target_x, target_y);
             const d = pixel_p.sub(origin);
 
             const edge0 = d.inner(x_axis.perp().neg());
@@ -452,12 +449,11 @@ pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, 
                 assert(x >= 0 and x < texture.width);
                 assert(y >= 0 and y < texture.height);
 
-                const texel_offset: usize = @bitCast(@as(isize, @intCast((y * texture.pitch) + (x * bpp))));
-                const texel_ptr: [*]u8 = @ptrCast(texture.memory + texel_offset);
-                const texel_ptr_a: *align(1) u32 = @ptrCast(texel_ptr);
-                const texel_ptr_b: *align(1) u32 = @ptrCast(texel_ptr + bpp);
-                const texel_ptr_c: *align(1) u32 = @ptrCast(texel_ptr + texture_pitch);
-                const texel_ptr_d: *align(1) u32 = @ptrCast(texel_ptr + texture_pitch + bpp);
+                const texel_ptr = intrinsics.ptrOffset(texture.memory, (y * texture.pitch) + (x * bpp));
+                const texel_ptr_a = @as(*align(1) u32, @ptrCast(texel_ptr));
+                const texel_ptr_b = intrinsics.ptrOffsetT(*align(1) u32, texel_ptr, bpp);
+                const texel_ptr_c = intrinsics.ptrOffsetT(*align(1) u32, texel_ptr, texture.pitch);
+                const texel_ptr_d = intrinsics.ptrOffsetT(*align(1) u32, texel_ptr, texture.pitch + bpp);
 
                 const texel_a: Color = .rgba(
                     @as(f32, @floatFromInt((texel_ptr_a.* >> 16) & 0xff)),
@@ -519,7 +515,7 @@ pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, 
             pixel += 1;
         }
 
-        row += buffer_pitch;
+        row = intrinsics.ptrOffset(row, buffer.pitch);
     }
 }
 
@@ -536,34 +532,29 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
 
     var source_offset_x: i32 = 0;
     if (min_x < 0) {
-        source_offset_x = -%min_x;
+        source_offset_x = -min_x;
         min_x = 0;
     }
 
     var source_offset_y: i32 = 0;
     if (min_y < 0) {
-        source_offset_y = -%min_y;
+        source_offset_y = -min_y;
         min_y = 0;
     }
 
     if (max_x > buffer.width) {
-        max_x = @intCast(buffer.width);
+        max_x = buffer.width;
     }
 
     if (max_y > buffer.height) {
-        max_y = @intCast(buffer.height);
+        max_y = buffer.height;
     }
 
     max_x = @intCast(@max(0, max_x));
     max_y = @intCast(@max(0, max_y));
 
-    const source_offset_i: isize = @as(isize, @intCast(source_offset_y *% bitmap.pitch +% bpp *% source_offset_x));
-    // assert(source_offset_i >= 0);
-    const source_offset: usize = @bitCast(source_offset_i);
-    var source_row: [*]u8 = bitmap.memory + source_offset;
-
-    const dest_offset: usize = @bitCast(@as(isize, @intCast((min_x *% bpp) +% (min_y *% buffer.pitch))));
-    var dest_row: [*]u8 = buffer.memory + dest_offset;
+    var source_row = intrinsics.ptrOffset(bitmap.memory, (source_offset_y * bitmap.pitch) + (source_offset_x * bpp));
+    var dest_row = intrinsics.ptrOffset(buffer.memory, (min_y * buffer.pitch) + (min_x * bpp));
 
     var y: usize = @intCast(min_y);
     while (y < max_y) : (y += 1) {
@@ -600,8 +591,8 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
             dest += 1;
         }
 
-        dest_row += @bitCast(@as(isize, @intCast(buffer.pitch)));
-        source_row += @bitCast(@as(isize, @intCast(bitmap.pitch)));
+        dest_row = intrinsics.ptrOffset(dest_row, buffer.pitch);
+        source_row = intrinsics.ptrOffset(source_row, bitmap.pitch);
     }
 }
 

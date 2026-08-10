@@ -1,5 +1,6 @@
 const math = @import("math");
 const meta = @import("meta");
+const builtin = @import("builtin");
 
 pub fn BitScanResult(comptime T: type) type {
     meta.expectIntType(T);
@@ -60,4 +61,30 @@ pub inline fn roundReal32ToUInt32(r: f32) u32 {
     const rounded: f32 = @round(r);
     const result: u32 = @intFromFloat(rounded);
     return result;
+}
+
+pub inline fn ptrOffset(ptr: anytype, offset: isize) @TypeOf(ptr) {
+    const result = ptrOffsetT(@TypeOf(ptr), ptr, offset);
+    return result;
+}
+
+pub inline fn ptrOffsetT(comptime T: type, ptr: *anyopaque, offset: isize) T {
+    meta.expectPtrType(T);
+
+    if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+        var result: [*]u8 = @ptrCast(@alignCast(ptr));
+
+        if (offset >= 0) {
+            result += @intCast(offset);
+        } else {
+            result -= @as(usize, @intCast(-offset));
+        }
+
+        return @ptrCast(@alignCast(result));
+    } else {
+        var result: [*]u8 = @ptrCast(@alignCast(ptr));
+        result += @as(usize, @bitCast(offset));
+
+        return @as(T, @ptrCast(@alignCast(result)));
+    }
 }
