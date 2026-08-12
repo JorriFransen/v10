@@ -1,6 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const core = @import("core");
+const math = core.math;
+const V3 = math.V3;
+const v3 = V3.init;
+const Rect3 = math.Rect3;
+
 const MemoryArena = @import("arena.zig");
 
 const v10 = @import("v10.zig");
@@ -14,11 +20,6 @@ const EntityReference = Entity.Reference;
 const invalid_p = Entity.invalid_p;
 
 const World = @import("world.zig");
-
-const math = @import("math");
-const V3 = math.V3;
-const v3 = V3.init;
-const Rect3 = math.Rect3;
 
 const entities_per_region = 4096;
 

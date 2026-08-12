@@ -2,9 +2,19 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.v10);
 
-const mem = @import("mem");
+const core = @import("core");
+const intrinsics = core.intrinsics;
+const mem = core.mem;
 
-const intrinsics = @import("intrinsics.zig");
+const math = core.math;
+const Color = math.Color;
+const V2 = math.V2;
+const v2 = V2.init;
+const V3 = math.V3;
+const v3 = V3.init;
+const V4 = math.V4;
+const v4 = V4.init;
+const Rect3 = math.Rect3;
 
 const SimRegion = @import("sim_region.zig");
 const MoveSpec = SimRegion.MoveSpec;
@@ -14,16 +24,6 @@ const EntityIndex = Entity.Index;
 const EntityType = Entity.Type;
 const EntityReference = Entity.Reference;
 const HitPoint = Entity.HitPoint;
-
-const math = @import("math");
-const Color = math.Color;
-const V2 = math.V2;
-const v2 = V2.init;
-const V3 = math.V3;
-const v3 = V3.init;
-const V4 = math.V4;
-const v4 = V4.init;
-const Rect3 = math.Rect3;
 
 const Random = @import("random.zig");
 const MemoryArena = @import("arena.zig");

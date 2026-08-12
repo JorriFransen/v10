@@ -1,9 +1,11 @@
 pub const std = @import("std");
 const assert = std.debug.assert;
 
+const core = @import("core");
+const mem = core.mem;
+const xml = core.xml;
+
 pub const AST = @import("ast.zig");
-pub const xml = @import("xml");
-pub const mem = @import("mem");
 
 pub const Context = @import("wayland_generator.zig").Context;
 

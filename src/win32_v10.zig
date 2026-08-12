@@ -6,14 +6,15 @@ const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 
 const options = @import("options");
-const mem = @import("mem");
-const win32 = @import("win32");
+
+const core = @import("core");
+const arch = core.arch;
+const math = core.math;
+const mem = core.mem;
+
+const win32 = core.win32;
 const xinput = win32.xinput;
 const dsound = win32.direct_sound;
-
-const arch = @import("arch").arch;
-
-const math = @import("math");
 
 const common = @import("v10_common");
 

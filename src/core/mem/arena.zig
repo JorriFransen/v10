@@ -1,10 +1,11 @@
 const std = @import("std");
 const log = std.log.scoped(.arena);
-const builtin = @import("builtin");
-const mem = @import("memory.zig");
 
-const win32 = if (builtin.os.tag == .windows) @import("win32") else void;
-const linux = if (builtin.os.tag == .linux) @import("linux") else void;
+const builtin = @import("builtin");
+
+const mem = @import("mem.zig");
+const linux = @import("../linux/linux.zig");
+const win32 = @import("../win32/win32.zig");
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;

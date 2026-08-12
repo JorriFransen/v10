@@ -1,9 +1,10 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const options = @import("options");
+const core = @import("core");
+const mem = core.mem;
 
-const mem = @import("mem");
+const options = @import("options");
 
 const AST = @import("ast.zig");
 
@@ -15,7 +16,7 @@ pub const Error = error{} ||
     std.Io.File.Writer.Error ||
     std.Io.Writer.Error;
 
-pub fn emitProtocol(context: *const generator.Context, dir: std.Io.Dir, prot: *const AST.Protocol, core: bool) Error!void {
+pub fn emitProtocol(context: *const generator.Context, dir: std.Io.Dir, prot: *const AST.Protocol, is_core_prot: bool) Error!void {
     var tmp = mem.getScratch(context.arena);
     defer tmp.release();
 
@@ -27,7 +28,7 @@ pub fn emitProtocol(context: *const generator.Context, dir: std.Io.Dir, prot: *c
         var writer: Writer = .{
             .context = context,
             .protocol = prot,
-            .core = core,
+            .is_core_prot = is_core_prot,
         };
 
         var file_writer = file.writer(context.io, &writer.write_buf);
@@ -46,7 +47,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
         var writer: Writer = .{
             .context = context,
             .protocol = undefined,
-            .core = undefined,
+            .is_core_prot = undefined,
         };
 
         var file_writer = file.writer(context.io, &writer.write_buf);
@@ -58,7 +59,8 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             \\
             \\const options = @import("options");
             \\
-            \\const linux = @import("linux");
+            \\const core = @import("core");
+            \\const linux = core.linux;
             \\
             \\const client = @import("client.zig");
             \\const Display = client.Display;
@@ -280,7 +282,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
 const Writer = struct {
     context: *const generator.Context,
     protocol: *const AST.Protocol,
-    core: bool,
+    is_core_prot: bool,
 
     file_writer: *std.Io.Writer = undefined,
 
@@ -301,9 +303,10 @@ const Writer = struct {
             \\
         );
 
-        if (this.core) {
+        if (this.is_core_prot) {
             try this.append(
-                \\const linux = @import("linux");
+                \\const core = @import("core");
+                \\const linux = core.linux;
                 \\
                 \\
             );
@@ -329,7 +332,7 @@ const Writer = struct {
 
         try this.appendi(1, "object: Object,\n");
 
-        if (this.core and std.mem.eql(u8, "Display", interface.zig_name)) {
+        if (this.is_core_prot and std.mem.eql(u8, "Display", interface.zig_name)) {
             try this.appendi(1,
                 \\
                 \\fd: linux.fd_t,
@@ -360,7 +363,7 @@ const Writer = struct {
 
         try this.emitStaticInterfaceData(interface);
 
-        if (this.core and std.mem.eql(u8, interface.name, "wl_registry")) {
+        if (this.is_core_prot and std.mem.eql(u8, interface.name, "wl_registry")) {
             try this.appendi(1,
                 \\
                 \\pub inline fn bindTyped(this: *Registry, comptime InterfaceType: type, name: u32, version: u32) *InterfaceType {
@@ -803,7 +806,7 @@ const FmtArgTypeToZigType = struct {
             }
         }
 
-        if (!this.context.core) {
+        if (!this.context.is_core_prot) {
             if (this.arg.import_name) |import_name| {
                 try writer.print("{s}.", .{import_name});
             }

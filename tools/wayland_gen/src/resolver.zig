@@ -2,7 +2,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-const mem = @import("mem");
+const core = @import("core");
+const mem = core.mem;
 
 const Context = @import("wayland_generator.zig").Context;
 
@@ -18,31 +19,31 @@ pub const Error = error{
     std.Io.Writer.Error ||
     mem.TempStringBuilder.Error;
 
-pub fn resolveProtocol(context: *Context, protocol: *AST.Protocol, core: bool) Error!void {
+pub fn resolveProtocol(context: *Context, protocol: *AST.Protocol, is_core_prot: bool) Error!void {
     for (protocol.interfaces) |*interface| {
-        try resolveInterface(context, protocol, interface, core);
+        try resolveInterface(context, protocol, interface, is_core_prot);
     }
 }
 
-fn resolveInterface(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, core: bool) Error!void {
+fn resolveInterface(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, is_core_prot: bool) Error!void {
     interface.zig_name = try toZigTypeName(context, context.arena, interface.name, true);
 
     for (interface.requests) |*message| {
-        try resolveRequest(context, protocol, interface, message, core);
+        try resolveRequest(context, protocol, interface, message, is_core_prot);
     }
 
     for (interface.events) |*message| {
-        try resolveEvent(context, protocol, interface, message, core);
+        try resolveEvent(context, protocol, interface, message, is_core_prot);
     }
 
     var enum_it = interface.enums.iterator();
     while (enum_it.next()) |entry| {
-        try resolveEnum(context, protocol, interface, entry.value_ptr, core);
+        try resolveEnum(context, protocol, interface, entry.value_ptr, is_core_prot);
     }
 }
 
-fn resolveRequest(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, request: *AST.Message, core: bool) Error!void {
-    try resolveMessage(context, protocol, interface, request, core);
+fn resolveRequest(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, request: *AST.Message, is_core_prot: bool) Error!void {
+    try resolveMessage(context, protocol, interface, request, is_core_prot);
 
     var return_type: ?[]const u8 = null;
     var is_anonymous_constructor = false;
@@ -64,18 +65,18 @@ fn resolveRequest(context: *Context, protocol: *AST.Protocol, interface: *AST.In
     request.is_anonymous_constructor = is_anonymous_constructor;
 }
 
-fn resolveEvent(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, event: *AST.Message, core: bool) Error!void {
-    try resolveMessage(context, protocol, interface, event, core);
+fn resolveEvent(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, event: *AST.Message, is_core_prot: bool) Error!void {
+    try resolveMessage(context, protocol, interface, event, is_core_prot);
 }
 
-fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, message: *AST.Message, core: bool) Error!void {
+fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.Interface, message: *AST.Message, is_core_prot: bool) Error!void {
     message.zig_name = try toCamelCase(context.arena, message.name);
 
     var sig_sb = mem.getScratchStringBuilder(context.arena);
     defer sig_sb.deinit();
 
     for (message.args) |*arg| {
-        try resolveArg(context, protocol, interface, message, arg, core);
+        try resolveArg(context, protocol, interface, message, arg, is_core_prot);
 
         if (arg.type.tag == .h) {
             message.fd_count += 1;
@@ -114,7 +115,7 @@ fn resolveMessage(context: *Context, protocol: *AST.Protocol, interface: *AST.In
     }
 }
 
-fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, message: *const AST.Message, arg: *AST.Arg, core: bool) Error!void {
+fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *const AST.Interface, message: *const AST.Message, arg: *AST.Arg, is_core_prot: bool) Error!void {
     _ = message;
 
     if (arg.enum_name) |enum_name| {
@@ -153,7 +154,7 @@ fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *cons
         arg.zig_interface_name = try toZigTypeName(context, context.arena, interface_name, true);
     }
 
-    if (!core and (arg.type.tag == .n or arg.type.tag == .o)) {
+    if (!is_core_prot and (arg.type.tag == .n or arg.type.tag == .o)) {
         if (arg.interface_name) |interface_name| {
             if (!protocol.interface_names.contains(interface_name)) {
                 if (context.interface_to_protocol_map.get(interface_name)) |in_prot| {
@@ -169,9 +170,9 @@ fn resolveArg(context: *const Context, protocol: *AST.Protocol, interface: *cons
     }
 }
 
-fn resolveEnum(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, @"enum": *AST.Enum, core: bool) Error!void {
+fn resolveEnum(context: *const Context, protocol: *const AST.Protocol, interface: *const AST.Interface, @"enum": *AST.Enum, is_core_prot: bool) Error!void {
     _ = protocol;
-    _ = core;
+    _ = is_core_prot;
 
     @"enum".interface = interface;
     @"enum".zig_name = try toZigTypeName(context, context.arena, @"enum".name, false);

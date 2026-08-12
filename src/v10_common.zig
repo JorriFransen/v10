@@ -3,13 +3,14 @@ const log = std.log.scoped(.v10_platform);
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
-
-const math = @import("math");
-const mem = @import("mem");
 const options = @import("options");
-const DynLib = @import("dynlib");
 
-const TimeParts = @import("timeparts.zig").TimeParts;
+const core = @import("core");
+const DynLib = core.DynLib;
+const TimeParts = core.TimeParts;
+const math = core.math;
+const mem = core.mem;
+const win32 = core.win32;
 
 const assert = std.debug.assert;
 
@@ -294,7 +295,6 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
 
     switch (builtin.os.tag) {
         .windows => {
-            const win32 = @import("win32");
             var data: win32.FILE_ATTRIBUTE_DATA = undefined;
             if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data).toBool()) {
                 const lwt = win32.LARGE_INTEGER{ .u = .{ .low_part = data.last_write_time.low_date_time, .high_part = @bitCast(data.last_write_time.high_date_time) } };

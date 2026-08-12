@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 
 const arena = @import("arena.zig");
 pub const Arena = arena.Arena;
+
 pub const TempArena = @import("temp_arena.zig");
 pub const TempStringBuilder = TempArena.StringBuilder;
 

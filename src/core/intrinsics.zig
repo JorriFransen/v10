@@ -1,6 +1,7 @@
-const math = @import("math");
-const meta = @import("meta");
 const builtin = @import("builtin");
+
+const math = @import("math.zig");
+const meta = @import("meta.zig");
 
 pub fn BitScanResult(comptime T: type) type {
     meta.expectIntType(T);

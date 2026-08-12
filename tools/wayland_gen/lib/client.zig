@@ -1,17 +1,19 @@
 const std = @import("std");
 const log = std.log.scoped(.@"wayland-client");
 const assert = std.debug.assert;
-const options = @import("options");
 
 const builtin = @import("builtin");
 
-const linux = @import("linux");
+const core = @import("core");
+const linux = core.linux;
 
-const core = @import("wayland.zig");
+const options = @import("options");
+
+const wl_core = @import("wayland.zig");
 const trampolines = @import("trampolines.zig");
 const Signature = trampolines.Signature;
 
-pub const Display = core.Display;
+pub const Display = wl_core.Display;
 
 comptime {
     if (options.verbose_wayland and builtin.mode != .Debug) {
@@ -199,7 +201,7 @@ pub fn displayRoundtrip(display: *Display) usize {
     const sync_callback = display.sync();
 
     var done = false;
-    const display_roundtrip_done_listener = core.Callback.Listener{
+    const display_roundtrip_done_listener = wl_core.Callback.Listener{
         .done = &displayRoundtripSyncDoneHandler,
     };
     sync_callback.addListener(&display_roundtrip_done_listener, &done);
@@ -216,7 +218,7 @@ pub fn displayRoundtrip(display: *Display) usize {
     return dispatched_count;
 }
 
-fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*core.Callback, _: u32) void {
+fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl_core.Callback, _: u32) void {
     const done_ptr: *bool = @ptrCast(data);
     done_ptr.* = true;
 }

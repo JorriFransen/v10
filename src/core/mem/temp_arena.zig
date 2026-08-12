@@ -2,8 +2,10 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-const mem = @import("memory.zig");
+const mem = @import("mem.zig");
+
 const Arena = @import("arena.zig").Arena;
+
 const TempArena = @This();
 
 arena: *Arena,

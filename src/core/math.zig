@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const meta = @import("meta");
+const meta = @import("meta.zig");
 
 pub const pi = std.math.pi;
 pub const tau = std.math.tau;

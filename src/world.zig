@@ -1,18 +1,20 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const core = @import("core");
+const intrinsics = core.intrinsics;
+
+const math = core.math;
+const V3 = math.V3;
+const v3 = V3.init;
+
 const MemoryArena = @import("arena.zig");
-const intrinsics = @import("intrinsics.zig");
 
 const v10 = @import("v10.zig");
 const LowEntity = v10.LowEntity;
 
 const Entity = @import("entity.zig");
 const EntityIndex = Entity.Index;
-
-const math = @import("math");
-const V3 = math.V3;
-const v3 = V3.init;
 
 const World = @This();
 

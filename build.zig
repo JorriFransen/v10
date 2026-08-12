@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const Build = std.Build;
+const Module = Build.Module;
 const OptimizeMode = std.builtin.OptimizeMode;
 const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
@@ -37,56 +38,9 @@ pub fn build(b: *Build) !void {
 
     const options_module = options.createModule();
 
-    const arch_module = b.createModule(.{
+    const core_module = b.createModule(.{
         .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/arch/arch.zig"),
-    });
-
-    const dynlib_module = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/dynlib.zig"),
-    });
-
-    const meta_module = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/meta.zig"),
-    });
-
-    const math_module = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/math.zig"),
-        .imports = &.{
-            .{ .name = "meta", .module = meta_module },
-        },
-    });
-
-    const linux_module = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/linux/linux.zig"),
-        .imports = &.{
-            .{ .name = "arch", .module = arch_module },
-            .{ .name = "options", .module = options_module },
-            .{ .name = "math", .module = math_module },
-        },
-    });
-
-    const win32_module = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/win32/win32.zig"),
-        .imports = &.{
-            .{ .name = "dynlib", .module = dynlib_module },
-            .{ .name = "math", .module = math_module },
-        },
-    });
-    dynlib_module.addImport("win32", win32_module);
-
-    const mem_module = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/memory/memory.zig"),
-        .imports = &.{
-            .{ .name = "linux", .module = linux_module },
-            .{ .name = "win32", .module = win32_module },
-        },
+        .root_source_file = b.path(src_path ++ "/core/core.zig"),
     });
 
     const common_module = b.createModule(.{
@@ -94,36 +48,18 @@ pub fn build(b: *Build) !void {
         .root_source_file = b.path(src_path ++ "/v10_common.zig"),
         .imports = &.{
             .{ .name = "options", .module = options_module },
-            .{ .name = "mem", .module = mem_module },
-            .{ .name = "math", .module = math_module },
-            .{ .name = "dynlib", .module = dynlib_module },
+            .{ .name = "core", .module = core_module },
         },
     });
-    if (target.result.os.tag == .windows) {
-        common_module.addImport("win32", win32_module);
-    }
 
     const cli_parse_dep = b.dependency("zig_cli_parse", .{});
     const clip_module = cli_parse_dep.module("CliParse");
 
     var modules = Modules{
         .options = options_module,
-        .arch = arch_module,
+        .core = core_module,
         .common = common_module,
-        .linux = linux_module,
-        .win32 = win32_module,
-        .memory = mem_module,
-        .dynlib = dynlib_module,
         .clip = clip_module,
-        .math = math_module,
-        .meta = meta_module,
-        .xml = b.createModule(.{
-            .optimize = optimize,
-            .root_source_file = b.path(src_path ++ "/xml.zig"),
-            .imports = &.{
-                .{ .name = "mem", .module = mem_module },
-            },
-        }),
     };
 
     const tools = try Tools.build(b, native_target, target, &modules);
@@ -158,19 +94,11 @@ pub fn build(b: *Build) !void {
 }
 
 const Modules = struct {
-    options: *Build.Module,
-    arch: *Build.Module,
-    linux: *Build.Module,
-    win32: *Build.Module,
-    memory: *Build.Module,
-    dynlib: *Build.Module,
-    xml: *Build.Module,
-    clip: *Build.Module,
-    math: *Build.Module,
-    meta: *Build.Module,
+    options: *Module,
+    core: *Module,
+    clip: *Module,
 
-    // This should really be shared/common?
-    common: *Build.Module,
+    common: *Module,
 };
 
 const Engine = struct {
@@ -187,12 +115,11 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
 
     const exe = switch (os) {
         else => return error.PlatformNotSupported,
-        .windows => try buildEngineWindows(b, optimize, target, modules),
+        .windows => try buildEngineWindows(b, optimize, target),
         .linux => try buildEngineLinux(b, optimize, target, modules, tools),
     };
-    exe.root_module.addImport("mem", modules.memory);
+    exe.root_module.addImport("core", modules.core);
     exe.root_module.addImport("options", modules.options);
-    exe.root_module.addImport("math", modules.math);
     exe.root_module.addImport("v10_common", modules.common);
 
     const exe_install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .prefix } });
@@ -217,16 +144,12 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     };
 }
 
-fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules) !*Step.Compile {
+fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !*Step.Compile {
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
         .root_source_file = b.path(src_path ++ "/win32_v10.zig"),
         .link_libc = false,
-        .imports = &.{
-            .{ .name = "arch", .module = modules.arch },
-            .{ .name = "win32", .module = modules.win32 },
-        },
     });
 
     root_module.linkSystemLibrary("kernel32", .{});
@@ -272,8 +195,6 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
         .root_source_file = b.path(src_path ++ "/linux_v10.zig"),
         .link_libc = true,
         .imports = &.{
-            .{ .name = "arch", .module = modules.arch },
-            .{ .name = "linux", .module = modules.linux },
             .{ .name = "wayland", .module = wayland_module },
             .{ .name = "linux_options", .module = linux_options_module },
         },
@@ -301,9 +222,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
         .link_libc = true,
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
-            .{ .module = engine.modules.memory, .name = "mem" },
-            .{ .module = engine.modules.math, .name = "math" },
-            .{ .module = engine.modules.meta, .name = "meta" },
+            .{ .module = engine.modules.core, .name = "core" },
             .{ .module = engine.modules.common, .name = "v10_common" },
         },
     });
@@ -350,7 +269,7 @@ const Tools = struct {
 
     pub const WaylandGen = struct {
         gen_exe: *Step.Compile,
-        options_module: *Build.Module,
+        options_module: *Module,
 
         fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?WaylandGen {
             const options = b.addOptions();
@@ -364,8 +283,7 @@ const Tools = struct {
                     .target = tools_target,
                     .optimize = tools_optimize,
                     .imports = &.{
-                        .{ .name = "xml", .module = modules.xml },
-                        .{ .name = "mem", .module = modules.memory },
+                        .{ .name = "core", .module = modules.core },
                         .{ .name = "clip", .module = modules.clip },
                         .{ .name = "options", .module = options_module },
                         .{ .name = "v10_common", .module = modules.common },
@@ -379,7 +297,7 @@ const Tools = struct {
             return .{ .gen_exe = wayland_gen_exe, .options_module = options_module };
         }
 
-        pub fn module(this: *const WaylandGen, b: *Build, optimize: OptimizeMode, modules: *const Modules, core_xml_path: []const u8, protocol_xml_paths: []const []const u8) *Build.Module {
+        pub fn module(this: *const WaylandGen, b: *Build, optimize: OptimizeMode, modules: *const Modules, core_xml_path: []const u8, protocol_xml_paths: []const []const u8) *Module {
             const run_wayland_gen_exe = b.addRunArtifact(this.gen_exe);
 
             _ = run_wayland_gen_exe.addPrefixedFileArg("--wayland=", b.path(core_xml_path));
@@ -393,7 +311,7 @@ const Tools = struct {
                 .optimize = optimize,
                 .root_source_file = wayland_source_dir.path(b, "root.zig"),
                 .imports = &.{
-                    .{ .name = "linux", .module = modules.linux },
+                    .{ .name = "core", .module = modules.core },
                     .{ .name = "options", .module = this.options_module },
                 },
             });
@@ -404,7 +322,7 @@ const Tools = struct {
 
     pub const AssetCompiler = struct {
         exe: *Step.Compile,
-        module: *Build.Module,
+        module: *Module,
 
         fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?AssetCompiler {
             const aseprite_names: []const []const u8 = if (tools_target.result.os.tag == .windows)
@@ -428,7 +346,7 @@ const Tools = struct {
                 .target = tools_target,
                 .optimize = tools_optimize,
                 .imports = &.{
-                    .{ .name = "mem", .module = modules.memory },
+                    .{ .name = "core", .module = modules.core },
                     .{ .name = "clip", .module = modules.clip },
                     .{ .name = "options", .module = option_module },
                     .{ .name = "v10_common", .module = modules.common },

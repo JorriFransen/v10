@@ -1,15 +1,16 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const v10 = @import("v10.zig");
-const GameState = v10.GameState;
-
-const math = @import("math");
+const core = @import("core");
+const math = core.math;
 const V2 = math.V2;
 const V3 = math.V3;
 const v3 = V3.init;
 const Rect = math.Rect;
 const Rect3 = math.Rect3;
+
+const v10 = @import("v10.zig");
+const GameState = v10.GameState;
 
 const Entity = @This();
 

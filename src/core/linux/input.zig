@@ -21,13 +21,13 @@ pub inline fn EVIOCGABS(abs: Abs) u32 {
 }
 pub const EVIOCSFF = ioctl.IOW('E', 0x80, FfEffect);
 
-// fn testBit(bit: usize, buf: []const c_ulong) bool {
-//     // NOTE: correct buffer size calculation
-//     // var abs_bit_buffer: [((input.Abs.MAX - 1) / @bitSizeOf(c_ulong)) + 1]c_ulong = undefined;
-//
-//     const bits_per_long = @bitSizeOf(c_ulong);
-//     return ((buf[bit / bits_per_long] >> @as(u6, @intCast(bit % bits_per_long))) & 1) != 0;
-// }
+fn testBit(bit: usize, buf: []const c_ulong) bool {
+    // NOTE: correct buffer size calculation
+    const bits = @bitSizeOf(c_ulong);
+    // var abs_bit_buffer: [((input.Abs.CNT + bits - 1) / bits) ]c_ulong = undefined;
+
+    return ((buf[bit / bits] >> @as(u6, @intCast(bit % bits))) & 1) != 0;
+}
 
 pub const InputEvent = extern struct {
     time: linux.timeval = .{ .sec = 0, .usec = 0 },

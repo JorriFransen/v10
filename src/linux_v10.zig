@@ -2,30 +2,31 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.linux_v10);
 
-const mem = @import("mem");
-const options = @import("options");
-const linux_options = @import("linux_options");
 const builtin = @import("builtin");
-const DynLib = @import("dynlib");
 
-const common = @import("v10_common");
+const core = @import("core");
+const arch = core.arch;
+const math = core.math;
+const mem = core.mem;
 
-const arch = @import("arch").arch;
-
-const wayland = @import("wayland");
-const wlc = wayland.client;
-const wl = wayland.wayland;
-const xdg_shell = wayland.xdg_shell;
-const xdg_decoration = wayland.xdg_decoration_unstable_v1;
-
-const linux = @import("linux");
+const linux = core.linux;
 const input = linux.input;
 const pa = linux.pulse;
 const ioctl = linux.ioctl;
 const udev = linux.libudev;
 const errno = linux.errno;
 
-const math = @import("math");
+const options = @import("options");
+const linux_options = @import("linux_options");
+const DynLib = @import("dynlib");
+
+const common = @import("v10_common");
+
+const wayland = @import("wayland");
+const wlc = wayland.client;
+const wl = wayland.wayland;
+const xdg_shell = wayland.xdg_shell;
+const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
 const GameCode = common.GameCode;
 const Memory = common.Memory;

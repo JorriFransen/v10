@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.xml);
-const mem = @import("mem");
+
+const mem = @import("mem/mem.zig");
 
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;

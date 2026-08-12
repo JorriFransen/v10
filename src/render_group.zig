@@ -1,5 +1,16 @@
 const std = @import("std");
 
+const core = @import("core");
+const intrinsics = core.intrinsics;
+
+const math = core.math;
+const Color = math.Color;
+const V2 = math.V2;
+const v2 = V2.init;
+const V3 = math.V3;
+const V4 = math.V4;
+const v4 = V4.init;
+
 const v10 = @import("v10.zig");
 const LoadedBitmap = v10.LoadedBitmap;
 const GameState = v10.GameState;
@@ -7,15 +18,6 @@ const GameState = v10.GameState;
 const MemoryArena = @import("arena.zig");
 
 const common = @import("v10_common");
-const intrinsics = @import("intrinsics.zig");
-
-const math = @import("math");
-const Color = math.Color;
-const V2 = math.V2;
-const v2 = V2.init;
-const V3 = math.V3;
-const V4 = math.V4;
-const v4 = V4.init;
 
 const RenderGroup = @This();
 

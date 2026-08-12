@@ -1,7 +1,9 @@
 const std = @import("std");
 pub const log = std.log.scoped(.pulse);
-const options = @import("options");
-const math = @import("math");
+
+const builtin = @import("builtin");
+
+const math = @import("../math.zig");
 
 pub const Context = opaque {};
 pub const MainLoop = opaque {};
@@ -494,7 +496,7 @@ pub fn load() void {
                     @field(@This(), decl.name) = sym;
                 } else {
                     load_stubs = true;
-                    if (options.internal_build) {
+                    if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
                         @panic("Unable to load function: '" ++ decl.name ++ "'");
                     }
                     break;

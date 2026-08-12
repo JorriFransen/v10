@@ -5,7 +5,8 @@ const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
 
-const mem = @import("mem");
+const core = @import("core");
+const mem = core.mem;
 
 const compile_options = @import("options");
 const clip = @import("clip");
