@@ -10,7 +10,7 @@ const AST = @import("ast.zig");
 const emit = @import("emit.zig");
 const resolve = @import("resolver.zig");
 
-pub const std_options = @import("v10_common").std_options;
+pub const std_options = core.default_std_options;
 
 const OptionParser = clip.OptionParser("wayland-gen", &.{
     clip.option(@as([]const u8, ""), "wayland", 'w', "Wayland xml path"),

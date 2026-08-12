@@ -41,7 +41,7 @@ const RenderGroup = @import("render_group.zig");
 
 const os = @import("builtin").os.tag;
 
-pub const std_options = common.std_options;
+pub const std_options = core.default_std_options;
 
 pub const LowEntity = struct {
     sim: Entity = .{},

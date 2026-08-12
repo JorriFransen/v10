@@ -14,59 +14,9 @@ const win32 = core.win32;
 
 const assert = std.debug.assert;
 
-pub const std_log_scope_levels = [_]std.log.ScopeLevel{
-    .{ .scope = .v10_platform, .level = .debug },
-    .{
-        .scope = .asset_compiler,
-        .level = if (options.tools_optimize == .Debug) .debug else .info,
-    },
+pub const log_scope_levels = [_]std.log.ScopeLevel{
+    .{ .scope = .asset_compiler, .level = if (options.tools_optimize == .Debug) .debug else .info },
 };
-
-pub const std_options: std.Options = .{
-    .log_level = std.log.default_level,
-    .log_scope_levels = &std_log_scope_levels,
-    .logFn = defaultLog,
-};
-
-fn defaultLog(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
-    const io = std.Options.debug_io;
-    const prev = io.swapCancelProtection(.blocked);
-    defer _ = io.swapCancelProtection(prev);
-    var buffer: [64]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer).terminal();
-    defer std.debug.unlockStderr();
-    return defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
-}
-pub fn defaultLogFileTerminal(
-    comptime level: std.log.Level,
-    comptime scope: @EnumLiteral(),
-    comptime format: []const u8,
-    args: anytype,
-    t: std.Io.Terminal,
-) !void {
-    const color = switch (level) {
-        .err => .red,
-        .warn => .yellow,
-        .info => .green,
-        .debug => .magenta,
-    };
-    const ts = std.Io.Timestamp.now(std.Options.debug_io, .real);
-    const tp = TimeParts.fromMsTimestamp(@bitCast(ts.toMilliseconds()));
-
-    try t.writer.print("{f} ", .{std.fmt.alt(tp, .writeTime)});
-
-    try t.setColor(color);
-    try t.setColor(.bold);
-    try t.writer.writeAll(level.asText());
-
-    try t.setColor(.dim);
-    try t.setColor(.bold);
-    if (scope != .default) try t.writer.print("({t})", .{scope});
-    try t.writer.writeAll(": ");
-
-    try t.setColor(.reset);
-    try t.writer.print(format ++ "\n", args);
-}
 
 pub const ThreadContext = struct {
     io: std.Io,

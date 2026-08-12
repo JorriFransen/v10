@@ -27,16 +27,17 @@ const ButtonState = common.ButtonState;
 const ThreadContext = common.ThreadContext;
 const AudioBuffer = common.AudioBuffer;
 
-const std_log_scope_levels = common.std_log_scope_levels ++ [_]std.log.ScopeLevel{
-    .{ .scope = .win32_v10, .level = .info },
-    .{ .scope = .xinput, .level = .debug },
-    .{ .scope = .dsound, .level = .info },
-};
-
 pub const std_options: std.Options = blk: {
-    var o = common.std_options;
+    var o = core.default_std_options;
 
-    o.log_scope_levels = o.log_scope_levels ++ std_log_scope_levels;
+    o.log_scope_levels =
+        o.log_scope_levels ++
+        common.log_scope_levels ++
+        [_]std.log.ScopeLevel{
+            .{ .scope = .win32_v10, .level = .info },
+            .{ .scope = .xinput, .level = .debug },
+            .{ .scope = .dsound, .level = .info },
+        };
 
     break :blk o;
 };

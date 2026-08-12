@@ -41,15 +41,16 @@ const InputEvent = input.InputEvent;
 const Key = input.Key;
 const Abs = input.Abs;
 
-const std_log_scope_levels = [_]std.log.ScopeLevel{
-    .{ .scope = .linux_v10, .level = .info },
-    .{ .scope = .pulse, .level = .info },
-};
-
 pub const std_options: std.Options = blk: {
-    var o = common.std_options;
+    var o = core.default_std_options;
 
-    o.log_scope_levels = o.log_scope_levels ++ std_log_scope_levels;
+    o.log_scope_levels =
+        o.log_scope_levels ++
+        common.log_scope_levels ++
+        [_]std.log.ScopeLevel{
+            .{ .scope = .linux_v10, .level = .info },
+            .{ .scope = .pulse, .level = .info },
+        };
 
     break :blk o;
 };

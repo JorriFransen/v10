@@ -286,7 +286,6 @@ const Tools = struct {
                     .imports = &.{
                         .{ .name = "core", .module = modules.core },
                         .{ .name = "options", .module = options_module },
-                        .{ .name = "v10_common", .module = modules.common },
                     },
                 }),
                 .use_llvm = use_llvm,
@@ -348,7 +347,6 @@ const Tools = struct {
                 .imports = &.{
                     .{ .name = "core", .module = modules.core },
                     .{ .name = "options", .module = option_module },
-                    .{ .name = "v10_common", .module = modules.common },
                 },
             });
 

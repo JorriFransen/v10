@@ -19,7 +19,7 @@ const dirname = std.fs.path.dirname;
 const stem = std.fs.path.stem;
 const pathIsAbsolute = std.fs.path.isAbsolute;
 
-pub const std_options = @import("v10_common").std_options;
+pub const std_options: std.Options = core.default_std_options;
 
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
