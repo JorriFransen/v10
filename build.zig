@@ -7,6 +7,7 @@ const OptimizeMode = std.builtin.OptimizeMode;
 const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
+var enable_tests: bool = true;
 var use_llvm: bool = false;
 var tools_optimize: OptimizeMode = .ReleaseSafe;
 var internal_build: bool = true;
@@ -23,6 +24,7 @@ pub fn build(b: *Build) !void {
     const native_target = b.resolveTargetQuery(.{});
     cross_compile = !target.query.eql(native_target.query);
 
+    enable_tests = b.option(bool, "tests", "Enable tests") orelse enable_tests;
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse use_llvm;
     if (target.result.os.tag == .windows) use_llvm = true;
 
@@ -52,14 +54,10 @@ pub fn build(b: *Build) !void {
         },
     });
 
-    const cli_parse_dep = b.dependency("zig_cli_parse", .{});
-    const clip_module = cli_parse_dep.module("CliParse");
-
     var modules = Modules{
         .options = options_module,
         .core = core_module,
         .common = common_module,
-        .clip = clip_module,
     };
 
     const tools = try Tools.build(b, native_target, target, &modules);
@@ -90,13 +88,16 @@ pub fn build(b: *Build) !void {
         std.log.warn("Skipping asset compilation", .{});
     }
 
-    try buildTests(b, &modules);
+    if (enable_tests) {
+        const tests = try buildTests(b, target);
+        engine.run.step.dependOn(&tests.run.step);
+        engine.install.step.dependOn(&tests.install.step);
+    }
 }
 
 const Modules = struct {
     options: *Module,
     core: *Module,
-    clip: *Module,
 
     common: *Module,
 };
@@ -284,7 +285,6 @@ const Tools = struct {
                     .optimize = tools_optimize,
                     .imports = &.{
                         .{ .name = "core", .module = modules.core },
-                        .{ .name = "clip", .module = modules.clip },
                         .{ .name = "options", .module = options_module },
                         .{ .name = "v10_common", .module = modules.common },
                     },
@@ -347,7 +347,6 @@ const Tools = struct {
                 .optimize = tools_optimize,
                 .imports = &.{
                     .{ .name = "core", .module = modules.core },
-                    .{ .name = "clip", .module = modules.clip },
                     .{ .name = "options", .module = option_module },
                     .{ .name = "v10_common", .module = modules.common },
                 },
@@ -403,14 +402,31 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
     }
 }
 
-pub fn buildTests(b: *Build, modules: *const Modules) !void {
+pub const Tests = struct {
+    exe: *Step.Compile,
+    run: *Step.Run,
+    install: *Step.InstallArtifact,
+};
+
+pub fn buildTests(b: *Build, target: ResolvedTarget) !Tests {
     const test_step = b.step("test", "run all tests");
     const test_install_step = b.step("test_install", "install tests");
 
-    const clip_test_exe = b.addTest(.{ .root_module = modules.clip, .name = "clip_test" });
-    const clip_test_run = b.addRunArtifact(clip_test_exe);
-    const clip_test_install = b.addInstallArtifact(clip_test_exe, .{ .dest_dir = .{ .override = .{ .custom = "test" } } });
+    const core_test_module = b.createModule(.{
+        .target = target,
+        .root_source_file = b.path(src_path ++ "/core/core.zig"),
+    });
 
-    test_step.dependOn(&clip_test_run.step);
-    test_install_step.dependOn(&clip_test_install.step);
+    const core_test_exe = b.addTest(.{ .root_module = core_test_module, .name = "core tests" });
+    const core_test_run = b.addRunArtifact(core_test_exe);
+    const core_test_install = b.addInstallArtifact(core_test_exe, .{ .dest_dir = .{ .override = .{ .custom = "test" } } });
+
+    test_step.dependOn(&core_test_run.step);
+    test_install_step.dependOn(&core_test_install.step);
+
+    return .{
+        .exe = core_test_exe,
+        .run = core_test_run,
+        .install = core_test_install,
+    };
 }

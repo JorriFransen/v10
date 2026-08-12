@@ -2,9 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const core = @import("core");
+const clip = core.clip;
 const mem = core.mem;
-
-const clip = @import("clip");
 
 const parser = @import("parser.zig");
 const AST = @import("ast.zig");

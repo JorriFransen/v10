@@ -6,10 +6,10 @@ const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 
 const core = @import("core");
+const clip = core.clip;
 const mem = core.mem;
 
 const compile_options = @import("options");
-const clip = @import("clip");
 
 // Note: If any of these functions start making "temporary" allocations they need
 //        to be wrapped like 'pathResolve'.

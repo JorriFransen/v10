@@ -13,7 +13,4 @@
     },
     .fingerprint = 0x4fb9faee3e8a9632,
 
-    .dependencies =  .{
-        .zig_cli_parse = .{ .path = "vendor/zig-CliParse" },
-    },
 }

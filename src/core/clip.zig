@@ -494,7 +494,10 @@ fn testParse(comptime OP: type, args: []const []const u8, expected: OP.Options, 
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const opt_or_err = OP.parse(args, allocator, undefined);
+    var temp_arena = std.heap.ArenaAllocator.init(allocator);
+    const temp_allocator = temp_arena.allocator();
+
+    const opt_or_err = OP.parse(args, allocator, temp_allocator, undefined);
     if (err) |expected_err| {
         try std.testing.expectError(expected_err, opt_or_err);
     } else {

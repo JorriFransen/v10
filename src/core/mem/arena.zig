@@ -149,7 +149,7 @@ pub const Arena = struct {
 
                     else => error.Unexpected,
                 },
-                .windows => win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
+                .windows => _ = win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
             }
         }
 
