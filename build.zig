@@ -21,7 +21,7 @@ const src_path = "src";
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
-    const native_target = b.resolveTargetQuery(.{});
+    const native_target = b.graph.host;
     cross_compile = !target.query.eql(native_target.query);
 
     enable_tests = b.option(bool, "tests", "Enable tests") orelse enable_tests;
@@ -415,9 +415,27 @@ pub fn buildTests(b: *Build, target: ResolvedTarget) !Tests {
         .root_source_file = b.path(src_path ++ "/core/core.zig"),
     });
 
-    const core_test_exe = b.addTest(.{ .root_module = core_test_module, .name = "core tests" });
+    // Workaround for wine related output in stderr: even if all tests pass, the build process prints
+    // a spurious line about the test exe, e.g.
+    //   `failed command: "./.zig-cache/o/<hash>/<test-exe>.exe" --cache-dir=./.zig-cache --seed=<seed> --listen=-`
+    const cross_windows = target.result.os.tag == .windows and b.graph.host.result.os.tag != .windows;
+    const test_runner: ?Step.Compile.TestRunner = if (cross_windows) .{
+        .path = .{ .cwd_relative = try b.graph.zig_lib_directory.join(b.allocator, &.{ "compiler", "test_runner.zig" }) },
+        .mode = .simple,
+    } else null;
+
+    const core_test_exe = b.addTest(.{
+        .root_module = core_test_module,
+        .name = "core tests",
+        .test_runner = test_runner,
+    });
+
     const core_test_run = b.addRunArtifact(core_test_exe);
     const core_test_install = b.addInstallArtifact(core_test_exe, .{ .dest_dir = .{ .override = .{ .custom = "test" } } });
+
+    if (cross_windows) {
+        core_test_run.stdio = .infer_from_args;
+    }
 
     test_step.dependOn(&core_test_run.step);
     test_install_step.dependOn(&core_test_install.step);
