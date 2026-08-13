@@ -9,7 +9,6 @@ pub const intrinsics = @import("intrinsics.zig");
 pub const math = @import("math.zig");
 pub const mem = @import("mem/mem.zig");
 pub const meta = @import("meta.zig");
-pub const os = Os.os;
 pub const xml = @import("xml.zig");
 
 const std = @import("std");

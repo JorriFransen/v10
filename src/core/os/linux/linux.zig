@@ -20,18 +20,6 @@ pub const syscall6 = arch.syscall6;
 
 pub const page_size = std.heap.page_size_min;
 
-pub const fd_t = c_int;
-pub const off_t = isize;
-pub const mode_t = u32;
-
-pub const F = abi.F;
-pub const IOC = abi.IOC;
-pub const MAP = abi.MAP;
-pub const O = abi.O;
-pub const PROT = abi.PROT;
-pub const SO = abi.SO;
-pub const SOCK = abi.SOCK;
-
 pub const Error = error{
     AddressNotAvailable,
     AlreadyConnecting,
@@ -78,758 +66,9 @@ pub const Error = error{
     UnexpectedErrno,
 };
 
-pub inline fn check_errno(err: isize) ?Errno {
-    if (err < 0) {
-        return @enumFromInt(-err);
-    }
-    return null;
-}
-
-pub fn read(fd: fd_t, buf: []u8) Error![]u8 {
-    const rc = syscall3(.read, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
-    if (check_errno(rc)) |e| return switch (e) {
-        .INTR => error.Interrupt,
-        .AGAIN => error.NoData,
-        .BADF => error.InvalidFD,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .IO => error.IO,
-        .ISDIR => error.UnexpectedDirFD,
-        else => blk: {
-            log.warn("Unexpected errno for read: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
-    if (rc == 0) {
-        return error.EndOfFile;
-    } else {
-        return buf[0..@intCast(rc)];
-    }
-}
-
-pub fn write(fd: fd_t, buf: []const u8) Error!usize {
-    const rc = syscall3(.write, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
-    if (check_errno(rc)) |e| return switch (e) {
-        .INTR => error.Interrupt,
-        .AGAIN => error.NoData,
-        .BADF => error.InvalidFD,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .IO => error.IO,
-        .NOSPC => error.NoSpaceLeft,
-        .DQUOT => error.DiskQuotaExceeded,
-        else => blk: {
-            log.warn("Unexpected errno for write: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
-    return @intCast(rc);
-}
-
-pub fn open(path: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = syscall3(.open, @intFromPtr(path), @as(u32, @bitCast(flags)), mode);
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .EXIST => error.FileExists,
-        .ISDIR => error.UnexpectedDirFD,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NODEV => error.InvalidDevice,
-        .NOENT => error.FileDoesNotExist,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        else => blk: {
-            log.warn("Unexpected errno for open: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
-    return @as(fd_t, @truncate(rc));
-}
-
-pub fn close(fd: fd_t) Error!void {
-    const rc = syscall1(.close, @as(u32, @bitCast(fd)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .INTR => error.Interrupt,
-        .IO => error.IO,
-        else => blk: {
-            log.warn("Unexpected errno for close: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-pub fn poll(fds: []pollfd, timeout: c_int) Error!c_int {
-    const rc = syscall3(.poll, @intFromPtr(fds.ptr), fds.len, @as(u32, @bitCast(timeout)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .FAULT => error.InvalidPointer,
-        .INTR => error.Interrupt,
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for poll: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-    return @intCast(rc);
-}
-
-pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP, fd: fd_t, offset: off_t) Error![]align(page_size) u8 {
-    const rc = syscall6(
-        .mmap,
-        @intFromPtr(addr),
-        length,
-        @as(u32, @bitCast(prot)),
-        @as(u32, @bitCast(flags)),
-        @as(u32, @bitCast(fd)),
-        @bitCast(offset),
-    );
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .INVAL => error.InvalidArg,
-        .ACCES => error.PermissionDenied,
-        .NOMEM => error.NoMemory,
-        .AGAIN => error.Lock,
-        else => blk: {
-            log.warn("Unexpected errno for mmap: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
-    return @as([*]align(page_size) u8, @ptrFromInt(@as(usize, @bitCast(rc))))[0..length];
-}
-
-pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) Error!void {
-    const rc = syscall3(.mprotect, @intFromPtr(slice.ptr), slice.len, @as(u32, @bitCast(prot)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for mprotect: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-pub fn pipe(fds: *[2]fd_t) Error!void {
-    const rc = syscall1(.pipe, @intFromPtr(fds));
-    if (check_errno(rc)) |e| return switch (e) {
-        .FAULT => error.InvalidPointer,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        else => blk: {
-            log.warn("Unexpected errno for pipe: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-pub fn munmap(memory: []align(page_size) const u8) Error!void {
-    const rc = syscall2(.munmap, @intFromPtr(memory.ptr), memory.len);
-    if (check_errno(rc)) |e| return switch (e) {
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for munmap: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) Error!fd_t {
-    const rc = syscall3(.socket, @as(u32, @bitCast(domain)), @"type", protocol);
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .AFNOSUPPORT => error.InvalidAddressFamily,
-        .INVAL => error.InvalidArg,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NOBUFS, .NOMEM => error.NoMemory,
-        .PROTONOSUPPORT => error.InvalidProtocol,
-        else => blk: {
-            log.warn("Unexpected errno for socket: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-    return @truncate(rc);
-}
-
-pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c_int {
-    const rc = syscall3(.connect, @as(u32, @bitCast(sock_fd)), @intFromPtr(addr), addrlen);
-    if (check_errno(rc)) |e| return switch (e) {
-        .PERM, .ACCES => error.PermissionDenied,
-        .ADDRNOTAVAIL => error.AddressNotAvailable,
-        .AFNOSUPPORT => error.InvalidAddressFamily,
-        .ALREADY => error.AlreadyConnecting,
-        .BADF => error.InvalidFD,
-        .CONNREFUSED => error.ConnectionRefused,
-        .FAULT => error.InvalidPointer,
-        .INPROGRESS => error.ConnectingInProgress,
-        .INTR => error.Interrupt,
-        .INVAL => error.InvalidArg,
-        .NOTSOCK => error.NotSocket,
-        .TIMEDOUT => error.Timeout,
-        .NETUNREACH => error.NetworkUnreachable,
-        .HOSTUNREACH => error.HostUnreachable,
-        else => blk: {
-            log.warn("Unexpected errno for connect: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-    assert(rc == 0);
-    return @intCast(rc);
-}
-
-pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
-    const rc = syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .AGAIN => error.NoSpaceLeft, // send buffer full
-        .INTR => error.Interrupt,
-        .PIPE => error.ConnectionClosed, // peer closed connection
-        .CONNRESET => error.ConnectionReset,
-        .MSGSIZE => error.MessageTooBig,
-        .INVAL => error.InvalidArg,
-        .NOMEM => error.NoMemory,
-        else => blk: {
-            log.warn("Unexpected errno for sendmsg: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-    return @intCast(rc);
-}
-
-pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
-    const rc = syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .AGAIN, .TIMEDOUT => error.Timeout,
-        .FAULT => error.InvalidPointer,
-        .INTR => error.Interrupt,
-        .NOTCONN => error.NotConnected,
-        .NOTSOCK => error.InvalidFD,
-        .OPNOTSUPP => error.InvalidFlags,
-        .INVAL => error.InvalidArg,
-        .NOMEM => error.NoMemory,
-        else => blk: {
-            log.warn("Unexpected errno for recvmsg: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-    return @intCast(rc);
-}
-
-pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
-    const rc = syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
-    if (check_errno(rc)) |e| return switch (e) {
-        else => blk: {
-            log.warn("Unexpected errno for fcntl: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-    return @as(u32, @intCast(rc));
-}
-
-pub fn ftruncate(fd: fd_t, length: usize) !void {
-    const rc = syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for ftruncate: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-pub fn unlink(pathname: [:0]const u8) Error!void {
-    const rc = syscall1(.unlink, @intFromPtr(pathname.ptr));
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .PERM => error.UnlinkDirectoryAttempt,
-        .NOENT => error.FileDoesNotExist,
-        .BUSY => error.FileBusy,
-        .ROFS => error.ReadOnly,
-        .NOTDIR => error.InvalidPath,
-        .NAMETOOLONG => error.NameTooLong,
-        .LOOP => error.TooManySymbolicLinks,
-        .IO => error.IO,
-        else => blk: {
-            log.warn("Unexpected errno for unlink: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-pub fn openat(dir_fd: fd_t, filename: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = syscall4(.openat, @as(u32, @bitCast(dir_fd)), @intFromPtr(filename), @as(u32, @bitCast(flags)), mode);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .ACCES => error.PermissionDenied,
-        .EXIST => error.FileExists,
-        .ISDIR => error.IsDirectory,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NOENT => error.FileDoesNotExist,
-        .NOTDIR => error.InvalidPath,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        else => blk: {
-            log.warn("Unexpected errno for openat: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-    return @as(fd_t, @truncate(@as(isize, @intCast(rc))));
-}
-
-pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
-    const rc = syscall4(.fstatat64, @bitCast(@as(isize, AT.FDCWD)), @intFromPtr(pathname.ptr), @intFromPtr(statbuf), 0);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
-        .FAULT => error.InvalidPointer,
-        .ACCES => error.PermissionDenied,
-        .NOENT => error.FileDoesNotExist,
-        .NOTDIR => error.InvalidPath,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        .NODEV => error.InvalidDevice,
-        .ROFS => error.ReadOnly,
-        .IO => error.IO,
-        else => blk: {
-            log.warn("Unexpected errno for stat: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-pub fn pipe2(fds: *[2]fd_t, flags: O) Error!void {
-    const rc = syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .FAULT => error.InvalidPointer,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .INVAL => error.InvalidArg,
-        .NOPKG => error.PackageNotCompiled,
-        else => blk: {
-            log.warn("Unexpected errno for pipe: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
-inline fn getShmPath(name: [:0]const u8) std.fmt.BufPrintError![:0]const u8 {
-    var name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const path_fmt = std.fs.path.fmtJoin(&.{ "/dev/shm/", name });
-    return try std.fmt.bufPrintSentinel(&name_buf, "{f}", .{path_fmt}, 0);
-}
-
-pub const ShmError = Error || std.fmt.BufPrintError;
-pub fn shm_open(name: [:0]const u8, oflag: O, mode: mode_t) ShmError!c_int {
-    const path = try getShmPath(name);
-
-    const fd = try openat(AT.FDCWD, path, oflag, mode);
-    return fd;
-}
-
-pub fn shm_unlink(name: [:0]const u8) ShmError!void {
-    const path = try getShmPath(name);
-    try unlink(path);
-}
-
-pub const S = struct {
-    pub const IFMT = 0o170000;
-
-    pub const IFDIR = 0o040000;
-    pub const IFCHR = 0o020000;
-    pub const IFBLK = 0o060000;
-    pub const IFREG = 0o100000;
-    pub const IFIFO = 0o010000;
-    pub const IFLNK = 0o120000;
-    pub const IFSOCK = 0o140000;
-
-    pub const ISUID = 0o4000;
-    pub const ISGID = 0o2000;
-    pub const ISVTX = 0o1000;
-    pub const IRUSR = 0o400;
-    pub const IWUSR = 0o200;
-    pub const IXUSR = 0o100;
-    pub const IRWXU = 0o700;
-    pub const IRGRP = 0o040;
-    pub const IWGRP = 0o020;
-    pub const IXGRP = 0o010;
-    pub const IRWXG = 0o070;
-    pub const IROTH = 0o004;
-    pub const IWOTH = 0o002;
-    pub const IXOTH = 0o001;
-    pub const IRWXO = 0o007;
-
-    pub fn ISREG(m: mode_t) bool {
-        return m & IFMT == IFREG;
-    }
-
-    pub fn ISDIR(m: mode_t) bool {
-        return m & IFMT == IFDIR;
-    }
-
-    pub fn ISCHR(m: mode_t) bool {
-        return m & IFMT == IFCHR;
-    }
-
-    pub fn ISBLK(m: mode_t) bool {
-        return m & IFMT == IFBLK;
-    }
-
-    pub fn ISFIFO(m: mode_t) bool {
-        return m & IFMT == IFIFO;
-    }
-
-    pub fn ISLNK(m: mode_t) bool {
-        return m & IFMT == IFLNK;
-    }
-
-    pub fn ISSOCK(m: mode_t) bool {
-        return m & IFMT == IFSOCK;
-    }
-};
-
-pub const AT = struct {
-    pub const FDCWD = -100;
-    pub const SYMLINK_NOFOLLOW = 0x100;
-    pub const REMOVEDIR = 0x200;
-    pub const SYMLINK_FOLLOW = 0x400;
-    pub const NO_AUTOMOUNT = 0x800;
-    pub const EMPTY_PATH = 0x1000;
-    pub const STATX_SYNC_TYPE = 0x6000;
-    pub const STATX_SYNC_AS_STAT = 0x0000;
-    pub const STATX_FORCE_SYNC = 0x2000;
-    pub const STATX_DONT_SYNC = 0x4000;
-    pub const RECURSIVE = 0x8000;
-    pub const HANDLE_FID = REMOVEDIR;
-};
-
-pub const PF = struct {
-    pub const UNSPEC = 0;
-    pub const LOCAL = 1;
-    pub const UNIX = LOCAL;
-    pub const FILE = LOCAL;
-    pub const INET = 2;
-    pub const AX25 = 3;
-    pub const IPX = 4;
-    pub const APPLETALK = 5;
-    pub const NETROM = 6;
-    pub const BRIDGE = 7;
-    pub const ATMPVC = 8;
-    pub const X25 = 9;
-    pub const INET6 = 10;
-    pub const ROSE = 11;
-    pub const DECnet = 12;
-    pub const NETBEUI = 13;
-    pub const SECURITY = 14;
-    pub const KEY = 15;
-    pub const NETLINK = 16;
-    pub const ROUTE = PF.NETLINK;
-    pub const PACKET = 17;
-    pub const ASH = 18;
-    pub const ECONET = 19;
-    pub const ATMSVC = 20;
-    pub const RDS = 21;
-    pub const SNA = 22;
-    pub const IRDA = 23;
-    pub const PPPOX = 24;
-    pub const WANPIPE = 25;
-    pub const LLC = 26;
-    pub const IB = 27;
-    pub const MPLS = 28;
-    pub const CAN = 29;
-    pub const TIPC = 30;
-    pub const BLUETOOTH = 31;
-    pub const IUCV = 32;
-    pub const RXRPC = 33;
-    pub const ISDN = 34;
-    pub const PHONET = 35;
-    pub const IEEE802154 = 36;
-    pub const CAIF = 37;
-    pub const ALG = 38;
-    pub const NFC = 39;
-    pub const VSOCK = 40;
-    pub const KCM = 41;
-    pub const QIPCRTR = 42;
-    pub const SMC = 43;
-    pub const XDP = 44;
-    pub const MAX = 45;
-};
-
-pub const AF = struct {
-    pub const UNSPEC = PF.UNSPEC;
-    pub const LOCAL = PF.LOCAL;
-    pub const UNIX = AF.LOCAL;
-    pub const FILE = AF.LOCAL;
-    pub const INET = PF.INET;
-    pub const AX25 = PF.AX25;
-    pub const IPX = PF.IPX;
-    pub const APPLETALK = PF.APPLETALK;
-    pub const NETROM = PF.NETROM;
-    pub const BRIDGE = PF.BRIDGE;
-    pub const ATMPVC = PF.ATMPVC;
-    pub const X25 = PF.X25;
-    pub const INET6 = PF.INET6;
-    pub const ROSE = PF.ROSE;
-    pub const DECnet = PF.DECnet;
-    pub const NETBEUI = PF.NETBEUI;
-    pub const SECURITY = PF.SECURITY;
-    pub const KEY = PF.KEY;
-    pub const NETLINK = PF.NETLINK;
-    pub const ROUTE = PF.ROUTE;
-    pub const PACKET = PF.PACKET;
-    pub const ASH = PF.ASH;
-    pub const ECONET = PF.ECONET;
-    pub const ATMSVC = PF.ATMSVC;
-    pub const RDS = PF.RDS;
-    pub const SNA = PF.SNA;
-    pub const IRDA = PF.IRDA;
-    pub const PPPOX = PF.PPPOX;
-    pub const WANPIPE = PF.WANPIPE;
-    pub const LLC = PF.LLC;
-    pub const IB = PF.IB;
-    pub const MPLS = PF.MPLS;
-    pub const CAN = PF.CAN;
-    pub const TIPC = PF.TIPC;
-    pub const BLUETOOTH = PF.BLUETOOTH;
-    pub const IUCV = PF.IUCV;
-    pub const RXRPC = PF.RXRPC;
-    pub const ISDN = PF.ISDN;
-    pub const PHONET = PF.PHONET;
-    pub const IEEE802154 = PF.IEEE802154;
-    pub const CAIF = PF.CAIF;
-    pub const ALG = PF.ALG;
-    pub const NFC = PF.NFC;
-    pub const VSOCK = PF.VSOCK;
-    pub const KCM = PF.KCM;
-    pub const QIPCRTR = PF.QIPCRTR;
-    pub const SMC = PF.SMC;
-    pub const XDP = PF.XDP;
-    pub const MAX = PF.MAX;
-};
-
-pub const SOL = struct {
-    pub const SOCKET = 1;
-
-    pub const IP = 0;
-    pub const IPV6 = 41;
-    pub const ICMPV6 = 58;
-
-    pub const RAW = 255;
-    pub const DECNET = 261;
-    pub const X25 = 262;
-    pub const PACKET = 263;
-    pub const ATM = 264;
-    pub const AAL = 265;
-    pub const IRDA = 266;
-    pub const NETBEUI = 267;
-    pub const LLC = 268;
-    pub const DCCP = 269;
-    pub const NETLINK = 270;
-    pub const TIPC = 271;
-    pub const RXRPC = 272;
-    pub const PPPOL2TP = 273;
-    pub const BLUETOOTH = 274;
-    pub const PNPIPE = 275;
-    pub const RDS = 276;
-    pub const IUCV = 277;
-    pub const CAIF = 278;
-    pub const ALG = 279;
-    pub const NFC = 280;
-    pub const KCM = 281;
-    pub const TLS = 282;
-    pub const XDP = 283;
-};
-
-pub const POLL = struct {
-    pub const IN = 0x001;
-    pub const PRI = 0x002;
-    pub const OUT = 0x004;
-    pub const ERR = 0x008;
-    pub const HUP = 0x010;
-    pub const NVAL = 0x020;
-    pub const RDNORM = 0x040;
-    pub const RDBAND = 0x080;
-};
-
-pub const MSG = struct {
-    pub const OOB = 0x0001;
-    pub const PEEK = 0x0002;
-    pub const DONTROUTE = 0x0004;
-    pub const CTRUNC = 0x0008;
-    pub const PROXY = 0x0010;
-    pub const TRUNC = 0x0020;
-    pub const DONTWAIT = 0x0040;
-    pub const EOR = 0x0080;
-    pub const WAITALL = 0x0100;
-    pub const FIN = 0x0200;
-    pub const SYN = 0x0400;
-    pub const CONFIRM = 0x0800;
-    pub const RST = 0x1000;
-    pub const ERRQUEUE = 0x2000;
-    pub const NOSIGNAL = 0x4000;
-    pub const MORE = 0x8000;
-    pub const WAITFORONE = 0x10000;
-    pub const BATCH = 0x40000;
-    pub const ZEROCOPY = 0x4000000;
-    pub const FASTOPEN = 0x20000000;
-    pub const CMSG_CLOEXEC = 0x40000000;
-};
-
-pub const SCM = struct {
-    // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/socket.h?id=f777d1112ee597d7f7dd3ca232220873a34ad0c8#n178
-    pub const RIGHTS = 1;
-    pub const CREDENTIALS = 2;
-    pub const SECURITY = 3;
-    pub const PIDFD = 4;
-
-    pub const WIFI_STATUS = SO.WIFI_STATUS;
-    pub const TIMESTAMPING_OPT_STATS = 54;
-    pub const TIMESTAMPING_PKTINFO = 58;
-    pub const TXTIME = SO.TXTIME;
-};
-
-pub inline fn CMSG_NXTHDR(msg: *msghdr, cmsg: *cmsghdr) ?*cmsghdr {
-    assert(cmsg.len >= @sizeOf(cmsghdr));
-    const next = @as([*]u8, @ptrCast(cmsg)) + CMSG_ALIGN(cmsg.len);
-    const end = @as([*]u8, @ptrCast(msg.control)) + msg.controllen;
-
-    if (end - next < @sizeOf(cmsghdr)) {
-        return null;
-    }
-
-    return @ptrCast(@alignCast(next));
-}
-
-pub inline fn CMSG_FIRSTHDR(msg: *msghdr) ?*cmsghdr {
-    return if (msg.controllen >= @sizeOf(cmsghdr)) @ptrCast(@alignCast(msg.control)) else null;
-}
-
-pub inline fn CMSG_SPACE(len: usize) usize {
-    return CMSG_ALIGN(len) + CMSG_ALIGN(@sizeOf(cmsghdr));
-}
-
-pub inline fn CMSG_ALIGN(len: usize) usize {
-    const algn: usize = @alignOf(cmsghdr);
-    return (len + algn - 1) & ~(algn - 1);
-}
-
-pub inline fn CMSG_LEN(len: usize) usize {
-    return @sizeOf(cmsghdr) + len;
-}
-
-pub inline fn CMSG_DATA(msg: *cmsghdr) []u8 {
-    const offset = CMSG_ALIGN(@sizeOf(cmsghdr));
-    return (@as([*]u8, @ptrCast(msg)) + offset)[0 .. msg.len - offset];
-}
-
-pub const pollfd = extern struct {
-    fd: fd_t,
-    events: i16,
-    revents: i16,
-};
-
-pub const Stat = extern struct {
-    const __dev_t = c_ulong;
-    const __ino_t = c_ulong;
-    const __nlink_t = c_ulong;
-    const __mode_t = c_uint;
-    const __uid_t = c_uint;
-    const __gid_t = c_uint;
-    const __off_t = c_long;
-    const __blksize_t = c_long;
-    const __blkcnt_t = c_long;
-    const __syscall_slong_t = c_long;
-
-    st_dev: __dev_t = 0,
-    st_ino: __ino_t = 0,
-    st_nlink: __nlink_t = 0,
-    st_mode: __mode_t = 0,
-    st_uid: __uid_t = 0,
-    st_gid: __gid_t = 0,
-    __pad0: c_int = 0,
-    st_rdev: __dev_t = 0,
-    st_size: __off_t = 0,
-    st_blksize: __blksize_t = 0,
-    st_blocks: __blkcnt_t = 0,
-    st_atim: timespec = std.mem.zeroes(timespec),
-    st_mtim: timespec = std.mem.zeroes(timespec),
-    st_ctim: timespec = std.mem.zeroes(timespec),
-    __glibc_reserved: [3]__syscall_slong_t = std.mem.zeroes([3]__syscall_slong_t),
-};
-
-pub const timespec = extern struct {
-    sec: isize,
-    nsec: isize,
-
-    pub const NOW: timespec = .{
-        .sec = 0,
-        .nsec = 0x3fffffff,
-    };
-
-    pub const OMIT: timespec = .{
-        .sec = 0,
-        .nsec = 0x3ffffffe,
-    };
-};
-
-pub const timeval = extern struct {
-    sec: isize,
-    usec: i64,
-};
-
-pub const sa_family_t = u16;
-pub const socklen_t = u32;
-
-pub const sockaddr = extern struct {
-    family: sa_family_t,
-    data: [14]u8,
-
-    pub const SS_MAXSIZE = 128;
-    pub const storage = extern struct {
-        family: sa_family_t align(8),
-        padding: [SS_MAXSIZE - @sizeOf(sa_family_t)]u8 = undefined,
-
-        comptime {
-            std.debug.assert(@sizeOf(storage) == SS_MAXSIZE);
-            std.debug.assert(@alignOf(storage) == 8);
-        }
-    };
-
-    /// UNIX domain socket address
-    pub const un = extern struct {
-        family: sa_family_t = AF.UNIX,
-        path: [108]u8,
-    };
-};
-
-pub const iovec = extern struct {
-    base: [*]u8,
-    len: usize,
-};
-
-pub const msghdr = extern struct {
-    name: ?*sockaddr,
-    namelen: socklen_t,
-    iov: [*]iovec,
-    /// The kernel and glibc use `usize` for this field; POSIX and musl use `c_int`.
-    iovlen: usize,
-    control: ?*anyopaque,
-    /// The kernel and glibc use `usize` for this field; POSIX and musl use `socklen_t`.
-    controllen: usize,
-    flags: u32,
-};
-
-pub const cmsghdr = extern struct {
-    /// The kernel and glibc use `usize` for this field; musl uses `socklen_t`.
-    len: usize,
-    level: i32,
-    type: i32,
-};
+// =============================================================================
+// errno.h (+ errno-base.h)
+// =============================================================================
 
 pub const Errno = enum(u16) {
     /// No error occurred.
@@ -1140,3 +379,842 @@ pub const Errno = enum(u16) {
 
     _,
 };
+
+// =============================================================================
+// fcntl.h
+// =============================================================================
+
+pub const O = abi.O;
+
+pub const F = struct {
+    pub const DUPFD = 0;
+    pub const GETFD = 1;
+    pub const SETFD = 2;
+    pub const GETFL = 3;
+    pub const SETFL = 4;
+
+    pub const GETLK = GET_SET_LK.GETLK;
+    pub const SETLK = GET_SET_LK.SETLK;
+    pub const SETLKW = GET_SET_LK.SETLKW;
+
+    const GET_SET_LK = extern struct {
+        pub const GETLK = 5;
+        pub const SETLK = 6;
+        pub const SETLKW = 7;
+    };
+    pub const SETOWN = 8;
+    pub const GETOWN = 9;
+
+    pub const SETSIG = 10;
+    pub const GETSIG = 11;
+
+    pub const SETOWN_EX = 15;
+    pub const GETOWN_EX = 16;
+
+    pub const GETOWNER_UIDS = 17;
+
+    pub const OFD_GETLK = 36;
+    pub const OFD_SETLK = 37;
+    pub const OFD_SETLKW = 38;
+
+    pub const RDLCK = 0;
+    pub const WRLCK = 1;
+    pub const UNLCK = 2;
+
+    pub const LINUX_SPECIFIC_BASE = 1024;
+
+    pub const SETLEASE = LINUX_SPECIFIC_BASE + 0;
+    pub const GETLEASE = LINUX_SPECIFIC_BASE + 1;
+    pub const NOTIFY = LINUX_SPECIFIC_BASE + 2;
+    pub const DUPFD_QUERY = LINUX_SPECIFIC_BASE + 3;
+    pub const CREATED_QUERY = LINUX_SPECIFIC_BASE + 4;
+    pub const CANCELLK = LINUX_SPECIFIC_BASE + 5;
+    pub const DUPFD_CLOEXEC = LINUX_SPECIFIC_BASE + 6;
+    pub const SETPIPE_SZ = LINUX_SPECIFIC_BASE + 7;
+    pub const GETPIPE_SZ = LINUX_SPECIFIC_BASE + 8;
+    pub const ADD_SEALS = LINUX_SPECIFIC_BASE + 9;
+    pub const GET_SEALS = LINUX_SPECIFIC_BASE + 10;
+
+    pub const SEAL_SEAL = 0x0001;
+    pub const SEAL_SHRINK = 0x0002;
+    pub const SEAL_GROW = 0x0004;
+    pub const SEAL_WRITE = 0x0008;
+    pub const SEAL_FUTURE_WRITE = 0x0010;
+    pub const SEAL_EXEC = 0x0020;
+
+    pub const GET_RW_HINT = LINUX_SPECIFIC_BASE + 11;
+    pub const SET_RW_HINT = LINUX_SPECIFIC_BASE + 12;
+    pub const GET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 13;
+    pub const SET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 14;
+};
+
+pub const ACCMODE = enum(u2) {
+    RDONLY = 0,
+    WRONLY = 1,
+    RDWR = 2,
+};
+
+pub const AT = struct {
+    pub const FDCWD = -100;
+    pub const SYMLINK_NOFOLLOW = 0x100;
+    pub const REMOVEDIR = 0x200;
+    pub const SYMLINK_FOLLOW = 0x400;
+    pub const NO_AUTOMOUNT = 0x800;
+    pub const EMPTY_PATH = 0x1000;
+    pub const STATX_SYNC_TYPE = 0x6000;
+    pub const STATX_SYNC_AS_STAT = 0x0000;
+    pub const STATX_FORCE_SYNC = 0x2000;
+    pub const STATX_DONT_SYNC = 0x4000;
+    pub const RECURSIVE = 0x8000;
+    pub const HANDLE_FID = REMOVEDIR;
+};
+
+pub fn open(path: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
+    const rc = syscall3(.open, @intFromPtr(path), @as(u32, @bitCast(flags)), mode);
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .EXIST => error.FileExists,
+        .ISDIR => error.UnexpectedDirFD,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .NODEV => error.InvalidDevice,
+        .NOENT => error.FileDoesNotExist,
+        .LOOP => error.TooManySymbolicLinks,
+        .NAMETOOLONG => error.NameTooLong,
+        else => blk: {
+            log.warn("Unexpected errno for open: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @as(fd_t, @truncate(rc));
+}
+
+pub fn openat(dir_fd: fd_t, filename: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
+    const rc = syscall4(.openat, @as(u32, @bitCast(dir_fd)), @intFromPtr(filename), @as(u32, @bitCast(flags)), mode);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .ACCES => error.PermissionDenied,
+        .EXIST => error.FileExists,
+        .ISDIR => error.IsDirectory,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .NOENT => error.FileDoesNotExist,
+        .NOTDIR => error.InvalidPath,
+        .LOOP => error.TooManySymbolicLinks,
+        .NAMETOOLONG => error.NameTooLong,
+        else => blk: {
+            log.warn("Unexpected errno for openat: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @as(fd_t, @truncate(@as(isize, @intCast(rc))));
+}
+
+pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
+    const rc = syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
+    if (check_errno(rc)) |e| return switch (e) {
+        else => blk: {
+            log.warn("Unexpected errno for fcntl: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @as(u32, @intCast(rc));
+}
+
+// =============================================================================
+// ioctls.h
+// =============================================================================
+
+pub const IOC = abi.IOC;
+
+// =============================================================================
+// mman-common.h
+// =============================================================================
+
+pub const MAP = abi.MAP;
+pub const PROT = abi.PROT;
+
+pub const MAP_TYPE = enum(u4) {
+    SHARED = 0x01,
+    PRIVATE = 0x02,
+    SHARED_VALIDATE = 0x03,
+    DROPPABLE = 0x08,
+};
+
+pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP, fd: fd_t, offset: off_t) Error![]align(page_size) u8 {
+    const rc = syscall6(
+        .mmap,
+        @intFromPtr(addr),
+        length,
+        @as(u32, @bitCast(prot)),
+        @as(u32, @bitCast(flags)),
+        @as(u32, @bitCast(fd)),
+        @bitCast(offset),
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .INVAL => error.InvalidArg,
+        .ACCES => error.PermissionDenied,
+        .NOMEM => error.NoMemory,
+        .AGAIN => error.Lock,
+        else => blk: {
+            log.warn("Unexpected errno for mmap: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @as([*]align(page_size) u8, @ptrFromInt(@as(usize, @bitCast(rc))))[0..length];
+}
+
+pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) Error!void {
+    const rc = syscall3(.mprotect, @intFromPtr(slice.ptr), slice.len, @as(u32, @bitCast(prot)));
+    if (check_errno(rc)) |e| return switch (e) {
+        .INVAL => error.InvalidArg,
+        else => blk: {
+            log.warn("Unexpected errno for mprotect: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn munmap(memory: []align(page_size) const u8) Error!void {
+    const rc = syscall2(.munmap, @intFromPtr(memory.ptr), memory.len);
+    if (check_errno(rc)) |e| return switch (e) {
+        .INVAL => error.InvalidArg,
+        else => blk: {
+            log.warn("Unexpected errno for munmap: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+// =============================================================================
+// net.h
+// =============================================================================
+
+pub const SOCK = struct {
+    pub const STREAM = 1;
+    pub const DGRAM = 2;
+    pub const RAW = 3;
+    pub const RDM = 4;
+    pub const SEQPACKET = 5;
+    pub const DCCP = 6;
+    pub const PACKET = 10;
+    pub const CLOEXEC = 0o2000000;
+    pub const NONBLOCK = 0o4000;
+};
+
+// =============================================================================
+// poll.h
+// =============================================================================
+
+pub const POLL = abi.POLL;
+
+pub const pollfd = extern struct {
+    fd: fd_t,
+    events: i16,
+    revents: i16,
+};
+
+pub fn poll(fds: []pollfd, timeout: c_int) Error!c_int {
+    const rc = syscall3(.poll, @intFromPtr(fds.ptr), fds.len, @as(u32, @bitCast(timeout)));
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .FAULT => error.InvalidPointer,
+        .INTR => error.Interrupt,
+        .INVAL => error.InvalidArg,
+        else => blk: {
+            log.warn("Unexpected errno for poll: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @intCast(rc);
+}
+
+// =============================================================================
+// socket.h
+// =============================================================================
+
+pub const SO = abi.SO;
+
+pub const SOL = struct {
+    pub const SOCKET = 1;
+
+    pub const IP = 0;
+    pub const IPV6 = 41;
+    pub const ICMPV6 = 58;
+
+    pub const RAW = 255;
+    pub const DECNET = 261;
+    pub const X25 = 262;
+    pub const PACKET = 263;
+    pub const ATM = 264;
+    pub const AAL = 265;
+    pub const IRDA = 266;
+    pub const NETBEUI = 267;
+    pub const LLC = 268;
+    pub const DCCP = 269;
+    pub const NETLINK = 270;
+    pub const TIPC = 271;
+    pub const RXRPC = 272;
+    pub const PPPOL2TP = 273;
+    pub const BLUETOOTH = 274;
+    pub const PNPIPE = 275;
+    pub const RDS = 276;
+    pub const IUCV = 277;
+    pub const CAIF = 278;
+    pub const ALG = 279;
+    pub const NFC = 280;
+    pub const KCM = 281;
+    pub const TLS = 282;
+    pub const XDP = 283;
+};
+
+pub const PF = struct {
+    pub const UNSPEC = 0;
+    pub const LOCAL = 1;
+    pub const UNIX = LOCAL;
+    pub const FILE = LOCAL;
+    pub const INET = 2;
+    pub const AX25 = 3;
+    pub const IPX = 4;
+    pub const APPLETALK = 5;
+    pub const NETROM = 6;
+    pub const BRIDGE = 7;
+    pub const ATMPVC = 8;
+    pub const X25 = 9;
+    pub const INET6 = 10;
+    pub const ROSE = 11;
+    pub const DECnet = 12;
+    pub const NETBEUI = 13;
+    pub const SECURITY = 14;
+    pub const KEY = 15;
+    pub const NETLINK = 16;
+    pub const ROUTE = PF.NETLINK;
+    pub const PACKET = 17;
+    pub const ASH = 18;
+    pub const ECONET = 19;
+    pub const ATMSVC = 20;
+    pub const RDS = 21;
+    pub const SNA = 22;
+    pub const IRDA = 23;
+    pub const PPPOX = 24;
+    pub const WANPIPE = 25;
+    pub const LLC = 26;
+    pub const IB = 27;
+    pub const MPLS = 28;
+    pub const CAN = 29;
+    pub const TIPC = 30;
+    pub const BLUETOOTH = 31;
+    pub const IUCV = 32;
+    pub const RXRPC = 33;
+    pub const ISDN = 34;
+    pub const PHONET = 35;
+    pub const IEEE802154 = 36;
+    pub const CAIF = 37;
+    pub const ALG = 38;
+    pub const NFC = 39;
+    pub const VSOCK = 40;
+    pub const KCM = 41;
+    pub const QIPCRTR = 42;
+    pub const SMC = 43;
+    pub const XDP = 44;
+    pub const MAX = 45;
+};
+
+pub const AF = struct {
+    pub const UNSPEC = PF.UNSPEC;
+    pub const LOCAL = PF.LOCAL;
+    pub const UNIX = AF.LOCAL;
+    pub const FILE = AF.LOCAL;
+    pub const INET = PF.INET;
+    pub const AX25 = PF.AX25;
+    pub const IPX = PF.IPX;
+    pub const APPLETALK = PF.APPLETALK;
+    pub const NETROM = PF.NETROM;
+    pub const BRIDGE = PF.BRIDGE;
+    pub const ATMPVC = PF.ATMPVC;
+    pub const X25 = PF.X25;
+    pub const INET6 = PF.INET6;
+    pub const ROSE = PF.ROSE;
+    pub const DECnet = PF.DECnet;
+    pub const NETBEUI = PF.NETBEUI;
+    pub const SECURITY = PF.SECURITY;
+    pub const KEY = PF.KEY;
+    pub const NETLINK = PF.NETLINK;
+    pub const ROUTE = PF.ROUTE;
+    pub const PACKET = PF.PACKET;
+    pub const ASH = PF.ASH;
+    pub const ECONET = PF.ECONET;
+    pub const ATMSVC = PF.ATMSVC;
+    pub const RDS = PF.RDS;
+    pub const SNA = PF.SNA;
+    pub const IRDA = PF.IRDA;
+    pub const PPPOX = PF.PPPOX;
+    pub const WANPIPE = PF.WANPIPE;
+    pub const LLC = PF.LLC;
+    pub const IB = PF.IB;
+    pub const MPLS = PF.MPLS;
+    pub const CAN = PF.CAN;
+    pub const TIPC = PF.TIPC;
+    pub const BLUETOOTH = PF.BLUETOOTH;
+    pub const IUCV = PF.IUCV;
+    pub const RXRPC = PF.RXRPC;
+    pub const ISDN = PF.ISDN;
+    pub const PHONET = PF.PHONET;
+    pub const IEEE802154 = PF.IEEE802154;
+    pub const CAIF = PF.CAIF;
+    pub const ALG = PF.ALG;
+    pub const NFC = PF.NFC;
+    pub const VSOCK = PF.VSOCK;
+    pub const KCM = PF.KCM;
+    pub const QIPCRTR = PF.QIPCRTR;
+    pub const SMC = PF.SMC;
+    pub const XDP = PF.XDP;
+    pub const MAX = PF.MAX;
+};
+
+pub const sa_family_t = u16;
+pub const socklen_t = u32;
+
+pub const sockaddr = extern struct {
+    family: sa_family_t,
+    data: [14]u8,
+
+    pub const SS_MAXSIZE = 128;
+    pub const storage = extern struct {
+        family: sa_family_t align(8),
+        padding: [SS_MAXSIZE - @sizeOf(sa_family_t)]u8 = undefined,
+
+        comptime {
+            std.debug.assert(@sizeOf(storage) == SS_MAXSIZE);
+            std.debug.assert(@alignOf(storage) == 8);
+        }
+    };
+
+    /// UNIX domain socket address
+    pub const un = extern struct {
+        family: sa_family_t = AF.UNIX,
+        path: [108]u8,
+    };
+};
+
+pub const msghdr = extern struct {
+    name: ?*sockaddr,
+    namelen: socklen_t,
+    iov: [*]iovec,
+    /// The kernel and glibc use `usize` for this field; POSIX and musl use `c_int`.
+    iovlen: usize,
+    control: ?*anyopaque,
+    /// The kernel and glibc use `usize` for this field; POSIX and musl use `socklen_t`.
+    controllen: usize,
+    flags: u32,
+};
+
+pub const cmsghdr = extern struct {
+    /// The kernel and glibc use `usize` for this field; musl uses `socklen_t`.
+    len: usize,
+    level: i32,
+    type: i32,
+};
+
+pub const MSG = struct {
+    pub const OOB = 0x0001;
+    pub const PEEK = 0x0002;
+    pub const DONTROUTE = 0x0004;
+    pub const CTRUNC = 0x0008;
+    pub const PROXY = 0x0010;
+    pub const TRUNC = 0x0020;
+    pub const DONTWAIT = 0x0040;
+    pub const EOR = 0x0080;
+    pub const WAITALL = 0x0100;
+    pub const FIN = 0x0200;
+    pub const SYN = 0x0400;
+    pub const CONFIRM = 0x0800;
+    pub const RST = 0x1000;
+    pub const ERRQUEUE = 0x2000;
+    pub const NOSIGNAL = 0x4000;
+    pub const MORE = 0x8000;
+    pub const WAITFORONE = 0x10000;
+    pub const BATCH = 0x40000;
+    pub const ZEROCOPY = 0x4000000;
+    pub const FASTOPEN = 0x20000000;
+    pub const CMSG_CLOEXEC = 0x40000000;
+};
+
+pub const SCM = struct {
+    // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/socket.h?id=f777d1112ee597d7f7dd3ca232220873a34ad0c8#n178
+    pub const RIGHTS = 1;
+    pub const CREDENTIALS = 2;
+    pub const SECURITY = 3;
+    pub const PIDFD = 4;
+
+    pub const WIFI_STATUS = SO.WIFI_STATUS;
+    pub const TIMESTAMPING_OPT_STATS = 54;
+    pub const TIMESTAMPING_PKTINFO = 58;
+    pub const TXTIME = SO.TXTIME;
+};
+
+pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) Error!fd_t {
+    const rc = syscall3(.socket, @as(u32, @bitCast(domain)), @"type", protocol);
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .AFNOSUPPORT => error.InvalidAddressFamily,
+        .INVAL => error.InvalidArg,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .NOBUFS, .NOMEM => error.NoMemory,
+        .PROTONOSUPPORT => error.InvalidProtocol,
+        else => blk: {
+            log.warn("Unexpected errno for socket: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @truncate(rc);
+}
+
+pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c_int {
+    const rc = syscall3(.connect, @as(u32, @bitCast(sock_fd)), @intFromPtr(addr), addrlen);
+    if (check_errno(rc)) |e| return switch (e) {
+        .PERM, .ACCES => error.PermissionDenied,
+        .ADDRNOTAVAIL => error.AddressNotAvailable,
+        .AFNOSUPPORT => error.InvalidAddressFamily,
+        .ALREADY => error.AlreadyConnecting,
+        .BADF => error.InvalidFD,
+        .CONNREFUSED => error.ConnectionRefused,
+        .FAULT => error.InvalidPointer,
+        .INPROGRESS => error.ConnectingInProgress,
+        .INTR => error.Interrupt,
+        .INVAL => error.InvalidArg,
+        .NOTSOCK => error.NotSocket,
+        .TIMEDOUT => error.Timeout,
+        .NETUNREACH => error.NetworkUnreachable,
+        .HOSTUNREACH => error.HostUnreachable,
+        else => blk: {
+            log.warn("Unexpected errno for connect: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    assert(rc == 0);
+    return @intCast(rc);
+}
+
+pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
+    const rc = syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .AGAIN => error.NoSpaceLeft, // send buffer full
+        .INTR => error.Interrupt,
+        .PIPE => error.ConnectionClosed, // peer closed connection
+        .CONNRESET => error.ConnectionReset,
+        .MSGSIZE => error.MessageTooBig,
+        .INVAL => error.InvalidArg,
+        .NOMEM => error.NoMemory,
+        else => blk: {
+            log.warn("Unexpected errno for sendmsg: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @intCast(rc);
+}
+
+pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
+    const rc = syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .AGAIN, .TIMEDOUT => error.Timeout,
+        .FAULT => error.InvalidPointer,
+        .INTR => error.Interrupt,
+        .NOTCONN => error.NotConnected,
+        .NOTSOCK => error.InvalidFD,
+        .OPNOTSUPP => error.InvalidFlags,
+        .INVAL => error.InvalidArg,
+        .NOMEM => error.NoMemory,
+        else => blk: {
+            log.warn("Unexpected errno for recvmsg: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+    return @intCast(rc);
+}
+
+pub inline fn CMSG_NXTHDR(msg: *msghdr, cmsg: *cmsghdr) ?*cmsghdr {
+    assert(cmsg.len >= @sizeOf(cmsghdr));
+    const next = @as([*]u8, @ptrCast(cmsg)) + CMSG_ALIGN(cmsg.len);
+    const end = @as([*]u8, @ptrCast(msg.control)) + msg.controllen;
+
+    if (end - next < @sizeOf(cmsghdr)) {
+        return null;
+    }
+
+    return @ptrCast(@alignCast(next));
+}
+
+pub inline fn CMSG_FIRSTHDR(msg: *msghdr) ?*cmsghdr {
+    return if (msg.controllen >= @sizeOf(cmsghdr)) @ptrCast(@alignCast(msg.control)) else null;
+}
+
+pub inline fn CMSG_SPACE(len: usize) usize {
+    return CMSG_ALIGN(len) + CMSG_ALIGN(@sizeOf(cmsghdr));
+}
+
+pub inline fn CMSG_ALIGN(len: usize) usize {
+    const algn: usize = @alignOf(cmsghdr);
+    return (len + algn - 1) & ~(algn - 1);
+}
+
+pub inline fn CMSG_LEN(len: usize) usize {
+    return @sizeOf(cmsghdr) + len;
+}
+
+pub inline fn CMSG_DATA(msg: *cmsghdr) []u8 {
+    const offset = CMSG_ALIGN(@sizeOf(cmsghdr));
+    return (@as([*]u8, @ptrCast(msg)) + offset)[0 .. msg.len - offset];
+}
+
+// =============================================================================
+// stat.h
+// =============================================================================
+
+pub const S = struct {
+    pub const IFMT = 0o170000;
+
+    pub const IFDIR = 0o040000;
+    pub const IFCHR = 0o020000;
+    pub const IFBLK = 0o060000;
+    pub const IFREG = 0o100000;
+    pub const IFIFO = 0o010000;
+    pub const IFLNK = 0o120000;
+    pub const IFSOCK = 0o140000;
+
+    pub const ISUID = 0o4000;
+    pub const ISGID = 0o2000;
+    pub const ISVTX = 0o1000;
+    pub const IRUSR = 0o400;
+    pub const IWUSR = 0o200;
+    pub const IXUSR = 0o100;
+    pub const IRWXU = 0o700;
+    pub const IRGRP = 0o040;
+    pub const IWGRP = 0o020;
+    pub const IXGRP = 0o010;
+    pub const IRWXG = 0o070;
+    pub const IROTH = 0o004;
+    pub const IWOTH = 0o002;
+    pub const IXOTH = 0o001;
+    pub const IRWXO = 0o007;
+
+    pub fn ISREG(m: mode_t) bool {
+        return m & IFMT == IFREG;
+    }
+
+    pub fn ISDIR(m: mode_t) bool {
+        return m & IFMT == IFDIR;
+    }
+
+    pub fn ISCHR(m: mode_t) bool {
+        return m & IFMT == IFCHR;
+    }
+
+    pub fn ISBLK(m: mode_t) bool {
+        return m & IFMT == IFBLK;
+    }
+
+    pub fn ISFIFO(m: mode_t) bool {
+        return m & IFMT == IFIFO;
+    }
+
+    pub fn ISLNK(m: mode_t) bool {
+        return m & IFMT == IFLNK;
+    }
+
+    pub fn ISSOCK(m: mode_t) bool {
+        return m & IFMT == IFSOCK;
+    }
+};
+
+pub const Stat = abi.Stat;
+pub const mode_t = u32;
+
+pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
+    const rc = syscall4(.fstatat64, @bitCast(@as(isize, AT.FDCWD)), @intFromPtr(pathname.ptr), @intFromPtr(statbuf), 0);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .FAULT => error.InvalidPointer,
+        .ACCES => error.PermissionDenied,
+        .NOENT => error.FileDoesNotExist,
+        .NOTDIR => error.InvalidPath,
+        .LOOP => error.TooManySymbolicLinks,
+        .NAMETOOLONG => error.NameTooLong,
+        .NODEV => error.InvalidDevice,
+        .ROFS => error.ReadOnly,
+        .IO => error.IO,
+        else => blk: {
+            log.warn("Unexpected errno for stat: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+// =============================================================================
+// time.h
+// =============================================================================
+
+pub const timespec = extern struct {
+    sec: isize,
+    nsec: isize,
+
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
+};
+
+pub const timeval = extern struct {
+    sec: isize,
+    usec: i64,
+};
+
+// =============================================================================
+// uio.h
+// =============================================================================
+
+pub const iovec = extern struct {
+    base: [*]u8,
+    len: usize,
+};
+
+// =============================================================================
+// unistd.h
+// =============================================================================
+
+pub const SYS = abi.SYS;
+pub const fd_t = c_int;
+pub const off_t = isize;
+
+pub inline fn check_errno(err: isize) ?Errno {
+    if (err < 0) {
+        return @enumFromInt(-err);
+    }
+    return null;
+}
+
+pub fn read(fd: fd_t, buf: []u8) Error![]u8 {
+    const rc = syscall3(.read, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
+    if (check_errno(rc)) |e| return switch (e) {
+        .INTR => error.Interrupt,
+        .AGAIN => error.NoData,
+        .BADF => error.InvalidFD,
+        .FAULT => error.InvalidPointer,
+        .INVAL => error.InvalidArg,
+        .IO => error.IO,
+        .ISDIR => error.UnexpectedDirFD,
+        else => blk: {
+            log.warn("Unexpected errno for read: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    if (rc == 0) {
+        return error.EndOfFile;
+    } else {
+        return buf[0..@intCast(rc)];
+    }
+}
+
+pub fn write(fd: fd_t, buf: []const u8) Error!usize {
+    const rc = syscall3(.write, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
+    if (check_errno(rc)) |e| return switch (e) {
+        .INTR => error.Interrupt,
+        .AGAIN => error.NoData,
+        .BADF => error.InvalidFD,
+        .FAULT => error.InvalidPointer,
+        .INVAL => error.InvalidArg,
+        .IO => error.IO,
+        .NOSPC => error.NoSpaceLeft,
+        .DQUOT => error.DiskQuotaExceeded,
+        else => blk: {
+            log.warn("Unexpected errno for write: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @intCast(rc);
+}
+
+pub fn close(fd: fd_t) Error!void {
+    const rc = syscall1(.close, @as(u32, @bitCast(fd)));
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .INTR => error.Interrupt,
+        .IO => error.IO,
+        else => blk: {
+            log.warn("Unexpected errno for close: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn pipe(fds: *[2]fd_t) Error!void {
+    const rc = syscall1(.pipe, @intFromPtr(fds));
+    if (check_errno(rc)) |e| return switch (e) {
+        .FAULT => error.InvalidPointer,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        else => blk: {
+            log.warn("Unexpected errno for pipe: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn pipe2(fds: *[2]fd_t, flags: O) Error!void {
+    const rc = syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
+    if (check_errno(rc)) |e| return switch (e) {
+        .FAULT => error.InvalidPointer,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .INVAL => error.InvalidArg,
+        .NOPKG => error.PackageNotCompiled,
+        else => blk: {
+            log.warn("Unexpected errno for pipe: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn ftruncate(fd: fd_t, length: usize) !void {
+    const rc = syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .INVAL => error.InvalidArg,
+        else => blk: {
+            log.warn("Unexpected errno for ftruncate: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn unlink(pathname: [:0]const u8) Error!void {
+    const rc = syscall1(.unlink, @intFromPtr(pathname.ptr));
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .PERM => error.UnlinkDirectoryAttempt,
+        .NOENT => error.FileDoesNotExist,
+        .BUSY => error.FileBusy,
+        .ROFS => error.ReadOnly,
+        .NOTDIR => error.InvalidPath,
+        .NAMETOOLONG => error.NameTooLong,
+        .LOOP => error.TooManySymbolicLinks,
+        .IO => error.IO,
+        else => blk: {
+            log.warn("Unexpected errno for unlink: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}

@@ -10,6 +10,7 @@ const math = core.math;
 const mem = core.mem;
 
 const linux = core.Os.linux;
+const posix = core.Os.posix;
 const input = linux.input;
 const pa = linux.pulse;
 const ioctl = linux.ioctl;
@@ -1313,7 +1314,7 @@ fn alloc_shm() ShmError!void {
     // TODO: Use mem_fd!
     const open_flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
     const mode: linux.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
-    const fd = linux.shm_open(name, open_flags, mode) catch |e| {
+    const fd = posix.shm_open(name, open_flags, mode) catch |e| {
         log.err("shm_open failed, error: {}", .{e});
         return error.ShmOpenFailed;
     };
@@ -1321,7 +1322,7 @@ fn alloc_shm() ShmError!void {
         log.err("close shm fd failed, error: {}", .{e});
     };
 
-    linux.shm_unlink(name) catch |e| {
+    posix.shm_unlink(name) catch |e| {
         log.err("shm_unlink failed, error: {}", .{e});
         return error.ShmUnlinkFailed;
     };
