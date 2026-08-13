@@ -2,7 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.@".linux.ioctl");
 
 const linux = @import("linux.zig");
-const abi = linux.abi;
+const IOC = linux.IOC;
 
 pub const IOCTLError = linux.Error || error{
     ArgIsInvalidPointer,
@@ -11,7 +11,7 @@ pub const IOCTLError = linux.Error || error{
 };
 
 pub fn ioctl(fd: linux.fd_t, request: usize, arg: usize) IOCTLError!usize {
-    const rc = abi.syscall3(.ioctl, @as(u32, @bitCast(fd)), request, arg);
+    const rc = linux.syscall3(.ioctl, @as(u32, @bitCast(fd)), request, arg);
     if (linux.check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .FAULT => error.ArgIsInvalidPointer,
@@ -30,8 +30,8 @@ pub fn ioctl(fd: linux.fd_t, request: usize, arg: usize) IOCTLError!usize {
 }
 
 pub const Request = packed struct {
-    pub const SizeInt = @Int(.unsigned, abi.IOC.SIZE);
-    pub const DirectionInt = @Int(.unsigned, abi.IOC.DIR);
+    pub const SizeInt = @Int(.unsigned, IOC.SIZE);
+    pub const DirectionInt = @Int(.unsigned, IOC.DIR);
 
     nr: u8,
     type: u8,
@@ -39,7 +39,7 @@ pub const Request = packed struct {
     dir: DirectionInt,
 };
 
-pub inline fn IOC(dir: Request.DirectionInt, @"type": u8, nr: u8, size: Request.SizeInt) u32 {
+pub inline fn _IOC(dir: Request.DirectionInt, @"type": u8, nr: u8, size: Request.SizeInt) u32 {
     const request = Request{
         .nr = nr,
         .type = @"type",
@@ -50,16 +50,16 @@ pub inline fn IOC(dir: Request.DirectionInt, @"type": u8, nr: u8, size: Request.
     return @bitCast(request);
 }
 
-pub inline fn IOR(@"type": u8, nr: u8, comptime T: type) u32 {
-    return IOC(abi.IOC.READ, @"type", nr, @sizeOf(T));
+pub inline fn _IOR(@"type": u8, nr: u8, comptime T: type) u32 {
+    return _IOC(IOC.READ, @"type", nr, @sizeOf(T));
 }
 
-pub inline fn IOW(@"type": u8, nr: u8, comptime T: type) u32 {
-    return IOC(abi.IOC.WRITE, @"type", nr, @sizeOf(T));
+pub inline fn _IOW(@"type": u8, nr: u8, comptime T: type) u32 {
+    return _IOC(IOC.WRITE, @"type", nr, @sizeOf(T));
 }
 
-pub inline fn IOWR(@"type": u8, nr: u8, comptime T: type) u32 {
-    return IOC(abi.IOC.READ | abi.IOC.WRITE, @"type", nr, @sizeOf(T));
+pub inline fn _IOWR(@"type": u8, nr: u8, comptime T: type) u32 {
+    return _IOC(IOC.READ | IOC.WRITE, @"type", nr, @sizeOf(T));
 }
 
 comptime {

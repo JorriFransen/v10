@@ -1,25 +1,26 @@
 const linux = @import("linux.zig");
 const ioctl = linux.ioctl;
+const IOC = linux.IOC;
 
 pub inline fn EVIOCGNAME(len: u32) u32 {
-    return ioctl.IOC(ioctl.bits.read, 'E', 0x06, len);
+    return ioctl._IOC(IOC.READ, 'E', 0x06, len);
 }
 pub inline fn EVIOCGPHYS(len: u32) u32 {
-    return ioctl.IOC(ioctl.bits.read, 'E', 0x07, len);
+    return ioctl._IOC(IOC.READ, 'E', 0x07, len);
 }
 pub inline fn EVIOCGUNIQ(len: u32) u32 {
-    return ioctl.IOC(ioctl.bits.read, 'E', 0x08, len);
+    return ioctl._IOC(IOC.READ, 'E', 0x08, len);
 }
 pub inline fn EVIOCGPROP(len: u32) u32 {
-    return ioctl.IOC(ioctl.bits.read, 'E', 0x09, len);
+    return ioctl._IOC(IOC.READ, 'E', 0x09, len);
 }
 pub inline fn EVIOCGBIT(ev: EventType, len: u32) u32 {
-    return ioctl.IOC(ioctl.bits.read, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
+    return ioctl._IOC(IOC.READ, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
 }
 pub inline fn EVIOCGABS(abs: Abs) u32 {
-    return ioctl.IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
+    return ioctl._IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
 }
-pub const EVIOCSFF = ioctl.IOW('E', 0x80, FfEffect);
+pub const EVIOCSFF = ioctl._IOW('E', 0x80, FfEffect);
 
 fn testBit(bit: usize, buf: []const c_ulong) bool {
     // NOTE: correct buffer size calculation

@@ -2,24 +2,33 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.linux);
 
-const arch = @import("arch").arch;
-pub const abi = @import("abi.zig").abi;
+const arch = @import("arch/arch.zig").arch;
+pub const abi = @import("abi/abi.zig").abi;
 pub const input = @import("input.zig");
 pub const ioctl = @import("ioctl.zig");
 
 pub const pulse = @import("pulse.zig");
 pub const libudev = @import("libudev.zig");
 
+pub const syscall0 = arch.syscall0;
+pub const syscall1 = arch.syscall1;
+pub const syscall2 = arch.syscall2;
+pub const syscall3 = arch.syscall3;
+pub const syscall4 = arch.syscall4;
+pub const syscall5 = arch.syscall5;
+pub const syscall6 = arch.syscall6;
+
+pub const page_size = std.heap.page_size_min;
+
 pub const fd_t = c_int;
 pub const off_t = isize;
 pub const mode_t = u32;
 
-pub const page_size = std.heap.page_size_min;
-
+pub const F = abi.F;
+pub const IOC = abi.IOC;
+pub const MAP = abi.MAP;
 pub const O = abi.O;
 pub const PROT = abi.PROT;
-pub const MAP = abi.MAP;
-pub const F = abi.F;
 pub const SO = abi.SO;
 pub const SOCK = abi.SOCK;
 
@@ -77,7 +86,7 @@ pub inline fn check_errno(err: isize) ?Errno {
 }
 
 pub fn read(fd: fd_t, buf: []u8) Error![]u8 {
-    const rc = abi.syscall3(.read, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
+    const rc = syscall3(.read, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
     if (check_errno(rc)) |e| return switch (e) {
         .INTR => error.Interrupt,
         .AGAIN => error.NoData,
@@ -100,7 +109,7 @@ pub fn read(fd: fd_t, buf: []u8) Error![]u8 {
 }
 
 pub fn write(fd: fd_t, buf: []const u8) Error!usize {
-    const rc = abi.syscall3(.write, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
+    const rc = syscall3(.write, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
     if (check_errno(rc)) |e| return switch (e) {
         .INTR => error.Interrupt,
         .AGAIN => error.NoData,
@@ -120,7 +129,7 @@ pub fn write(fd: fd_t, buf: []const u8) Error!usize {
 }
 
 pub fn open(path: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = abi.syscall3(.open, @intFromPtr(path), @as(u32, @bitCast(flags)), mode);
+    const rc = syscall3(.open, @intFromPtr(path), @as(u32, @bitCast(flags)), mode);
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
         .EXIST => error.FileExists,
@@ -141,7 +150,7 @@ pub fn open(path: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
 }
 
 pub fn close(fd: fd_t) Error!void {
-    const rc = abi.syscall1(.close, @as(u32, @bitCast(fd)));
+    const rc = syscall1(.close, @as(u32, @bitCast(fd)));
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .INTR => error.Interrupt,
@@ -154,7 +163,7 @@ pub fn close(fd: fd_t) Error!void {
 }
 
 pub fn poll(fds: []pollfd, timeout: c_int) Error!c_int {
-    const rc = abi.syscall3(.poll, @intFromPtr(fds.ptr), fds.len, @as(u32, @bitCast(timeout)));
+    const rc = syscall3(.poll, @intFromPtr(fds.ptr), fds.len, @as(u32, @bitCast(timeout)));
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .FAULT => error.InvalidPointer,
@@ -169,7 +178,7 @@ pub fn poll(fds: []pollfd, timeout: c_int) Error!c_int {
 }
 
 pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP, fd: fd_t, offset: off_t) Error![]align(page_size) u8 {
-    const rc = abi.syscall6(
+    const rc = syscall6(
         .mmap,
         @intFromPtr(addr),
         length,
@@ -194,7 +203,7 @@ pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP
 }
 
 pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) Error!void {
-    const rc = abi.syscall3(.mprotect, @intFromPtr(slice.ptr), slice.len, @as(u32, @bitCast(prot)));
+    const rc = syscall3(.mprotect, @intFromPtr(slice.ptr), slice.len, @as(u32, @bitCast(prot)));
     if (check_errno(rc)) |e| return switch (e) {
         .INVAL => error.InvalidArg,
         else => blk: {
@@ -205,7 +214,7 @@ pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) Error!void {
 }
 
 pub fn pipe(fds: *[2]fd_t) Error!void {
-    const rc = abi.syscall1(.pipe, @intFromPtr(fds));
+    const rc = syscall1(.pipe, @intFromPtr(fds));
     if (check_errno(rc)) |e| return switch (e) {
         .FAULT => error.InvalidPointer,
         .MFILE => error.TooManyProcessFiles,
@@ -218,7 +227,7 @@ pub fn pipe(fds: *[2]fd_t) Error!void {
 }
 
 pub fn munmap(memory: []align(page_size) const u8) Error!void {
-    const rc = abi.syscall2(.munmap, @intFromPtr(memory.ptr), memory.len);
+    const rc = syscall2(.munmap, @intFromPtr(memory.ptr), memory.len);
     if (check_errno(rc)) |e| return switch (e) {
         .INVAL => error.InvalidArg,
         else => blk: {
@@ -229,7 +238,7 @@ pub fn munmap(memory: []align(page_size) const u8) Error!void {
 }
 
 pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) Error!fd_t {
-    const rc = abi.syscall3(.socket, @as(u32, @bitCast(domain)), @"type", protocol);
+    const rc = syscall3(.socket, @as(u32, @bitCast(domain)), @"type", protocol);
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
         .AFNOSUPPORT => error.InvalidAddressFamily,
@@ -247,7 +256,7 @@ pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) Error!fd_t {
 }
 
 pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c_int {
-    const rc = abi.syscall3(.connect, @as(u32, @bitCast(sock_fd)), @intFromPtr(addr), addrlen);
+    const rc = syscall3(.connect, @as(u32, @bitCast(sock_fd)), @intFromPtr(addr), addrlen);
     if (check_errno(rc)) |e| return switch (e) {
         .PERM, .ACCES => error.PermissionDenied,
         .ADDRNOTAVAIL => error.AddressNotAvailable,
@@ -273,7 +282,7 @@ pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c
 }
 
 pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
-    const rc = abi.syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    const rc = syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .AGAIN => error.NoSpaceLeft, // send buffer full
@@ -292,7 +301,7 @@ pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
 }
 
 pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
-    const rc = abi.syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    const rc = syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .AGAIN, .TIMEDOUT => error.Timeout,
@@ -312,7 +321,7 @@ pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
 }
 
 pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
-    const rc = abi.syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
+    const rc = syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
     if (check_errno(rc)) |e| return switch (e) {
         else => blk: {
             log.warn("Unexpected errno for fcntl: {}", .{e});
@@ -323,7 +332,7 @@ pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
 }
 
 pub fn ftruncate(fd: fd_t, length: usize) !void {
-    const rc = abi.syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
+    const rc = syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .INVAL => error.InvalidArg,
@@ -335,7 +344,7 @@ pub fn ftruncate(fd: fd_t, length: usize) !void {
 }
 
 pub fn unlink(pathname: [:0]const u8) Error!void {
-    const rc = abi.syscall1(.unlink, @intFromPtr(pathname.ptr));
+    const rc = syscall1(.unlink, @intFromPtr(pathname.ptr));
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
         .PERM => error.UnlinkDirectoryAttempt,
@@ -354,7 +363,7 @@ pub fn unlink(pathname: [:0]const u8) Error!void {
 }
 
 pub fn openat(dir_fd: fd_t, filename: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = abi.syscall4(.openat, @as(u32, @bitCast(dir_fd)), @intFromPtr(filename), @as(u32, @bitCast(flags)), mode);
+    const rc = syscall4(.openat, @as(u32, @bitCast(dir_fd)), @intFromPtr(filename), @as(u32, @bitCast(flags)), mode);
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .ACCES => error.PermissionDenied,
@@ -375,7 +384,7 @@ pub fn openat(dir_fd: fd_t, filename: [*:0]const u8, flags: O, mode: mode_t) Err
 }
 
 pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
-    const rc = abi.syscall4(.fstatat64, @bitCast(@as(isize, AT.FDCWD)), @intFromPtr(pathname.ptr), @intFromPtr(statbuf), 0);
+    const rc = syscall4(.fstatat64, @bitCast(@as(isize, AT.FDCWD)), @intFromPtr(pathname.ptr), @intFromPtr(statbuf), 0);
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .FAULT => error.InvalidPointer,
@@ -395,7 +404,7 @@ pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
 }
 
 pub fn pipe2(fds: *[2]fd_t, flags: O) Error!void {
-    const rc = abi.syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
+    const rc = syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
     if (check_errno(rc)) |e| return switch (e) {
         .FAULT => error.InvalidPointer,
         .MFILE => error.TooManyProcessFiles,
