@@ -3,7 +3,7 @@ const log = std.log.scoped(.xinput);
 
 const win32 = @import("win32.zig");
 
-const DynLib = @import("../dynlib.zig");
+const DynLib = @import("../../dynlib.zig");
 
 const XInput = @This();
 

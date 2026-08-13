@@ -5,7 +5,7 @@ const assert = std.debug.assert;
 const builtin = @import("builtin");
 
 const core = @import("core");
-const linux = core.linux;
+const linux = core.Os.linux;
 
 const options = @import("options");
 

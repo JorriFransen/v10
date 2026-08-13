@@ -3,7 +3,7 @@ pub const log = std.log.scoped(.dsound);
 
 const win32 = @import("win32.zig");
 
-const DynLib = @import("../dynlib.zig");
+const DynLib = @import("../../dynlib.zig");
 
 pub const OK: u32 = 0x00000000;
 pub const ERR_OUTOFMEMORY: u32 = 0x00000007;

@@ -3,7 +3,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const arch = @import("../arch/arch.zig").arch;
+const arch = @import("../../arch/arch.zig").arch;
 
 pub const abi = switch (builtin.cpu.arch) {
     else => @compileError(std.fmt.comptimePrint("Unsupported platform: {}", .{builtin.cpu.arch})),

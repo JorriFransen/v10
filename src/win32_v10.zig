@@ -12,7 +12,7 @@ const arch = core.arch;
 const math = core.math;
 const mem = core.mem;
 
-const win32 = core.win32;
+const win32 = core.Os.win32;
 const xinput = win32.xinput;
 const dsound = win32.direct_sound;
 

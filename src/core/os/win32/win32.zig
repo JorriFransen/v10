@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const math = @import("../math.zig");
+const math = @import("../../math.zig");
 
 pub const xinput = @import("xinput.zig");
 pub const direct_sound = @import("direct_sound.zig");

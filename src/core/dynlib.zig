@@ -1,7 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const win32 = @import("win32/win32.zig");
+const os = @import("os/os.zig");
+const win32 = os.win32;
 
 const DynLib = @This();
 

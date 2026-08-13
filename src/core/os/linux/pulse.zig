@@ -3,7 +3,7 @@ pub const log = std.log.scoped(.pulse);
 
 const builtin = @import("builtin");
 
-const math = @import("../math.zig");
+const math = @import("../../math.zig");
 
 pub const Context = opaque {};
 pub const MainLoop = opaque {};

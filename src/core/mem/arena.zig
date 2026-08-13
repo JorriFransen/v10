@@ -4,8 +4,10 @@ const log = std.log.scoped(.arena);
 const builtin = @import("builtin");
 
 const mem = @import("mem.zig");
-const linux = @import("../linux/linux.zig");
-const win32 = @import("../win32/win32.zig");
+
+const os = @import("../os/os.zig");
+const linux = os.linux;
+const win32 = os.win32;
 
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;

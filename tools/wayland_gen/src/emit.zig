@@ -60,7 +60,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             \\const options = @import("options");
             \\
             \\const core = @import("core");
-            \\const linux = core.linux;
+            \\const linux = core.Os.linux;
             \\
             \\const client = @import("client.zig");
             \\const Display = client.Display;
@@ -306,7 +306,7 @@ const Writer = struct {
         if (this.is_core_prot) {
             try this.append(
                 \\const core = @import("core");
-                \\const linux = core.linux;
+                \\const linux = core.Os.linux;
                 \\
                 \\
             );

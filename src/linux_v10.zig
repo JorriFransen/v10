@@ -9,7 +9,7 @@ const arch = core.arch;
 const math = core.math;
 const mem = core.mem;
 
-const linux = core.linux;
+const linux = core.Os.linux;
 const input = linux.input;
 const pa = linux.pulse;
 const ioctl = linux.ioctl;
