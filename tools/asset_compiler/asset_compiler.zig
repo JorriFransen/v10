@@ -1,11 +1,11 @@
 const std = @import("std");
 const log = std.log.scoped(.asset_compiler);
-const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
 
 const core = @import("core");
+const assert = core.assert;
 const clip = core.clip;
 const mem = core.mem;
 

@@ -1,11 +1,11 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const log = std.log.scoped(.linux_v10);
 
 const builtin = @import("builtin");
 
 const core = @import("core");
 const arch = core.arch;
+const assert = core.assert;
 const math = core.math;
 const mem = core.mem;
 const pa = core.lib.pulse;

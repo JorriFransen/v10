@@ -1,7 +1,5 @@
-const std = @import("std");
-const assert = std.debug.assert;
-
 const core = @import("core");
+const assert = core.assert;
 const math = core.math;
 const V2 = math.V2;
 const V3 = math.V3;

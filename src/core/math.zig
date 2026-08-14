@@ -1,6 +1,6 @@
 const std = @import("std");
-const assert = std.debug.assert;
 
+const assert = @import("core.zig").assert;
 const meta = @import("meta.zig");
 
 pub const pi = std.math.pi;

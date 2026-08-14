@@ -1,10 +1,9 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.xml);
 
+const assert = @import("core.zig").assert;
 const mem = @import("mem/mem.zig");
-
-const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
 
 pub const Reader = struct {
     reader: *std.Io.Reader,

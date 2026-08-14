@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const core = @import("core");
+const assert = core.assert;
 const clip = core.clip;
 const mem = core.mem;
 
@@ -216,7 +217,7 @@ fn run(context: *Context) !void {
         try writer.interface.writeAll(root_template);
 
         // Embedfile seems to add a newline?
-        std.debug.assert(root_template[root_template.len - 1] == '\n');
+        assert(root_template[root_template.len - 1] == '\n');
 
         for (protocols.items) |*protocol| {
             try writer.interface.print("pub const {s} = @import(\"{s}.zig\");\n", .{

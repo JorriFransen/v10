@@ -1,10 +1,11 @@
 const std = @import("std");
 const log = std.log.scoped(.@"wayland-client");
-const assert = std.debug.assert;
 
 const builtin = @import("builtin");
 
-const linux = @import("core").os.linux;
+const core = @import("core");
+const assert = core.assert;
+const linux = core.os.linux;
 
 const options = @import("options");
 

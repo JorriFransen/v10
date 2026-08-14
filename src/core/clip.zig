@@ -1,10 +1,10 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.cli_parse);
+
 const builtin = @import("builtin");
 
-const Allocator = std.mem.Allocator;
-
-const assert = std.debug.assert;
+const assert = @import("core.zig").assert;
 
 pub const max_name_length = 20;
 const max_type_length = 10;

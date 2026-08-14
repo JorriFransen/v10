@@ -1,5 +1,4 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const log = std.log.scoped(.win32_v10);
 const Allocator = std.mem.Allocator;
 
@@ -8,6 +7,7 @@ const builtin = @import("builtin");
 const options = @import("options");
 
 const core = @import("core");
+const assert = core.assert;
 const arch = core.arch;
 const dsound = core.lib.dsound;
 const math = core.math;

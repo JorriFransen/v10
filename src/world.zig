@@ -1,7 +1,5 @@
-const std = @import("std");
-const assert = std.debug.assert;
-
 const core = @import("core");
+const assert = core.assert;
 const intrinsics = core.intrinsics;
 
 const math = core.math;

@@ -1,7 +1,5 @@
-const std = @import("std");
-const assert = std.debug.assert;
-
 const core = @import("core");
+const assert = core.assert;
 const math = core.math;
 const V3 = math.V3;
 const v3 = V3.init;
@@ -90,7 +88,7 @@ pub fn begin(sim_arena: *MemoryArena, game_state: *GameState, region_origin: Wor
             .updateable_bounds = updatable_bounds,
             .max_entity_count = entities_per_region,
             .entities = sim_arena.pushArray(entities_per_region, Entity),
-            .sim_entity_hash = @splat(std.mem.zeroes(EntityHash)),
+            .sim_entity_hash = @splat(.{}),
         };
         sim_region.entities.len = 0;
     }

@@ -1,5 +1,4 @@
-const std = @import("std");
-const assert = std.debug.assert;
+const assert = @import("core").assert;
 
 const common = @import("v10_common");
 

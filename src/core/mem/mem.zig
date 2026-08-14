@@ -1,10 +1,9 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
-const assert = std.debug.assert;
+const assert = @import("../core.zig").assert;
 
-const arena = @import("arena.zig");
-pub const Arena = arena.Arena;
-
+pub const Arena = @import("arena.zig").Arena;
 pub const TempArena = @import("temp_arena.zig");
 pub const TempStringBuilder = TempArena.StringBuilder;
 
@@ -17,8 +16,6 @@ pub threadlocal var temp_initialized = false;
 threadlocal var temp_arena_a: Arena = undefined;
 threadlocal var temp_arena_b: Arena = undefined;
 threadlocal var temp_arena_next: *Arena = undefined;
-
-const Allocator = std.mem.Allocator;
 
 pub fn init() void {
     initTemp();

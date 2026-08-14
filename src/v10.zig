@@ -1,8 +1,8 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const log = std.log.scoped(.v10);
 
 const core = @import("core");
+const assert = core.assert;
 const intrinsics = core.intrinsics;
 const mem = core.mem;
 

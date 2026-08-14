@@ -1,8 +1,9 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const log = std.log.scoped(.linux);
 
 const arch = @import("arch/arch.zig").arch;
+const assert = @import("../../core.zig").assert;
+
 pub const abi = @import("abi/abi.zig").abi;
 
 pub const syscall0 = arch.syscall0;
@@ -1666,8 +1667,8 @@ pub const sockaddr = extern struct {
         padding: [SS_MAXSIZE - @sizeOf(sa_family_t)]u8 = undefined,
 
         comptime {
-            std.debug.assert(@sizeOf(storage) == SS_MAXSIZE);
-            std.debug.assert(@alignOf(storage) == 8);
+            assert(@sizeOf(storage) == SS_MAXSIZE);
+            assert(@alignOf(storage) == 8);
         }
     };
 

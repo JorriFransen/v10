@@ -1,8 +1,8 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const core = @import("core");
+const assert = core.assert;
 const mem = core.mem;
 
 const Context = @import("wayland_generator.zig").Context;

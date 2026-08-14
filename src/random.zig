@@ -1,7 +1,6 @@
-const std = @import("std");
-const assert = std.debug.assert;
-
-const math = @import("core").math;
+const core = @import("core");
+const assert = core.assert;
+const math = core.math;
 
 pub const max_number = 0x05f5c21f;
 pub const min_number = 0x000025a0;

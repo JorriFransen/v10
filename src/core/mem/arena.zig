@@ -5,13 +5,11 @@ const log = std.log.scoped(.arena);
 
 const builtin = @import("builtin");
 
+const assert = @import("../core.zig").assert;
 const mem = @import("mem.zig");
-
 const os = @import("../os/os.zig");
 const linux = os.linux;
 const win32 = os.win32;
-
-const assert = std.debug.assert;
 
 const page_size_min = std.heap.page_size_min;
 pub const max_cap: usize = mem.GiB * 4;

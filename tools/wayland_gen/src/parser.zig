@@ -1,7 +1,7 @@
 pub const std = @import("std");
-const assert = std.debug.assert;
 
 const core = @import("core");
+const assert = core.assert;
 const mem = core.mem;
 const xml = core.xml;
 

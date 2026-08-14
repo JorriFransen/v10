@@ -6,13 +6,12 @@ const builtin = @import("builtin");
 const options = @import("options");
 
 const core = @import("core");
+const assert = core.assert;
 const DynLib = core.DynLib;
 const TimeParts = core.TimeParts;
 const math = core.math;
 const mem = core.mem;
 const win32 = core.os.win32;
-
-const assert = std.debug.assert;
 
 pub const log_scope_levels = [_]std.log.ScopeLevel{
     .{ .scope = .asset_compiler, .level = if (options.tools_optimize == .Debug) .debug else .info },

@@ -1,7 +1,7 @@
 const std = @import("std");
-const assert = std.debug.assert;
 
 const core = @import("core");
+const assert = core.assert;
 const mem = core.mem;
 
 const options = @import("options");
@@ -54,12 +54,11 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
         writer.file_writer = &file_writer.interface;
 
         try writer.append(
-            \\const std = @import("std");
-            \\const assert = std.debug.assert;
-            \\
             \\const options = @import("options");
             \\
-            \\const linux = @import("core").os.linux;
+            \\const core = @import("core");
+            \\const assert = core.assert;
+            \\const linux = core.os.linux;
             \\
             \\const client = @import("client.zig");
             \\const Display = client.Display;
@@ -288,9 +287,11 @@ const Writer = struct {
     write_buf: [4096]u8 = undefined,
 
     pub fn emitProtocol(this: *const Writer) Error!void {
+        if (this.is_core_prot) {
+            try this.append("const std = @import(\"std\");\n\n");
+        }
+
         try this.append(
-            \\const std = @import("std");
-            \\
             \\const client = @import("client.zig");
             \\pub const Object = client.Object;
             \\pub const RegisteredListener = client.RegisteredListener;
@@ -303,12 +304,7 @@ const Writer = struct {
         );
 
         if (this.is_core_prot) {
-            try this.append(
-                \\
-                \\const linux = @import("core").os.linux;
-                \\
-                \\
-            );
+            try this.append("\nconst linux = @import(\"core\").os.linux;\n\n");
         } else {
             var it = this.protocol.protocol_imports.iterator();
             while (it.next()) |entry| {
