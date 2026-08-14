@@ -247,7 +247,7 @@ pub fn load() void {
 
             if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
                 @field(@This(), decl.name) = l.lookup(decl_type, "udev_" ++ decl.name) orelse {
-                    log.warn("Failed to load 'udev_{s}'", .{decl.name});
+                    log.err("Failed to load 'udev_{s}'", .{decl.name});
                     loaded = false;
                     break;
                 };
@@ -258,7 +258,7 @@ pub fn load() void {
     }
 
     if (!loaded) {
-        log.warn("Udev not available, loading stubs", .{});
+        log.err("Udev not available, loading stubs", .{});
         loadStubs();
     }
 }

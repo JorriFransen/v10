@@ -8,17 +8,15 @@ const core = @import("core");
 const arch = core.arch;
 const math = core.math;
 const mem = core.mem;
-const pa = core.lib.linux.pulse;
+const pa = core.lib.pulse;
 const posix = core.os.posix;
-const udev = core.lib.linux.udev;
+const udev = core.lib.udev;
 
 const linux = core.os.linux;
 const InputEvent = linux.InputEvent;
 const Key = linux.Key;
 const Abs = linux.Abs;
 const errno = linux.errno;
-
-const ioctl = linux.ioctl;
 
 const options = @import("options");
 const linux_options = @import("linux_options");
@@ -1256,7 +1254,7 @@ const Joystick = struct {
                 .replay = .{ .length = 0xffff },
             };
 
-            const id = ioctl.ioctl(this.fd, linux.EVIOCSFF, @intFromPtr(&rumble_event));
+            const id = linux.ioctl(this.fd, linux.EVIOCSFF, @intFromPtr(&rumble_event));
             assert(id >= 0);
             this.rumble_event_id = @intCast(id);
 
@@ -1983,7 +1981,7 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
             .default, .xbox => {
                 inline for (std.meta.fields(linux.Abs)) |axis| {
                     var abs_info: linux.AbsInfo = undefined;
-                    if (ioctl.ioctl(fd, linux.EVIOCGABS(@enumFromInt(axis.value)), @intFromPtr(&abs_info))) |_| {
+                    if (linux.ioctl(fd, linux.EVIOCGABS(@enumFromInt(axis.value)), @intFromPtr(&abs_info))) |_| {
                         if (abs_info.maximum > abs_info.minimum) {
                             if (Joystick.absEventCodeToAxisIndex(kind, axis.value)) |axis_idx| {
                                 joystick.axis_meta[axis_idx] = .{

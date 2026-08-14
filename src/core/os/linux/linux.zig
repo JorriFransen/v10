@@ -4,7 +4,6 @@ const log = std.log.scoped(.linux);
 
 const arch = @import("arch/arch.zig").arch;
 pub const abi = @import("abi/abi.zig").abi;
-pub const ioctl = @import("ioctl.zig");
 
 pub const syscall0 = arch.syscall0;
 pub const syscall1 = arch.syscall1;
@@ -525,7 +524,7 @@ pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
 pub fn EVIOCGBIT_bitTest(bit: usize, buf: []const c_ulong) bool {
     // NOTE: correct buffer size calculation
     const bits = @bitSizeOf(c_ulong);
-    // var abs_bit_buffer: [((input.Abs.CNT + bits - 1) / bits) ]c_ulong = undefined;
+    // var abs_bit_buffer: [((Abs.CNT + bits - 1) / bits) ]c_ulong = undefined;
 
     return ((buf[bit / bits] >> @as(u6, @intCast(bit % bits))) & 1) != 0;
 }
@@ -1366,6 +1365,40 @@ pub const Key = enum(u16) {
 
     pub const CNT: u16 = (.MAX + 1);
 };
+
+// =============================================================================
+// ioctl.h
+// =============================================================================
+
+pub const _IOC = abi._IOC;
+pub const _IOR = abi._IOR;
+pub const _IOW = abi._IOW;
+pub const _IOWR = abi._IOWR;
+
+pub const IOCTLError = Error || error{
+    ArgIsInvalidPointer,
+    InvalidRequestOrArg,
+    InvalidFDForRequest,
+};
+
+pub fn ioctl(fd: fd_t, request: usize, arg: usize) IOCTLError!usize {
+    const rc = syscall3(.ioctl, @as(u32, @bitCast(fd)), request, arg);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .FAULT => error.ArgIsInvalidPointer,
+        .INVAL => error.InvalidRequestOrArg,
+        .IO => error.IO,
+        .NOTTY => error.InvalidFDForRequest,
+        .INTR => error.Interrupt,
+        .ACCES, .PERM => error.PermissionDenied,
+        else => blk: {
+            log.warn("Unexpected errno for ioctl: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @intCast(rc);
+}
 
 // =============================================================================
 // ioctls.h

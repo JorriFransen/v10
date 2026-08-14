@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const core = @import("core");
+const assert = core.assert;
 const intrinsics = core.intrinsics;
 
 const math = core.math;
@@ -595,13 +596,5 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
 
         dest_row = intrinsics.ptrOffset(dest_row, buffer.pitch);
         source_row = intrinsics.ptrOffset(source_row, bitmap.pitch);
-    }
-}
-
-pub fn assert(cond: bool) void {
-    if (!cond) {
-        @branchHint(.cold);
-        std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
-        @breakpoint();
     }
 }

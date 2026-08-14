@@ -1,5 +1,7 @@
 const linux = @import("../linux.zig");
 
+const assert = @import("../../../core.zig").assert;
+
 // =============================================================================
 // fcntl.h
 // =============================================================================
@@ -37,30 +39,30 @@ const AbsInfo = linux.AbsInfo;
 const FfEffect = linux.FfEffect;
 
 pub inline fn EVIOCGNAME(len: u32) u32 {
-    return linux.ioctl._IOC(IOC.READ, 'E', 0x06, len);
+    return _IOC(IOC.READ, 'E', 0x06, len);
 }
 
 pub inline fn EVIOCGPHYS(len: u32) u32 {
-    return linux.ioctl._IOC(IOC.READ, 'E', 0x07, len);
+    return _IOC(IOC.READ, 'E', 0x07, len);
 }
 
 pub inline fn EVIOCGUNIQ(len: u32) u32 {
-    return linux.ioctl._IOC(IOC.READ, 'E', 0x08, len);
+    return _IOC(IOC.READ, 'E', 0x08, len);
 }
 
 pub inline fn EVIOCGPROP(len: u32) u32 {
-    return linux.ioctl._IOC(IOC.READ, 'E', 0x09, len);
+    return _IOC(IOC.READ, 'E', 0x09, len);
 }
 
 pub inline fn EVIOCGBIT(ev: EventType, len: u32) u32 {
-    return linux.ioctl._IOC(IOC.READ, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
+    return _IOC(IOC.READ, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
 }
 
 pub inline fn EVIOCGABS(abs: Abs) u32 {
-    return linux.ioctl._IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
+    return _IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
 }
 
-pub const EVIOCSFF = linux.ioctl._IOW('E', 0x80, FfEffect);
+pub const EVIOCSFF = _IOW('E', 0x80, FfEffect);
 
 // =============================================================================
 // input-event-codes.h
@@ -68,6 +70,47 @@ pub const EVIOCSFF = linux.ioctl._IOW('E', 0x80, FfEffect);
 
 const EventType = linux.EventType;
 const Abs = linux.Abs;
+
+// =============================================================================
+// ioctl.h
+// =============================================================================
+
+const Request = packed struct {
+    pub const SizeInt = @Int(.unsigned, IOC.SIZE);
+    pub const DirectionInt = @Int(.unsigned, IOC.DIR);
+
+    nr: u8,
+    type: u8,
+    size: SizeInt,
+    dir: DirectionInt,
+};
+
+comptime {
+    assert(@bitSizeOf(Request) == 32);
+}
+
+pub inline fn _IOC(dir: Request.DirectionInt, @"type": u8, nr: u8, size: Request.SizeInt) u32 {
+    const request = Request{
+        .nr = nr,
+        .type = @"type",
+        .size = size,
+        .dir = dir,
+    };
+
+    return @bitCast(request);
+}
+
+pub inline fn _IOR(@"type": u8, nr: u8, comptime T: type) u32 {
+    return _IOC(IOC.READ, @"type", nr, @sizeOf(T));
+}
+
+pub inline fn _IOW(@"type": u8, nr: u8, comptime T: type) u32 {
+    return _IOC(IOC.WRITE, @"type", nr, @sizeOf(T));
+}
+
+pub inline fn _IOWR(@"type": u8, nr: u8, comptime T: type) u32 {
+    return _IOC(IOC.READ | IOC.WRITE, @"type", nr, @sizeOf(T));
+}
 
 // =============================================================================
 // ioctls.h

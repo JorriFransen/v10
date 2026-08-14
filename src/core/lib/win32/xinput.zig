@@ -98,14 +98,12 @@ pub fn load() void {
     }
 
     if (!loaded) {
-        log.debug("Xinput loading failed, returning stubs", .{});
+        log.err("Xinput loading failed, loading stubs", .{});
         loadStubs();
     }
 }
 
 fn loadStubs() void {
-    log.warn("XInput not found, loading stubs", .{});
-
     const struct_info = @typeInfo(XInput).@"struct";
     inline for (struct_info.decls) |decl| {
         const decl_type = @TypeOf(@field(XInput, decl.name));

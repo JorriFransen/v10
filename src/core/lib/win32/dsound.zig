@@ -262,7 +262,7 @@ pub var DirectSoundCreate: *const FN_DirectSoundCreate = undefined;
 
 pub fn load() void {
     var lib = DynLib.open("dsound.dll") catch {
-        log.warn("DSound not found, loading stubs", .{});
+        log.err("DSound not found, loading stubs", .{});
         loadStubs();
         return;
     };
@@ -275,7 +275,7 @@ pub fn load() void {
         const decl_info = @typeInfo(decl_type);
         if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
             @field(@This(), decl.name) = lib.lookup(decl_type, decl.name) orelse {
-                log.warn("Error loading dsound, loading stubs", .{});
+                log.err("Error loading dsound, loading stubs", .{});
                 if (@import("builtin").mode == .Debug) @panic("Error loading dsound!");
                 loadStubs();
                 break;

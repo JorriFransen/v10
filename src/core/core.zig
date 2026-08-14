@@ -59,6 +59,21 @@ pub fn defaultLogFileTerminal(
     try t.setColor(.reset);
     try t.writer.print(format ++ "\n", args);
 }
+
+pub fn assert(cond: bool) void {
+    if (@inComptime()) {
+        if (!cond) {
+            @trap();
+        }
+    } else {
+        if (!cond) {
+            @branchHint(.cold);
+            std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
+            @breakpoint();
+        }
+    }
+}
+
 test {
     const t = std.testing;
 

@@ -506,7 +506,7 @@ pub fn load() void {
             }
         }
     } else |_| {
-        log.warn("Failed to open: '{s}'", .{lib_name});
+        log.err("Failed to open: '{s}'", .{lib_name});
         load_stubs = true;
     }
 

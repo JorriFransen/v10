@@ -22,6 +22,15 @@ pub const EVIOCGABS = generic.EVIOCGABS;
 pub const EVIOCSFF = generic.EVIOCSFF;
 
 // =============================================================================
+// ioctl.h
+// =============================================================================
+
+pub const _IOC = generic._IOC;
+pub const _IOR = generic._IOR;
+pub const _IOW = generic._IOW;
+pub const _IOWR = generic._IOWR;
+
+// =============================================================================
 // ioctls.h
 // =============================================================================
 
