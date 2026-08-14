@@ -6,16 +6,19 @@ const builtin = @import("builtin");
 
 const core = @import("core");
 const arch = core.arch;
-const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
 const pa = core.lib.linux.pulse;
 const posix = core.os.posix;
 const udev = core.lib.linux.udev;
 
-const input = linux.input;
-const ioctl = linux.ioctl;
+const linux = core.os.linux;
+const InputEvent = linux.InputEvent;
+const Key = linux.Key;
+const Abs = linux.Abs;
 const errno = linux.errno;
+
+const ioctl = linux.ioctl;
 
 const options = @import("options");
 const linux_options = @import("linux_options");
@@ -36,10 +39,6 @@ const ControllerInput = common.ControllerInput;
 const ButtonState = common.ButtonState;
 const ThreadContext = common.ThreadContext;
 const AudioBuffer = common.AudioBuffer;
-
-const InputEvent = input.InputEvent;
-const Key = input.Key;
-const Abs = input.Abs;
 
 pub const std_options: std.Options = blk: {
     var o = core.default_std_options;
@@ -1248,7 +1247,7 @@ const Joystick = struct {
             this.rumble_strong = strong;
             this.rumble_weak = weak;
 
-            const rumble_event = input.FfEffect{
+            const rumble_event = linux.FfEffect{
                 .type = .RUMBLE,
                 .id = this.rumble_event_id,
                 // NOTE: These magnitudes are treated as i16 values by the xpad driver!
@@ -1257,7 +1256,7 @@ const Joystick = struct {
                 .replay = .{ .length = 0xffff },
             };
 
-            const id = ioctl.ioctl(this.fd, input.EVIOCSFF, @intFromPtr(&rumble_event));
+            const id = ioctl.ioctl(this.fd, linux.EVIOCSFF, @intFromPtr(&rumble_event));
             assert(id >= 0);
             this.rumble_event_id = @intCast(id);
 
@@ -1760,7 +1759,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32
     _ = serial;
 
     // TODO: Do this via the keymap with xkb!
-    const key: input.Key = @enumFromInt(rawkey);
+    const key: linux.Key = @enumFromInt(rawkey);
     const was_down = state != .pressed;
     const is_down = state == .pressed or state == .repeated;
 
@@ -1863,7 +1862,7 @@ fn handleWlMouseMotion(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, surfa
 fn handleWlMouseButton(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) void {
     _ = .{ data, pointer, serial, time };
 
-    const button: input.Key = @enumFromInt(raw_button);
+    const button: linux.Key = @enumFromInt(raw_button);
     const was_down = state == .released;
     const is_down = state == .pressed;
 
@@ -1982,9 +1981,9 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
 
         switch (kind) {
             .default, .xbox => {
-                inline for (std.meta.fields(input.Abs)) |axis| {
-                    var abs_info: input.AbsInfo = undefined;
-                    if (ioctl.ioctl(fd, input.EVIOCGABS(@enumFromInt(axis.value)), @intFromPtr(&abs_info))) |_| {
+                inline for (std.meta.fields(linux.Abs)) |axis| {
+                    var abs_info: linux.AbsInfo = undefined;
+                    if (ioctl.ioctl(fd, linux.EVIOCGABS(@enumFromInt(axis.value)), @intFromPtr(&abs_info))) |_| {
                         if (abs_info.maximum > abs_info.minimum) {
                             if (Joystick.absEventCodeToAxisIndex(kind, axis.value)) |axis_idx| {
                                 joystick.axis_meta[axis_idx] = .{

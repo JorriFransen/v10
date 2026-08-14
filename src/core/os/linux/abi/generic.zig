@@ -30,6 +30,46 @@ pub const O = packed struct(u32) {
 };
 
 // =============================================================================
+// input.h
+// =============================================================================
+
+const AbsInfo = linux.AbsInfo;
+const FfEffect = linux.FfEffect;
+
+pub inline fn EVIOCGNAME(len: u32) u32 {
+    return linux.ioctl._IOC(IOC.READ, 'E', 0x06, len);
+}
+
+pub inline fn EVIOCGPHYS(len: u32) u32 {
+    return linux.ioctl._IOC(IOC.READ, 'E', 0x07, len);
+}
+
+pub inline fn EVIOCGUNIQ(len: u32) u32 {
+    return linux.ioctl._IOC(IOC.READ, 'E', 0x08, len);
+}
+
+pub inline fn EVIOCGPROP(len: u32) u32 {
+    return linux.ioctl._IOC(IOC.READ, 'E', 0x09, len);
+}
+
+pub inline fn EVIOCGBIT(ev: EventType, len: u32) u32 {
+    return linux.ioctl._IOC(IOC.READ, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
+}
+
+pub inline fn EVIOCGABS(abs: Abs) u32 {
+    return linux.ioctl._IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
+}
+
+pub const EVIOCSFF = linux.ioctl._IOW('E', 0x80, FfEffect);
+
+// =============================================================================
+// input-event-codes.h
+// =============================================================================
+
+const EventType = linux.EventType;
+const Abs = linux.Abs;
+
+// =============================================================================
 // ioctls.h
 // =============================================================================
 
