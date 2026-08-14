@@ -7,9 +7,6 @@ pub const abi = @import("abi/abi.zig").abi;
 pub const input = @import("input.zig");
 pub const ioctl = @import("ioctl.zig");
 
-pub const pulse = @import("pulse.zig");
-pub const libudev = @import("libudev.zig");
-
 pub const syscall0 = arch.syscall0;
 pub const syscall1 = arch.syscall1;
 pub const syscall2 = arch.syscall2;

@@ -1,5 +1,3 @@
-// !NOTE: x86_64 only currently
-
 const std = @import("std");
 const builtin = @import("builtin");
 

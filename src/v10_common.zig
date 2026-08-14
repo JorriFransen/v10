@@ -10,7 +10,7 @@ const DynLib = core.DynLib;
 const TimeParts = core.TimeParts;
 const math = core.math;
 const mem = core.mem;
-const win32 = core.Os.win32;
+const win32 = core.os.win32;
 
 const assert = std.debug.assert;
 

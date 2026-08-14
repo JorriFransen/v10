@@ -1,8 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.xinput);
 
-const win32 = @import("win32.zig");
-
+const win32 = @import("../../os/os.zig").win32;
 const DynLib = @import("../../dynlib.zig");
 
 const XInput = @This();

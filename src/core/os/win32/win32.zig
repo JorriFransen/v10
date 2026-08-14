@@ -2,9 +2,6 @@ const std = @import("std");
 
 const math = @import("../../math.zig");
 
-pub const xinput = @import("xinput.zig");
-pub const direct_sound = @import("direct_sound.zig");
-
 const zig_win32 = std.os.windows;
 
 fn cLiteral(comptime T: type, value: comptime_int) T {

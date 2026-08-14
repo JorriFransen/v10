@@ -3,7 +3,6 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const mem = @import("mem.zig");
-
 const Arena = @import("arena.zig").Arena;
 
 const TempArena = @This();

@@ -6,20 +6,19 @@ const builtin = @import("builtin");
 
 const core = @import("core");
 const arch = core.arch;
+const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
+const pa = core.lib.linux.pulse;
+const posix = core.os.posix;
+const udev = core.lib.linux.udev;
 
-const linux = core.Os.linux;
-const posix = core.Os.posix;
 const input = linux.input;
-const pa = linux.pulse;
 const ioctl = linux.ioctl;
-const udev = linux.libudev;
 const errno = linux.errno;
 
 const options = @import("options");
 const linux_options = @import("linux_options");
-const DynLib = @import("dynlib");
 
 const common = @import("v10_common");
 

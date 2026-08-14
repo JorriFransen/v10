@@ -9,12 +9,11 @@ const options = @import("options");
 
 const core = @import("core");
 const arch = core.arch;
+const dsound = core.lib.win32.dsound;
 const math = core.math;
 const mem = core.mem;
-
-const win32 = core.Os.win32;
-const xinput = win32.xinput;
-const dsound = win32.direct_sound;
+const win32 = core.os.win32;
+const xinput = core.lib.win32.xinput;
 
 const common = @import("v10_common");
 

@@ -1,14 +1,14 @@
 pub const DynLib = @import("dynlib.zig");
-pub const Os = @import("os/os.zig");
-pub const Arch = @import("arch/arch.zig");
 pub const TimeParts = @import("timeparts.zig").TimeParts;
 
-pub const arch = Arch.arch;
+pub const arch = @import("arch/arch.zig").arch;
 pub const clip = @import("clip.zig");
 pub const intrinsics = @import("intrinsics.zig");
+pub const lib = @import("lib/lib.zig");
 pub const math = @import("math.zig");
 pub const mem = @import("mem/mem.zig");
 pub const meta = @import("meta.zig");
+pub const os = @import("os/os.zig");
 pub const xml = @import("xml.zig");
 
 const std = @import("std");
