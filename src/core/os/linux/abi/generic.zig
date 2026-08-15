@@ -59,7 +59,7 @@ pub inline fn EVIOCGBIT(ev: EventType, len: u32) u32 {
 }
 
 pub inline fn EVIOCGABS(abs: Abs) u32 {
-    return _IOR('E', 0x40 + @as(u8, @intFromEnum(abs)), AbsInfo);
+    return _IOR('E', 0x40 + @intFromEnum(abs), AbsInfo);
 }
 
 pub const EVIOCSFF = _IOW('E', 0x80, FfEffect);

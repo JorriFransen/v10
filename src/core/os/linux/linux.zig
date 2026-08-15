@@ -673,7 +673,7 @@ pub const EventType = enum(u16) {
     pub const CNT: u16 = .MAX + 1;
 };
 
-pub const Abs = enum(u16) {
+pub const Abs = enum(u8) {
     X = 0x00,
     Y = 0x01,
     Z = 0x02,

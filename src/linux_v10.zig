@@ -67,7 +67,7 @@ var running: bool = false;
 var pause: bool = false;
 var wld: WlData = .{};
 
-var joysticks: [PollFdSlot.joystick_count]Joystick = @splat(.{ .fd = -1, .kind = undefined });
+var joysticks: [PollFdSlot.joystick_count]Joystick = @splat(.{ .fd = -1, .kind = undefined, .map = undefined });
 
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
 var poll_fds: [poll_fd_count]linux.pollfd = @splat(.{
@@ -1057,6 +1057,7 @@ const Joystick = struct {
     fd: linux.fd_t,
     active: bool = false,
     kind: Kind,
+    map: *const Map,
 
     rumble_strong: u16 = 0,
     rumble_weak: u16 = 0,
@@ -1082,15 +1083,15 @@ const Joystick = struct {
     };
 
     const axis_count = @typeInfo(Axis).@"enum".fields.len;
-    const Axis = enum(usize) {
-        left_x = 0,
-        left_y = 1,
-        left_z = 2,
-        right_x = 3,
-        right_y = 4,
-        right_z = 5,
-        hat_x = 6,
-        hat_y = 7,
+    const Axis = enum {
+        left_x,
+        left_y,
+        left_z,
+        right_x,
+        right_y,
+        right_z,
+        dpad_x,
+        dpad_y,
     };
 
     pub const button_count = @typeInfo(Button).@"enum".fields.len;
@@ -1113,6 +1114,44 @@ const Joystick = struct {
         mode,
     };
 
+    pub const AxisMap = std.enums.EnumFieldStruct(Axis, Abs, null);
+    pub const ButtonMap = std.enums.EnumFieldStruct(Button, Key, null);
+    pub const Map = struct {
+        axis: AxisMap,
+        buttons: ButtonMap,
+    };
+
+    pub const default_map = xbox_map;
+    pub const xbox_map: Map = .{
+        .axis = .{
+            .left_x = .X,
+            .left_y = .Y,
+            .left_z = .Z,
+            .right_x = .RX,
+            .right_y = .RY,
+            .right_z = .RZ,
+            .dpad_x = .HAT0X,
+            .dpad_y = .HAT0Y,
+        },
+        .buttons = .{
+            .north = .BTN_Y,
+            .east = .BTN_B,
+            .south = .BTN_A,
+            .west = .BTN_X,
+            .thumb_left = .BTN_THUMBL,
+            .thumb_right = .BTN_THUMBR,
+            .shoulder_left = .BTN_TL,
+            .shoulder_right = .BTN_TR,
+            .select = .BTN_SELECT,
+            .start = .BTN_START,
+            .mode = .BTN_MODE,
+            .dpad_up = .RESERVED,
+            .dpad_right = .RESERVED,
+            .dpad_down = .RESERVED,
+            .dpad_left = .RESERVED,
+        },
+    };
+
     pub inline fn getButtonState(this: *const Joystick, button: Button) bool {
         return this.buttons.isSet(@intFromEnum(button));
     }
@@ -1121,118 +1160,75 @@ const Joystick = struct {
         this.buttons.setValue(@intFromEnum(button), state);
     }
 
-    fn absEventCodeToAxisIndex(kind: Kind, code: u16) ?usize {
-        switch (kind) {
-            .default,
-            .xbox,
-            => {
-                const abs: Abs = @enumFromInt(code);
-                const axis_opt: ?Axis = switch (abs) {
-                    else => {
-                        log.warn("Unhandled {s} controller event: {s}", .{ @tagName(kind), @tagName(abs) });
-                        return null;
-                    },
-
-                    Abs.X => .left_x,
-                    Abs.Y => .left_y,
-                    Abs.Z => .left_z,
-                    Abs.RX => .right_x,
-                    Abs.RY => .right_y,
-                    Abs.RZ => .right_z,
-
-                    Abs.HAT0X => .hat_x,
-                    Abs.HAT0Y => .hat_y,
-                };
-
-                if (axis_opt) |axis| {
-                    return @intFromEnum(axis);
-                } else return null;
-            },
-        }
-    }
-
-    fn keyEventCodeToButtonIndex(kind: Kind, code: u16) ?usize {
-        switch (kind) {
-            .default,
-            .xbox,
-            => {
-                const key: Key = @enumFromInt(code);
-                const btn_opt: ?Button = switch (key) {
-                    else => {
-                        log.warn("Unhandled {s} controller event: {s}", .{ @tagName(kind), @tagName(key) });
-                        return null;
-                    },
-                    Key.BTN_Y => .north,
-                    Key.BTN_B => .east,
-                    Key.BTN_A => .south,
-                    Key.BTN_X => .west,
-                    Key.BTN_THUMBL => .thumb_left,
-                    Key.BTN_THUMBR => .thumb_right,
-                    Key.BTN_TL => .shoulder_left,
-                    Key.BTN_TR => .shoulder_right,
-                    Key.BTN_SELECT => .select,
-                    Key.BTN_START => .start,
-                    Key.BTN_MODE => .mode,
-
-                    // Handled as axis
-                    Key.BTN_DPAD_UP, Key.BTN_DPAD_LEFT, Key.BTN_DPAD_RIGHT, Key.BTN_DPAD_DOWN => null,
-                };
-
-                if (btn_opt) |btn| {
-                    return @intFromEnum(btn);
-                } else return null;
-            },
-        }
-    }
-
     fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         switch (event.type) {
-            .SYN => {
-                // TODO: Buffer events and handle this
-            },
             .ABS => {
-                if (absEventCodeToAxisIndex(this.kind, event.code)) |axis_idx| {
-                    const meta = this.axis_meta[axis_idx];
+                const abs: Abs = @enumFromInt(event.code);
 
-                    var value: f32 = 0;
-                    if (event.value < -meta.deadzone or event.value > meta.deadzone) {
-                        const min: f32 = @floatFromInt(meta.min);
-                        const max: f32 = @floatFromInt(meta.max);
-                        value = @as(f32, @floatFromInt(event.value)) / if (event.value < 0) -min else max;
-                    }
-                    this.axis[axis_idx] = value;
+                inline for (std.meta.fields(Axis)) |field| {
+                    const mapped_abs_axis = @field(this.map.axis, field.name);
 
-                    const axis: Joystick.Axis = @enumFromInt(axis_idx);
-                    if (axis == .hat_x) {
-                        if (value == 0) {
-                            this.setButtonState(.dpad_left, false);
-                            this.setButtonState(.dpad_right, false);
-                        } else if (value > 0) {
-                            this.setButtonState(.dpad_left, false);
-                            this.setButtonState(.dpad_right, true);
-                        } else {
-                            this.setButtonState(.dpad_left, true);
-                            this.setButtonState(.dpad_right, false);
+                    if (abs == mapped_abs_axis) {
+                        const axis_idx: usize = field.value;
+                        const axis = @field(Axis, field.name);
+
+                        const meta = this.axis_meta[axis_idx];
+
+                        var value: f32 = 0;
+                        if (event.value < -meta.deadzone or event.value > meta.deadzone) {
+                            const min: f32 = @floatFromInt(meta.min);
+                            const max: f32 = @floatFromInt(meta.max);
+                            value = @as(f32, @floatFromInt(event.value)) / if (event.value < 0) -min else max;
                         }
-                    } else if (axis == .hat_y) {
-                        if (value == 0) {
-                            this.setButtonState(.dpad_up, false);
-                            this.setButtonState(.dpad_down, false);
-                        } else if (value > 0) {
-                            this.setButtonState(.dpad_up, false);
-                            this.setButtonState(.dpad_down, true);
-                        } else {
-                            this.setButtonState(.dpad_up, true);
-                            this.setButtonState(.dpad_down, false);
+
+                        this.axis[axis_idx] = value;
+
+                        if (axis == .dpad_x) {
+                            if (value == 0) {
+                                this.setButtonState(.dpad_left, false);
+                                this.setButtonState(.dpad_right, false);
+                            } else if (value > 0) {
+                                this.setButtonState(.dpad_left, false);
+                                this.setButtonState(.dpad_right, true);
+                            } else {
+                                this.setButtonState(.dpad_left, true);
+                                this.setButtonState(.dpad_right, false);
+                            }
+                        } else if (axis == .dpad_y) {
+                            if (value == 0) {
+                                this.setButtonState(.dpad_up, false);
+                                this.setButtonState(.dpad_down, false);
+                            } else if (value > 0) {
+                                this.setButtonState(.dpad_up, false);
+                                this.setButtonState(.dpad_down, true);
+                            } else {
+                                this.setButtonState(.dpad_up, true);
+                                this.setButtonState(.dpad_down, false);
+                            }
                         }
+
+                        break;
                     }
                 }
             },
             .KEY => {
-                if (keyEventCodeToButtonIndex(this.kind, event.code)) |btn_idx| {
-                    this.buttons.setValue(btn_idx, event.value != 0);
+                const key: Key = @enumFromInt(event.code);
+
+                inline for (std.meta.fields(Button)) |field| {
+                    const mapped_key = @field(this.map.buttons, field.name);
+
+                    if (key == mapped_key) {
+                        const button = @field(Button, field.name);
+                        this.setButtonState(button, event.value != 0);
+                        break;
+                    }
                 }
             },
+
+            .SYN => {}, // TODO: Buffer events and handle this
+            .FF, .MSC, .REL => {}, // ignore
+            .FF_STATUS => {}, // ignore for now, reports playback-state changes, could be used to re-trigger or chain events
+
             else => log.warn("Unhandled event: {}", .{event.type}),
         }
     }
@@ -1757,7 +1753,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32
     _ = serial;
 
     // TODO: Do this via the keymap with xkb!
-    const key: linux.Key = @enumFromInt(rawkey);
+    const key: Key = @enumFromInt(rawkey);
     const was_down = state != .pressed;
     const is_down = state == .pressed or state == .repeated;
 
@@ -1860,7 +1856,7 @@ fn handleWlMouseMotion(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, surfa
 fn handleWlMouseButton(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) void {
     _ = .{ data, pointer, serial, time };
 
-    const button: linux.Key = @enumFromInt(raw_button);
+    const button: Key = @enumFromInt(raw_button);
     const was_down = state == .released;
     const is_down = state == .pressed;
 
@@ -1939,10 +1935,11 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
     const driver_name_len = try std.Io.Dir.readLinkAbsolute(io, driver_path, &driver_name_buffer);
     const driver_name = std.fs.path.basename(driver_name_buffer[0..driver_name_len]);
 
-    const kind: Joystick.Kind = if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
-        .xbox
-    else
-        .default;
+    const kind: Joystick.Kind, const map: *const Joystick.Map =
+        if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
+            .{ .xbox, &Joystick.xbox_map }
+        else
+            .{ .default, &Joystick.default_map };
 
     var joystick_index_opt: ?usize = null;
     for (0..PollFdSlot.joystick_count) |ji| {
@@ -1970,6 +1967,7 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
             .fd = @intCast(fd),
             .active = true,
             .kind = kind,
+            .map = map,
         };
 
         const dnp = std.mem.span(devnode_path);
@@ -1977,25 +1975,22 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
         @memcpy(joystick.path[0..dnp.len], dnp);
         joystick.path[dnp.len] = 0;
 
-        switch (kind) {
-            .default, .xbox => {
-                inline for (std.meta.fields(linux.Abs)) |axis| {
-                    var abs_info: linux.AbsInfo = undefined;
-                    if (linux.ioctl(fd, linux.EVIOCGABS(@enumFromInt(axis.value)), @intFromPtr(&abs_info))) |_| {
-                        if (abs_info.maximum > abs_info.minimum) {
-                            if (Joystick.absEventCodeToAxisIndex(kind, axis.value)) |axis_idx| {
-                                joystick.axis_meta[axis_idx] = .{
-                                    .min = abs_info.minimum,
-                                    .max = abs_info.maximum,
-                                    .deadzone = abs_info.flat,
-                                };
-                            }
-                        }
-                    } else |e| {
-                        log.warn("ioctl EVIOCGABS failed for asix '{s}', error: {}", .{ axis.name, e });
-                    }
+        inline for (std.meta.fields(Joystick.Axis)) |field| {
+            const axis_idx = field.value;
+            const abs: Abs = @field(map.axis, field.name);
+
+            var abs_info: linux.AbsInfo = undefined;
+            if (linux.ioctl(fd, linux.EVIOCGABS(abs), @intFromPtr(&abs_info))) |_| {
+                if (abs_info.maximum > abs_info.minimum) {
+                    joystick.axis_meta[axis_idx] = .{
+                        .min = abs_info.minimum,
+                        .max = abs_info.maximum,
+                        .deadzone = abs_info.flat,
+                    };
                 }
-            },
+            } else |e| {
+                log.warn("ioctl EVIOCGABS failed for asix '{s}', error: {}", .{ @tagName(abs), e });
+            }
         }
     } else {
         log.warn("A joystick was added, but there are no free slots!", .{});
@@ -2012,9 +2007,9 @@ fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) void {
     for (&joysticks, 0..) |*js, ji| {
         if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), dnp)) {
             joystick_index_opt = ji;
-            js.* = .{ .fd = -1, .active = false, .kind = undefined };
+            js.* = .{ .fd = -1, .active = false, .kind = undefined, .map = undefined };
             break;
-        } else {}
+        }
     }
 
     if (joystick_index_opt) |ji| {
