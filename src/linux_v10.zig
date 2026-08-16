@@ -14,8 +14,8 @@ const udev = core.lib.udev;
 
 const linux = core.os.linux;
 const InputEvent = linux.InputEvent;
-const Key = linux.Key;
-const Abs = linux.Abs;
+const Key = linux.KEY;
+const Abs = linux.ABS;
 const errno = linux.errno;
 
 const options = @import("options");
@@ -1059,14 +1059,15 @@ const Joystick = struct {
     kind: Kind,
     map: *const Map,
 
+    axis: [axis_count]f32 = @splat(0),
+    buttons: Buttons = .empty,
+
+    // cached rumble event
     rumble_strong: u16 = 0,
     rumble_weak: u16 = 0,
     rumble_event_id: i16 = -1,
 
     axis_meta: [axis_count]AxisMeta = @splat(.{}),
-    axis: [axis_count]f32 = @splat(0),
-
-    buttons: Buttons = .empty,
 
     /// Zero terminated devnode path
     path: [32]u8 = @splat(0),
@@ -1211,11 +1212,12 @@ const Joystick = struct {
                     }
                 }
             },
+
             .KEY => {
                 const key: Key = @enumFromInt(event.code);
 
                 inline for (std.meta.fields(Button)) |field| {
-                    const mapped_key = @field(this.map.buttons, field.name);
+                    const mapped_key: Key = @field(this.map.buttons, field.name);
 
                     if (key == mapped_key) {
                         const button = @field(Button, field.name);
@@ -1250,12 +1252,11 @@ const Joystick = struct {
                 .replay = .{ .length = 0xffff },
             };
 
-            const id = linux.ioctl(this.fd, linux.EVIOCSFF, @intFromPtr(&rumble_event));
-            assert(id >= 0);
+            const id: u16 = try linux.ioctl_EVIOCSFF(this.fd, &rumble_event);
             this.rumble_event_id = @intCast(id);
 
-            const play = InputEvent{ .type = .FF, .code = @intCast(id), .value = 1 };
-            _ = linux.write(this.fd, @ptrCast(&play), @sizeOf(InputEvent));
+            const play = InputEvent{ .type = .FF, .code = id, .value = 1 };
+            _ = try linux.write(this.fd, @ptrCast(&play));
         }
     }
 };
@@ -1975,19 +1976,40 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
         @memcpy(joystick.path[0..dnp.len], dnp);
         joystick.path[dnp.len] = 0;
 
+        // var name_buf: [128]u8 = undefined;
+        // const name = try linux.ioctl_EVIOCGNAME(fd, &name_buf);
+        // log.info("js name: \"{s}\"", .{name});
+        //
+        // var phys_buf: [128]u8 = undefined;
+        // if (try linux.ioctl_EVIOCGPHYS(fd, &phys_buf)) |phys| {
+        //     log.info("js phys: \"{s}\"", .{phys});
+        // }
+
+        // Capabilities
+        const key_bits = try linux.ioctl_EVIOCGBIT(fd, Key);
+        const abs_bits = try linux.ioctl_EVIOCGBIT(fd, Abs);
+        const ff_bits = try linux.ioctl_EVIOCGBIT(fd, linux.FF);
+        // const ev_bits = try linux.ioctl_EVIOCGBIT(fd, linux.EV);
+        _ = key_bits;
+        _ = abs_bits;
+        _ = ff_bits;
+
+        const key_state = try linux.ioctl_EVIOCGKEY(fd);
+        _ = key_state;
+
         inline for (std.meta.fields(Joystick.Axis)) |field| {
             const axis_idx = field.value;
             const abs: Abs = @field(map.axis, field.name);
 
-            var abs_info: linux.AbsInfo = undefined;
-            if (linux.ioctl(fd, linux.EVIOCGABS(abs), @intFromPtr(&abs_info))) |_| {
-                if (abs_info.maximum > abs_info.minimum) {
+            if (linux.ioctl_EVIOCGABS(fd, abs)) |abs_info| {
+                // if (abs_bits.isSet(@intFromEnum(abs))) {
+                if (abs_info.maximum > abs_info.minimum)
                     joystick.axis_meta[axis_idx] = .{
                         .min = abs_info.minimum,
                         .max = abs_info.maximum,
                         .deadzone = abs_info.flat,
                     };
-                }
+                // }
             } else |e| {
                 log.warn("ioctl EVIOCGABS failed for asix '{s}', error: {}", .{ @tagName(abs), e });
             }

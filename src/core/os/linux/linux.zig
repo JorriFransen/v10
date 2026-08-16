@@ -3,6 +3,7 @@ const log = std.log.scoped(.linux);
 
 const arch = @import("arch/arch.zig").arch;
 const assert = @import("../../core.zig").assert;
+const meta = @import("../../meta.zig");
 
 pub const abi = @import("abi/abi.zig").abi;
 
@@ -522,32 +523,24 @@ pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
 // input.h
 // =============================================================================
 
-pub fn EVIOCGBIT_bitTest(bit: usize, buf: []const c_ulong) bool {
-    // NOTE: correct buffer size calculation
-    const bits = @bitSizeOf(c_ulong);
-    // var abs_bit_buffer: [((Abs.CNT + bits - 1) / bits) ]c_ulong = undefined;
-
-    return ((buf[bit / bits] >> @as(u6, @intCast(bit % bits))) & 1) != 0;
-}
-
 pub const InputEvent = extern struct {
     time: timeval = .{ .sec = 0, .usec = 0 },
-    type: EventType = @enumFromInt(0),
+    type: EV = @enumFromInt(0),
     code: u16 = 0,
     value: i32 = 0,
 };
 
-pub const AbsInfo = extern struct {
-    value: i32,
-    minimum: i32,
-    maximum: i32,
-    fuzz: i32,
-    flat: i32,
-    resolution: i32,
+pub const InputAbsInfo = extern struct {
+    value: i32 = 0,
+    minimum: i32 = 0,
+    maximum: i32 = 0,
+    fuzz: i32 = 0,
+    flat: i32 = 0,
+    resolution: i32 = 0,
 };
 
 pub const FfEffect = extern struct {
-    type: FfType,
+    type: FF,
     id: i16 = 0,
     direction: u16 = 0,
     trigger: FfTrigger = .{},
@@ -615,19 +608,133 @@ pub const FfEnvelope = extern struct {
     fade_level: u16 = 0,
 };
 
-pub const EVIOCGNAME = abi.EVIOCGNAME;
-pub const EVIOCGPHYS = abi.EVIOCGPHYS;
-pub const EVIOCGUNIQ = abi.EVIOCGUNIQ;
-pub const EVIOCGPROP = abi.EVIOCGPROP;
-pub const EVIOCGBIT = abi.EVIOCGBIT;
-pub const EVIOCGABS = abi.EVIOCGABS;
-pub const EVIOCSFF = abi.EVIOCSFF;
+pub inline fn EVIOCGNAME(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x06, len);
+}
+
+pub inline fn EVIOCGPHYS(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x07, len);
+}
+
+pub inline fn EVIOCGUNIQ(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x08, len);
+}
+
+pub inline fn EVIOCGPROP(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x09, len);
+}
+
+pub inline fn EVIOCGKEY(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x18, len);
+}
+
+pub inline fn EVIOCGBIT(ev: EV, len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
+}
+
+pub inline fn EVIOCGABS(abs: ABS) _IOC {
+    return _IOR('E', 0x40 + @intFromEnum(abs), InputAbsInfo);
+}
+
+pub const EVIOCSFF: _IOC = _IOW('E', 0x80, FfEffect);
+
+// =============================================================================
+// EVIOC-ioctl helpers
+// =============================================================================
+
+/// Functional buf size is buf.len - 1, null terminator is included
+const stringRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
+inline fn ioctl_String(fd: fd_t, buf: []u8, comptime requestFn: stringRequestFn) IOCTLError![]const u8 {
+    buf[buf.len - 1] = 0;
+
+    const rc = try ioctl(fd, requestFn(@intCast(buf.len - 1)), @intFromPtr(buf.ptr));
+    assert(rc >= 0);
+
+    const result: []const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(buf.ptr)));
+    return result;
+}
+
+const structRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
+inline fn ioctl_Struct(comptime T: type, fd: fd_t, comptime requestFn: structRequestFn) IOCTLError!T {
+    var result: T = std.mem.zeroes(T);
+    const rc = try ioctl(fd, requestFn(@sizeOf(InputProp)), @intFromPtr(&result));
+    assert(rc == @sizeOf(T));
+    return result;
+}
+
+/// Functional buf size is buf.len - 1, null terminator is included
+pub inline fn ioctl_EVIOCGNAME(fd: fd_t, buf: []u8) IOCTLError![]const u8 {
+    const result = try ioctl_String(fd, buf, EVIOCGNAME);
+    return result;
+}
+
+/// Functional buf size is buf.len - 1, null terminator is included
+pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
+    const result: IOCTLError!?[]const u8 = ioctl_String(fd, buf, EVIOCGPHYS) catch |e| switch (e) {
+        error.FileDoesNotExist => null,
+        else => e,
+    };
+
+    return result;
+}
+
+/// Functional buf size is buf.len - 1, null terminator is included
+pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
+    const result: IOCTLError!?[]const u8 = ioctl_String(fd, buf, EVIOCGUNIQ) catch |e| switch (e) {
+        error.FileDoesNotExist => null,
+        else => e,
+    };
+
+    return result;
+}
+
+pub inline fn ioctl_EVIOCGPROP(fd: fd_t) IOCTLError!InputProp {
+    const result = try ioctl_Struct(InputProp, fd, EVIOCGPROP);
+    return result;
+}
+
+pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!std.StaticBitSet(KEY.CNT) {
+    const BitSet = std.StaticBitSet(KEY.CNT);
+    const result = try ioctl_Struct(BitSet, fd, EVIOCGKEY);
+    return result;
+}
+
+pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!std.StaticBitSet(@field(ET, "CNT")) {
+    const bit_count = @field(ET, "CNT");
+    const BitSet = std.StaticBitSet(bit_count);
+
+    const ev: EV = comptime switch (ET) {
+        else => @compileError("Invalid event type"),
+        EV => .SYN,
+        ABS, KEY, FF, REL, MSC, LED, SND, SW => @field(EV, meta.typeNameLeaf(ET)),
+    };
+
+    var result: BitSet = .empty;
+
+    const rc = try ioctl(fd, EVIOCGBIT(ev, @sizeOf(BitSet)), @intFromPtr(&result));
+    assert(rc == @sizeOf(BitSet));
+
+    return result;
+}
+
+pub inline fn ioctl_EVIOCGABS(fd: fd_t, abs: ABS) IOCTLError!InputAbsInfo {
+    var result: InputAbsInfo = .{};
+    const rc = try ioctl(fd, EVIOCGABS(abs), @intFromPtr(&result));
+    assert(rc == 0);
+    return result;
+}
+
+pub inline fn ioctl_EVIOCSFF(fd: fd_t, effect: *const FfEffect) IOCTLError!u16 {
+    const rc = try ioctl(fd, EVIOCSFF, @intFromPtr(effect));
+    const result: u16 = @intCast(rc);
+    return result;
+}
 
 // =============================================================================
 // input-event-codes.h
 // =============================================================================
 
-pub const Prop = packed struct(u8) {
+pub const InputProp = packed struct(u8) {
     pointer: bool = false,
     direct: bool = false,
     button_pad: bool = false,
@@ -635,27 +742,13 @@ pub const Prop = packed struct(u8) {
     top_button_pad: bool = false,
     pointing_stick: bool = false,
     accelerometer: bool = false,
-
-    __reserved__: u1 = 0,
+    pressure_pad: bool = false,
 
     pub const MAX: u8 = 0x1f;
     pub const CNT: u8 = MAX + 1;
 };
 
-pub const FfType = enum(u16) {
-    RUMBLE = 0x50,
-    PERIODIC = 0x51,
-    CONSTANT = 0x52,
-    SPRING = 0x53,
-    FRICTION = 0x54,
-    DAMPER = 0x55,
-    INERTIA = 0x56,
-    RAMP = 0x57,
-    pub const EFFECT_MIN: FfType = .RUMBLE;
-    pub const EFFECT_MAX: FfType = .RAMP;
-};
-
-pub const EventType = enum(u16) {
+pub const EV = enum(u16) {
     SYN = 0x00,
     KEY = 0x01,
     REL = 0x02,
@@ -668,12 +761,12 @@ pub const EventType = enum(u16) {
     FF = 0x15,
     PWR = 0x16,
     FF_STATUS = 0x17,
-    MAX = 0x1f,
 
-    pub const CNT: u16 = .MAX + 1;
+    pub const MAX: u16 = 0x1f;
+    pub const CNT: u16 = MAX + 1;
 };
 
-pub const Abs = enum(u8) {
+pub const ABS = enum(u8) {
     X = 0x00,
     Y = 0x01,
     Z = 0x02,
@@ -700,6 +793,7 @@ pub const Abs = enum(u8) {
     TOOL_WIDTH = 0x1c,
     VOLUME = 0x20,
     PROFILE = 0x21,
+    SND_PROFILE = 0x22,
     MISC = 0x28,
     RESERVED = 0x2e,
     MT_SLOT = 0x2f,
@@ -719,10 +813,41 @@ pub const Abs = enum(u8) {
     MT_TOOL_Y = 0x3d,
 
     pub const MAX: u16 = 0x3f;
-    pub const CNT: u16 = (.MAX + 1);
+    pub const CNT: u16 = (MAX + 1);
 };
 
-pub const Key = enum(u16) {
+pub const FF = enum(u16) {
+    HAPTIC = 0x4f,
+    RUMBLE = 0x50,
+    PERIODIC = 0x51,
+    CONSTANT = 0x52,
+    SPRING = 0x53,
+    FRICTION = 0x54,
+    DAMPER = 0x55,
+    INERTIA = 0x56,
+    RAMP = 0x57,
+
+    SQUARE = 0x58,
+    TRIANGLE = 0x59,
+    SINE = 0x5a,
+    SAW_UP = 0x5b,
+    SAW_DOWN = 0x5c,
+    CUSTOM = 0x5d,
+
+    GAIN = 0x60,
+    AUTOCENTER = 0x61,
+
+    pub const EFFECT_MIN: FF = .HAPTIC;
+    pub const EFFECT_MAX: FF = .RAMP;
+    pub const WAVEFORM_MIN: FF = .SQUARE;
+    pub const WAVEFORM_MAX: FF = .CUSTOM;
+    pub const MAX_EFFECTS: u16 = @intFromEnum(FF.GAIN);
+
+    pub const MAX: u16 = 0x7f;
+    pub const CNT: u16 = 0x80;
+};
+
+pub const KEY = enum(u16) {
     RESERVED = 0,
     ESC = 1,
     @"1" = 2,
@@ -1217,6 +1342,11 @@ pub const Key = enum(u16) {
     DO_NOT_DISTURB = 0x24f,
     BRIGHTNESS_MIN = 0x250,
     BRIGHTNESS_MAX = 0x251,
+    EPRIVACY_SCREEN_ON = 0x252,
+    EPRIVACY_SCREEN_OFF = 0x253,
+    ACTION_ON_SELECTION = 0x254,
+    CONTEXTUAL_INSERT = 0x255,
+    CONTEXTUAL_QUERY = 0x256,
     KBDINPUTASSIST_PREV = 0x260,
     KBDINPUTASSIST_NEXT = 0x261,
     KBDINPUTASSIST_PREVGROUP = 0x262,
@@ -1342,48 +1472,191 @@ pub const Key = enum(u16) {
     BTN_TRIGGER_HAPPY40 = 0x2e7,
 
     pub const MAX: u16 = 0x2ff;
-    pub const BTN_MISC: Key = 0x100;
-    pub const BTN_MOUSE: Key = 0x110;
-    pub const BTN_TRIGGER: Key = 0x120;
-    pub const BTN_GAMEPAD: Key = 0x130;
-    pub const BTN_DIGI: Key = 0x140;
-    pub const BTN_WHEEL: Key = 0x150;
-    pub const BTN_TRIGGER_HAPPY: Key = 0x2c0;
-    pub const HANGUEL: Key = .HANGEUL;
-    pub const SCREENLOCK: Key = .COFFEE;
-    pub const DIRECTION: Key = .ROTATE_DISPLAY;
-    pub const DASHBOARD: Key = .ALL_APPLICATIONS;
-    pub const BRIGHTNESS_ZERO: Key = .BRIGHTNESS_AUTO;
-    pub const WIMAX: Key = .WWAN;
-    pub const BTN_A: Key = .BTN_SOUTH;
-    pub const BTN_B: Key = .BTN_EAST;
-    pub const BTN_X: Key = .BTN_NORTH;
-    pub const BTN_Y: Key = .BTN_WEST;
-    pub const ZOOM: Key = .FULL_SCREEN;
-    pub const SCREEN: Key = .ASPECT_RATIO;
-    pub const BRIGHTNESS_TOGGLE: Key = .DISPLAYTOGGLE;
-    pub const MIN_INTERESTING: Key = .MUTE;
+    pub const BTN_MISC: KEY = 0x100;
+    pub const BTN_MOUSE: KEY = 0x110;
+    pub const BTN_TRIGGER: KEY = 0x120;
+    pub const BTN_GAMEPAD: KEY = 0x130;
+    pub const BTN_DIGI: KEY = 0x140;
+    pub const BTN_WHEEL: KEY = 0x150;
+    pub const BTN_TRIGGER_HAPPY: KEY = 0x2c0;
+    pub const HANGUEL: KEY = .HANGEUL;
+    pub const SCREENLOCK: KEY = .COFFEE;
+    pub const DIRECTION: KEY = .ROTATE_DISPLAY;
+    pub const DASHBOARD: KEY = .ALL_APPLICATIONS;
+    pub const BRIGHTNESS_ZERO: KEY = .BRIGHTNESS_AUTO;
+    pub const WIMAX: KEY = .WWAN;
+    pub const BTN_A: KEY = .BTN_SOUTH;
+    pub const BTN_B: KEY = .BTN_EAST;
+    pub const BTN_X: KEY = .BTN_NORTH;
+    pub const BTN_Y: KEY = .BTN_WEST;
+    pub const ZOOM: KEY = .FULL_SCREEN;
+    pub const SCREEN: KEY = .ASPECT_RATIO;
+    pub const BRIGHTNESS_TOGGLE: KEY = .DISPLAYTOGGLE;
+    pub const MIN_INTERESTING: KEY = .MUTE;
 
-    pub const CNT: u16 = (.MAX + 1);
+    pub const CNT: u16 = (MAX + 1);
+};
+
+pub const SYN = enum(u16) {
+    REPORT = 0,
+    CONFIG = 1,
+    MT_REPORT = 2,
+    DROPPED = 3,
+
+    pub const MAX: u16 = 0xf;
+    pub const CNT: u16 = MAX + 1;
+};
+
+pub const REL = enum(u8) {
+    X = 0x00,
+    Y = 0x01,
+    Z = 0x02,
+    RX = 0x03,
+    RY = 0x04,
+    RZ = 0x05,
+    HWHEEL = 0x06,
+    DIAL = 0x07,
+    WHEEL = 0x08,
+    MISC = 0x09,
+
+    /// 0x0a is reserved and should not be used in input drivers.
+    /// It was used by HID as REL_MISC+1 and userspace needs to detect if
+    /// the next REL_* event is correct or is just REL_MISC + n.
+    /// We define here REL_RESERVED so userspace can rely on it and detect
+    /// the situation described above.
+    RESERVED = 0x0a,
+    WHEEL_HI_RES = 0x0b,
+    HWHEEL_HI_RES = 0x0c,
+
+    pub const MAX: u8 = 0x0f;
+    pub const CNT: u8 = MAX + 1;
+};
+
+pub const MSC = enum(u8) {
+    SERIAL = 0x00,
+    PULSELED = 0x01,
+    GESTURE = 0x02,
+    RAW = 0x03,
+    SCAN = 0x04,
+    TIMESTAMP = 0x05,
+
+    pub const MAX: u8 = 0x07;
+    pub const CNT: u8 = MAX + 1;
+};
+
+pub const LED = enum(u8) {
+    NUML = 0x00,
+    CAPSL = 0x01,
+    SCROLLL = 0x02,
+    COMPOSE = 0x03,
+    KANA = 0x04,
+    SLEEP = 0x05,
+    SUSPEND = 0x06,
+    MUTE = 0x07,
+    MISC = 0x08,
+    MAIL = 0x09,
+    CHARGING = 0x0a,
+
+    pub const MAX: u8 = 0x0f;
+    pub const CNT: u8 = MAX + 1;
+};
+
+pub const SND = enum(u8) {
+    CLICK = 0x00,
+    BELL = 0x01,
+    TONE = 0x02,
+
+    pub const MAX: u8 = 0x07;
+    pub const CNT: u8 = MAX + 1;
+};
+
+pub const SW = enum(u8) {
+    /// set = lid shut
+    LID = 0x00,
+    /// set = tablet mode
+    TABLET_MODE = 0x01,
+    /// set = inserted
+    HEADPHONE_INSERT = 0x02,
+    /// rfkill master switch, type "any"
+    RFKILL_ALL = 0x03,
+    /// set = inserted
+    MICROPHONE_INSERT = 0x04,
+    /// set = plugged into dock
+    DOCK = 0x05,
+    /// set = inserted
+    LINEOUT_INSERT = 0x06,
+    /// set = mechanical switch set
+    JACK_PHYSICAL_INSERT = 0x07,
+    /// set = inserted
+    VIDEOOUT_INSERT = 0x08,
+    /// set = lens covered
+    CAMERA_LENS_COVER = 0x09,
+    /// set = keypad slide out
+    KEYPAD_SLIDE = 0x0a,
+    /// set = front proximity sensor active
+    FRONT_PROXIMITY = 0x0b,
+    /// set = rotate locked/disabled
+    ROTATE_LOCK = 0x0c,
+    /// set = inserted
+    LINEIN_INSERT = 0x0d,
+    /// set = device disabled
+    MUTE_DEVICE = 0x0e,
+    /// set = pen inserted
+    PEN_INSERTED = 0x0f,
+    /// set = cover closed
+    MACHINE_COVER = 0x10,
+    /// set = USB audio device connected
+    USB_INSERT = 0x11,
+
+    /// deprecated
+    /// set = radio enabled
+    pub const SW_RADIO: SW = .RFKILL_ALL;
+
+    pub const MAX: u8 = 0x11;
+    pub const CNT: u8 = MAX + 1;
 };
 
 // =============================================================================
 // ioctl.h
 // =============================================================================
 
-pub const _IOC = abi._IOC;
-pub const _IOR = abi._IOR;
-pub const _IOW = abi._IOW;
-pub const _IOWR = abi._IOWR;
-
 pub const IOCTLError = Error || error{
+    Unknown,
     ArgIsInvalidPointer,
     InvalidRequestOrArg,
     InvalidFDForRequest,
 };
 
-pub fn ioctl(fd: fd_t, request: usize, arg: usize) IOCTLError!usize {
-    const rc = syscall3(.ioctl, @as(u32, @bitCast(fd)), request, arg);
+pub const _IOC = packed struct(u32) {
+    pub const SizeInt = @Int(.unsigned, IOC.SIZE);
+    pub const DirectionInt = @Int(.unsigned, IOC.DIR);
+
+    nr: u8,
+    type: u8,
+    size: SizeInt,
+    dir: DirectionInt,
+
+    pub inline fn init(dir: DirectionInt, @"type": u8, nr: u8, size: SizeInt) _IOC {
+        const result: _IOC = .{ .nr = nr, .type = @"type", .size = size, .dir = dir };
+        return result;
+    }
+};
+
+pub inline fn _IOR(@"type": u8, nr: u8, comptime T: type) _IOC {
+    return _IOC.init(IOC.READ, @"type", nr, @sizeOf(T));
+}
+
+pub inline fn _IOW(@"type": u8, nr: u8, comptime T: type) _IOC {
+    return _IOC.init(IOC.WRITE, @"type", nr, @sizeOf(T));
+}
+
+pub inline fn _IOWR(@"type": u8, nr: u8, comptime T: type) _IOC {
+    return _IOC.init(IOC.READ | IOC.WRITE, @"type", nr, @sizeOf(T));
+}
+
+pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
+    const rc = syscall3(.ioctl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(request)), arg);
+
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .FAULT => error.ArgIsInvalidPointer,
@@ -1392,6 +1665,8 @@ pub fn ioctl(fd: fd_t, request: usize, arg: usize) IOCTLError!usize {
         .NOTTY => error.InvalidFDForRequest,
         .INTR => error.Interrupt,
         .ACCES, .PERM => error.PermissionDenied,
+        .NOENT => error.FileDoesNotExist,
+        .NODEV => error.InvalidDevice,
         else => blk: {
             log.warn("Unexpected errno for ioctl: {}", .{e});
             break :blk error.UnexpectedErrno;

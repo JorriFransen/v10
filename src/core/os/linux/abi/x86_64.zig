@@ -10,27 +10,6 @@ const linux = @import("../linux.zig");
 pub const O = generic.O;
 
 // =============================================================================
-// input.h
-// =============================================================================
-
-pub const EVIOCGNAME = generic.EVIOCGNAME;
-pub const EVIOCGPHYS = generic.EVIOCGPHYS;
-pub const EVIOCGUNIQ = generic.EVIOCGUNIQ;
-pub const EVIOCGPROP = generic.EVIOCGPROP;
-pub const EVIOCGBIT = generic.EVIOCGBIT;
-pub const EVIOCGABS = generic.EVIOCGABS;
-pub const EVIOCSFF = generic.EVIOCSFF;
-
-// =============================================================================
-// ioctl.h
-// =============================================================================
-
-pub const _IOC = generic._IOC;
-pub const _IOR = generic._IOR;
-pub const _IOW = generic._IOW;
-pub const _IOWR = generic._IOWR;
-
-// =============================================================================
 // ioctls.h
 // =============================================================================
 

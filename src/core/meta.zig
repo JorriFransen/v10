@@ -1,5 +1,19 @@
 const std = @import("std");
 
+const assert = @import("core.zig").assert;
+
+pub inline fn typeNameLeaf(comptime T: type) []const u8 {
+    const full_name = @typeName(T);
+    var result: []const u8 = full_name;
+
+    if (std.mem.lastIndexOfScalar(u8, full_name, '.')) |dot_idx| {
+        assert(dot_idx < full_name.len - 1);
+        result = full_name[dot_idx + 1 ..];
+    }
+
+    return result;
+}
+
 pub inline fn matchTypeIds(x: anytype, comptime type_ids: []const std.lang.TypeId) bool {
     return matchType(@TypeOf(x), type_ids);
 }

@@ -3,6 +3,7 @@ const std = @import("std");
 const core = @import("core");
 const assert = core.assert;
 const intrinsics = core.intrinsics;
+const meta = core.meta;
 
 const math = core.math;
 const Color = math.Color;
@@ -127,11 +128,7 @@ pub inline fn pushRenderElement(this: *RenderGroup, comptime T: type) ?*T {
 
         assert(std.mem.isAligned(@intFromPtr(header), push_buffer_align));
 
-        header.type = comptime blk: {
-            const full_type_str = @typeName(T);
-            const type_str = if (std.mem.lastIndexOfScalar(u8, full_type_str, '.')) |dot_idx| full_type_str[dot_idx + 1 ..] else full_type_str;
-            break :blk @field(EntryHeader.Type, type_str);
-        };
+        header.type = @field(EntryHeader.Type, meta.typeNameLeaf(T));
 
         this.push_buffer_size += size;
     } else {
