@@ -3,6 +3,7 @@ const log = std.log.scoped(.linux);
 
 const arch = @import("arch/arch.zig").arch;
 const assert = @import("../../core.zig").assert;
+const math = @import("../../math.zig");
 const meta = @import("../../meta.zig");
 
 pub const abi = @import("abi/abi.zig").abi;
@@ -647,7 +648,7 @@ const stringRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
 inline fn ioctl_String(fd: fd_t, buf: []u8, comptime requestFn: stringRequestFn) IOCTLError![]const u8 {
     buf[buf.len - 1] = 0;
 
-    const rc = try ioctl(fd, requestFn(@intCast(buf.len - 1)), @intFromPtr(buf.ptr));
+    const rc = try ioctlRead(fd, requestFn(@intCast(buf.len - 1)), buf.ptr);
     assert(rc >= 0);
 
     const result: []const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(buf.ptr)));
@@ -657,7 +658,7 @@ inline fn ioctl_String(fd: fd_t, buf: []u8, comptime requestFn: stringRequestFn)
 const structRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
 inline fn ioctl_Struct(comptime T: type, fd: fd_t, comptime requestFn: structRequestFn) IOCTLError!T {
     var result: T = std.mem.zeroes(T);
-    const rc = try ioctl(fd, requestFn(@sizeOf(InputProp)), @intFromPtr(&result));
+    const rc = try ioctlRead(fd, requestFn(@sizeOf(T)), &result);
     assert(rc == @sizeOf(T));
     return result;
 }
@@ -711,7 +712,7 @@ pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!std.Static
 
     var result: BitSet = .empty;
 
-    const rc = try ioctl(fd, EVIOCGBIT(ev, @sizeOf(BitSet)), @intFromPtr(&result));
+    const rc = try ioctlRead(fd, EVIOCGBIT(ev, @sizeOf(BitSet)), &result);
     assert(rc == @sizeOf(BitSet));
 
     return result;
@@ -719,13 +720,13 @@ pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!std.Static
 
 pub inline fn ioctl_EVIOCGABS(fd: fd_t, abs: ABS) IOCTLError!InputAbsInfo {
     var result: InputAbsInfo = .{};
-    const rc = try ioctl(fd, EVIOCGABS(abs), @intFromPtr(&result));
+    const rc = try ioctlRead(fd, EVIOCGABS(abs), &result);
     assert(rc == 0);
     return result;
 }
 
 pub inline fn ioctl_EVIOCSFF(fd: fd_t, effect: *const FfEffect) IOCTLError!u16 {
-    const rc = try ioctl(fd, EVIOCSFF, @intFromPtr(effect));
+    const rc = try ioctlWrite(fd, EVIOCSFF, effect);
     const result: u16 = @intCast(rc);
     return result;
 }
@@ -1652,6 +1653,18 @@ pub inline fn _IOW(@"type": u8, nr: u8, comptime T: type) _IOC {
 
 pub inline fn _IOWR(@"type": u8, nr: u8, comptime T: type) _IOC {
     return _IOC.init(IOC.READ | IOC.WRITE, @"type", nr, @sizeOf(T));
+}
+
+pub inline fn ioctlRead(fd: fd_t, request: _IOC, arg: *anyopaque) IOCTLError!usize {
+    assert(request.dir & IOC.READ == IOC.READ);
+    const result = ioctl(fd, request, @intFromPtr(arg));
+    return result;
+}
+
+pub inline fn ioctlWrite(fd: fd_t, request: _IOC, arg: *const anyopaque) IOCTLError!usize {
+    assert(request.dir & IOC.WRITE == IOC.WRITE);
+    const result = ioctl(fd, request, @intFromPtr(arg));
+    return result;
 }
 
 pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
