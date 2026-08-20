@@ -667,7 +667,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
                     processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
 
-                    // try js.setRumble(3000, 0);
+                    // TODO: Why is rumble ff not scaled between 0 and u16_max? (for my xbox-like conroller) (anything above 0xc9ff acts as 0x0)
+                    // const r = js.axis[@intFromEnum(Joystick.Axis.right_z)];
+                    // const strong: u16 = @intFromFloat(math.lerp(0, r, 0xc9ff));
+                    //
+                    // const l = js.axis[@intFromEnum(Joystick.Axis.left_z)];
+                    // const weak: u16 = @intFromFloat(math.lerp(0, l, 0xc9ff));
+                    //
+                    // log.warn("rumble - strong: 0x{x:04} - weak: 0x{x:04}", .{ strong, weak });
+                    //
+                    // try js.setRumble(strong, weak);
                 } else {
                     new_controller.is_connected = false;
                 }
@@ -1243,20 +1252,27 @@ const Joystick = struct {
             this.rumble_strong = strong;
             this.rumble_weak = weak;
 
-            const rumble_event = linux.FfEffect{
-                .type = .RUMBLE,
-                .id = this.rumble_event_id,
-                // NOTE: These magnitudes are treated as i16 values by the xpad driver!
-                // TODO: Query the driver with udev, modify magnitude based on driver
-                .u = .{ .rumble = .{ .strong_magnitude = this.rumble_strong, .weak_magnitude = this.rumble_weak } },
-                .replay = .{ .length = 0xffff },
-            };
+            if (this.rumble_event_id != -1 and strong == 0 and weak == 0) {
+                try linux.ioctl_EVIOCRMFF(this.fd, @intCast(this.rumble_event_id));
+                this.rumble_event_id = -1;
+            } else {
+                var rumble_event = linux.FfEffect{
+                    .type = .RUMBLE,
+                    .id = this.rumble_event_id,
+                    .u = .{ .rumble = .{ .strong_magnitude = this.rumble_strong, .weak_magnitude = this.rumble_weak } },
+                    .replay = .{ .length = 0, .delay = 0 },
+                };
 
-            const id: u16 = try linux.ioctl_EVIOCSFF(this.fd, &rumble_event);
-            this.rumble_event_id = @intCast(id);
+                try linux.ioctl_EVIOCSFF(this.fd, &rumble_event);
+                assert(rumble_event.id != -1);
+                const new_effect = this.rumble_event_id != rumble_event.id;
+                this.rumble_event_id = rumble_event.id;
 
-            const play = InputEvent{ .type = .FF, .code = id, .value = 1 };
-            _ = try linux.write(this.fd, @ptrCast(&play));
+                if (new_effect) {
+                    const play = InputEvent{ .type = .FF, .code = @intCast(rumble_event.id), .value = 1 };
+                    _ = try linux.write(this.fd, @ptrCast(&play));
+                }
+            }
         }
     }
 };

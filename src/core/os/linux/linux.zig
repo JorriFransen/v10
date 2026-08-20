@@ -531,6 +531,13 @@ pub const InputEvent = extern struct {
     value: i32 = 0,
 };
 
+pub const InputId = extern struct {
+    bus_type: u16 = 0,
+    vendor: u16 = 0,
+    product: u16 = 0,
+    version: u16 = 0,
+};
+
 pub const InputAbsInfo = extern struct {
     value: i32 = 0,
     minimum: i32 = 0,
@@ -540,8 +547,27 @@ pub const InputAbsInfo = extern struct {
     resolution: i32 = 0,
 };
 
+pub const InputKeymapEntry = extern struct {
+    flags: Flags = .{},
+    len: u8 = 0,
+    index: u16 = 0,
+    keycode: u32 = 0,
+    scancode: [32]u8 = @splat(0),
+
+    pub const Flags = packed struct(u8) {
+        KEYMAP_BY_INDEX: bool = false,
+        __unused__: u7 = 0,
+    };
+};
+
+pub const InputMask = extern struct {
+    type: u32,
+    codes_size: u32,
+    codes_ptr: u64,
+};
+
 pub const FfEffect = extern struct {
-    type: FF,
+    type: FF.EFFECT,
     id: i16 = 0,
     direction: u16 = 0,
     trigger: FfTrigger = .{},
@@ -553,6 +579,7 @@ pub const FfEffect = extern struct {
         periodic: FfPeriodicEffect,
         condition: [2]FfConditionEffect,
         rumble: FfRumbleEffect,
+        haptic: FfHapticEffect,
     },
 };
 
@@ -578,7 +605,7 @@ pub const FfRampEffect = extern struct {
 };
 
 pub const FfPeriodicEffect = extern struct {
-    waveform: u16 = 0,
+    waveform: FF.WAVEFORM,
     period: u16 = 0,
     magnitude: i16 = 0,
     offset: i16 = 0,
@@ -602,6 +629,15 @@ pub const FfRumbleEffect = extern struct {
     weak_magnitude: u16 = 0,
 };
 
+pub const FfHapticEffect = extern struct {
+    hid_usage: u16 = 0,
+    vendor_id: u16 = 0,
+    vendor_waveform_page: u8 = 0,
+    intensity: u16 = 0,
+    repeat_count: u16 = 0,
+    retrigger_period: u16 = 0,
+};
+
 pub const FfEnvelope = extern struct {
     attack_length: u16 = 0,
     attack_level: u16 = 0,
@@ -609,69 +645,198 @@ pub const FfEnvelope = extern struct {
     fade_level: u16 = 0,
 };
 
+/// Get device id
+pub const EVIOCGID: _IOC = _IOR('E', 0x02, InputId);
+/// Get repeat settings
+pub const EVIOCGREP: _IOC = _IOR('E', 0x03, [2]c_uint);
+/// Set repeat settings
+pub const EVIOCSREP: _IOC = _IOW('E', 0x03, [2]c_uint);
+/// Get keycode
+pub const EVIOCGKEYCODE: _IOC = _IOR('E', 0x04, [2]c_uint);
+/// Get keycode
+pub const EVIOCGKEYCODE_V2: _IOC = _IOR('E', 0x04, InputKeymapEntry);
+/// Set keycode
+pub const EVIOCSKEYCODE: _IOC = _IOW('E', 0x04, [2]c_uint);
+/// Set keycode
+pub const EVIOCSKEYCODE_V2: _IOC = _IOW('E', 0x04, InputKeymapEntry);
+/// Get device name
 pub inline fn EVIOCGNAME(len: _IOC.SizeInt) _IOC {
     return _IOC.init(IOC.READ, 'E', 0x06, len);
 }
-
+/// Get physical location
 pub inline fn EVIOCGPHYS(len: _IOC.SizeInt) _IOC {
     return _IOC.init(IOC.READ, 'E', 0x07, len);
 }
-
+/// Get unique identifier
 pub inline fn EVIOCGUNIQ(len: _IOC.SizeInt) _IOC {
     return _IOC.init(IOC.READ, 'E', 0x08, len);
 }
-
+/// Get device properties
 pub inline fn EVIOCGPROP(len: _IOC.SizeInt) _IOC {
     return _IOC.init(IOC.READ, 'E', 0x09, len);
 }
-
+/// Get MT slot values
+pub inline fn EVIOCGMTSLOTS(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x0a, len);
+}
+/// Get global key state
 pub inline fn EVIOCGKEY(len: _IOC.SizeInt) _IOC {
     return _IOC.init(IOC.READ, 'E', 0x18, len);
 }
-
-pub inline fn EVIOCGBIT(ev: EV, len: _IOC.SizeInt) _IOC {
-    return _IOC.init(IOC.READ, 'E', 0x20 + @as(u8, @intFromEnum(ev)), len);
+/// Get all LEDs
+pub inline fn EVIOCGLED(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x19, len);
 }
-
+/// Get all sounds status
+pub inline fn EVIOCGSND(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x1a, len);
+}
+/// Get all switch states
+pub inline fn EVIOCGSW(len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x1b, len);
+}
+/// Get event bits
+pub inline fn EVIOCGBIT(ev: u8, len: _IOC.SizeInt) _IOC {
+    return _IOC.init(IOC.READ, 'E', 0x20 + ev, len);
+}
+/// Get abs value/limits
 pub inline fn EVIOCGABS(abs: ABS) _IOC {
     return _IOR('E', 0x40 + @intFromEnum(abs), InputAbsInfo);
 }
-
+/// Set abs value/limits
+pub inline fn EVIOCSABS(abs: ABS) _IOC {
+    return _IOW('E', 0xc0 + @intFromEnum(abs), InputAbsInfo);
+}
+/// Send a force effect to a force feedback device
 pub const EVIOCSFF: _IOC = _IOW('E', 0x80, FfEffect);
+/// Erase a force effect
+pub const EVIOCRMFF: _IOC = _IOW('E', 0x81, c_int);
+/// Report number of effects playable at the same time
+pub const EVIOCGEFFECTS: _IOC = _IOR('E', 0x84, c_int);
+/// Grab/Release device
+pub const EVIOCGRAB: _IOC = _IOW('E', 0x90, c_int);
+/// Revoke device access
+pub const EVIOCREVOKE: _IOC = _IOW('E', 0x91, c_int);
+/// Retrieve current event mask
+pub const EVIOCGMASK: _IOC = _IOR('E', 0x92, InputMask);
+/// Set event mask
+pub const EVIOCSMASK: _IOC = _IOW('E', 0x93, InputMask);
+/// Set clockid to be used for timestamps
+pub const EVIOCSCLOCKID: _IOC = _IOW('E', 0xa0, c_int);
 
 // =============================================================================
 // EVIOC-ioctl helpers
 // =============================================================================
 
-/// Functional buf size is buf.len - 1, null terminator is included
-const stringRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
-inline fn ioctl_String(fd: fd_t, buf: []u8, comptime requestFn: stringRequestFn) IOCTLError![]const u8 {
-    buf[buf.len - 1] = 0;
+const sizeRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
 
-    const rc = try ioctlRead(fd, requestFn(@intCast(buf.len - 1)), buf.ptr);
-    assert(rc >= 0);
+fn EnumBitset(comptime T: type) type {
+    return std.StaticBitSet(T.CNT);
+}
 
-    const result: []const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(buf.ptr)));
+pub inline fn ioctlRead(fd: fd_t, request: _IOC, arg: *anyopaque) IOCTLError!usize {
+    assert(request.dir & IOC.READ == IOC.READ);
+    const result = ioctl(fd, request, @intFromPtr(arg));
     return result;
 }
 
-const structRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
-inline fn ioctl_Struct(comptime T: type, fd: fd_t, comptime requestFn: structRequestFn) IOCTLError!T {
+pub inline fn ioctlWrite(fd: fd_t, request: _IOC, arg: *const anyopaque) IOCTLError!void {
+    assert(request.dir & IOC.WRITE == IOC.WRITE);
+    const result = try ioctl(fd, request, @intFromPtr(arg));
+    assert(result == 0);
+}
+
+/// Functional buf size is buf.len - 1, null terminator is included
+inline fn ioctlString(fd: fd_t, buf: []u8, comptime requestFn: sizeRequestFn) IOCTLError![]const u8 {
+    assert(buf.len >= 1);
+
+    const rc = try ioctlRead(fd, requestFn(@intCast(buf.len - 1)), buf.ptr);
+
+    const result: []const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(buf.ptr)));
+    assert(result.len == rc or result.len + 1 == rc);
+
+    return result;
+}
+
+inline fn ioctlReadType(comptime T: type, fd: fd_t, comptime request: _IOC) IOCTLError!T {
+    var result: T = std.mem.zeroes(T);
+    const rc = try ioctlRead(fd, request, &result);
+    assert(rc == 0);
+    return result;
+}
+
+inline fn ioctlReadTypeSize(comptime T: type, fd: fd_t, comptime requestFn: sizeRequestFn) IOCTLError!T {
     var result: T = std.mem.zeroes(T);
     const rc = try ioctlRead(fd, requestFn(@sizeOf(T)), &result);
     assert(rc == @sizeOf(T));
     return result;
 }
 
+/// Get device id
+pub inline fn ioctl_EVIOCGID(fd: fd_t) IOCTLError!InputId {
+    const result = try ioctlReadType(InputId, fd, EVIOCGID);
+    return result;
+}
+
+/// Get repeat settings
+pub inline fn ioctl_EVIOCGREP(fd: fd_t) IOCTLError!?[2]c_uint {
+    const result = ioctlReadType([2]c_uint, fd, EVIOCGREP) catch |e| switch (e) {
+        error.Unsupported => null,
+        else => e,
+    };
+    return result;
+}
+
+/// Set repeat settings
+pub inline fn ioctl_EVIOCSREP(fd: fd_t, rep: [2]c_uint) IOCTLError!void {
+    try ioctlWrite(fd, EVIOCSREP, &rep);
+}
+
+/// Get keycode
+pub inline fn ioctl_EVIOCGKEYCODE(fd: fd_t, scancode: c_uint) IOCTLError!c_uint {
+    var result: [2]c_uint = .{ scancode, 0 };
+    const rc = try ioctlRead(fd, EVIOCGKEYCODE, &result);
+    assert(rc == 0);
+    return result[1];
+}
+
+/// Get keycode
+pub inline fn ioctl_EVIOCGKEYCODE_V2(fd: fd_t, index: u16) IOCTLError!?InputKeymapEntry {
+    var result: IOCTLError!?InputKeymapEntry = null;
+    var entry: InputKeymapEntry = .{ .index = index, .flags = .{ .KEYMAP_BY_INDEX = true } };
+
+    if (ioctl(fd, EVIOCGKEYCODE_V2, @intFromPtr(&entry))) |rc| {
+        assert(rc == 0);
+        result = entry;
+    } else |e| switch (e) {
+        error.InvalidRequestOrArg => result = null,
+        else => result = e,
+    }
+    return result;
+}
+
+/// Set keycode
+pub inline fn ioctl_EVIOCSKEYCODE(fd: fd_t, scancode: c_uint, keycode: c_uint) IOCTLError!void {
+    const new_map: [2]c_uint = .{ scancode, keycode };
+    try ioctlWrite(fd, EVIOCSKEYCODE, &new_map);
+}
+
+/// Set keycode
+pub inline fn ioctl_EVIOCSKEYCODE_V2(fd: fd_t, entry: *const InputKeymapEntry) IOCTLError!void {
+    try ioctlWrite(fd, EVIOCSKEYCODE_V2, entry);
+}
+
+/// Get device name
 /// Functional buf size is buf.len - 1, null terminator is included
 pub inline fn ioctl_EVIOCGNAME(fd: fd_t, buf: []u8) IOCTLError![]const u8 {
-    const result = try ioctl_String(fd, buf, EVIOCGNAME);
+    const result = try ioctlString(fd, buf, EVIOCGNAME);
     return result;
 }
 
+/// Get physical location
 /// Functional buf size is buf.len - 1, null terminator is included
 pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
-    const result: IOCTLError!?[]const u8 = ioctl_String(fd, buf, EVIOCGPHYS) catch |e| switch (e) {
+    const result: IOCTLError!?[]const u8 = ioctlString(fd, buf, EVIOCGPHYS) catch |e| switch (e) {
         error.FileDoesNotExist => null,
         else => e,
     };
@@ -679,9 +844,10 @@ pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
     return result;
 }
 
+/// Get unique identifier
 /// Functional buf size is buf.len - 1, null terminator is included
 pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
-    const result: IOCTLError!?[]const u8 = ioctl_String(fd, buf, EVIOCGUNIQ) catch |e| switch (e) {
+    const result: IOCTLError!?[]const u8 = ioctlString(fd, buf, EVIOCGUNIQ) catch |e| switch (e) {
         error.FileDoesNotExist => null,
         else => e,
     };
@@ -689,28 +855,56 @@ pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
     return result;
 }
 
+/// Get device properties
 pub inline fn ioctl_EVIOCGPROP(fd: fd_t) IOCTLError!InputProp {
-    const result = try ioctl_Struct(InputProp, fd, EVIOCGPROP);
+    const result = try ioctlReadTypeSize(InputProp, fd, EVIOCGPROP);
     return result;
 }
 
-pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!std.StaticBitSet(KEY.CNT) {
-    const BitSet = std.StaticBitSet(KEY.CNT);
-    const result = try ioctl_Struct(BitSet, fd, EVIOCGKEY);
+/// Get MT slot values
+/// The length of 'slot_buf' must be 'slot_count + 1' because the code is put in the first slot for the ioctl request.
+pub inline fn ioctl_EVIOCGMTSLOTS(fd: fd_t, slot: ABS.MT, slot_count: usize, slot_buf: []i32) IOCTLError![]i32 {
+    assert(slot_count + 1 == slot_buf.len);
+    slot_buf[0] = @intFromEnum(slot);
+    const rc = try ioctlRead(fd, EVIOCGMTSLOTS(@intCast(slot_buf.len * @sizeOf(i32))), slot_buf.ptr);
+    assert(rc == 0);
+    return slot_buf[1..];
+}
+
+/// Get global key state
+pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!EnumBitset(KEY) {
+    const BitSet = EnumBitset(KEY);
+    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGKEY);
     return result;
 }
 
-pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!std.StaticBitSet(@field(ET, "CNT")) {
-    const bit_count = @field(ET, "CNT");
-    const BitSet = std.StaticBitSet(bit_count);
+/// Get all LEDs
+pub inline fn ioctl_EVIOCGLED(fd: fd_t) IOCTLError!EnumBitset(LED) {
+    const BitSet = EnumBitset(LED);
+    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGLED);
+    return result;
+}
 
-    const ev: EV = comptime switch (ET) {
-        else => @compileError("Invalid event type"),
-        EV => .SYN,
-        ABS, KEY, FF, REL, MSC, LED, SND, SW => @field(EV, meta.typeNameLeaf(ET)),
-    };
+/// Get all sounds status
+pub inline fn ioctl_EVIOCGSND(fd: fd_t) IOCTLError!EnumBitset(SND) {
+    const BitSet = EnumBitset(SND);
+    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGSND);
+    return result;
+}
 
+/// Get all switch states
+pub inline fn ioctl_EVIOCGSW(fd: fd_t) IOCTLError!EnumBitset(SW) {
+    const BitSet = EnumBitset(SW);
+    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGSW);
+    return result;
+}
+
+/// Get event bits
+pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!EnumBitset(ET) {
+    const BitSet = EnumBitset(ET);
     var result: BitSet = .empty;
+
+    const ev: u8 = @intCast(EV.uintFromType(ET));
 
     const rc = try ioctlRead(fd, EVIOCGBIT(ev, @sizeOf(BitSet)), &result);
     assert(rc == @sizeOf(BitSet));
@@ -718,6 +912,7 @@ pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!std.Static
     return result;
 }
 
+/// Get abs value/limits
 pub inline fn ioctl_EVIOCGABS(fd: fd_t, abs: ABS) IOCTLError!InputAbsInfo {
     var result: InputAbsInfo = .{};
     const rc = try ioctlRead(fd, EVIOCGABS(abs), &result);
@@ -725,10 +920,75 @@ pub inline fn ioctl_EVIOCGABS(fd: fd_t, abs: ABS) IOCTLError!InputAbsInfo {
     return result;
 }
 
-pub inline fn ioctl_EVIOCSFF(fd: fd_t, effect: *const FfEffect) IOCTLError!u16 {
-    const rc = try ioctlWrite(fd, EVIOCSFF, effect);
-    const result: u16 = @intCast(rc);
+/// Set abs value/limits
+pub inline fn ioctl_EVIOCSABS(fd: fd_t, abs: ABS, abs_info: InputAbsInfo) IOCTLError!void {
+    try ioctlWrite(fd, EVIOCSABS(abs), &abs_info);
+}
+
+/// Send a force effect to a force feedback device
+/// New id is written back to 'effect'
+pub inline fn ioctl_EVIOCSFF(fd: fd_t, effect: *FfEffect) IOCTLError!void {
+    // Note: ioctlWrite takes a '*const anyopaque' and converts it to usize.
+    //        Because the original pointer is mutable, the pointed-to storage can
+    //        be written to by the kernel.
+    try ioctlWrite(fd, EVIOCSFF, effect);
+}
+
+/// Erase a force effect
+pub inline fn ioctl_EVIOCRMFF(fd: fd_t, id: u16) IOCTLError!void {
+    const rc = try ioctl(fd, EVIOCRMFF, id);
+    assert(rc == 0);
+}
+
+/// Report number of effect playable at the same time
+pub inline fn ioctl_EVIOCGEFFECTS(fd: fd_t) IOCTLError!c_int {
+    const result = try ioctlReadType(c_int, fd, EVIOCGEFFECTS);
     return result;
+}
+
+/// Grab/Release device
+pub inline fn ioctl_EVIOCGRAB(fd: fd_t, grab: bool) IOCTLError!void {
+    const rc = try ioctl(fd, EVIOCGRAB, @intFromBool(grab));
+    assert(rc == 0);
+}
+
+/// Revoke device access
+pub inline fn ioctl_EVIOCREVOKE(fd: fd_t) IOCTLError!void {
+    const rc = try ioctl(fd, EVIOCREVOKE, 0);
+    assert(rc == 0);
+}
+
+/// Retrieve current event mask
+pub inline fn ioctl_EVIOCGMASK(fd: fd_t, comptime ET: type) IOCTLError!EnumBitset(ET) {
+    const BitSet = EnumBitset(ET);
+    var result: BitSet = .empty;
+
+    var input_mask = InputMask{
+        .type = EV.uintFromType(ET),
+        .codes_size = @sizeOf(BitSet),
+        .codes_ptr = @intFromPtr(&result),
+    };
+
+    const rc = try ioctlRead(fd, EVIOCGMASK, &input_mask);
+    assert(rc == 0);
+
+    return result;
+}
+
+/// Set event mask
+pub inline fn ioctl_EVIOCSMASK(fd: fd_t, comptime ET: type, new_mask: *const EnumBitset(ET)) IOCTLError!void {
+    const input_mask = InputMask{
+        .type = EV.uintFromType(ET),
+        .codes_size = @sizeOf(EnumBitset(ET)),
+        .codes_ptr = @intFromPtr(new_mask),
+    };
+
+    try ioctlWrite(fd, EVIOCSMASK, &input_mask);
+}
+
+/// Set clockid to be used for timestamps
+pub inline fn ioctl_EVIOCSCLOCKID(fd: fd_t, id: c_int) IOCTLError!void {
+    try ioctlWrite(fd, EVIOCSCLOCKID, &id);
 }
 
 // =============================================================================
@@ -765,6 +1025,14 @@ pub const EV = enum(u16) {
 
     pub const MAX: u16 = 0x1f;
     pub const CNT: u16 = MAX + 1;
+
+    fn uintFromType(comptime T: type) u16 {
+        return switch (T) {
+            else => @compileError("Invalid event type"),
+            EV => 0,
+            ABS, KEY, FF, REL, MSC, LED, SND, SW => @intFromEnum(@field(EV, meta.typeNameLeaf(T))),
+        };
+    }
 };
 
 pub const ABS = enum(u8) {
@@ -815,6 +1083,23 @@ pub const ABS = enum(u8) {
 
     pub const MAX: u16 = 0x3f;
     pub const CNT: u16 = (MAX + 1);
+
+    pub const MT = enum(u8) {
+        TOUCH_MAJOR = @intFromEnum(ABS.MT_TOUCH_MAJOR),
+        TOUCH_MINOR = @intFromEnum(ABS.MT_TOUCH_MINOR),
+        WIDTH_MAJOR = @intFromEnum(ABS.MT_WIDTH_MAJOR),
+        WIDTH_MINOR = @intFromEnum(ABS.MT_WIDTH_MINOR),
+        ORIENTATION = @intFromEnum(ABS.MT_ORIENTATION),
+        POSITION_X = @intFromEnum(ABS.MT_POSITION_X),
+        POSITION_Y = @intFromEnum(ABS.MT_POSITION_Y),
+        TOOL_TYPE = @intFromEnum(ABS.MT_TOOL_TYPE),
+        BLOB_ID = @intFromEnum(ABS.MT_BLOB_ID),
+        TRACKING_ID = @intFromEnum(ABS.MT_TRACKING_ID),
+        PRESSURE = @intFromEnum(ABS.MT_PRESSURE),
+        DISTANCE = @intFromEnum(ABS.MT_DISTANCE),
+        TOOL_X = @intFromEnum(ABS.MT_TOOL_X),
+        TOOL_Y = @intFromEnum(ABS.MT_TOOL_Y),
+    };
 };
 
 pub const FF = enum(u16) {
@@ -837,6 +1122,27 @@ pub const FF = enum(u16) {
 
     GAIN = 0x60,
     AUTOCENTER = 0x61,
+
+    pub const EFFECT = enum(u16) {
+        HAPTIC = @intFromEnum(FF.HAPTIC),
+        RUMBLE = @intFromEnum(FF.RUMBLE),
+        PERIODIC = @intFromEnum(FF.PERIODIC),
+        CONSTANT = @intFromEnum(FF.CONSTANT),
+        SPRING = @intFromEnum(FF.SPRING),
+        FRICTION = @intFromEnum(FF.FRICTION),
+        DAMPER = @intFromEnum(FF.DAMPER),
+        INERTIA = @intFromEnum(FF.INERTIA),
+        RAMP = @intFromEnum(FF.RAMP),
+    };
+
+    pub const WAVEFORM = enum(u16) {
+        SQUARE = @intFromEnum(FF.SQUARE),
+        TRIANGLE = @intFromEnum(FF.TRIANGLE),
+        SINE = @intFromEnum(FF.SINE),
+        SAW_UP = @intFromEnum(FF.SAW_UP),
+        SAW_DOWN = @intFromEnum(FF.SAW_DOWN),
+        CUSTOM = @intFromEnum(FF.CUSTOM),
+    };
 
     pub const EFFECT_MIN: FF = .HAPTIC;
     pub const EFFECT_MAX: FF = .RAMP;
@@ -1622,7 +1928,8 @@ pub const SW = enum(u8) {
 // =============================================================================
 
 pub const IOCTLError = Error || error{
-    Unknown,
+    // Unknown,
+    Unsupported,
     ArgIsInvalidPointer,
     InvalidRequestOrArg,
     InvalidFDForRequest,
@@ -1655,18 +1962,6 @@ pub inline fn _IOWR(@"type": u8, nr: u8, comptime T: type) _IOC {
     return _IOC.init(IOC.READ | IOC.WRITE, @"type", nr, @sizeOf(T));
 }
 
-pub inline fn ioctlRead(fd: fd_t, request: _IOC, arg: *anyopaque) IOCTLError!usize {
-    assert(request.dir & IOC.READ == IOC.READ);
-    const result = ioctl(fd, request, @intFromPtr(arg));
-    return result;
-}
-
-pub inline fn ioctlWrite(fd: fd_t, request: _IOC, arg: *const anyopaque) IOCTLError!usize {
-    assert(request.dir & IOC.WRITE == IOC.WRITE);
-    const result = ioctl(fd, request, @intFromPtr(arg));
-    return result;
-}
-
 pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
     const rc = syscall3(.ioctl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(request)), arg);
 
@@ -1680,6 +1975,7 @@ pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
         .ACCES, .PERM => error.PermissionDenied,
         .NOENT => error.FileDoesNotExist,
         .NODEV => error.InvalidDevice,
+        .NOSYS => error.Unsupported,
         else => blk: {
             log.warn("Unexpected errno for ioctl: {}", .{e});
             break :blk error.UnexpectedErrno;
@@ -2245,6 +2541,37 @@ pub const timespec = extern struct {
 pub const timeval = extern struct {
     sec: isize,
     usec: i64,
+};
+
+pub const CLOCK = enum(c_int) {
+    REALTIME = 0,
+    MONOTONIC = 1,
+    PROCESS_CPUTIME_ID = 2,
+    THREAD_CPUTIME_ID = 3,
+    MONOTONIC_RAW = 4,
+    REALTIME_COARSE = 5,
+    MONOTONIC_COARSE = 6,
+    BOOTTIME = 7,
+    REALTIME_ALARM = 8,
+    BOOTTIME_ALARM = 9,
+
+    // The driver implementing this got removed. The clock ID is kept as a
+    // place holder. Do not reuse!
+    CLOCK_SGI_CYCLE = 10,
+    CLOCK_TAI = 11,
+
+    pub const MAX_CLOCKS = 16;
+
+    // AUX clock support. AUXiliary clocks are dynamically configured by
+    // enabling a clock ID. These clock can be steered independently of the
+    // core timekeeper. The kernel can support up to 8 auxiliary clocks, but
+    // the actual limit depends on eventual architecture constraints vs. VDSO.
+    pub const CLOCK_AUX = MAX_CLOCKS;
+    pub const MAX_AUX_CLOCKS = 8;
+    pub const CLOCK_AUX_LAST = (CLOCK_AUX + MAX_AUX_CLOCKS - 1);
+
+    pub const CLOCKS_MASK: c_int = (@intFromEnum(CLOCK.REALTIME) | @intFromEnum(CLOCK.MONOTONIC));
+    pub const CLOCKS_MONO: c_int = @intFromEnum(CLOCK.MONOTONIC);
 };
 
 // =============================================================================
