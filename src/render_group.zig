@@ -532,13 +532,13 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
 
     var source_offset_x: i32 = 0;
     if (min_x < 0) {
-        source_offset_x = -min_x;
+        source_offset_x = -%min_x;
         min_x = 0;
     }
 
     var source_offset_y: i32 = 0;
     if (min_y < 0) {
-        source_offset_y = -min_y;
+        source_offset_y = -%min_y;
         min_y = 0;
     }
 
@@ -550,11 +550,8 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
         max_y = buffer.height;
     }
 
-    max_x = @intCast(@max(0, max_x));
-    max_y = @intCast(@max(0, max_y));
-
-    var source_row = intrinsics.ptrOffset(bitmap.memory, (source_offset_y * bitmap.pitch) + (source_offset_x * bpp));
-    var dest_row = intrinsics.ptrOffset(buffer.memory, (min_y * buffer.pitch) + (min_x * bpp));
+    var source_row = intrinsics.ptrOffset(bitmap.memory, (source_offset_y *% bitmap.pitch) + (source_offset_x *% bpp));
+    var dest_row = intrinsics.ptrOffset(buffer.memory, (min_y *% buffer.pitch) + (min_x *% bpp));
 
     var y: usize = @intCast(min_y);
     while (y < max_y) : (y += 1) {
