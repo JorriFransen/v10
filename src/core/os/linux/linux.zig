@@ -872,30 +872,26 @@ pub inline fn ioctl_EVIOCGMTSLOTS(fd: fd_t, slot: ABS.MT, slot_count: usize, slo
 }
 
 /// Get global key state
-pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!EnumBitset(KEY) {
-    const BitSet = EnumBitset(KEY);
-    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGKEY);
+pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!KEY.Bitset {
+    const result = try ioctlReadTypeSize(KEY.BitSet, fd, EVIOCGKEY);
     return result;
 }
 
 /// Get all LEDs
-pub inline fn ioctl_EVIOCGLED(fd: fd_t) IOCTLError!EnumBitset(LED) {
-    const BitSet = EnumBitset(LED);
-    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGLED);
+pub inline fn ioctl_EVIOCGLED(fd: fd_t) IOCTLError!LED.Bitset {
+    const result = try ioctlReadTypeSize(LED.BitSet, fd, EVIOCGLED);
     return result;
 }
 
 /// Get all sounds status
-pub inline fn ioctl_EVIOCGSND(fd: fd_t) IOCTLError!EnumBitset(SND) {
-    const BitSet = EnumBitset(SND);
-    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGSND);
+pub inline fn ioctl_EVIOCGSND(fd: fd_t) IOCTLError!SND.Bitset {
+    const result = try ioctlReadTypeSize(SND.BitSet, fd, EVIOCGSND);
     return result;
 }
 
 /// Get all switch states
-pub inline fn ioctl_EVIOCGSW(fd: fd_t) IOCTLError!EnumBitset(SW) {
-    const BitSet = EnumBitset(SW);
-    const result = try ioctlReadTypeSize(BitSet, fd, EVIOCGSW);
+pub inline fn ioctl_EVIOCGSW(fd: fd_t) IOCTLError!SW.Bitset {
+    const result = try ioctlReadTypeSize(SW.Bitset, fd, EVIOCGSW);
     return result;
 }
 
@@ -1026,6 +1022,8 @@ pub const EV = enum(u16) {
     pub const MAX: u16 = 0x1f;
     pub const CNT: u16 = MAX + 1;
 
+    pub const Bitset = EnumBitset(@This());
+
     fn uintFromType(comptime T: type) u16 {
         return switch (T) {
             else => @compileError("Invalid event type"),
@@ -1100,6 +1098,8 @@ pub const ABS = enum(u8) {
         TOOL_X = @intFromEnum(ABS.MT_TOOL_X),
         TOOL_Y = @intFromEnum(ABS.MT_TOOL_Y),
     };
+
+    pub const Bitset = EnumBitset(@This());
 };
 
 pub const FF = enum(u16) {
@@ -1152,6 +1152,8 @@ pub const FF = enum(u16) {
 
     pub const MAX: u16 = 0x7f;
     pub const CNT: u16 = 0x80;
+
+    pub const Bitset = EnumBitset(@This());
 };
 
 pub const KEY = enum(u16) {
@@ -1866,6 +1868,8 @@ pub const LED = enum(u8) {
 
     pub const MAX: u8 = 0x0f;
     pub const CNT: u8 = MAX + 1;
+
+    pub const Bitset = EnumBitset(@This());
 };
 
 pub const SND = enum(u8) {
@@ -1875,6 +1879,8 @@ pub const SND = enum(u8) {
 
     pub const MAX: u8 = 0x07;
     pub const CNT: u8 = MAX + 1;
+
+    pub const Bitset = EnumBitset(@This());
 };
 
 pub const SW = enum(u8) {
@@ -1921,6 +1927,8 @@ pub const SW = enum(u8) {
 
     pub const MAX: u8 = 0x11;
     pub const CNT: u8 = MAX + 1;
+
+    pub const Bitset = EnumBitset(@This());
 };
 
 // =============================================================================
