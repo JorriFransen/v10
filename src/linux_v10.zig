@@ -556,14 +556,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                             const action = std.mem.span(udev.device_get_action(device).?);
 
-                            if (Joystick.udevDeviceIsJoystick(udev_ctx_opt.?, device)) |devnode_path| {
-                                if (std.mem.eql(u8, action, "add")) {
+                            if (std.mem.eql(u8, action, "add")) {
+                                if (Joystick.udevDeviceIsJoystick(udev_ctx_opt.?, device)) |devnode_path| {
                                     addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
-                                } else if (std.mem.eql(u8, action, "remove")) {
-                                    removeJoystick(device, devnode_path) catch |e| log.err("Failed to remove joystick '{s}', error: '{}'", .{ devnode_path, e });
-                                } else {
-                                    log.err("Unhandled joystick action: '{s}'", .{action});
                                 }
+                            } else if (std.mem.eql(u8, action, "remove")) {
+                                removeJoystick(device) catch |e| {
+                                    const dnp_opt = udev.device_get_devnode(device);
+                                    log.err("Failed to remove joystick '{?s}', error: '{}'", .{ dnp_opt, e });
+                                };
+                            } else {
+                                log.err("Unhandled joystick action: '{s}'", .{action});
                             }
                         }
                     },
@@ -1735,7 +1738,7 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
     }
 }
 
-fn addJoystick(io: std.Io, device: *const udev.Device, devnode_path: [*:0]const u8) !void {
+fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
     log.info("Adding joystick: '{s}'", .{devnode_path});
 
     for (&joysticks, 0..) |*js, i| {
@@ -1755,15 +1758,16 @@ fn addJoystick(io: std.Io, device: *const udev.Device, devnode_path: [*:0]const 
     } else return error.NoFreeJoystickSlot;
 }
 
-fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
-    _ = device;
-
-    log.info("Removing joystick: '{s}'", .{devnode_path});
-
-    const dnp = std.mem.span(devnode_path);
+fn removeJoystick(device: *udev.Device) !void {
+    const dev_path = std.mem.span(udev.device_get_devpath(device).?);
+    const devnode_path = if (udev.device_get_devnode(device)) |dnp| std.mem.span(dnp) else dev_path;
 
     for (&joysticks, 0..) |*js, ji| {
-        if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), dnp)) {
+        const js_dev_path = std.mem.span(@as([*:0]u8, @ptrCast(&js.dev_path)));
+
+        if (std.mem.eql(u8, js_dev_path, dev_path)) {
+            log.info("Removing joystick: '{s}'", .{devnode_path});
+
             assert(js.state == .active or js.state == .sync);
             assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
 
@@ -1774,7 +1778,7 @@ fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
 
             break;
         }
-    } else return error.JoystickNotRegistered;
+    }
 }
 
 const AudioOutput = struct {

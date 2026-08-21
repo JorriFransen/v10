@@ -36,7 +36,7 @@ sync_report_count: u8,
 axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
 
 /// Zero terminated devnode path
-path: [32]u8 = @splat(0),
+dev_path: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
 
 pub const State = enum(u8) {
     inactive,
@@ -133,7 +133,7 @@ pub const xbox_map: Map = .{
     },
 };
 
-pub fn init(this: *Joystick, io: std.Io, device: *const udev.Device, devnode_path: [*:0]const u8) !void {
+pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
     const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;
     const parent_syspath = std.mem.span(udev.device_get_syspath(input_dev).?);
 
@@ -154,12 +154,6 @@ pub fn init(this: *Joystick, io: std.Io, device: *const udev.Device, devnode_pat
     const fd = try linux.open(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
     const open_timestamp = linux_v10.getWallClock(io);
 
-    // poll_fds[PollFdSlot.first_joystick + index] = .{
-    //     .fd = @intCast(fd),
-    //     .events = linux.POLL.IN,
-    //     .revents = undefined,
-    // };
-
     this.* = .{
         .fd = @intCast(fd),
         .state = .sync,
@@ -170,10 +164,11 @@ pub fn init(this: *Joystick, io: std.Io, device: *const udev.Device, devnode_pat
         .sync_report_count = 0,
     };
 
-    const dnp = std.mem.span(devnode_path);
-    assert(this.path.len > dnp.len + 1);
-    @memcpy(this.path[0..dnp.len], dnp);
-    this.path[dnp.len] = 0;
+    const dev_path_z = udev.device_get_devpath(device).?;
+    const dev_path = std.mem.span(dev_path_z);
+    assert(this.dev_path.len > dev_path.len + 1);
+    @memcpy(this.dev_path[0..dev_path.len], dev_path);
+    this.dev_path[dev_path.len] = 0;
 
     // var name_buf: [128]u8 = undefined;
     // const name = try linux.ioctl_EVIOCGNAME(fd, &name_buf);
