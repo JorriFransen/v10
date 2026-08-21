@@ -6,22 +6,15 @@ const builtin = @import("builtin");
 const core = @import("core");
 const arch = core.arch;
 const assert = core.assert;
+const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
 const pa = core.lib.pulse;
 const posix = core.os.posix;
 const udev = core.lib.udev;
 
-const linux = core.os.linux;
-const InputEvent = linux.InputEvent;
-const Key = linux.KEY;
-const Abs = linux.ABS;
-const errno = linux.errno;
-
 const options = @import("options");
 const linux_options = @import("linux_options");
-
-const common = @import("v10_common");
 
 const wayland = @import("wayland");
 const wlc = wayland.client;
@@ -29,6 +22,9 @@ const wl = wayland.wayland;
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
+const Joystick = @import("linux_joystick.zig");
+
+const common = @import("v10_common");
 const GameCode = common.GameCode;
 const Memory = common.Memory;
 const OffscreenBuffer = common.OffscreenBuffer;
@@ -414,7 +410,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
             defer _ = udev.device_unref(device);
 
-            if (udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
+            if (Joystick.udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
                 addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
             }
 
@@ -560,7 +556,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                             const action = std.mem.span(udev.device_get_action(device).?);
 
-                            if (udevDeviceIsJoystick(udev_ctx_opt.?, device)) |devnode_path| {
+                            if (Joystick.udevDeviceIsJoystick(udev_ctx_opt.?, device)) |devnode_path| {
                                 if (std.mem.eql(u8, action, "add")) {
                                     addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
                                 } else if (std.mem.eql(u8, action, "remove")) {
@@ -577,9 +573,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .joystick_2,
                     .joystick_3,
                     => if (in) {
-                        var events: [16]InputEvent = undefined;
+                        var events: [16]linux.InputEvent = undefined;
                         while (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
-                            const num_events = bytes_read.len / @sizeOf(InputEvent);
+                            const num_events = bytes_read.len / @sizeOf(linux.InputEvent);
                             for (events[0..num_events]) |*event| {
                                 const jid = slot_index - PollFdSlot.first_joystick;
                                 const joystick = &joysticks[jid];
@@ -587,7 +583,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             }
                         } else |e| switch (e) {
                             error.NoData => {},
-                            else => return e,
+                            else => log.err("Failed to read joystick events, error: '{}'", .{e}),
                         }
                     },
                 }
@@ -601,6 +597,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
             try resize(r.width, r.height);
         }
 
+        for (&joysticks) |*js| {
+            js.update(io);
+        }
+
         if (!pause) {
             var max_controller_count: usize = joysticks.len;
             if (max_controller_count > (wld.new_input.controllers.len - 1)) max_controller_count = (wld.new_input.controllers.len - 1);
@@ -612,93 +612,81 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 const old_buttons = &old_controller.buttons.named;
                 const new_buttons = &new_controller.buttons.named;
 
-                state: switch (js.state) {
-                    .inactive => {
-                        new_controller.is_connected = false;
-                    },
+                if (js.state == .active) {
+                    new_controller.is_connected = true;
+                    new_controller.is_analog = old_controller.is_analog;
 
-                    .sync => {
-                        if (js.open_timestamp.nanoseconds + (200 * std.time.ns_per_ms) < getWallClock(io).nanoseconds) {
-                            js.activate();
-                            assert(js.state == .active);
-                            continue :state Joystick.State.active;
-                        }
-                    },
+                    new_controller.stick_average_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
+                    new_controller.stick_average_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
 
-                    .active => {
-                        new_controller.is_connected = true;
-                        new_controller.is_analog = old_controller.is_analog;
+                    if (new_controller.stick_average_x != 0 or new_controller.stick_average_y != 0) {
+                        new_controller.is_analog = true;
+                    }
 
-                        new_controller.stick_average_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
-                        new_controller.stick_average_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
+                    if (js.getButtonState(.dpad_up)) {
+                        new_controller.stick_average_y = 1;
+                        new_controller.is_analog = false;
+                    }
+                    if (js.getButtonState(.dpad_down)) {
+                        new_controller.stick_average_y = -1;
+                        new_controller.is_analog = false;
+                    }
+                    if (js.getButtonState(.dpad_left)) {
+                        new_controller.stick_average_x = -1;
+                        new_controller.is_analog = false;
+                    }
+                    if (js.getButtonState(.dpad_right)) {
+                        new_controller.stick_average_x = 1;
+                        new_controller.is_analog = false;
+                    }
 
-                        if (new_controller.stick_average_x != 0 or new_controller.stick_average_y != 0) {
-                            new_controller.is_analog = true;
-                        }
+                    const threshold = 0.5;
 
-                        if (js.getButtonState(.dpad_up)) {
-                            new_controller.stick_average_y = 1;
-                            new_controller.is_analog = false;
-                        }
-                        if (js.getButtonState(.dpad_down)) {
-                            new_controller.stick_average_y = -1;
-                            new_controller.is_analog = false;
-                        }
-                        if (js.getButtonState(.dpad_left)) {
-                            new_controller.stick_average_x = -1;
-                            new_controller.is_analog = false;
-                        }
-                        if (js.getButtonState(.dpad_right)) {
-                            new_controller.stick_average_x = 1;
-                            new_controller.is_analog = false;
-                        }
+                    processDigitalButton(
+                        .{ .mask = if (new_controller.stick_average_x < -threshold) 1 else 0 },
+                        &old_buttons.move_left,
+                        @enumFromInt(0),
+                        &new_buttons.move_left,
+                    );
+                    processDigitalButton(
+                        .{ .mask = if (new_controller.stick_average_x > threshold) 1 else 0 },
+                        &old_buttons.move_right,
+                        @enumFromInt(0),
+                        &new_buttons.move_right,
+                    );
+                    processDigitalButton(
+                        .{ .mask = if (new_controller.stick_average_y < -threshold) 1 else 0 },
+                        &old_buttons.move_down,
+                        @enumFromInt(0),
+                        &new_buttons.move_down,
+                    );
+                    processDigitalButton(
+                        .{ .mask = if (new_controller.stick_average_y > threshold) 1 else 0 },
+                        &old_buttons.move_up,
+                        @enumFromInt(0),
+                        &new_buttons.move_up,
+                    );
 
-                        const threshold = 0.5;
+                    // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
+                    processDigitalButton(js.buttons, &old_buttons.action_up, .north, &new_buttons.action_up);
+                    processDigitalButton(js.buttons, &old_buttons.action_down, .south, &new_buttons.action_down);
+                    processDigitalButton(js.buttons, &old_buttons.action_left, .west, &new_buttons.action_left);
+                    processDigitalButton(js.buttons, &old_buttons.action_right, .east, &new_buttons.action_right);
+                    processDigitalButton(js.buttons, &old_buttons.left_shoulder, .shoulder_left, &new_buttons.left_shoulder);
+                    processDigitalButton(js.buttons, &old_buttons.right_shoulder, .shoulder_right, &new_buttons.right_shoulder);
+                    processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
+                    processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
 
-                        processDigitalButton(
-                            .{ .mask = if (new_controller.stick_average_x < -threshold) 1 else 0 },
-                            &old_buttons.move_left,
-                            @enumFromInt(0),
-                            &new_buttons.move_left,
-                        );
-                        processDigitalButton(
-                            .{ .mask = if (new_controller.stick_average_x > threshold) 1 else 0 },
-                            &old_buttons.move_right,
-                            @enumFromInt(0),
-                            &new_buttons.move_right,
-                        );
-                        processDigitalButton(
-                            .{ .mask = if (new_controller.stick_average_y < -threshold) 1 else 0 },
-                            &old_buttons.move_down,
-                            @enumFromInt(0),
-                            &new_buttons.move_down,
-                        );
-                        processDigitalButton(
-                            .{ .mask = if (new_controller.stick_average_y > threshold) 1 else 0 },
-                            &old_buttons.move_up,
-                            @enumFromInt(0),
-                            &new_buttons.move_up,
-                        );
+                    // TODO: Why is rumble ff not scaled between 0 and u16_max? (for my xbox-like conroller) (anything above 0xc9ff acts as 0x0)
+                    const r = js.axis[@intFromEnum(Joystick.Axis.right_z)];
+                    const strong: u16 = @intFromFloat(math.lerp(0, r, 0xc9ff));
 
-                        // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
-                        processDigitalButton(js.buttons, &old_buttons.action_up, .north, &new_buttons.action_up);
-                        processDigitalButton(js.buttons, &old_buttons.action_down, .south, &new_buttons.action_down);
-                        processDigitalButton(js.buttons, &old_buttons.action_left, .west, &new_buttons.action_left);
-                        processDigitalButton(js.buttons, &old_buttons.action_right, .east, &new_buttons.action_right);
-                        processDigitalButton(js.buttons, &old_buttons.left_shoulder, .shoulder_left, &new_buttons.left_shoulder);
-                        processDigitalButton(js.buttons, &old_buttons.right_shoulder, .shoulder_right, &new_buttons.right_shoulder);
-                        processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
-                        processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
+                    const l = js.axis[@intFromEnum(Joystick.Axis.left_z)];
+                    const weak: u16 = @intFromFloat(math.lerp(0, l, 0xc9ff));
 
-                        // TODO: Why is rumble ff not scaled between 0 and u16_max? (for my xbox-like conroller) (anything above 0xc9ff acts as 0x0)
-                        const r = js.axis[@intFromEnum(Joystick.Axis.right_z)];
-                        const strong: u16 = @intFromFloat(math.lerp(0, r, 0xc9ff));
-
-                        const l = js.axis[@intFromEnum(Joystick.Axis.left_z)];
-                        const weak: u16 = @intFromFloat(math.lerp(0, l, 0xc9ff));
-
-                        js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
-                    },
+                    js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
+                } else if (js.state == .inactive) {
+                    new_controller.is_connected = false;
                 }
             }
 
@@ -1082,267 +1070,6 @@ const PollFdSlot = enum(usize) {
     pub const joystick_count: usize = last_joystick - first_joystick + 1;
 };
 
-const Joystick = struct {
-    fd: linux.fd_t,
-    state: State,
-    kind: Kind,
-    capabilities: Capabilities,
-    map: *const Map,
-
-    axis: [axis_count]f32 = @splat(0),
-    buttons: Buttons = .empty,
-
-    // cached rumble event
-    rumble_strong: u16 = 0,
-    rumble_weak: u16 = 0,
-    rumble_event_id: i16 = -1,
-
-    open_timestamp: std.Io.Timestamp,
-    sync_report_count: u8,
-
-    axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
-
-    /// Zero terminated devnode path
-    path: [32]u8 = @splat(0),
-
-    const State = enum(u8) {
-        inactive,
-        sync,
-        active,
-    };
-
-    const Kind = enum(u8) {
-        default,
-        xbox,
-    };
-
-    const Capabilities = packed struct(u8) {
-        axis: bool = false,
-        button: bool = false,
-        rumble: bool = false,
-        __reserved__: u5 = 0,
-    };
-
-    const AxisMeta = struct {
-        available: bool,
-        min: i32 = -1,
-        max: i32 = 1,
-        deadzone: i32 = 0,
-    };
-
-    const axis_count = @typeInfo(Axis).@"enum".fields.len;
-    const Axis = enum {
-        left_x,
-        left_y,
-        left_z,
-        right_x,
-        right_y,
-        right_z,
-        dpad_x,
-        dpad_y,
-    };
-
-    pub const button_count = @typeInfo(Button).@"enum".fields.len;
-    pub const Buttons = std.StaticBitSet(button_count);
-    pub const Button = enum {
-        north,
-        east,
-        south,
-        west,
-        dpad_up,
-        dpad_right,
-        dpad_down,
-        dpad_left,
-        thumb_left,
-        thumb_right,
-        shoulder_left,
-        shoulder_right,
-        select,
-        start,
-        mode,
-    };
-
-    pub const AxisMap = std.enums.EnumFieldStruct(Axis, Abs, null);
-    pub const ButtonMap = std.enums.EnumFieldStruct(Button, Key, null);
-    pub const Map = struct {
-        axis: AxisMap,
-        buttons: ButtonMap,
-    };
-
-    pub const default_map = xbox_map;
-    pub const xbox_map: Map = .{
-        .axis = .{
-            .left_x = .X,
-            .left_y = .Y,
-            .left_z = .Z,
-            .right_x = .RX,
-            .right_y = .RY,
-            .right_z = .RZ,
-            .dpad_x = .HAT0X,
-            .dpad_y = .HAT0Y,
-        },
-        .buttons = .{
-            .north = .BTN_Y,
-            .east = .BTN_B,
-            .south = .BTN_A,
-            .west = .BTN_X,
-            .thumb_left = .BTN_THUMBL,
-            .thumb_right = .BTN_THUMBR,
-            .shoulder_left = .BTN_TL,
-            .shoulder_right = .BTN_TR,
-            .select = .BTN_SELECT,
-            .start = .BTN_START,
-            .mode = .BTN_MODE,
-            .dpad_up = .RESERVED,
-            .dpad_right = .RESERVED,
-            .dpad_down = .RESERVED,
-            .dpad_left = .RESERVED,
-        },
-    };
-
-    pub inline fn getButtonState(this: *const Joystick, button: Button) bool {
-        return this.buttons.isSet(@intFromEnum(button));
-    }
-
-    pub inline fn setButtonState(this: *Joystick, button: Button, state: bool) void {
-        this.buttons.setValue(@intFromEnum(button), state);
-    }
-
-    pub fn normalizedAxis(this: *const Joystick, axis: Joystick.Axis, raw: i32) f32 {
-        var result: f32 = 0;
-
-        const meta = &this.axis_meta[@intFromEnum(axis)];
-
-        if (raw < -meta.deadzone or raw > meta.deadzone) {
-            const min: f32 = @floatFromInt(meta.min);
-            const max: f32 = @floatFromInt(meta.max);
-            result = @as(f32, @floatFromInt(raw)) / if (raw < 0) -min else max;
-        }
-
-        return result;
-    }
-
-    fn handleEvent(this: *Joystick, event: *const InputEvent) void {
-        switch (event.type) {
-            .ABS => {
-                const abs: Abs = @enumFromInt(event.code);
-
-                inline for (std.meta.fields(Axis)) |field| {
-                    const mapped_abs_axis = @field(this.map.axis, field.name);
-
-                    if (abs == mapped_abs_axis) {
-                        const axis_idx: usize = field.value;
-                        const axis = @field(Axis, field.name);
-
-                        const axis_value = this.normalizedAxis(axis, event.value);
-                        this.axis[axis_idx] = axis_value;
-
-                        if (axis == .dpad_x) {
-                            if (axis_value == 0) {
-                                this.setButtonState(.dpad_left, false);
-                                this.setButtonState(.dpad_right, false);
-                            } else if (axis_value > 0) {
-                                this.setButtonState(.dpad_left, false);
-                                this.setButtonState(.dpad_right, true);
-                            } else {
-                                this.setButtonState(.dpad_left, true);
-                                this.setButtonState(.dpad_right, false);
-                            }
-                        } else if (axis == .dpad_y) {
-                            if (axis_value == 0) {
-                                this.setButtonState(.dpad_up, false);
-                                this.setButtonState(.dpad_down, false);
-                            } else if (axis_value > 0) {
-                                this.setButtonState(.dpad_up, false);
-                                this.setButtonState(.dpad_down, true);
-                            } else {
-                                this.setButtonState(.dpad_up, true);
-                                this.setButtonState(.dpad_down, false);
-                            }
-                        }
-
-                        break;
-                    }
-                }
-            },
-
-            .KEY => {
-                const key: Key = @enumFromInt(event.code);
-
-                inline for (std.meta.fields(Button)) |field| {
-                    const mapped_key: Key = @field(this.map.buttons, field.name);
-
-                    if (key == mapped_key) {
-                        const button = @field(Button, field.name);
-                        this.setButtonState(button, event.value != 0);
-                        break;
-                    }
-                }
-            },
-
-            .SYN => {
-                const syn: linux.SYN = @enumFromInt(event.code);
-
-                if (syn == .REPORT and this.state == .sync) {
-                    this.sync_report_count += 1;
-                }
-            },
-
-            .FF, .MSC, .REL => {}, // ignore
-            .FF_STATUS => {}, // ignore for now, reports playback-state changes, could be used to re-trigger or chain events
-
-            else => {},
-        }
-
-        if (this.state == .sync and this.sync_report_count >= 2) {
-            this.activate();
-        }
-    }
-
-    fn activate(this: *Joystick) void {
-        assert(this.state == .sync);
-        this.state = .active;
-    }
-
-    fn setRumble(this: *Joystick, strong: u16, weak: u16) !void {
-        if (this.capabilities.rumble) {
-            assert(this.state == .active);
-            assert(this.fd >= 0);
-
-            if (strong != this.rumble_strong or weak != this.rumble_weak) {
-                this.rumble_strong = strong;
-                this.rumble_weak = weak;
-
-                if (this.rumble_event_id != -1 and strong == 0 and weak == 0) {
-                    const stop_event = linux.InputEvent{ .type = .FF, .code = @intCast(this.rumble_event_id), .value = 0 };
-                    const write_len = try linux.write(this.fd, @ptrCast(&stop_event));
-                    if (write_len != @sizeOf(linux.InputEvent)) return error.EventWriteFailed;
-
-                    try linux.ioctl_EVIOCRMFF(this.fd, @intCast(this.rumble_event_id));
-
-                    this.rumble_event_id = -1;
-                } else {
-                    var rumble_event = linux.FfEffect{
-                        .type = .RUMBLE,
-                        .id = this.rumble_event_id,
-                        .u = .{ .rumble = .{ .strong_magnitude = this.rumble_strong, .weak_magnitude = this.rumble_weak } },
-                        .replay = .{ .length = 0, .delay = 0 },
-                    };
-
-                    try linux.ioctl_EVIOCSFF(this.fd, &rumble_event);
-                    if (this.rumble_event_id != rumble_event.id) {
-                        this.rumble_event_id = rumble_event.id;
-
-                        const play_event = InputEvent{ .type = .FF, .code = @intCast(rumble_event.id), .value = 1 };
-                        const write_len = try linux.write(this.fd, @ptrCast(&play_event));
-                        if (write_len != @sizeOf(linux.InputEvent)) return error.EventWriteFailed;
-                    }
-                }
-            }
-        }
-    }
-};
-
 fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const ButtonState, btn: Joystick.Button, new_state: *ButtonState) void {
     new_state.ended_down = buttons.isSet(@intFromEnum(btn));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 0 else 1;
@@ -1353,7 +1080,7 @@ fn processKeyEvent(new_state: *ButtonState, is_down: bool) void {
     new_state.half_transition_count += 1;
 }
 
-inline fn getWallClock(io: std.Io) std.Io.Timestamp {
+pub inline fn getWallClock(io: std.Io) std.Io.Timestamp {
     return std.Io.Timestamp.now(io, .real);
 }
 
@@ -1837,7 +1564,7 @@ fn handleWlKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32
     _ = serial;
 
     // TODO: Do this via the keymap with xkb!
-    const key: Key = @enumFromInt(rawkey);
+    const key: linux.KEY = @enumFromInt(rawkey);
     const was_down = state != .pressed;
     const is_down = state == .pressed or state == .repeated;
 
@@ -1940,7 +1667,7 @@ fn handleWlMouseMotion(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, surfa
 fn handleWlMouseButton(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) void {
     _ = .{ data, pointer, serial, time };
 
-    const button: Key = @enumFromInt(raw_button);
+    const button: linux.KEY = @enumFromInt(raw_button);
     const was_down = state == .released;
     const is_down = state == .pressed;
 
@@ -2008,178 +1735,46 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
     }
 }
 
-fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
+fn addJoystick(io: std.Io, device: *const udev.Device, devnode_path: [*:0]const u8) !void {
     log.info("Adding joystick: '{s}'", .{devnode_path});
 
-    const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;
-    const parent_syspath = std.mem.span(udev.device_get_syspath(input_dev).?);
+    for (&joysticks, 0..) |*js, i| {
+        if (js.state == .inactive) {
+            assert(js.fd == -1);
+            assert(poll_fds[PollFdSlot.first_joystick + i].fd == -1);
 
-    var driver_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const driver_path_fmt = std.fs.path.fmtJoin(&.{ parent_syspath, "device/driver" });
-    const driver_path = try std.fmt.bufPrint(&driver_path_buffer, "{f}", .{driver_path_fmt});
+            try Joystick.init(js, io, device, devnode_path);
 
-    var driver_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const driver_name_len = try std.Io.Dir.readLinkAbsolute(io, driver_path, &driver_name_buffer);
-    const driver_name = std.fs.path.basename(driver_name_buffer[0..driver_name_len]);
-
-    const kind: Joystick.Kind, const map: *const Joystick.Map =
-        if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
-            .{ .xbox, &Joystick.xbox_map }
-        else
-            .{ .default, &Joystick.default_map };
-
-    const ji: usize = blk: for (0..PollFdSlot.joystick_count) |i| {
-        const pollfd = &poll_fds[PollFdSlot.first_joystick + i];
-        if (pollfd.fd == -1) {
-            break :blk i;
+            poll_fds[PollFdSlot.first_joystick + i] = .{
+                .fd = @intCast(js.fd),
+                .events = linux.POLL.IN,
+                .revents = undefined,
+            };
+            break;
         }
     } else return error.NoFreeJoystickSlot;
-
-    const fd = try linux.open(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
-    const open_timestamp = getWallClock(io);
-
-    poll_fds[PollFdSlot.first_joystick + ji] = .{
-        .fd = @intCast(fd),
-        .events = linux.POLL.IN,
-        .revents = undefined,
-    };
-
-    const joystick = &joysticks[ji];
-    joystick.* = .{
-        .fd = @intCast(fd),
-        .state = .sync,
-        .kind = kind,
-        .capabilities = .{},
-        .map = map,
-        .open_timestamp = open_timestamp,
-        .sync_report_count = 0,
-    };
-
-    const dnp = std.mem.span(devnode_path);
-    assert(joystick.path.len > dnp.len + 1);
-    @memcpy(joystick.path[0..dnp.len], dnp);
-    joystick.path[dnp.len] = 0;
-
-    // var name_buf: [128]u8 = undefined;
-    // const name = try linux.ioctl_EVIOCGNAME(fd, &name_buf);
-    // log.info("js name: \"{s}\"", .{name});
-    //
-    // var phys_buf: [128]u8 = undefined;
-    // if (try linux.ioctl_EVIOCGPHYS(fd, &phys_buf)) |phys| {
-    //     log.info("js phys: \"{s}\"", .{phys});
-    // }
-
-    const ev_bits: linux.EV.Bitset = linux.ioctl_EVIOCGBIT(joystick.fd, linux.EV) catch .empty;
-
-    const has_axis = ev_bits.isSet(@intFromEnum(linux.EV.ABS));
-    const has_buttons = ev_bits.isSet(@intFromEnum(linux.EV.KEY));
-
-    const has_rumble: bool = if (ev_bits.isSet(@intFromEnum(linux.EV.FF))) blk: {
-        const ff_bits: linux.FF.Bitset = linux.ioctl_EVIOCGBIT(joystick.fd, linux.FF) catch .empty;
-        break :blk ff_bits.isSet(@intFromEnum(linux.FF.RUMBLE));
-    } else false;
-
-    joystick.capabilities = .{ .axis = has_axis, .button = has_buttons, .rumble = has_rumble };
-
-    if (has_axis) {
-        const abs_bits: linux.ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, linux.ABS) catch .empty;
-
-        inline for (std.meta.fields(Joystick.Axis)) |field| {
-            const axis_idx = field.value;
-            const abs: Abs = @field(map.axis, field.name);
-
-            if (abs_bits.isSet(@intFromEnum(abs))) {
-                joystick.axis_meta[axis_idx] = if (linux.ioctl_EVIOCGABS(fd, abs)) |abs_info|
-                    .{
-                        .available = true,
-                        .min = abs_info.minimum,
-                        .max = abs_info.maximum,
-                        .deadzone = abs_info.flat,
-                    }
-                else |_|
-                    .{ .available = false };
-            }
-        }
-    }
 }
 
 fn removeJoystick(device: *udev.Device, devnode_path: [*:0]const u8) !void {
     _ = device;
+
     log.info("Removing joystick: '{s}'", .{devnode_path});
 
     const dnp = std.mem.span(devnode_path);
 
-    var joystick_index_opt: ?usize = null;
     for (&joysticks, 0..) |*js, ji| {
         if (std.mem.eql(u8, std.mem.span(@as([*:0]u8, @ptrCast(&js.path))), dnp)) {
-            joystick_index_opt = ji;
-            js.* = .{
-                .fd = -1,
-                .state = .inactive,
-                .kind = undefined,
-                .map = undefined,
-                .capabilities = .{},
-                .open_timestamp = .zero,
-                .sync_report_count = 0,
-            };
+            assert(js.state == .active or js.state == .sync);
+            assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
+
+            try js.deinit();
+
+            const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
+            js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
+
             break;
         }
-    }
-
-    if (joystick_index_opt) |ji| {
-        const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
-        try linux.close(js_pollfd.fd);
-        js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
     } else return error.JoystickNotRegistered;
-}
-
-/// Returns the devnode path if the device is a joystick, otherwise returns null.
-fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8 {
-    var is_joystick = false;
-    var is_keyboard = false;
-    var is_mouse = false;
-    if (udev.device_get_devnode(device)) |n| {
-        const devnode_path = std.mem.span(n);
-
-        if (std.mem.indexOf(u8, devnode_path, "event") != null) {
-            is_joystick = udev.device_get_property_value(device, "ID_INPUT_JOYSTICK") != null;
-            if (is_joystick) {
-                if (udev.device_get_parent_with_subsystem_devtype(device, "usb", null)) |parent| {
-                    const sibling_enumerator = udev.enumerate_new(ctx).?;
-                    defer _ = udev.enumerate_unref(sibling_enumerator);
-
-                    _ = udev.enumerate_add_match_subsystem(sibling_enumerator, "input");
-                    _ = udev.enumerate_add_match_parent(sibling_enumerator, parent);
-                    _ = udev.enumerate_scan_devices(sibling_enumerator);
-
-                    var sibling = udev.enumerate_get_list_entry(sibling_enumerator);
-                    while (sibling) |s| {
-                        const sib_syspath = udev.list_entry_get_name(s);
-                        if (udev.device_new_from_syspath(ctx, sib_syspath)) |sib_dev| {
-                            defer _ = udev.device_unref(sib_dev);
-
-                            if (udev.device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
-                                is_keyboard = true;
-                                break;
-                            }
-
-                            if (udev.device_get_property_value(sib_dev, "ID_INPUT_MOUSE")) |_| {
-                                is_mouse = true;
-                                break;
-                            }
-                        }
-                        sibling = udev.list_entry_get_next(s);
-                    }
-                }
-            }
-        }
-
-        if (is_joystick and !is_keyboard and !is_mouse) {
-            return devnode_path;
-        }
-    }
-
-    return null;
 }
 
 const AudioOutput = struct {

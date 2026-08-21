@@ -167,7 +167,7 @@ fn device_get_parent_stub(device: *Device) callconv(.c) ?*Device {
 const FN_device_get_parent = @TypeOf(device_get_parent_stub);
 pub var device_get_parent: *const FN_device_get_parent = undefined;
 
-fn device_get_parent_with_subsystem_devtype_stub(device: *Device, subsystem: ?[*:0]const u8, devtype: ?[*:0]const u8) callconv(.c) ?*Device {
+fn device_get_parent_with_subsystem_devtype_stub(device: *const Device, subsystem: ?[*:0]const u8, devtype: ?[*:0]const u8) callconv(.c) ?*Device {
     _ = device;
     _ = subsystem;
     _ = devtype;
