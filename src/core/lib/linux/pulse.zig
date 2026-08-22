@@ -484,7 +484,7 @@ fn usec_to_bytes_stub(t: USec, spec: *const SampleSpec) callconv(.c) usize {
 }
 
 pub fn load() void {
-    const lib_name = "libpulse.so";
+    const lib_name = "libpulse.so.0";
     var load_stubs = false;
 
     var lib_or_err = std.DynLib.open(lib_name);
@@ -498,7 +498,7 @@ pub fn load() void {
                     @field(@This(), decl.name) = sym;
                 } else {
                     load_stubs = true;
-                    if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+                    if (builtin.mode == .Debug) {
                         @panic("Unable to load function: '" ++ decl.name ++ "'");
                     }
                     break;

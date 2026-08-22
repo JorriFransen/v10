@@ -401,23 +401,22 @@ pub fn main(init: std.process.Init.Minimal) !void {
             log.err("udev_enumerate_new failed", .{});
             return error.Unexpected;
         };
+        defer _ = udev.enumerate_unref(udev_enumerator);
+
         _ = udev.enumerate_add_match_subsystem(udev_enumerator, "input");
         _ = udev.enumerate_scan_devices(udev_enumerator);
 
         var udev_list_entry = udev.enumerate_get_list_entry(udev_enumerator);
-        while (udev_list_entry) |entry| {
+        while (udev_list_entry) |entry| : (udev_list_entry = udev.list_entry_get_next(entry)) {
             const syspath = udev.list_entry_get_name(entry);
-            const device = udev.device_new_from_syspath(udev_ctx, syspath).?;
+
+            const device = udev.device_new_from_syspath(udev_ctx, syspath) orelse continue;
             defer _ = udev.device_unref(device);
 
             if (Joystick.udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
                 addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
             }
-
-            udev_list_entry = udev.list_entry_get_next(entry);
         }
-
-        _ = udev.enumerate_unref(udev_enumerator);
 
         if (udev.monitor_new_from_netlink(udev_ctx, "udev")) |m| {
             udev_monitor = m;
@@ -680,13 +679,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
                     processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
 
-                    // TODO: Why is rumble ff not scaled between 0 and u16_max? (for my xbox-like conroller) (anything above 0xc9ff acts as 0x0)
-                    const r = js.axis[@intFromEnum(Joystick.Axis.right_z)];
-                    const strong: u16 = @intFromFloat(math.lerp(0, r, 0xc9ff));
-
-                    const l = js.axis[@intFromEnum(Joystick.Axis.left_z)];
-                    const weak: u16 = @intFromFloat(math.lerp(0, l, 0xc9ff));
-
+                    const strong = js.axis[@intFromEnum(Joystick.Axis.right_z)];
+                    const weak = js.axis[@intFromEnum(Joystick.Axis.left_z)];
                     js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
                 } else if (js.state == .inactive) {
                     new_controller.is_connected = false;

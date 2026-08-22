@@ -4,6 +4,7 @@ const log = std.log.scoped(.linux_joystick);
 const core = @import("core");
 const assert = core.assert;
 const linux = core.os.linux;
+const math = core.math;
 const udev = core.lib.udev;
 
 const ABS = linux.ABS;
@@ -20,7 +21,6 @@ fd: linux.fd_t,
 state: State,
 kind: Kind,
 capabilities: Capabilities,
-map: *const Map,
 
 axis: [axis_count]f32 = @splat(0),
 buttons: Buttons = .empty,
@@ -30,10 +30,11 @@ rumble_strong: u16 = 0,
 rumble_weak: u16 = 0,
 rumble_event_id: i16 = -1,
 
+map: Map,
+axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
+
 open_timestamp: std.Io.Timestamp,
 sync_report_count: u8,
-
-axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
 
 /// Zero terminated devnode path
 dev_path: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
@@ -100,6 +101,7 @@ pub const ButtonMap = std.enums.EnumFieldStruct(Button, KEY, null);
 pub const Map = struct {
     axis: AxisMap,
     buttons: ButtonMap,
+    rumble_max: u16 = math.maxInt(u16),
 };
 
 pub const default_map = xbox_map;
@@ -137,6 +139,20 @@ pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:
     const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;
     const parent_syspath = std.mem.span(udev.device_get_syspath(input_dev).?);
 
+    var usb_class: []const u8 = "";
+    var usb_subclass: []const u8 = "";
+    var usb_protocol: []const u8 = "";
+
+    if (udev.device_get_parent_with_subsystem_devtype(input_dev, "usb", "usb_interface")) |usb_interface_dev| {
+        const usb_class_z = udev.device_get_sysattr_value(usb_interface_dev, "bInterfaceClass");
+        const usb_subclass_z = udev.device_get_sysattr_value(usb_interface_dev, "bInterfaceSubClass");
+        const usb_protocol_z = udev.device_get_sysattr_value(usb_interface_dev, "bInterfaceProtocol");
+
+        if (usb_class_z) |v| usb_class = std.mem.span(v);
+        if (usb_subclass_z) |v| usb_subclass = std.mem.span(v);
+        if (usb_protocol_z) |v| usb_protocol = std.mem.span(v);
+    }
+
     var driver_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const driver_path_fmt = std.fs.path.fmtJoin(&.{ parent_syspath, "device/driver" });
     const driver_path = try std.fmt.bufPrint(&driver_path_buffer, "{f}", .{driver_path_fmt});
@@ -145,11 +161,20 @@ pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:
     const driver_name_len = try std.Io.Dir.readLinkAbsolute(io, driver_path, &driver_name_buffer);
     const driver_name = std.fs.path.basename(driver_name_buffer[0..driver_name_len]);
 
-    const kind: Joystick.Kind, const map: *const Joystick.Map =
+    const kind: Kind, var map: Map =
         if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
-            .{ .xbox, &Joystick.xbox_map }
+            .{ .xbox, xbox_map }
         else
-            .{ .default, &Joystick.default_map };
+            .{ .default, default_map };
+
+    // xpad xbox one quirck
+    if (std.mem.eql(u8, driver_name, "xpad") and
+        std.mem.eql(u8, usb_class, "ff") and
+        std.mem.eql(u8, usb_subclass, "47") and
+        std.mem.eql(u8, usb_protocol, "d0"))
+    {
+        map.rumble_max = 0xc9ff;
+    }
 
     const fd = try linux.open(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
     const open_timestamp = linux_v10.getWallClock(io);
@@ -170,15 +195,6 @@ pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:
     @memcpy(this.dev_path[0..dev_path.len], dev_path);
     this.dev_path[dev_path.len] = 0;
 
-    // var name_buf: [128]u8 = undefined;
-    // const name = try linux.ioctl_EVIOCGNAME(fd, &name_buf);
-    // log.info("js name: \"{s}\"", .{name});
-    //
-    // var phys_buf: [128]u8 = undefined;
-    // if (try linux.ioctl_EVIOCGPHYS(fd, &phys_buf)) |phys| {
-    //     log.info("js phys: \"{s}\"", .{phys});
-    // }
-
     const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(this.fd, EV) catch .empty;
 
     const has_axis = ev_bits.isSet(@intFromEnum(EV.ABS));
@@ -194,7 +210,7 @@ pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:
     if (has_axis) {
         const abs_bits: ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
 
-        inline for (std.meta.fields(Joystick.Axis)) |field| {
+        inline for (std.meta.fields(Axis)) |field| {
             const axis_idx = field.value;
             const abs: ABS = @field(map.axis, field.name);
 
@@ -228,52 +244,57 @@ pub fn deinit(this: *Joystick) !void {
 }
 
 /// Returns the devnode path if the device is a joystick, otherwise returns null.
-pub fn udevDeviceIsJoystick(ctx: *udev.Context, device: *udev.Device) ?[*:0]const u8 {
-    var is_joystick = false;
+pub fn udevDeviceIsJoystick(ctx: *udev.Udev, device: *udev.Device) ?[*:0]const u8 {
+    var result: ?[*:0]const u8 = null;
+
     var is_keyboard = false;
     var is_mouse = false;
+
     if (udev.device_get_devnode(device)) |n| {
         const devnode_path = std.mem.span(n);
 
         if (std.mem.indexOf(u8, devnode_path, "event") != null) {
-            is_joystick = udev.device_get_property_value(device, "ID_INPUT_JOYSTICK") != null;
-            if (is_joystick) {
+            if (udev.device_get_property_value(device, "ID_INPUT_JOYSTICK") != null) {
+                var sibling_check = false;
+
                 if (udev.device_get_parent_with_subsystem_devtype(device, "usb", null)) |parent| {
-                    const sibling_enumerator = udev.enumerate_new(ctx).?;
-                    defer _ = udev.enumerate_unref(sibling_enumerator);
+                    if (udev.enumerate_new(ctx)) |sibling_enumerator| {
+                        defer _ = udev.enumerate_unref(sibling_enumerator);
+                        sibling_check = true;
 
-                    _ = udev.enumerate_add_match_subsystem(sibling_enumerator, "input");
-                    _ = udev.enumerate_add_match_parent(sibling_enumerator, parent);
-                    _ = udev.enumerate_scan_devices(sibling_enumerator);
+                        _ = udev.enumerate_add_match_subsystem(sibling_enumerator, "input");
+                        _ = udev.enumerate_add_match_parent(sibling_enumerator, parent);
+                        _ = udev.enumerate_scan_devices(sibling_enumerator);
 
-                    var sibling = udev.enumerate_get_list_entry(sibling_enumerator);
-                    while (sibling) |s| {
-                        const sib_syspath = udev.list_entry_get_name(s);
-                        if (udev.device_new_from_syspath(ctx, sib_syspath)) |sib_dev| {
-                            defer _ = udev.device_unref(sib_dev);
+                        var sibling = udev.enumerate_get_list_entry(sibling_enumerator);
+                        while (sibling) |s| {
+                            const sib_syspath = udev.list_entry_get_name(s);
+                            if (udev.device_new_from_syspath(ctx, sib_syspath)) |sib_dev| {
+                                defer _ = udev.device_unref(sib_dev);
 
-                            if (udev.device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
-                                is_keyboard = true;
-                                break;
+                                if (udev.device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
+                                    is_keyboard = true;
+                                    break;
+                                }
+
+                                if (udev.device_get_property_value(sib_dev, "ID_INPUT_MOUSE")) |_| {
+                                    is_mouse = true;
+                                    break;
+                                }
                             }
-
-                            if (udev.device_get_property_value(sib_dev, "ID_INPUT_MOUSE")) |_| {
-                                is_mouse = true;
-                                break;
-                            }
+                            sibling = udev.list_entry_get_next(s);
                         }
-                        sibling = udev.list_entry_get_next(s);
                     }
+                }
+
+                if (sibling_check and !is_keyboard and !is_mouse) {
+                    result = devnode_path;
                 }
             }
         }
-
-        if (is_joystick and !is_keyboard and !is_mouse) {
-            return devnode_path;
-        }
     }
 
-    return null;
+    return result;
 }
 
 pub inline fn getButtonState(this: *const Joystick, button: Button) bool {
@@ -284,7 +305,7 @@ pub inline fn setButtonState(this: *Joystick, button: Button, state: bool) void 
     this.buttons.setValue(@intFromEnum(button), state);
 }
 
-pub fn normalizedAxis(this: *const Joystick, axis: Joystick.Axis, raw: i32) f32 {
+pub fn normalizedAxis(this: *const Joystick, axis: Axis, raw: i32) f32 {
     var result: f32 = 0;
 
     const meta = &this.axis_meta[@intFromEnum(axis)];
@@ -389,16 +410,19 @@ pub fn activate(this: *Joystick) void {
     this.state = .active;
 }
 
-pub fn setRumble(this: *Joystick, strong: u16, weak: u16) !void {
+pub fn setRumble(this: *Joystick, strong: f32, weak: f32) !void {
     if (this.capabilities.rumble) {
         assert(this.state == .active);
         assert(this.fd >= 0);
 
-        if (strong != this.rumble_strong or weak != this.rumble_weak) {
-            this.rumble_strong = strong;
-            this.rumble_weak = weak;
+        const strong_u16: u16 = @intFromFloat(math.lerp(0, math.clamp01(strong), this.map.rumble_max));
+        const weak_u16: u16 = @intFromFloat(math.lerp(0, math.clamp01(weak), this.map.rumble_max));
 
-            if (this.rumble_event_id != -1 and strong == 0 and weak == 0) {
+        if (strong_u16 != this.rumble_strong or weak_u16 != this.rumble_weak) {
+            this.rumble_strong = strong_u16;
+            this.rumble_weak = weak_u16;
+
+            if (this.rumble_event_id != -1 and strong_u16 == 0 and weak_u16 == 0) {
                 const stop_event = InputEvent{ .type = .FF, .code = @intCast(this.rumble_event_id), .value = 0 };
                 const write_len = try linux.write(this.fd, @ptrCast(&stop_event));
                 if (write_len != @sizeOf(InputEvent)) return error.EventWriteFailed;
