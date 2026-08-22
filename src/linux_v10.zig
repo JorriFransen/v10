@@ -393,55 +393,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     udev.load();
-    var udev_monitor: *udev.Monitor = undefined;
-
-    const udev_ctx_opt = udev.new();
-    if (udev_ctx_opt) |udev_ctx| {
-        const udev_enumerator = udev.enumerate_new(udev_ctx) orelse {
-            log.err("udev_enumerate_new failed", .{});
-            return error.Unexpected;
-        };
-        defer _ = udev.enumerate_unref(udev_enumerator);
-
-        _ = udev.enumerate_add_match_subsystem(udev_enumerator, "input");
-        _ = udev.enumerate_scan_devices(udev_enumerator);
-
-        var udev_list_entry = udev.enumerate_get_list_entry(udev_enumerator);
-        while (udev_list_entry) |entry| : (udev_list_entry = udev.list_entry_get_next(entry)) {
-            const syspath = udev.list_entry_get_name(entry);
-
-            const device = udev.device_new_from_syspath(udev_ctx, syspath) orelse continue;
-            defer _ = udev.device_unref(device);
-
-            if (Joystick.udevDeviceIsJoystick(udev_ctx, device)) |devnode_path| {
-                addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
-            }
-        }
-
-        if (udev.monitor_new_from_netlink(udev_ctx, "udev")) |m| {
-            udev_monitor = m;
-        } else {
-            log.err("udev_monitor_new_from_netlink failed", .{});
-            return error.Unexpected;
-        }
-
-        const udev_monitor_fd = udev.monitor_get_fd(udev_monitor);
-        if (udev_monitor_fd < 0) {
-            log.err("udev_monitor_get_Fd failed", .{});
-            return error.Unexpected;
-        }
-        poll_fds[@intFromEnum(PollFdSlot.udev)] = .{ .fd = udev_monitor_fd, .events = linux.POLL.IN, .revents = undefined };
-
-        if (udev.monitor_filter_add_match_subsystem_devtype(udev_monitor, "input", null) < 0) {
-            log.err("udev_monitor_filter_add_match_subsystem_devtype failed", .{});
-            return error.Unexpected;
-        }
-
-        if (udev.monitor_enable_receiving(udev_monitor) < 0) {
-            log.err("udev_monitor_enable_receiving failed", .{});
-            return error.Unexpected;
-        }
-    }
+    const udev_state_opt: ?Udev = Udev.init(io, &poll_fds[@intFromEnum(PollFdSlot.udev)]) catch null;
+    defer if (udev_state_opt) |*ud| ud.deinit();
 
     var game_code = GameCode.load(io, game_lib_name);
 
@@ -549,14 +502,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 const in = pollfd.revents & linux.POLL.IN != 0;
 
                 switch (slot) {
-                    .udev => if (in) {
-                        while (udev.monitor_receive_device(udev_monitor)) |device| {
+                    .udev => if (udev_state_opt) |ud| if (in) {
+                        while (udev.monitor_receive_device(ud.monitor)) |device| {
                             defer _ = udev.device_unref(device);
 
                             const action = std.mem.span(udev.device_get_action(device).?);
 
                             if (std.mem.eql(u8, action, "add")) {
-                                if (Joystick.udevDeviceIsJoystick(udev_ctx_opt.?, device)) |devnode_path| {
+                                if (Joystick.udevDeviceIsJoystick(ud.ctx, device)) |devnode_path| {
                                     addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
                                 }
                             } else if (std.mem.eql(u8, action, "remove")) {
@@ -887,6 +840,66 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 }
+
+const Udev = struct {
+    ctx: *udev.Udev,
+    monitor: *udev.Monitor,
+
+    pub fn init(io: std.Io, poll_fd: *linux.pollfd) !Udev {
+        const ctx = udev.new() orelse return error.InitFailed;
+        errdefer _ = udev.unref(ctx);
+
+        const monitor = try initMonitor(ctx, poll_fd);
+
+        if (udev.enumerate_new(ctx)) |enumerator| {
+            defer _ = udev.enumerate_unref(enumerator);
+
+            _ = udev.enumerate_add_match_subsystem(enumerator, "input");
+            _ = udev.enumerate_scan_devices(enumerator);
+
+            var udev_list_entry = udev.enumerate_get_list_entry(enumerator);
+            while (udev_list_entry) |entry| : (udev_list_entry = udev.list_entry_get_next(entry)) {
+                const syspath = udev.list_entry_get_name(entry);
+
+                const device = udev.device_new_from_syspath(ctx, syspath) orelse continue;
+                defer _ = udev.device_unref(device);
+
+                if (Joystick.udevDeviceIsJoystick(ctx, device)) |devnode_path| {
+                    addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
+                }
+            }
+        } else {
+            log.err("udev_enumerate_new failed", .{});
+        }
+
+        return .{ .ctx = ctx, .monitor = monitor };
+    }
+
+    fn initMonitor(ctx: *udev.Udev, poll_fd: *linux.pollfd) !*udev.Monitor {
+        const monitor = udev.monitor_new_from_netlink(ctx, "udev") orelse return error.MonitorNewFailed;
+        errdefer _ = udev.monitor_unref(monitor);
+
+        const fd = udev.monitor_get_fd(monitor);
+        if (fd < 0) return error.MonitorFdInvalid;
+
+        if (udev.monitor_filter_add_match_subsystem_devtype(monitor, "input", null) < 0) {
+            return error.MonitorFilterFailed;
+        }
+
+        if (udev.monitor_enable_receiving(monitor) < 0) {
+            return error.MonitorEnableRecievingFailed;
+        }
+
+        poll_fd.* = .{ .fd = fd, .events = linux.POLL.IN, .revents = undefined };
+
+        return monitor;
+    }
+
+    pub fn deinit(this: *const Udev) void {
+        _ = udev.monitor_unref(this.monitor);
+        _ = udev.unref(this.ctx);
+    }
+};
 
 const LinuxOffscreenBuffer = struct {
     memory: [*]u8 = undefined,
