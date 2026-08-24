@@ -74,9 +74,18 @@ pub fn assert(cond: bool) void {
     }
 }
 
+pub inline fn stackPathZ(path: []const u8) [:0]const u8 {
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    assert(path.len + 1 <= buf.len);
+    @memcpy(buf[0..path.len], path);
+    buf[path.len] = 0;
+    return buf[0..path.len :0];
+}
+
 test {
     const t = std.testing;
 
+    t.refAllDecls(os);
     t.refAllDecls(clip);
     t.refAllDecls(mem);
 }

@@ -422,9 +422,9 @@ pub fn windowsEntry(
     shared_state.exe_dir_path = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
     log.info("exe dir: '{s}'", .{shared_state.exe_dir_path});
 
-    var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
-    var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
-    var gamecode_lock_file_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
+    var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var gamecode_lock_file_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
 
     const source_dll_name = try shared_state.buildExePathFilename(&source_dll_name_buf, "v10_game.dll");
     const temp_dll_name = try shared_state.buildExePathFilename(&temp_dll_name_buf, "v10_temp.dll");

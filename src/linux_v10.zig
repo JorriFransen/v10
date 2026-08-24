@@ -393,8 +393,49 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     udev.load();
-    const udev_state_opt: ?Udev = Udev.init(io, &poll_fds[@intFromEnum(PollFdSlot.udev)]) catch null;
+    var udev_state_opt: ?Udev = null;
     defer if (udev_state_opt) |*ud| ud.deinit();
+
+    var input_dev_dir: std.Io.Dir = .{ .handle = -1 };
+    defer if (input_dev_dir.handle != -1) {
+        linux.close(input_dev_dir.handle) catch |e| {
+            log.warn("Failed to close fd '/dev/input', error: '{}'", .{e});
+        };
+    };
+
+    if (std.Io.Dir.openDirAbsolute(io, "/dev/input", .{ .iterate = true })) |input_dev_dir_| {
+        input_dev_dir = input_dev_dir_;
+
+        udev_state_opt = Udev.init(&poll_fds[@intFromEnum(PollFdSlot.udev)]) catch |e| blk: {
+            log.err("udev init failed with error: '{}'", .{e});
+            break :blk null;
+        };
+
+        var it = input_dev_dir.iterateAssumeFirstIteration();
+        while (it.next(io) catch |e| blk: {
+            log.warn("Iteration of /dev/input failed, error: '{}'", .{e});
+            break :blk null;
+        }) |entry| if (entry.kind == .character_device and std.mem.startsWith(u8, entry.name, "event")) {
+            if (linux.openat(input_dev_dir.handle, core.stackPathZ(entry.name), .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0)) |fd| {
+                const fd_open_ts = getWallClock(io);
+                if (Joystick.eventIsJoystick(fd)) {
+                    addJoystick(io, entry.name, fd, fd_open_ts) catch |e| {
+                        linux.close(fd) catch {};
+                        log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ entry.name, e });
+                    };
+                } else {
+                    linux.close(fd) catch {};
+                }
+            } else |e| switch (e) {
+                error.PermissionDenied => {},
+                else => {
+                    log.warn("Failed to open potential joystick '/dev/input/{s}', error: '{}'", .{ entry.name, e });
+                },
+            }
+        };
+    } else |e| {
+        log.warn("Failed to open '/dev/input' for iteration, error: {}", .{e});
+    }
 
     var game_code = GameCode.load(io, game_lib_name);
 
@@ -496,6 +537,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
             running = false;
         }
 
+        var js_poll_duration_opt: ?PerfDuration = null;
+        var js_receive_duration: PerfDuration = .zero;
+        var js_unref_duration: PerfDuration = .zero;
+        var js_receive_count: usize = 0;
+        var js_get_action_duration: PerfDuration = .zero;
+        var js_classify_duration_opt: ?PerfDuration = null;
+        var js_add_duration_opt: ?PerfDuration = null;
+        var js_remove_duration_opt: ?PerfDuration = null;
+        var js_event_handling_duration_opt: ?PerfDuration = null;
+
         if (try linux.poll(&poll_fds, 0) > 0) {
             for (&poll_fds, 0..) |*pollfd, slot_index| {
                 const slot: PollFdSlot = @enumFromInt(slot_index);
@@ -503,24 +554,67 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 switch (slot) {
                     .udev => if (udev_state_opt) |ud| if (in) {
-                        while (udev.monitor_receive_device(ud.monitor)) |device| {
-                            defer _ = udev.device_unref(device);
+                        const js_poll_start = getPerfTS(io);
 
-                            const action = std.mem.span(udev.device_get_action(device).?);
+                        while (true) {
+                            // while (udev.monitor_receive_device(ud.monitor)) |device| {
+                            const receive_start = getPerfTS(io);
+                            const device_opt = udev.monitor_receive_device(ud.monitor);
+                            js_receive_duration.add(getPerfDuration(receive_start, getPerfTS(io)));
+                            const device = device_opt orelse break;
+                            defer {
+                                const unref_start = getPerfTS(io);
+                                _ = udev.device_unref(device);
+                                js_unref_duration.add(getPerfDuration(unref_start, getPerfTS(io)));
+                            }
 
-                            if (std.mem.eql(u8, action, "add")) {
-                                if (Joystick.udevDeviceIsJoystick(ud.ctx, device)) |devnode_path| {
-                                    addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
+                            js_receive_count += 1;
+
+                            const sys_path = std.mem.span(udev.device_get_syspath(device).?);
+                            const base_name = std.fs.path.basename(sys_path);
+
+                            if (std.mem.startsWith(u8, base_name, "event")) {
+                                log.warn("input syspath: {s}", .{sys_path});
+
+                                const get_action_start = getPerfTS(io);
+                                const action = std.mem.span(udev.device_get_action(device).?);
+                                js_get_action_duration.add(getPerfDuration(get_action_start, getPerfTS(io)));
+
+                                if (std.mem.eql(u8, action, "add")) {
+                                    const js_classify_start = getPerfTS(io);
+
+                                    if (linux.openat(input_dev_dir.handle, core.stackPathZ(base_name), .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0)) |fd| {
+                                        const fd_open_ts = getWallClock(io);
+
+                                        if (Joystick.eventIsJoystick(fd)) {
+                                            js_classify_duration_opt = getPerfDuration(js_classify_start, getPerfTS(io));
+
+                                            const js_add_start = getPerfTS(io);
+                                            addJoystick(io, base_name, fd, fd_open_ts) catch |e| {
+                                                linux.close(fd) catch {};
+                                                log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ base_name, e });
+                                            };
+                                            js_add_duration_opt = getPerfDuration(js_add_start, getPerfTS(io));
+                                        } else {
+                                            linux.close(fd) catch |e| {
+                                                log.warn("Failed to close non-joystick fd: '/dev/input/{s}', error: '{}'", .{ base_name, e });
+                                            };
+                                        }
+                                    } else |e| {
+                                        log.warn("Unable to open input device fd, path: '{s}', error: '{}'", .{ base_name, e });
+                                    }
+                                } else if (std.mem.eql(u8, action, "remove")) {
+                                    const js_remove_start = getPerfTS(io);
+
+                                    removeJoystick(base_name);
+
+                                    js_remove_duration_opt = getPerfDuration(js_remove_start, getPerfTS(io));
+                                } else {
+                                    log.err("Unhandled joystick action: '{s}'", .{action});
                                 }
-                            } else if (std.mem.eql(u8, action, "remove")) {
-                                removeJoystick(device) catch |e| {
-                                    const dnp_opt = udev.device_get_devnode(device);
-                                    log.err("Failed to remove joystick '{?s}', error: '{}'", .{ dnp_opt, e });
-                                };
-                            } else {
-                                log.err("Unhandled joystick action: '{s}'", .{action});
                             }
                         }
+                        js_poll_duration_opt = getPerfDuration(js_poll_start, getPerfTS(io));
                     },
 
                     .joystick_0,
@@ -528,6 +622,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .joystick_2,
                     .joystick_3,
                     => if (in) {
+                        const js_event_handle_start = getPerfTS(io);
+
                         var events: [16]linux.InputEvent = undefined;
                         while (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
                             const num_events = bytes_read.len / @sizeOf(linux.InputEvent);
@@ -540,6 +636,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             error.NoData => {},
                             else => log.err("Failed to read joystick events, error: '{}'", .{e}),
                         }
+
+                        js_event_handling_duration_opt = getPerfDuration(js_event_handle_start, getPerfTS(io));
                     },
                 }
             }
@@ -806,6 +904,19 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
             }
 
+            if (js_poll_duration_opt) |jpd| {
+                log.warn("js poll duration          : {f}", .{jpd});
+                log.warn("js receive device duration: {f}", .{js_receive_duration});
+                log.warn("js receive device count   : {}", .{js_receive_count});
+                log.warn("js unref duration         : {f}", .{js_unref_duration});
+                log.warn("js get action duration    : {f}", .{js_get_action_duration});
+                if (js_classify_duration_opt) |jcd| log.warn("js classify duration      : {f}", .{jcd});
+                if (js_add_duration_opt) |jad| log.warn("js add duration           : {f}", .{jad});
+                if (js_remove_duration_opt) |jrd| log.warn("js remove duration        : {f}", .{jrd});
+                if (js_event_handling_duration_opt) |jehd| log.warn("js event handling duration: {f}", .{jehd});
+                log.warn("\n", .{});
+            }
+
             const end_counter = getWallClock(io);
             const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
@@ -844,32 +955,54 @@ const Udev = struct {
     ctx: *udev.Udev,
     monitor: *udev.Monitor,
 
-    pub fn init(io: std.Io, poll_fd: *linux.pollfd) !Udev {
+    pub fn init(poll_fd: *linux.pollfd) !Udev {
         const ctx = udev.new() orelse return error.InitFailed;
         errdefer _ = udev.unref(ctx);
 
+        // if (udev.enumerate_new(ctx)) |enumerator| {
+        //     defer _ = udev.enumerate_unref(enumerator);
+        //
+        //     _ = udev.enumerate_add_match_subsystem(enumerator, "input");
+        //     _ = udev.enumerate_scan_devices(enumerator);
+        //
+        //     var udev_list_entry = udev.enumerate_get_list_entry(enumerator);
+        //     while (udev_list_entry) |entry| : (udev_list_entry = udev.list_entry_get_next(entry)) {
+        //         const sys_path = std.mem.span(udev.list_entry_get_name(entry).?);
+        //         const basename = std.fs.path.basename(sys_path);
+        //
+        //         if (std.mem.startsWith(u8, basename, "event")) {
+        //             var devnode_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        //             const devnode_path = std.fmt.bufPrintSentinel(
+        //                 &devnode_path_buf,
+        //                 "{f}",
+        //                 .{std.fs.path.fmtJoin(&.{ "/dev/input", basename })},
+        //                 0,
+        //             ) catch unreachable;
+        //
+        //             const device = udev.device_new_from_syspath(ctx, sys_path) orelse continue;
+        //             defer _ = udev.device_unref(device);
+        //
+        //             if (linux.open(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0)) |fd| {
+        //                 const fd_open_ts = getWallClock(io);
+        //                 if (Joystick.eventIsJoystick(fd)) {
+        //                     addJoystick(io, devnode_path, fd, fd_open_ts) catch |e| {
+        //                         linux.close(fd) catch {};
+        //                         log.warn("Failed to add joystick: '{s}', error: '{}'", .{ devnode_path, e });
+        //                     };
+        //                 } else {
+        //                     linux.close(fd) catch {};
+        //                 }
+        //             } else |e| switch (e) {
+        //                 error.PermissionDenied => {},
+        //                 else => log.warn("Unable to open input device fd, error: '{}', path: '{s}'", .{ e, devnode_path }),
+        //             }
+        //         }
+        //     }
+        // } else {
+        //     log.err("udev_enumerate_new failed", .{});
+        // }
+
         const monitor = try initMonitor(ctx, poll_fd);
-
-        if (udev.enumerate_new(ctx)) |enumerator| {
-            defer _ = udev.enumerate_unref(enumerator);
-
-            _ = udev.enumerate_add_match_subsystem(enumerator, "input");
-            _ = udev.enumerate_scan_devices(enumerator);
-
-            var udev_list_entry = udev.enumerate_get_list_entry(enumerator);
-            while (udev_list_entry) |entry| : (udev_list_entry = udev.list_entry_get_next(entry)) {
-                const syspath = udev.list_entry_get_name(entry);
-
-                const device = udev.device_new_from_syspath(ctx, syspath) orelse continue;
-                defer _ = udev.device_unref(device);
-
-                if (Joystick.udevDeviceIsJoystick(ctx, device)) |devnode_path| {
-                    addJoystick(io, device, devnode_path) catch |e| log.err("Failed to add joystick '{s}', error: '{}'", .{ devnode_path, e });
-                }
-            }
-        } else {
-            log.err("udev_enumerate_new failed", .{});
-        }
 
         return .{ .ctx = ctx, .monitor = monitor };
     }
@@ -886,7 +1019,7 @@ const Udev = struct {
         }
 
         if (udev.monitor_enable_receiving(monitor) < 0) {
-            return error.MonitorEnableRecievingFailed;
+            return error.MonitorEnableReceivingFailed;
         }
 
         poll_fd.* = .{ .fd = fd, .events = linux.POLL.IN, .revents = undefined };
@@ -894,7 +1027,7 @@ const Udev = struct {
         return monitor;
     }
 
-    pub fn deinit(this: *const Udev) void {
+    pub fn deinit(this: *Udev) void {
         _ = udev.monitor_unref(this.monitor);
         _ = udev.unref(this.ctx);
     }
@@ -1112,14 +1245,19 @@ fn alloc_shm() ShmError!void {
 
     assert(wld.shm_data.len == 0);
 
-    var name_buf: [16]u8 = undefined;
+    var name_buf: [18]u8 = undefined;
     name_buf[0] = '/';
     name_buf[name_buf.len - 1] = 0;
 
     for (name_buf[1 .. name_buf.len - 1]) |*char| {
-        char.* = prng.intRangeAtMost(u8, 'a', 'z');
+        switch (prng.intRangeLessThan(u8, 0, 3)) {
+            0 => char.* = prng.intRangeAtMost(u8, '0', '9'),
+            1 => char.* = prng.intRangeAtMost(u8, 'a', 'z'),
+            2 => char.* = prng.intRangeAtMost(u8, 'A', 'Z'),
+            else => unreachable,
+        }
     }
-    const name = std.mem.span(@as([*:0]u8, @ptrCast(&name_buf)));
+    const name = name_buf[0 .. name_buf.len - 1 :0];
     log.debug("shm name: {s}", .{name});
 
     // TODO: Use mem_fd!
@@ -1744,15 +1882,15 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
     }
 }
 
-fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
-    log.info("Adding joystick: '{s}'", .{devnode_path});
+fn addJoystick(io: std.Io, event_sub_path: []const u8, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    log.info("Adding joystick: '/dev/input/{s}'", .{event_sub_path});
 
     for (&joysticks, 0..) |*js, i| {
         if (js.state == .inactive) {
             assert(js.fd == -1);
             assert(poll_fds[PollFdSlot.first_joystick + i].fd == -1);
 
-            try Joystick.init(js, io, device, devnode_path);
+            try Joystick.init(js, io, event_sub_path, fd, fd_open_ts);
 
             poll_fds[PollFdSlot.first_joystick + i] = .{
                 .fd = @intCast(js.fd),
@@ -1761,23 +1899,20 @@ fn addJoystick(io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !v
             };
             break;
         }
-    } else return error.NoFreeJoystickSlot;
+    } else log.warn("Failed to add joystick, no free slots ('/dev/input/{s}')", .{event_sub_path});
 }
 
-fn removeJoystick(device: *udev.Device) !void {
-    const dev_path = std.mem.span(udev.device_get_devpath(device).?);
-    const devnode_path = if (udev.device_get_devnode(device)) |dnp| std.mem.span(dnp) else dev_path;
-
+fn removeJoystick(devnode_sub_path: []const u8) void {
     for (&joysticks, 0..) |*js, ji| {
-        const js_dev_path = std.mem.span(@as([*:0]u8, @ptrCast(&js.dev_path)));
+        const js_devnode_path = std.mem.span(@as([*:0]u8, @ptrCast(&js.devnode_sub_path)));
 
-        if (std.mem.eql(u8, js_dev_path, dev_path)) {
-            log.info("Removing joystick: '{s}'", .{devnode_path});
+        if (std.mem.eql(u8, js_devnode_path, devnode_sub_path)) {
+            log.info("Removing joystick: '/dev/input/{s}'", .{devnode_sub_path});
 
             assert(js.state == .active or js.state == .sync);
             assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
 
-            try js.deinit();
+            js.deinit();
 
             const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
             js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
@@ -2544,3 +2679,41 @@ const wl_output_listener = wl.Output.Listener{
     .name = @ptrCast(&nop),
     .description = @ptrCast(&nop),
 };
+
+const PerfTimestamp = struct {
+    wall: std.Io.Timestamp,
+    cpu: std.Io.Timestamp,
+};
+
+fn getPerfTS(io: std.Io) PerfTimestamp {
+    return .{
+        .wall = std.Io.Timestamp.now(io, .real),
+        .cpu = std.Io.Timestamp.now(io, .cpu_thread),
+    };
+}
+
+const PerfDuration = struct {
+    wall: std.Io.Duration,
+    cpu: std.Io.Duration,
+
+    pub const zero: PerfDuration = .{ .wall = .zero, .cpu = .zero };
+
+    pub fn add(this: *PerfDuration, b: PerfDuration) void {
+        this.wall.nanoseconds += b.wall.nanoseconds;
+        this.cpu.nanoseconds += b.cpu.nanoseconds;
+    }
+
+    pub fn format(this: PerfDuration, writer: *std.Io.Writer) !void {
+        try writer.print("wall: {: >5.2}ms  cpu: {: >5.2}ms", .{
+            @as(f64, @floatFromInt(this.wall.nanoseconds)) / std.time.ns_per_ms,
+            @as(f64, @floatFromInt(this.cpu.nanoseconds)) / std.time.ns_per_ms,
+        });
+    }
+};
+
+fn getPerfDuration(a: PerfTimestamp, b: PerfTimestamp) PerfDuration {
+    return .{
+        .wall = a.wall.durationTo(b.wall),
+        .cpu = a.cpu.durationTo(b.cpu),
+    };
+}

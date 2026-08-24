@@ -64,6 +64,33 @@ pub const Error = error{
     UnexpectedErrno,
 };
 
+pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
+    if (n == 0) return path;
+
+    const result = std.mem.trimEnd(u8, path, std.fs.path.sep_str);
+
+    var result_len: usize = result.len;
+    var i: usize = result.len;
+    var remaining_cuts = n;
+
+    while (i > 0 and remaining_cuts > 0) {
+        while (i > 0 and result[i - 1] != std.fs.path.sep) {
+            i -= 1;
+        }
+
+        if (i == 0) break;
+
+        while (i > 0 and result[i - 1] == std.fs.path.sep) {
+            i -= 1;
+        }
+
+        result_len = if (i == 0) 1 else i;
+        remaining_cuts -= 1;
+    }
+
+    return if (remaining_cuts == 0) result[0..result_len] else null;
+}
+
 // =============================================================================
 // errno.h (+ errno-base.h)
 // =============================================================================
@@ -467,8 +494,8 @@ pub const AT = struct {
     pub const HANDLE_FID = REMOVEDIR;
 };
 
-pub fn open(path: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = syscall3(.open, @intFromPtr(path), @as(u32, @bitCast(flags)), mode);
+pub fn open(path: [:0]const u8, flags: O, mode: mode_t) Error!fd_t {
+    const rc = syscall3(.open, @intFromPtr(path.ptr), @as(u32, @bitCast(flags)), mode);
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
         .EXIST => error.FileExists,
@@ -488,8 +515,8 @@ pub fn open(path: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
     return @as(fd_t, @truncate(rc));
 }
 
-pub fn openat(dir_fd: fd_t, filename: [*:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = syscall4(.openat, @as(u32, @bitCast(dir_fd)), @intFromPtr(filename), @as(u32, @bitCast(flags)), mode);
+pub fn openat(dir_fd: fd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) Error!fd_t {
+    const rc = syscall4(.openat, @as(u32, @bitCast(dir_fd)), @intFromPtr(sub_path.ptr), @as(u32, @bitCast(flags)), mode);
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .ACCES => error.PermissionDenied,
@@ -747,12 +774,12 @@ pub inline fn ioctlWrite(fd: fd_t, request: _IOC, arg: *const anyopaque) IOCTLEr
 }
 
 /// Functional buf size is buf.len - 1, null terminator is included
-inline fn ioctlString(fd: fd_t, buf: []u8, comptime requestFn: sizeRequestFn) IOCTLError![]const u8 {
+inline fn ioctlString(fd: fd_t, buf: []u8, comptime requestFn: sizeRequestFn) IOCTLError![:0]const u8 {
     assert(buf.len >= 1);
 
     const rc = try ioctlRead(fd, requestFn(@intCast(buf.len - 1)), buf.ptr);
 
-    const result: []const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(buf.ptr)));
+    const result: [:0]const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(buf.ptr)));
     assert(result.len == rc or result.len + 1 == rc);
 
     return result;
@@ -828,15 +855,15 @@ pub inline fn ioctl_EVIOCSKEYCODE_V2(fd: fd_t, entry: *const InputKeymapEntry) I
 
 /// Get device name
 /// Functional buf size is buf.len - 1, null terminator is included
-pub inline fn ioctl_EVIOCGNAME(fd: fd_t, buf: []u8) IOCTLError![]const u8 {
+pub inline fn ioctl_EVIOCGNAME(fd: fd_t, buf: []u8) IOCTLError![:0]const u8 {
     const result = try ioctlString(fd, buf, EVIOCGNAME);
     return result;
 }
 
 /// Get physical location
 /// Functional buf size is buf.len - 1, null terminator is included
-pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
-    const result: IOCTLError!?[]const u8 = ioctlString(fd, buf, EVIOCGPHYS) catch |e| switch (e) {
+pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[:0]const u8 {
+    const result: IOCTLError!?[:0]const u8 = ioctlString(fd, buf, EVIOCGPHYS) catch |e| switch (e) {
         error.FileDoesNotExist => null,
         else => e,
     };
@@ -846,8 +873,8 @@ pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
 
 /// Get unique identifier
 /// Functional buf size is buf.len - 1, null terminator is included
-pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IOCTLError!?[]const u8 {
-    const result: IOCTLError!?[]const u8 = ioctlString(fd, buf, EVIOCGUNIQ) catch |e| switch (e) {
+pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IOCTLError!?[:0]const u8 {
+    const result: IOCTLError!?[:0]const u8 = ioctlString(fd, buf, EVIOCGUNIQ) catch |e| switch (e) {
         error.FileDoesNotExist => null,
         else => e,
     };
@@ -1418,7 +1445,7 @@ pub const KEY = enum(u16) {
     BTN_FORWARD = 0x115,
     BTN_BACK = 0x116,
     BTN_TASK = 0x117,
-    BTN_JOYSTICK = 0x120,
+    BTN_TRIGGER = 0x120,
     BTN_THUMB = 0x121,
     BTN_THUMB2 = 0x122,
     BTN_TOP = 0x123,
@@ -1781,13 +1808,13 @@ pub const KEY = enum(u16) {
     BTN_TRIGGER_HAPPY40 = 0x2e7,
 
     pub const MAX: u16 = 0x2ff;
-    pub const BTN_MISC: KEY = 0x100;
-    pub const BTN_MOUSE: KEY = 0x110;
-    pub const BTN_TRIGGER: KEY = 0x120;
-    pub const BTN_GAMEPAD: KEY = 0x130;
-    pub const BTN_DIGI: KEY = 0x140;
-    pub const BTN_WHEEL: KEY = 0x150;
-    pub const BTN_TRIGGER_HAPPY: KEY = 0x2c0;
+    pub const BTN_MISC: KEY = .BTN_0;
+    pub const BTN_MOUSE: KEY = .BTN_LEFT;
+    pub const BTN_JOYSTICK: KEY = .BTN_TRIGGER;
+    pub const BTN_GAMEPAD: KEY = .BTN_SOUTH;
+    pub const BTN_DIGI: KEY = .BTN_TOOL_PEN;
+    pub const BTN_WHEEL: KEY = .BTN_GEAR_DOWN;
+    pub const BTN_TRIGGER_HAPPY: KEY = .BTN_TRIGGER_HAPPY1;
     pub const HANGUEL: KEY = .HANGEUL;
     pub const SCREENLOCK: KEY = .COFFEE;
     pub const DIRECTION: KEY = .ROTATE_DISPLAY;
@@ -1804,6 +1831,8 @@ pub const KEY = enum(u16) {
     pub const MIN_INTERESTING: KEY = .MUTE;
 
     pub const CNT: u16 = (MAX + 1);
+
+    pub const Bitset = EnumBitset(@This());
 };
 
 pub const SYN = enum(u16) {
@@ -2719,4 +2748,78 @@ pub fn unlink(pathname: [:0]const u8) Error!void {
             break :blk error.UnexpectedErrno;
         },
     };
+}
+
+// =============================================================================
+// tests
+// =============================================================================
+
+test dirnameN {
+    try testDirnameN("/a/b/c", "/a/b", 1);
+    try testDirnameN("/a/b/c///", "/a/b", 1);
+    try testDirnameN("a/b", "a", 1);
+    try testDirnameN("a/b/c", "a/b", 1);
+    try testDirnameN("a/b/c///", "a/b", 1);
+    try testDirnameN("/a", "/", 1);
+    try testDirnameN("/", null, 1);
+    try testDirnameN("//", null, 1);
+    try testDirnameN("///", null, 1);
+    try testDirnameN("////", null, 1);
+    try testDirnameN("", null, 1);
+    try testDirnameN("a", null, 1);
+    try testDirnameN("a/", null, 1);
+    try testDirnameN("a//", null, 1);
+
+    try testDirnameN("/a/b/c", "/a", 2);
+    try testDirnameN("/a/b/c///", "/a", 2);
+    try testDirnameN("a/b/c", "a", 2);
+    try testDirnameN("a/b", null, 2);
+    try testDirnameN("a/b/c///", "a", 2);
+    try testDirnameN("/a", null, 2);
+    try testDirnameN("/", null, 2);
+    try testDirnameN("//", null, 2);
+    try testDirnameN("///", null, 2);
+    try testDirnameN("////", null, 2);
+    try testDirnameN("", null, 2);
+    try testDirnameN("a", null, 2);
+    try testDirnameN("a/", null, 2);
+    try testDirnameN("a//", null, 2);
+
+    try testDirnameN("a/b/c", null, 3);
+    try testDirnameN("a/b/c///", null, 3);
+    try testDirnameN("a/b", null, 3);
+
+    try testDirnameN("a//b", "a", 1);
+    try testDirnameN("a///b", "a", 1);
+    try testDirnameN("a//b//c", "a//b", 1);
+    try testDirnameN("a//b//c", "a", 2);
+    try testDirnameN("a//b//c", null, 3);
+
+    try testDirnameN("/a//b", "/a", 1);
+    try testDirnameN("/a///b", "/a", 1);
+    try testDirnameN("/a//b//c", "/a//b", 1);
+    try testDirnameN("/a//b//c", "/a", 2);
+    try testDirnameN("/a//b//c", "/", 3);
+    try testDirnameN("/a//b//c", null, 4);
+
+    try testDirnameN("///a/b", "///a", 1);
+    try testDirnameN("///a/b", "/", 2);
+    try testDirnameN("///a/b", null, 3);
+
+    try testDirnameN("a//b///c////d", "a//b///c", 1);
+    try testDirnameN("a//b///c////d", "a//b", 2);
+    try testDirnameN("a//b///c////d", "a", 3);
+    try testDirnameN("a//b///c////d", null, 4);
+}
+
+fn testDirnameN(input: []const u8, expected_output_opt: ?[]const u8, n: usize) !void {
+    var std_result_opt: ?[]const u8 = input;
+    for (0..n) |_| {
+        std_result_opt = if (std_result_opt) |std_result| std.fs.path.dirnamePosix(std_result) else null;
+    }
+
+    const output_opt = dirnameN(input, n);
+
+    try std.testing.expectEqualDeep(expected_output_opt, output_opt);
+    try std.testing.expectEqualDeep(std_result_opt, output_opt);
 }

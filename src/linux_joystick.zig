@@ -12,6 +12,7 @@ const EV = linux.EV;
 const FF = linux.FF;
 const InputEvent = linux.InputEvent;
 const KEY = linux.KEY;
+const fd_t = linux.fd_t;
 
 const linux_v10 = @import("linux_v10.zig");
 
@@ -37,7 +38,9 @@ open_timestamp: std.Io.Timestamp,
 sync_report_count: u8,
 
 /// Zero terminated devnode path
-dev_path: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
+devnode_sub_path: [256]u8 = @splat(0),
+
+pub const sync_ms_max = 200;
 
 pub const State = enum(u8) {
     inactive,
@@ -135,31 +138,36 @@ pub const xbox_map: Map = .{
     },
 };
 
-pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:0]const u8) !void {
-    const input_dev = udev.device_get_parent_with_subsystem_devtype(device, "input", null).?;
-    const parent_syspath = std.mem.span(udev.device_get_syspath(input_dev).?);
+pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const sys_link = std.fmt.bufPrint(&sys_link_buf, "{f}", .{std.fs.path.fmtJoin(&.{
+        "/sys/class/input",
+        event_sub_path,
+    })}) catch unreachable;
 
-    var usb_class: []const u8 = "";
-    var usb_subclass: []const u8 = "";
-    var usb_protocol: []const u8 = "";
+    var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dev_sys_path_len = try std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf);
+    const dev_sys_path = dev_sys_path_buf[0..dev_sys_path_len];
 
-    if (udev.device_get_parent_with_subsystem_devtype(input_dev, "usb", "usb_interface")) |usb_interface_dev| {
-        const usb_class_z = udev.device_get_sysattr_value(usb_interface_dev, "bInterfaceClass");
-        const usb_subclass_z = udev.device_get_sysattr_value(usb_interface_dev, "bInterfaceSubClass");
-        const usb_protocol_z = udev.device_get_sysattr_value(usb_interface_dev, "bInterfaceProtocol");
+    const usb_iface_sys_path = if (linux.dirnameN(dev_sys_path, 3)) |p| core.stackPathZ(p) else "";
 
-        if (usb_class_z) |v| usb_class = std.mem.span(v);
-        if (usb_subclass_z) |v| usb_subclass = std.mem.span(v);
-        if (usb_protocol_z) |v| usb_protocol = std.mem.span(v);
-    }
+    log.warn("sys_link          : '{s}'", .{sys_link});
+    log.warn("dev_sys_path      : '{s}'", .{dev_sys_path});
+    log.warn("usb_iface_sys_path: '{s}'", .{usb_iface_sys_path});
 
-    var driver_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const driver_path_fmt = std.fs.path.fmtJoin(&.{ parent_syspath, "device/driver" });
-    const driver_path = try std.fmt.bufPrint(&driver_path_buffer, "{f}", .{driver_path_fmt});
+    var driver_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const driver_link_fmt = std.fs.path.fmtJoin(&.{ std.fs.path.dirname(dev_sys_path).?, "device/driver" });
+    const driver_link = std.fmt.bufPrint(&driver_link_buf, "{f}", .{driver_link_fmt}) catch unreachable;
 
-    var driver_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const driver_name_len = try std.Io.Dir.readLinkAbsolute(io, driver_path, &driver_name_buffer);
-    const driver_name = std.fs.path.basename(driver_name_buffer[0..driver_name_len]);
+    var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const driver_path_len = try std.Io.Dir.readLinkAbsolute(io, driver_link, &driver_path_buf);
+    const driver_path = driver_path_buf[0..driver_path_len];
+
+    const driver_name = std.fs.path.basename(driver_path);
+
+    log.warn("driver link: '{s}'", .{driver_link});
+    log.warn("driver path: '{s}'", .{driver_path});
+    log.warn("driver name: '{s}'", .{driver_name});
 
     const kind: Kind, var map: Map =
         if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
@@ -167,17 +175,19 @@ pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:
         else
             .{ .default, default_map };
 
-    // xpad xbox one quirck
-    if (std.mem.eql(u8, driver_name, "xpad") and
-        std.mem.eql(u8, usb_class, "ff") and
-        std.mem.eql(u8, usb_subclass, "47") and
-        std.mem.eql(u8, usb_protocol, "d0"))
-    {
-        map.rumble_max = 0xc9ff;
-    }
+    if (linux.open(usb_iface_sys_path, .{ .ACCMODE = .RDONLY }, 0)) |usb_iface_fd| {
+        defer linux.close(usb_iface_fd) catch |e| {
+            log.warn("Failed to close usb_interface fd: '{s}', error: '{}'", .{ usb_iface_sys_path, e });
+        };
 
-    const fd = try linux.open(devnode_path, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0);
-    const open_timestamp = linux_v10.getWallClock(io);
+        if (std.mem.eql(u8, driver_name, "xpad") and
+            try sysAttrEql(usb_iface_fd, "bInterfaceClass", "ff") and
+            try sysAttrEql(usb_iface_fd, "bInterfaceSubClass", "47") and
+            try sysAttrEql(usb_iface_fd, "bInterfaceProtocol", "d0"))
+        {
+            map.rumble_max = 0xc9ff;
+        }
+    } else |_| {}
 
     this.* = .{
         .fd = @intCast(fd),
@@ -185,15 +195,12 @@ pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:
         .kind = kind,
         .capabilities = .{},
         .map = map,
-        .open_timestamp = open_timestamp,
+        .open_timestamp = fd_open_ts,
         .sync_report_count = 0,
     };
 
-    const dev_path_z = udev.device_get_devpath(device).?;
-    const dev_path = std.mem.span(dev_path_z);
-    assert(this.dev_path.len > dev_path.len + 1);
-    @memcpy(this.dev_path[0..dev_path.len], dev_path);
-    this.dev_path[dev_path.len] = 0;
+    assert(this.devnode_sub_path.len >= event_sub_path.len + 1);
+    @memcpy(this.devnode_sub_path[0..event_sub_path.len :0], event_sub_path);
 
     const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(this.fd, EV) catch .empty;
 
@@ -229,8 +236,30 @@ pub fn init(this: *Joystick, io: std.Io, device: *udev.Device, devnode_path: [*:
     }
 }
 
-pub fn deinit(this: *Joystick) !void {
-    try linux.close(this.fd);
+fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) !bool {
+    var result = false;
+
+    if (linux.openat(dir_fd, attr, .{ .ACCMODE = .RDONLY }, 0)) |attr_fd| {
+        defer linux.close(attr_fd) catch |e| {
+            log.warn("Failed to close sysfs attribute fd: '{s}', error: '{}'", .{ attr, e });
+        };
+
+        var attr_buf: [16]u8 = @splat(0);
+        var attr_value = try linux.read(attr_fd, attr_buf[0 .. attr_buf.len - 1]);
+        attr_value.len = @min(attr_value.len, expect.len);
+
+        result = std.mem.eql(u8, expect, attr_value);
+    } else |e| {
+        log.warn("Failed to open sysfs attribute: '{s}', error: '{}'", .{ attr, e });
+    }
+
+    return result;
+}
+
+pub fn deinit(this: *Joystick) void {
+    linux.close(this.fd) catch |e| {
+        log.warn("Failed to close joystick fd: '{s}', error: '{}'", .{ this.devnode_sub_path, e });
+    };
 
     this.* = .{
         .fd = -1,
@@ -243,55 +272,33 @@ pub fn deinit(this: *Joystick) !void {
     };
 }
 
-/// Returns the devnode path if the device is a joystick, otherwise returns null.
-pub fn udevDeviceIsJoystick(ctx: *udev.Udev, device: *udev.Device) ?[*:0]const u8 {
-    var result: ?[*:0]const u8 = null;
+pub fn eventIsJoystick(fd: fd_t) bool {
+    var result = false;
 
-    var is_keyboard = false;
-    var is_mouse = false;
+    const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
 
-    if (udev.device_get_devnode(device)) |n| {
-        const devnode_path = std.mem.span(n);
+    if (ev_bits.isSet(@intFromEnum(EV.ABS)) or
+        ev_bits.isSet(@intFromEnum(EV.KEY)))
+    {
+        const abs_bits: ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
+        const key_bits: KEY.Bitset = linux.ioctl_EVIOCGBIT(fd, KEY) catch .empty;
 
-        if (std.mem.indexOf(u8, devnode_path, "event") != null) {
-            if (udev.device_get_property_value(device, "ID_INPUT_JOYSTICK") != null) {
-                var sibling_check = false;
+        const check_key_bits: KEY.Bitset = comptime blk: {
+            var bits: KEY.Bitset = .empty;
+            bits.setRangeValue(.{
+                .start = @intFromEnum(KEY.BTN_JOYSTICK),
+                .end = @intFromEnum(KEY.BTN_THUMBR),
+            }, true);
+            break :blk bits;
+        };
 
-                if (udev.device_get_parent_with_subsystem_devtype(device, "usb", null)) |parent| {
-                    if (udev.enumerate_new(ctx)) |sibling_enumerator| {
-                        defer _ = udev.enumerate_unref(sibling_enumerator);
-                        sibling_check = true;
+        const has_some_buttons = check_key_bits.intersectWith(key_bits).findFirstSet() != null;
 
-                        _ = udev.enumerate_add_match_subsystem(sibling_enumerator, "input");
-                        _ = udev.enumerate_add_match_parent(sibling_enumerator, parent);
-                        _ = udev.enumerate_scan_devices(sibling_enumerator);
+        const has_xy =
+            abs_bits.isSet(@intFromEnum(ABS.X)) and
+            abs_bits.isSet(@intFromEnum(ABS.Y));
 
-                        var sibling = udev.enumerate_get_list_entry(sibling_enumerator);
-                        while (sibling) |s| {
-                            const sib_syspath = udev.list_entry_get_name(s);
-                            if (udev.device_new_from_syspath(ctx, sib_syspath)) |sib_dev| {
-                                defer _ = udev.device_unref(sib_dev);
-
-                                if (udev.device_get_property_value(sib_dev, "ID_INPUT_KEYBOARD")) |_| {
-                                    is_keyboard = true;
-                                    break;
-                                }
-
-                                if (udev.device_get_property_value(sib_dev, "ID_INPUT_MOUSE")) |_| {
-                                    is_mouse = true;
-                                    break;
-                                }
-                            }
-                            sibling = udev.list_entry_get_next(s);
-                        }
-                    }
-                }
-
-                if (sibling_check and !is_keyboard and !is_mouse) {
-                    result = devnode_path;
-                }
-            }
-        }
+        result = has_some_buttons and has_xy;
     }
 
     return result;
@@ -321,7 +328,7 @@ pub fn normalizedAxis(this: *const Joystick, axis: Axis, raw: i32) f32 {
 
 pub fn update(this: *Joystick, io: std.Io) void {
     if (this.state == .sync) {
-        if (this.open_timestamp.nanoseconds + (200 * std.time.ns_per_ms) < linux_v10.getWallClock(io).nanoseconds) {
+        if (this.open_timestamp.nanoseconds + (sync_ms_max * std.time.ns_per_ms) < linux_v10.getWallClock(io).nanoseconds) {
             this.activate();
             assert(this.state == .active);
         }
