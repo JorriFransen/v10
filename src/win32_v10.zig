@@ -737,8 +737,7 @@ pub fn windowsEntry(
                                     &old_buttons.move_up,
                                     @enumFromInt(0),
                                     &new_buttons.move_up,
-                                );
-                                processXInputDigitalButton(
+                                ); processXInputDigitalButton(
                                     @bitCast(@as(win32.WORD, if (new_controller.stick_average_x < -threshold) 1 else 0)),
                                     &old_buttons.move_left,
                                     @enumFromInt(0),
@@ -759,13 +758,22 @@ pub fn windowsEntry(
                                 processXInputDigitalButton(pad.buttons, &old_buttons.right_shoulder, .right_shoulder, &new_buttons.right_shoulder);
                                 processXInputDigitalButton(pad.buttons, &old_buttons.back, .back, &new_buttons.back);
                                 processXInputDigitalButton(pad.buttons, &old_buttons.start, .start, &new_buttons.start);
+
+                                // const lt = @as(f32, @floatFromInt(pad.left_trigger)) / math.maxInt(@TypeOf(pad.left_trigger));
+                                // const rt = @as(f32, @floatFromInt(pad.right_trigger)) / math.maxInt(@TypeOf(pad.right_trigger));
+                                //  
+                                // const lm: win32.WORD = @intFromFloat(lt * math.maxInt(win32.WORD));
+                                // const rm: win32.WORD = @intFromFloat(rt * math.maxInt(win32.WORD));
+                                //
+                                // log.info("{} -- {}", .{lm, rm});
+                                //
+                                // const vibration = xinput.VIBRATION{ .left_motor_speed = lm, .right_motor_speed = rm };
+                                // _ = xinput.XInputSetState(@intCast(controller_index), &vibration);
                             } else {
                                 // Controller not present
                                 new_controller.is_connected = false;
                             }
 
-                            const vibration = xinput.VIBRATION{ .left_motor_speed = 60000, .right_motor_speed = 0 };
-                            _ = xinput.XInputSetState(@intCast(x_controller_index), &vibration);
                         }
 
                         var game_offscreen_buffer: OffscreenBuffer = .{
