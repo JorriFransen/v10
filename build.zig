@@ -77,7 +77,6 @@ pub fn build(b: *Build) !void {
         try buildAssets(b, &engine, &tools, asset_mode, rel_scan_dir, rel_output_dir);
 
         if (internal_build) {
-            options.addOption(bool, "run_asset_compiler", run_asset_compiler);
 
             if (asset_mode == .engine) {
                 options.addOption([]const u8, "asset_compiler_scan_dir", b.pathFromRoot(rel_scan_dir));
@@ -85,6 +84,9 @@ pub fn build(b: *Build) !void {
             }
         }
     } else {
+        if (internal_build) {
+            options.addOption(bool, "run_asset_compiler", run_asset_compiler);
+        }
         std.log.warn("Skipping asset compilation", .{});
     }
 
