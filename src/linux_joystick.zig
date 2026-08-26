@@ -5,7 +5,6 @@ const core = @import("core");
 const assert = core.assert;
 const linux = core.os.linux;
 const math = core.math;
-const udev = core.lib.udev;
 
 const ABS = linux.ABS;
 const EV = linux.EV;
@@ -21,7 +20,7 @@ const Joystick = @This();
 fd: linux.fd_t,
 state: State,
 kind: Kind,
-id: Id = .{},
+id: u32 = invalid_id,
 capabilities: Capabilities,
 
 axis: [axis_count]f32 = @splat(0),
@@ -38,6 +37,7 @@ axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
 open_timestamp: std.Io.Timestamp,
 sync_report_count: u8,
 
+pub const invalid_id: u32 = math.maxInt(u32);
 pub const sync_ms_max = 200;
 
 pub const State = enum(u8) {
@@ -49,28 +49,6 @@ pub const State = enum(u8) {
 pub const Kind = enum(u8) {
     default,
     xbox,
-};
-
-pub const Id = struct {
-    buf: [4]u8 = @splat(0),
-
-    pub fn init(event_sub_path: []const u8) Id {
-        const id = std.mem.cutPrefix(u8, event_sub_path, "event").?;
-
-        var result: Id = .{};
-        @memcpy(result.buf[0..id.len], id);
-        return result;
-    }
-
-    pub fn eql(a: Id, b: Id) bool {
-        const a_u32 = @as(*const u32, @ptrCast(@alignCast(&a.buf))).*;
-        const b_u32 = @as(*const u32, @ptrCast(@alignCast(&b.buf))).*;
-        return a_u32 == b_u32;
-    }
-
-    pub fn format(this: Id, writer: *std.Io.Writer) !void {
-        try writer.print("{s}", .{std.mem.span(@as([*:0]const u8, @ptrCast(&this.buf)))});
-    }
 };
 
 pub const Capabilities = packed struct(u8) {
@@ -158,12 +136,11 @@ pub const xbox_map: Map = .{
     },
 };
 
-pub fn init(this: *Joystick, io: std.Io, id: Id, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    const id = idFromPath(event_sub_path);
+
     var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const sys_link = std.fmt.bufPrint(&sys_link_buf, "{s}{f}", .{
-        "/sys/class/input/event",
-        id,
-    }) catch unreachable;
+    const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{event_sub_path}) catch unreachable;
 
     var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dev_sys_path_len = try std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf);
@@ -171,13 +148,14 @@ pub fn init(this: *Joystick, io: std.Io, id: Id, fd: fd_t, fd_open_ts: std.Io.Ti
 
     const usb_iface_sys_path = if (linux.dirnameN(dev_sys_path, 3)) |p| core.stackPathZ(p) else "";
 
-    log.warn("sys_link          : '{s}'", .{sys_link});
-    log.warn("dev_sys_path      : '{s}'", .{dev_sys_path});
-    log.warn("usb_iface_sys_path: '{s}'", .{usb_iface_sys_path});
+    log.debug("sys_link          : '{s}'", .{sys_link});
+    log.debug("dev_sys_path      : '{s}'", .{dev_sys_path});
+    log.debug("usb_iface_sys_path: '{s}'", .{usb_iface_sys_path});
 
     var driver_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const driver_link_fmt = std.fs.path.fmtJoin(&.{ std.fs.path.dirname(dev_sys_path).?, "device/driver" });
-    const driver_link = std.fmt.bufPrint(&driver_link_buf, "{f}", .{driver_link_fmt}) catch unreachable;
+    const driver_link = std.fmt.bufPrint(&driver_link_buf, "{s}/device/driver", .{
+        std.fs.path.dirname(dev_sys_path).?,
+    }) catch unreachable;
 
     var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const driver_path_len = try std.Io.Dir.readLinkAbsolute(io, driver_link, &driver_path_buf);
@@ -185,9 +163,9 @@ pub fn init(this: *Joystick, io: std.Io, id: Id, fd: fd_t, fd_open_ts: std.Io.Ti
 
     const driver_name = std.fs.path.basename(driver_path);
 
-    log.warn("driver link: '{s}'", .{driver_link});
-    log.warn("driver path: '{s}'", .{driver_path});
-    log.warn("driver name: '{s}'", .{driver_name});
+    log.debug("driver link: '{s}'", .{driver_link});
+    log.debug("driver path: '{s}'", .{driver_path});
+    log.debug("driver name: '{s}'", .{driver_name});
 
     const kind: Kind, var map: Map =
         if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
@@ -195,45 +173,41 @@ pub fn init(this: *Joystick, io: std.Io, id: Id, fd: fd_t, fd_open_ts: std.Io.Ti
         else
             .{ .default, default_map };
 
-    if (linux.open(usb_iface_sys_path, .{ .ACCMODE = .RDONLY }, 0)) |usb_iface_fd| {
-        defer linux.close(usb_iface_fd) catch |e| {
-            log.warn("Failed to close usb_interface fd: '{s}', error: '{}'", .{ usb_iface_sys_path, e });
+    if (linux.open(usb_iface_sys_path, .{ .ACCMODE = .RDONLY }, 0)) |usb_iface| {
+        defer linux.close(usb_iface) catch |e| {
+            log.warn("Failed to close usb_interface : '{s}', error: '{}'", .{ usb_iface_sys_path, e });
         };
 
-        // TODO: These should print a warning, not return hard errors
         if (std.mem.eql(u8, driver_name, "xpad") and
-            try sysAttrEql(usb_iface_fd, "bInterfaceClass", "ff") and
-            try sysAttrEql(usb_iface_fd, "bInterfaceSubClass", "47") and
-            try sysAttrEql(usb_iface_fd, "bInterfaceProtocol", "d0"))
+            sysAttrEql(usb_iface, "bInterfaceClass", "ff") and
+            sysAttrEql(usb_iface, "bInterfaceSubClass", "47") and
+            sysAttrEql(usb_iface, "bInterfaceProtocol", "d0"))
         {
+            // xpad/gip quirk: gip controllers expect rumble values 0-100, xpad sends 0-255.
             map.rumble_max = 0xc9ff;
         }
-    } else |_| {
-        // TODO: Print warning
-    }
+    } else |_| {}
+
+    const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
+
+    const has_axis = ev_bits.isSet(@intFromEnum(EV.ABS));
+    const has_buttons = ev_bits.isSet(@intFromEnum(EV.KEY));
+
+    const has_rumble: bool = if (ev_bits.isSet(@intFromEnum(EV.FF))) blk: {
+        const ff_bits: FF.Bitset = linux.ioctl_EVIOCGBIT(fd, FF) catch .empty;
+        break :blk ff_bits.isSet(@intFromEnum(FF.RUMBLE));
+    } else false;
 
     this.* = .{
         .fd = @intCast(fd),
         .state = .sync,
         .kind = kind,
         .id = id,
-        .capabilities = .{},
+        .capabilities = .{ .axis = has_axis, .button = has_buttons, .rumble = has_rumble },
         .map = map,
         .open_timestamp = fd_open_ts,
         .sync_report_count = 0,
     };
-
-    const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(this.fd, EV) catch .empty;
-
-    const has_axis = ev_bits.isSet(@intFromEnum(EV.ABS));
-    const has_buttons = ev_bits.isSet(@intFromEnum(EV.KEY));
-
-    const has_rumble: bool = if (ev_bits.isSet(@intFromEnum(EV.FF))) blk: {
-        const ff_bits: FF.Bitset = linux.ioctl_EVIOCGBIT(this.fd, FF) catch .empty;
-        break :blk ff_bits.isSet(@intFromEnum(FF.RUMBLE));
-    } else false;
-
-    this.capabilities = .{ .axis = has_axis, .button = has_buttons, .rumble = has_rumble };
 
     if (has_axis) {
         const abs_bits: ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
@@ -257,29 +231,9 @@ pub fn init(this: *Joystick, io: std.Io, id: Id, fd: fd_t, fd_open_ts: std.Io.Ti
     }
 }
 
-fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) !bool {
-    var result = false;
-
-    if (linux.openat(dir_fd, attr, .{ .ACCMODE = .RDONLY }, 0)) |attr_fd| {
-        defer linux.close(attr_fd) catch |e| {
-            log.warn("Failed to close sysfs attribute fd: '{s}', error: '{}'", .{ attr, e });
-        };
-
-        var attr_buf: [16]u8 = @splat(0);
-        var attr_value = try linux.read(attr_fd, attr_buf[0 .. attr_buf.len - 1]);
-        attr_value.len = @min(attr_value.len, expect.len);
-
-        result = std.mem.eql(u8, expect, attr_value);
-    } else |e| {
-        log.warn("Failed to open sysfs attribute: '{s}', error: '{}'", .{ attr, e });
-    }
-
-    return result;
-}
-
 pub fn deinit(this: *Joystick) void {
     linux.close(this.fd) catch |e| {
-        log.warn("Failed to close joystick fd: '/dev/input/event{f}', error: '{}'", .{ this.id, e });
+        log.warn("Failed to close joystick fd: '/dev/input/event{s}', error: '{}'", .{ idString(this.id), e });
     };
 
     this.* = .{
@@ -291,60 +245,6 @@ pub fn deinit(this: *Joystick) void {
         .open_timestamp = .zero,
         .sync_report_count = 0,
     };
-}
-
-pub fn eventIsJoystick(fd: fd_t) bool {
-    var result = false;
-
-    const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
-
-    if (ev_bits.isSet(@intFromEnum(EV.ABS)) or
-        ev_bits.isSet(@intFromEnum(EV.KEY)))
-    {
-        const abs_bits: ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
-        const key_bits: KEY.Bitset = linux.ioctl_EVIOCGBIT(fd, KEY) catch .empty;
-
-        const check_key_bits: KEY.Bitset = comptime blk: {
-            var bits: KEY.Bitset = .empty;
-            bits.setRangeValue(.{
-                .start = @intFromEnum(KEY.BTN_JOYSTICK),
-                .end = @intFromEnum(KEY.BTN_THUMBR),
-            }, true);
-            break :blk bits;
-        };
-
-        const has_some_buttons = check_key_bits.intersectWith(key_bits).findFirstSet() != null;
-
-        const has_xy =
-            abs_bits.isSet(@intFromEnum(ABS.X)) and
-            abs_bits.isSet(@intFromEnum(ABS.Y));
-
-        result = has_some_buttons and has_xy;
-    }
-
-    return result;
-}
-
-pub inline fn getButtonState(this: *const Joystick, button: Button) bool {
-    return this.buttons.isSet(@intFromEnum(button));
-}
-
-pub inline fn setButtonState(this: *Joystick, button: Button, state: bool) void {
-    this.buttons.setValue(@intFromEnum(button), state);
-}
-
-pub fn normalizedAxis(this: *const Joystick, axis: Axis, raw: i32) f32 {
-    var result: f32 = 0;
-
-    const meta = &this.axis_meta[@intFromEnum(axis)];
-
-    if (raw < -meta.deadzone or raw > meta.deadzone) {
-        const min: f32 = @floatFromInt(meta.min);
-        const max: f32 = @floatFromInt(meta.max);
-        result = @as(f32, @floatFromInt(raw)) / if (raw < 0) -min else max;
-    }
-
-    return result;
 }
 
 pub fn update(this: *Joystick, io: std.Io) void {
@@ -477,4 +377,98 @@ pub fn setRumble(this: *Joystick, strong: f32, weak: f32) !void {
             }
         }
     }
+}
+
+pub fn eventIsJoystick(fd: fd_t) bool {
+    var result = false;
+
+    const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
+
+    if (ev_bits.isSet(@intFromEnum(EV.ABS)) or
+        ev_bits.isSet(@intFromEnum(EV.KEY)))
+    {
+        const abs_bits: ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
+        const key_bits: KEY.Bitset = linux.ioctl_EVIOCGBIT(fd, KEY) catch .empty;
+
+        const check_key_bits: KEY.Bitset = comptime blk: {
+            var bits: KEY.Bitset = .empty;
+            bits.setRangeValue(.{
+                .start = @intFromEnum(KEY.BTN_JOYSTICK),
+                .end = @intFromEnum(KEY.BTN_THUMBR),
+            }, true);
+            break :blk bits;
+        };
+
+        const has_some_buttons = check_key_bits.intersectWith(key_bits).findFirstSet() != null;
+
+        const has_xy =
+            abs_bits.isSet(@intFromEnum(ABS.X)) and
+            abs_bits.isSet(@intFromEnum(ABS.Y));
+
+        result = has_some_buttons and has_xy;
+    }
+
+    return result;
+}
+
+pub inline fn getButtonState(this: *const Joystick, button: Button) bool {
+    return this.buttons.isSet(@intFromEnum(button));
+}
+
+pub inline fn setButtonState(this: *Joystick, button: Button, state: bool) void {
+    this.buttons.setValue(@intFromEnum(button), state);
+}
+
+pub fn normalizedAxis(this: *const Joystick, axis: Axis, raw: i32) f32 {
+    var result: f32 = 0;
+
+    const meta = &this.axis_meta[@intFromEnum(axis)];
+
+    if (raw < -meta.deadzone or raw > meta.deadzone) {
+        const min: f32 = @floatFromInt(meta.min);
+        const max: f32 = @floatFromInt(meta.max);
+        result = @as(f32, @floatFromInt(raw)) / if (raw < 0) -min else max;
+    }
+
+    return result;
+}
+
+fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
+    var result = false;
+
+    if (linux.openat(dir_fd, attr, .{ .ACCMODE = .RDONLY }, 0)) |attr_fd| {
+        defer linux.close(attr_fd) catch |e| {
+            log.warn("Failed to close sysfs attribute fd: '{s}', error: '{}'", .{ attr, e });
+        };
+
+        var attr_buf: [16]u8 = @splat(0);
+
+        if (linux.read(attr_fd, attr_buf[0 .. attr_buf.len - 1])) |attr_value_optional_newline| {
+            const attr_value = std.mem.trimEnd(u8, attr_value_optional_newline, "\n");
+            result = std.mem.eql(u8, expect, attr_value);
+        } else |e| {
+            log.warn("Failed to read from attribute fd: '{s}', error: '{}'", .{ attr, e });
+        }
+    } else |e| switch (e) {
+        error.FileDoesNotExist => {},
+        else => log.warn("Failed to open sysfs attribute fd: '{s}', error: '{}'", .{ attr, e }),
+    }
+
+    return result;
+}
+
+pub inline fn idFromPath(path: []const u8) u32 {
+    const id = std.mem.cutPrefix(u8, path, "event").?;
+    assert(id.len <= 4);
+
+    var buf: [4]u8 align(4) = @splat(0);
+    @memcpy(buf[0..id.len], id);
+
+    return @as(*const u32, @ptrCast(&buf)).*;
+}
+
+inline fn idString(id: u32) []const u8 {
+    const id_bytes: *const [4]u8 = @ptrCast(&id);
+    const len = std.mem.findScalar(u8, id_bytes, 0) orelse id_bytes.len;
+    return id_bytes[0..len];
 }

@@ -45,6 +45,7 @@ pub const std_options: std.Options = blk: {
         common.log_scope_levels ++
         [_]std.log.ScopeLevel{
             .{ .scope = .linux_v10, .level = .info },
+            .{ .scope = .linux_joystick, .level = .info },
             .{ .scope = .pulse, .level = .info },
         };
 
@@ -577,8 +578,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             const base_name = std.fs.path.basename(sys_path);
 
                             if (std.mem.startsWith(u8, base_name, "event")) {
-                                log.warn("input syspath: {s}", .{sys_path});
-
                                 const get_action_start = getPerfTS(io);
                                 const action = std.mem.span(udev.device_get_action(device).?);
                                 js_get_action_duration.add(get_action_start.untilNow(io));
@@ -1886,16 +1885,14 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
 }
 
 fn addJoystick(io: std.Io, event_sub_path: []const u8, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !void {
-    const event_id = Joystick.Id.init(event_sub_path);
-
-    log.info("Adding joystick: '/dev/input/event{f}'", .{event_id});
+    log.info("Adding joystick: '/dev/input/{s}'", .{event_sub_path});
 
     for (&joysticks, 0..) |*js, i| {
         if (js.state == .inactive) {
             assert(js.fd == -1);
             assert(poll_fds[PollFdSlot.first_joystick + i].fd == -1);
 
-            try Joystick.init(js, io, event_id, fd, fd_open_ts);
+            try Joystick.init(js, io, event_sub_path, fd, fd_open_ts);
 
             poll_fds[PollFdSlot.first_joystick + i] = .{
                 .fd = @intCast(js.fd),
@@ -1904,15 +1901,15 @@ fn addJoystick(io: std.Io, event_sub_path: []const u8, fd: linux.fd_t, fd_open_t
             };
             break;
         }
-    } else log.warn("Failed to add joystick, no free slots ('/dev/input/event{f}')", .{event_id});
+    } else log.warn("Failed to add joystick, no free slots ('/dev/input/{s}')", .{event_sub_path});
 }
 
 fn removeJoystick(event_sub_path: []const u8) void {
-    const id = Joystick.Id.init(event_sub_path);
+    const id = Joystick.idFromPath(event_sub_path);
 
     for (&joysticks, 0..) |*js, ji| {
-        if (js.id.eql(id)) {
-            log.info("Removing joystick: '/dev/input/event{f}'", .{id});
+        if (js.id == id) {
+            log.info("Removing joystick: '/dev/input/{s}'", .{event_sub_path});
 
             assert(js.state == .active or js.state == .sync);
             assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
