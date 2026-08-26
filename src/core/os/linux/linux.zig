@@ -64,23 +64,25 @@ pub const Error = error{
     UnexpectedErrno,
 };
 
+const sep = std.fs.path.sep_posix;
+const sep_str = std.fs.path.sep_str_posix;
 pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
     if (n == 0) return path;
 
-    const result = std.mem.trimEnd(u8, path, std.fs.path.sep_str);
+    const result = std.mem.trimEnd(u8, path, sep_str);
 
     var result_len: usize = result.len;
     var i: usize = result.len;
     var remaining_cuts = n;
 
     while (i > 0 and remaining_cuts > 0) {
-        while (i > 0 and result[i - 1] != std.fs.path.sep) {
+        while (i > 0 and result[i - 1] != sep) {
             i -= 1;
         }
 
         if (i == 0) break;
 
-        while (i > 0 and result[i - 1] == std.fs.path.sep) {
+        while (i > 0 and result[i - 1] == sep) {
             i -= 1;
         }
 
@@ -2820,6 +2822,7 @@ fn testDirnameN(input: []const u8, expected_output_opt: ?[]const u8, n: usize) !
 
     const output_opt = dirnameN(input, n);
 
+    try std.testing.expectEqualDeep(expected_output_opt, std_result_opt);
     try std.testing.expectEqualDeep(expected_output_opt, output_opt);
     try std.testing.expectEqualDeep(std_result_opt, output_opt);
 }

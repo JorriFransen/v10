@@ -31,12 +31,14 @@ const TemporaryMemory = MemoryArena.TemporaryMemory;
 const World = @import("world.zig");
 
 const common = @import("v10_common");
-const ThreadContext = common.ThreadContext;
-const Memory = common.Memory;
-const Input = common.Input;
-const OffscreenBuffer = common.OffscreenBuffer;
 const AudioBuffer = common.AudioBuffer;
-
+const Input = common.Input;
+const Memory = common.Memory;
+const OffscreenBuffer = common.OffscreenBuffer;
+const PerfDuration = common.PerfDuration;
+const ThreadContext = common.ThreadContext;
+const getPerfDuration = common.getPerfDuration;
+const getPerfTs = common.getPerfTS;
 const RenderGroup = @import("render_group.zig");
 
 const os = @import("builtin").os.tag;
@@ -439,6 +441,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
+    const io = thread_context.io;
+
     const ground_buffer_width = 256;
     const ground_buffer_height = 256;
 
@@ -496,7 +500,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const asset_prefix = "../../hh_assets/";
         // const asset_prefix = "";
 
-        const asset_load_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
+        const asset_load_start_ts = getPerfTs(io);
 
         game_state.grass[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass00.bmp");
         game_state.grass[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass01.bmp");
@@ -536,10 +540,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_torso.bmp");
         game_state.hero_bitmaps[3].alignment = v2(72, 182);
 
-        const asset_load_duration = asset_load_begin_ts.untilNow(thread_context.io, .real);
+        const asset_load_duration = asset_load_start_ts.untilNow(io);
         log.info("Asset loading took: {f}", .{asset_load_duration});
 
-        const world_build_begin_ts = std.Io.Timestamp.now(thread_context.io, .real);
+        const world_build_start_ts = getPerfTs(io);
 
         var series = Random.Series.seed(1234);
 
@@ -665,7 +669,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             _ = addFamiliar(game_state, cam_tile_x + fox, cam_tile_y + foy, cam_tile_z);
         }
 
-        const world_build_duration = world_build_begin_ts.untilNow(thread_context.io, .real);
+        const world_build_duration = world_build_start_ts.untilNow(io);
         log.info("World building took: {f}", .{world_build_duration});
 
         game_memory.initialized = true;
@@ -787,6 +791,8 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     {
+        var groundchunk_fill_duration: PerfDuration = .zero;
+
         const min_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.min);
         const max_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.max);
 
@@ -826,14 +832,21 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                         }
                     }
 
-                    if (furthest_buffer_opt) |empty_buffer| {
-                        fillGroundChunk(game_state, tran_state, empty_buffer, chunk_center_p);
+                    if (furthest_buffer_opt) |furthest_buffer| {
+                        const start_ts = getPerfTs(io);
+                        fillGroundChunk(game_state, tran_state, furthest_buffer, chunk_center_p);
+                        const duration = start_ts.untilNow(io);
+                        groundchunk_fill_duration.add(duration);
                     }
 
                     render_group.pushRectOutline(rel_p.xy(), 0, screen_dim, .rgb(1, 1, 0), .{});
                     _ = .{ rel_p, screen_dim };
                 }
             }
+        }
+
+        if (!groundchunk_fill_duration.eql(.zero)) {
+            log.info("groundchunck fill took: {f}", .{groundchunk_fill_duration});
         }
     }
 

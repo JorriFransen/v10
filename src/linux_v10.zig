@@ -25,14 +25,17 @@ const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 const Joystick = @import("linux_joystick.zig");
 
 const common = @import("v10_common");
+const AudioBuffer = common.AudioBuffer;
+const ButtonState = common.ButtonState;
+const ControllerInput = common.ControllerInput;
 const GameCode = common.GameCode;
+const Input = common.Input;
 const Memory = common.Memory;
 const OffscreenBuffer = common.OffscreenBuffer;
-const Input = common.Input;
-const ControllerInput = common.ControllerInput;
-const ButtonState = common.ButtonState;
+const PerfDuration = common.PerfDuration;
 const ThreadContext = common.ThreadContext;
-const AudioBuffer = common.AudioBuffer;
+const getPerfDuration = common.getPerfDuration;
+const getPerfTS = common.getPerfTS;
 
 pub const std_options: std.Options = blk: {
     var o = core.default_std_options;
@@ -560,12 +563,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             // while (udev.monitor_receive_device(ud.monitor)) |device| {
                             const receive_start = getPerfTS(io);
                             const device_opt = udev.monitor_receive_device(ud.monitor);
-                            js_receive_duration.add(getPerfDuration(receive_start, getPerfTS(io)));
+                            js_receive_duration.add(receive_start.untilNow(io));
                             const device = device_opt orelse break;
                             defer {
                                 const unref_start = getPerfTS(io);
                                 _ = udev.device_unref(device);
-                                js_unref_duration.add(getPerfDuration(unref_start, getPerfTS(io)));
+                                js_unref_duration.add(unref_start.untilNow(io));
                             }
 
                             js_receive_count += 1;
@@ -578,7 +581,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                                 const get_action_start = getPerfTS(io);
                                 const action = std.mem.span(udev.device_get_action(device).?);
-                                js_get_action_duration.add(getPerfDuration(get_action_start, getPerfTS(io)));
+                                js_get_action_duration.add(get_action_start.untilNow(io));
 
                                 if (std.mem.eql(u8, action, "add")) {
                                     const js_classify_start = getPerfTS(io);
@@ -587,15 +590,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                         const fd_open_ts = getWallClock(io);
 
                                         if (Joystick.eventIsJoystick(fd)) {
-                                            js_classify_duration_opt = getPerfDuration(js_classify_start, getPerfTS(io));
+                                            js_classify_duration_opt = js_classify_start.untilNow(io);
 
                                             const js_add_start = getPerfTS(io);
                                             addJoystick(io, base_name, fd, fd_open_ts) catch |e| {
                                                 linux.close(fd) catch {};
                                                 log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ base_name, e });
                                             };
-                                            js_add_duration_opt = getPerfDuration(js_add_start, getPerfTS(io));
+                                            js_add_duration_opt = js_add_start.untilNow(io);
                                         } else {
+                                            js_classify_duration_opt = js_classify_start.untilNow(io);
                                             linux.close(fd) catch |e| {
                                                 log.warn("Failed to close non-joystick fd: '/dev/input/{s}', error: '{}'", .{ base_name, e });
                                             };
@@ -605,16 +609,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                     }
                                 } else if (std.mem.eql(u8, action, "remove")) {
                                     const js_remove_start = getPerfTS(io);
-
                                     removeJoystick(base_name);
-
-                                    js_remove_duration_opt = getPerfDuration(js_remove_start, getPerfTS(io));
+                                    js_remove_duration_opt = js_remove_start.untilNow(io);
                                 } else {
                                     log.err("Unhandled joystick action: '{s}'", .{action});
                                 }
                             }
                         }
-                        js_poll_duration_opt = getPerfDuration(js_poll_start, getPerfTS(io));
+
+                        js_poll_duration_opt = js_poll_start.untilNow(io);
                     },
 
                     .joystick_0,
@@ -637,7 +640,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             else => log.err("Failed to read joystick events, error: '{}'", .{e}),
                         }
 
-                        js_event_handling_duration_opt = getPerfDuration(js_event_handle_start, getPerfTS(io));
+                        js_event_handling_duration_opt = js_event_handle_start.untilNow(io);
                     },
                 }
             }
@@ -1883,14 +1886,16 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
 }
 
 fn addJoystick(io: std.Io, event_sub_path: []const u8, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !void {
-    log.info("Adding joystick: '/dev/input/{s}'", .{event_sub_path});
+    const event_id = Joystick.Id.init(event_sub_path);
+
+    log.info("Adding joystick: '/dev/input/event{f}'", .{event_id});
 
     for (&joysticks, 0..) |*js, i| {
         if (js.state == .inactive) {
             assert(js.fd == -1);
             assert(poll_fds[PollFdSlot.first_joystick + i].fd == -1);
 
-            try Joystick.init(js, io, event_sub_path, fd, fd_open_ts);
+            try Joystick.init(js, io, event_id, fd, fd_open_ts);
 
             poll_fds[PollFdSlot.first_joystick + i] = .{
                 .fd = @intCast(js.fd),
@@ -1899,15 +1904,15 @@ fn addJoystick(io: std.Io, event_sub_path: []const u8, fd: linux.fd_t, fd_open_t
             };
             break;
         }
-    } else log.warn("Failed to add joystick, no free slots ('/dev/input/{s}')", .{event_sub_path});
+    } else log.warn("Failed to add joystick, no free slots ('/dev/input/event{f}')", .{event_id});
 }
 
-fn removeJoystick(devnode_sub_path: []const u8) void {
-    for (&joysticks, 0..) |*js, ji| {
-        const js_devnode_path = std.mem.span(@as([*:0]u8, @ptrCast(&js.devnode_sub_path)));
+fn removeJoystick(event_sub_path: []const u8) void {
+    const id = Joystick.Id.init(event_sub_path);
 
-        if (std.mem.eql(u8, js_devnode_path, devnode_sub_path)) {
-            log.info("Removing joystick: '/dev/input/{s}'", .{devnode_sub_path});
+    for (&joysticks, 0..) |*js, ji| {
+        if (js.id.eql(id)) {
+            log.info("Removing joystick: '/dev/input/event{f}'", .{id});
 
             assert(js.state == .active or js.state == .sync);
             assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
@@ -2679,41 +2684,3 @@ const wl_output_listener = wl.Output.Listener{
     .name = @ptrCast(&nop),
     .description = @ptrCast(&nop),
 };
-
-const PerfTimestamp = struct {
-    wall: std.Io.Timestamp,
-    cpu: std.Io.Timestamp,
-};
-
-fn getPerfTS(io: std.Io) PerfTimestamp {
-    return .{
-        .wall = std.Io.Timestamp.now(io, .real),
-        .cpu = std.Io.Timestamp.now(io, .cpu_thread),
-    };
-}
-
-const PerfDuration = struct {
-    wall: std.Io.Duration,
-    cpu: std.Io.Duration,
-
-    pub const zero: PerfDuration = .{ .wall = .zero, .cpu = .zero };
-
-    pub fn add(this: *PerfDuration, b: PerfDuration) void {
-        this.wall.nanoseconds += b.wall.nanoseconds;
-        this.cpu.nanoseconds += b.cpu.nanoseconds;
-    }
-
-    pub fn format(this: PerfDuration, writer: *std.Io.Writer) !void {
-        try writer.print("wall: {: >5.2}ms  cpu: {: >5.2}ms", .{
-            @as(f64, @floatFromInt(this.wall.nanoseconds)) / std.time.ns_per_ms,
-            @as(f64, @floatFromInt(this.cpu.nanoseconds)) / std.time.ns_per_ms,
-        });
-    }
-};
-
-fn getPerfDuration(a: PerfTimestamp, b: PerfTimestamp) PerfDuration {
-    return .{
-        .wall = a.wall.durationTo(b.wall),
-        .cpu = a.cpu.durationTo(b.cpu),
-    };
-}

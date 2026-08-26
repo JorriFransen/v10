@@ -3,6 +3,7 @@ const log = std.log.scoped(.win32_v10);
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
+//
 
 const options = @import("options");
 
@@ -738,7 +739,8 @@ pub fn windowsEntry(
                                     &old_buttons.move_up,
                                     @enumFromInt(0),
                                     &new_buttons.move_up,
-                                ); processXInputDigitalButton(
+                                );
+                                processXInputDigitalButton(
                                     @bitCast(@as(win32.WORD, if (new_controller.stick_average_x < -threshold) 1 else 0)),
                                     &old_buttons.move_left,
                                     @enumFromInt(0),
@@ -762,11 +764,11 @@ pub fn windowsEntry(
 
                                 // const lt = @as(f32, @floatFromInt(pad.left_trigger)) / math.maxInt(@TypeOf(pad.left_trigger));
                                 // const rt = @as(f32, @floatFromInt(pad.right_trigger)) / math.maxInt(@TypeOf(pad.right_trigger));
-                                //  
+                                //
                                 // const lm: win32.WORD = @intFromFloat(lt * math.maxInt(win32.WORD));
                                 // const rm: win32.WORD = @intFromFloat(rt * math.maxInt(win32.WORD));
                                 //
-                                // log.info("{} -- {}", .{lm, rm});
+                                // log.info("{} -- {}", .{ lm, rm });
                                 //
                                 // const vibration = xinput.VIBRATION{ .left_motor_speed = lm, .right_motor_speed = rm };
                                 // _ = xinput.XInputSetState(@intCast(controller_index), &vibration);
@@ -774,7 +776,6 @@ pub fn windowsEntry(
                                 // Controller not present
                                 new_controller.is_connected = false;
                             }
-
                         }
 
                         var game_offscreen_buffer: OffscreenBuffer = .{

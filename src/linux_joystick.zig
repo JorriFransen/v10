@@ -21,6 +21,7 @@ const Joystick = @This();
 fd: linux.fd_t,
 state: State,
 kind: Kind,
+id: Id = .{},
 capabilities: Capabilities,
 
 axis: [axis_count]f32 = @splat(0),
@@ -37,9 +38,6 @@ axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
 open_timestamp: std.Io.Timestamp,
 sync_report_count: u8,
 
-/// Zero terminated devnode path
-devnode_sub_path: [256]u8 = @splat(0),
-
 pub const sync_ms_max = 200;
 
 pub const State = enum(u8) {
@@ -51,6 +49,28 @@ pub const State = enum(u8) {
 pub const Kind = enum(u8) {
     default,
     xbox,
+};
+
+pub const Id = struct {
+    buf: [4]u8 = @splat(0),
+
+    pub fn init(event_sub_path: []const u8) Id {
+        const id = std.mem.cutPrefix(u8, event_sub_path, "event").?;
+
+        var result: Id = .{};
+        @memcpy(result.buf[0..id.len], id);
+        return result;
+    }
+
+    pub fn eql(a: Id, b: Id) bool {
+        const a_u32 = @as(*const u32, @ptrCast(@alignCast(&a.buf))).*;
+        const b_u32 = @as(*const u32, @ptrCast(@alignCast(&b.buf))).*;
+        return a_u32 == b_u32;
+    }
+
+    pub fn format(this: Id, writer: *std.Io.Writer) !void {
+        try writer.print("{s}", .{std.mem.span(@as([*:0]const u8, @ptrCast(&this.buf)))});
+    }
 };
 
 pub const Capabilities = packed struct(u8) {
@@ -138,12 +158,12 @@ pub const xbox_map: Map = .{
     },
 };
 
-pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+pub fn init(this: *Joystick, io: std.Io, id: Id, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
     var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const sys_link = std.fmt.bufPrint(&sys_link_buf, "{f}", .{std.fs.path.fmtJoin(&.{
-        "/sys/class/input",
-        event_sub_path,
-    })}) catch unreachable;
+    const sys_link = std.fmt.bufPrint(&sys_link_buf, "{s}{f}", .{
+        "/sys/class/input/event",
+        id,
+    }) catch unreachable;
 
     var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dev_sys_path_len = try std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf);
@@ -180,6 +200,7 @@ pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, f
             log.warn("Failed to close usb_interface fd: '{s}', error: '{}'", .{ usb_iface_sys_path, e });
         };
 
+        // TODO: These should print a warning, not return hard errors
         if (std.mem.eql(u8, driver_name, "xpad") and
             try sysAttrEql(usb_iface_fd, "bInterfaceClass", "ff") and
             try sysAttrEql(usb_iface_fd, "bInterfaceSubClass", "47") and
@@ -187,20 +208,20 @@ pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, f
         {
             map.rumble_max = 0xc9ff;
         }
-    } else |_| {}
+    } else |_| {
+        // TODO: Print warning
+    }
 
     this.* = .{
         .fd = @intCast(fd),
         .state = .sync,
         .kind = kind,
+        .id = id,
         .capabilities = .{},
         .map = map,
         .open_timestamp = fd_open_ts,
         .sync_report_count = 0,
     };
-
-    assert(this.devnode_sub_path.len >= event_sub_path.len + 1);
-    @memcpy(this.devnode_sub_path[0..event_sub_path.len :0], event_sub_path);
 
     const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(this.fd, EV) catch .empty;
 
@@ -258,7 +279,7 @@ fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) !bool {
 
 pub fn deinit(this: *Joystick) void {
     linux.close(this.fd) catch |e| {
-        log.warn("Failed to close joystick fd: '{s}', error: '{}'", .{ this.devnode_sub_path, e });
+        log.warn("Failed to close joystick fd: '/dev/input/event{f}', error: '{}'", .{ this.id, e });
     };
 
     this.* = .{

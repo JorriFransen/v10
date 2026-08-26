@@ -296,3 +296,51 @@ pub inline fn alignForward(addr: usize, alignment: usize) usize {
     const result = (addr + am1) & ~(am1);
     return result;
 }
+
+pub const PerfTimestamp = struct {
+    wall: std.Io.Timestamp,
+    cpu: std.Io.Timestamp,
+
+    pub inline fn untilNow(this: *const PerfTimestamp, io: std.Io) PerfDuration {
+        const now = getPerfTS(io);
+        return getPerfDuration(this, &now);
+    }
+};
+
+pub fn getPerfTS(io: std.Io) PerfTimestamp {
+    return .{
+        .wall = std.Io.Timestamp.now(io, .real),
+        .cpu = std.Io.Timestamp.now(io, .cpu_thread),
+    };
+}
+
+pub const PerfDuration = struct {
+    wall: std.Io.Duration,
+    cpu: std.Io.Duration,
+
+    pub const zero: PerfDuration = .{ .wall = .zero, .cpu = .zero };
+
+    pub fn add(this: *PerfDuration, b: PerfDuration) void {
+        this.wall.nanoseconds += b.wall.nanoseconds;
+        this.cpu.nanoseconds += b.cpu.nanoseconds;
+    }
+
+    pub fn eql(a: *const PerfDuration, b: PerfDuration) bool {
+        return a.wall.nanoseconds == b.wall.nanoseconds and
+            a.cpu.nanoseconds == b.cpu.nanoseconds;
+    }
+
+    pub fn format(this: *const PerfDuration, writer: *std.Io.Writer) !void {
+        try writer.print("wall: {: >7.2}ms  cpu: {: >7.2}ms", .{
+            @as(f64, @floatFromInt(this.wall.nanoseconds)) / std.time.ns_per_ms,
+            @as(f64, @floatFromInt(this.cpu.nanoseconds)) / std.time.ns_per_ms,
+        });
+    }
+};
+
+pub fn getPerfDuration(a: *const PerfTimestamp, b: *const PerfTimestamp) PerfDuration {
+    return .{
+        .wall = a.wall.durationTo(b.wall),
+        .cpu = a.cpu.durationTo(b.cpu),
+    };
+}
