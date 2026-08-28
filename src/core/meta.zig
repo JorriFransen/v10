@@ -38,8 +38,7 @@ pub inline fn matchIntType(comptime T: type) bool {
     return matchType(T, &.{ .int, .comptime_int });
 }
 
-pub inline fn matchSigned(x: anytype) bool {
-    const T = @TypeOf(x);
+pub inline fn matchSignedType(comptime T: type) bool {
     const info = @typeInfo(T);
 
     const signed: bool = if (info == .int)
@@ -97,8 +96,14 @@ pub inline fn expectIntType(comptime T: type) void {
 }
 
 pub inline fn expectSigned(x: anytype) void {
-    if (!matchSigned(x))
+    if (!matchSignedType(@TypeOf(x)))
         @compileError("Expected signed integer type");
+}
+
+pub inline fn expectSignedType(comptime T: type) void {
+    if (!matchSignedType(T)) {
+        @compileError("Expected signed integer type");
+    }
 }
 
 pub inline fn expectUnsigned(x: anytype) void {

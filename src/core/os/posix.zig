@@ -8,7 +8,7 @@ const openat = Os.openat;
 const unlink = Os.unlink;
 
 // =============================================================================
-// sys/mman.h
+// mman.h
 // =============================================================================
 
 pub const ShmError = Os.Error || std.fmt.BufPrintError;

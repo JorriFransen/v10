@@ -1,5 +1,7 @@
 const std = @import("std");
-const assert = std.debug.assert;
+
+const core = @import("src/core/core.zig");
+const assert = core.assert;
 
 const Build = std.Build;
 const Module = Build.Module;

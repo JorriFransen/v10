@@ -21,6 +21,7 @@ pub const page_size = std.heap.page_size_min;
 pub const Error = error{
     AddressNotAvailable,
     AlreadyConnecting,
+    BufferTooSmall,
     ConnectingInProgress,
     ConnectionClosed,
     ConnectionRefused,
@@ -51,6 +52,8 @@ pub const Error = error{
     NoSpaceLeft,
     NotConnected,
     NotSocket,
+    NotSupported,
+    Overflow,
     PackageNotCompiled,
     PermissionDenied,
     ReadOnly,
@@ -60,6 +63,7 @@ pub const Error = error{
     TooManySymbolicLinks,
     UnexpectedDirFD,
     UnlinkDirectoryAttempt,
+    ValueTooBig,
 
     UnexpectedErrno,
 };
@@ -405,6 +409,8 @@ pub const Errno = enum(u16) {
     NSRCNAMELOOP = 177,
 
     _,
+
+    pub const NOTSUP = Errno.OPNOTSUPP;
 };
 
 // =============================================================================
@@ -514,11 +520,17 @@ pub fn open(path: [:0]const u8, flags: O, mode: mode_t) Error!fd_t {
         },
     };
 
-    return @as(fd_t, @truncate(rc));
+    return @intCast(rc);
 }
 
-pub fn openat(dir_fd: fd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = syscall4(.openat, @as(u32, @bitCast(dir_fd)), @intFromPtr(sub_path.ptr), @as(u32, @bitCast(flags)), mode);
+pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) Error!fd_t {
+    const rc = syscall4(
+        .openat,
+        zeroExtendToUsize(dir_fd),
+        @intFromPtr(sub_path.ptr),
+        zeroExtendToUsize(flags),
+        mode,
+    );
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
         .ACCES => error.PermissionDenied,
@@ -535,10 +547,11 @@ pub fn openat(dir_fd: fd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) Erro
             break :blk error.UnexpectedErrno;
         },
     };
-    return @as(fd_t, @truncate(@as(isize, @intCast(rc))));
+
+    return safeTrunc(c_int, rc);
 }
 
-pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
+pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !c_int {
     const rc = syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
     if (check_errno(rc)) |e| return switch (e) {
         else => blk: {
@@ -546,7 +559,132 @@ pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !u32 {
             break :blk error.UnexpectedErrno;
         },
     };
-    return @as(u32, @intCast(rc));
+    return @as(c_int, @intCast(rc));
+}
+
+// =============================================================================
+// inotify.h
+// =============================================================================
+
+pub const InotifyEvent = extern struct {
+    wd: i32,
+    mask: IN,
+    cookie: u32,
+    len: u32,
+    name: [0]u8,
+};
+
+pub const IN = packed struct(u32) {
+    ACCESS: bool = false,
+    MODIFY: bool = false,
+    ATTRIB: bool = false,
+    CLOSE_WRITE: bool = false,
+    CLOSE_NOWRITE: bool = false,
+    OPEN: bool = false,
+    MOVED_FROM: bool = false,
+    MOVED_TO: bool = false,
+    CREATE: bool = false,
+    DELETE: bool = false,
+    DELETE_SELF: bool = false,
+    MOVE_SELF: bool = false,
+
+    __reserved0__: u1 = 0,
+
+    UNMOUNT: bool = false,
+    Q_OVERFLOW: bool = false,
+    IGNORED: bool = false,
+
+    __reserved1__: u8 = 0,
+
+    ONLYDIR: bool = false,
+    DONT_FOLLOW: bool = false,
+    EXCL_UNLINK: bool = false,
+
+    __reserved2__: u1 = 0,
+
+    MASK_CREATE: bool = false,
+    MASK_ADD: bool = false,
+    ISDIR: bool = false,
+    ONESHOT: bool = false,
+
+    pub const CLOSE: IN = .{ .CLOSE_WRITE = true, .CLOSE_NOWRITE = true };
+    pub const MOVE: IN = .{ .MOVED_FROM = true, .MOVED_TO = true };
+};
+
+pub fn inotify_init() Error!fd_t {
+    const rc = syscall0(.inotify_init);
+    if (check_errno(rc)) |e| return switch (e) {
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .NOMEM => error.NoMemory,
+        else => blk: {
+            log.warn("Unexpected errno for inotify_init: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return safeTrunc(fd_t, rc);
+}
+
+pub fn inotify_init1(flags: O) Error!fd_t {
+    const rc = syscall1(
+        .inotify_init1,
+        zeroExtendToUsize(flags),
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .INVAL => error.InvalidArg,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .NOMEM => error.NoMemory,
+        else => blk: {
+            log.warn("Unexpected errno for inotify_init1: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return safeTrunc(fd_t, rc);
+}
+
+pub fn inotify_add_watch(fd: fd_t, path: [:0]const u8, mask: IN) Error!c_int {
+    const rc = syscall3(
+        .inotify_add_watch,
+        safeExtendToUsize(fd),
+        @intFromPtr(path.ptr),
+        zeroExtendToUsize(mask),
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .BADF => error.InvalidFD,
+        .EXIST => error.FileExists,
+        .INVAL => error.InvalidArg,
+        .NAMETOOLONG => error.NameTooLong,
+        .NOENT => error.FileDoesNotExist,
+        .NOMEM => error.NoMemory,
+        .NOSPC => error.NoSpaceLeft,
+        .NOTDIR => error.InvalidPath,
+        else => blk: {
+            log.warn("Unexpected errno for inotify_add_watch: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return safeTrunc(c_int, rc);
+}
+
+pub fn inotify_rm_watch(fd: fd_t, wd: c_int) Error!void {
+    const rc = syscall2(
+        .inotify_rm_watch,
+        safeExtendToUsize(fd),
+        safeExtendToUsize(wd),
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .INVAL => error.InvalidArg,
+        else => blk: {
+            log.warn("Unexpected errno for inotify_rm_watch: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
 }
 
 // =============================================================================
@@ -2031,6 +2169,37 @@ pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
 pub const IOC = abi.IOC;
 
 // =============================================================================
+// limits.h
+// =============================================================================
+//
+pub const NR_OPEN = 1024;
+
+/// supplemental group IDs are available
+pub const NGROUPS_MAX = 65536;
+/// # bytes of args + environ for exec()
+pub const ARG_MAX = 131072;
+/// # links a file may have
+pub const LINK_MAX = 127;
+/// size of the canonical input queue
+pub const MAX_CANON = 255;
+/// size of the type-ahead buffer
+pub const MAX_INPUT = 255;
+/// # chars in a file name
+pub const NAME_MAX = 255;
+/// # chars in a path name including nul
+pub const PATH_MAX = 4096;
+/// # bytes in atomic write to a pipe
+pub const PIPE_BUF = 4096;
+/// # chars in an extended attribute name
+pub const XATTR_NAME_MAX = 255;
+/// size of an extended attribute value (64k)
+pub const XATTR_SIZE_MAX = 65536;
+/// size of extended attribute namelist (64k)
+pub const XATTR_LIST_MAX = 65536;
+
+pub const RTSIG_MAX = 32;
+
+// =============================================================================
 // mman-common.h
 // =============================================================================
 
@@ -2133,6 +2302,49 @@ pub fn poll(fds: []pollfd, timeout: c_int) Error!c_int {
     };
     return @intCast(rc);
 }
+
+// =============================================================================
+// posix_acl.h
+// =============================================================================
+
+pub const ACL = struct {
+    pub const UNDEFINED_ID = -1;
+
+    pub const TYPE = enum(u16) {
+        ACCESS = 0x8000,
+        DEFAULT = 0x400,
+    };
+
+    pub const Tag = enum(u16) {
+        USER_OBJ = 0x01,
+        USER = 0x02,
+        GROUP_OBJ = 0x04,
+        GROUP = 0x08,
+        MASK = 0x10,
+        OTHER = 0x20,
+    };
+
+    pub const Permission = packed struct(u16) {
+        EXECUTE: bool = false,
+        WRITE: bool = false,
+        READ: bool = false,
+        __reserved__: u13 = 0,
+    };
+};
+
+// =============================================================================
+// posix_acl_xattr.h
+// =============================================================================
+
+pub const PosixAclXattrHeader = extern struct {
+    a_version: u32,
+};
+
+pub const PosixAclXattrEntry = extern struct {
+    e_tag: ACL.Tag,
+    e_perm: ACL.Permission,
+    e_id: u32,
+};
 
 // =============================================================================
 // socket.h
@@ -2373,7 +2585,8 @@ pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) Error!fd_t {
             break :blk error.UnexpectedErrno;
         },
     };
-    return @truncate(rc);
+
+    return @intCast(rc);
 }
 
 pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c_int {
@@ -2539,18 +2752,44 @@ pub const Stat = abi.Stat;
 pub const mode_t = u32;
 
 pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
-    const rc = syscall4(.fstatat64, @bitCast(@as(isize, AT.FDCWD)), @intFromPtr(pathname.ptr), @intFromPtr(statbuf), 0);
+    const rc = syscall2(.stat, @intFromPtr(pathname.ptr), @intFromPtr(statbuf));
     if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
         .BADF => error.InvalidFD,
         .FAULT => error.InvalidPointer,
-        .ACCES => error.PermissionDenied,
-        .NOENT => error.FileDoesNotExist,
-        .NOTDIR => error.InvalidPath,
+        .INVAL => error.InvalidArg,
         .LOOP => error.TooManySymbolicLinks,
         .NAMETOOLONG => error.NameTooLong,
-        .NODEV => error.InvalidDevice,
-        .ROFS => error.ReadOnly,
-        .IO => error.IO,
+        .NOENT => error.FileDoesNotExist,
+        .NOMEM => error.NoMemory,
+        .NOTDIR => error.InvalidPath,
+        .OVERFLOW => error.Overflow,
+        else => blk: {
+            log.warn("Unexpected errno for stat: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn fstatat(dir_fd: dirfd_t, path: [:0]const u8, statbuf: *Stat, flags: c_int) Error!void {
+    const rc = syscall4(
+        .fstatat64,
+        zeroExtendToUsize(dir_fd),
+        @intFromPtr(path.ptr),
+        @intFromPtr(statbuf),
+        zeroExtendToUsize(flags),
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .BADF => error.InvalidFD,
+        .FAULT => error.InvalidPointer,
+        .INVAL => error.InvalidArg,
+        .LOOP => error.TooManySymbolicLinks,
+        .NAMETOOLONG => error.NameTooLong,
+        .NOENT => error.FileDoesNotExist,
+        .NOMEM => error.NoMemory,
+        .NOTDIR => error.InvalidPath,
+        .OVERFLOW => error.Overflow,
         else => blk: {
             log.warn("Unexpected errno for stat: {}", .{e});
             break :blk error.UnexpectedErrno;
@@ -2628,6 +2867,7 @@ pub const iovec = extern struct {
 
 pub const SYS = abi.SYS;
 pub const fd_t = c_int;
+pub const dirfd_t = c_int;
 pub const off_t = isize;
 
 pub inline fn check_errno(err: isize) ?Errno {
@@ -2750,6 +2990,128 @@ pub fn unlink(pathname: [:0]const u8) Error!void {
             break :blk error.UnexpectedErrno;
         },
     };
+}
+
+// =============================================================================
+// xattr.h
+// =============================================================================
+
+pub const XATTR = struct {
+    pub const CREATE = 0x1;
+    pub const REPLACE = 0x2;
+
+    pub const OS2_PREFIX = "os2.";
+    pub const MAC_OSX_PREFIX = "osx.";
+    pub const BTRFS_PREFIX = "btrfs.";
+    pub const HURD_PREFIX = "gnu.";
+    pub const SECURITY_PREFIX = "security.";
+    pub const SYSTEM_PREFIX = "system.";
+    pub const TRUSTED_PREFIX = "trusted.";
+    pub const USER_PREFIX = "user.";
+
+    pub const EVM_SUFFIX = "evm";
+    pub const NAME_EVM = SECURITY_PREFIX ++ EVM_SUFFIX;
+
+    pub const IMA_SUFFIX = "ima";
+    pub const NAME_IMA = SECURITY_PREFIX ++ IMA_SUFFIX;
+
+    pub const SELINUX_SUFFIX = "selinux";
+    pub const NAME_SELINUX = SECURITY_PREFIX ++ SELINUX_SUFFIX;
+
+    pub const SMACK_SUFFIX = "SMACK64";
+    pub const NAME_SMACK = SECURITY_PREFIX ++ SMACK_SUFFIX;
+    pub const SMACK_IPIN = "SMACK64IPIN";
+    pub const NAME_SMACKIPIN = SECURITY_PREFIX ++ SMACK_IPIN;
+    pub const SMACK_IPOUT = "SMACK64IPOUT";
+    pub const NAME_SMACKIPOUT = SECURITY_PREFIX ++ SMACK_IPOUT;
+    pub const SMACK_EXEC = "SMACK64EXEC";
+    pub const NAME_SMACKEXEC = SECURITY_PREFIX ++ SMACK_EXEC;
+    pub const SMACK_TRANSMUTE = "SMACK64TRANSMUTE";
+    pub const NAME_SMACKTRANSMUTE = SECURITY_PREFIX ++ SMACK_TRANSMUTE;
+    pub const SMACK_MMAP = "SMACK64MMAP";
+    pub const NAME_SMACKMMAP = SECURITY_PREFIX ++ SMACK_MMAP;
+
+    pub const APPARMOR_SUFFIX = "apparmor";
+    pub const NAME_APPARMOR = SECURITY_PREFIX ++ APPARMOR_SUFFIX;
+
+    pub const CAPS_SUFFIX = "capability";
+    pub const NAME_CAPS = SECURITY_PREFIX ++ CAPS_SUFFIX;
+
+    pub const BPF_LSM_SUFFIX = "bpf.";
+    pub const NAME_BPF_LSM = SECURITY_PREFIX ++ BPF_LSM_SUFFIX;
+
+    pub const POSIX_ACL_ACCESS = "posix_acl_access";
+    pub const NAME_POSIX_ACL_ACCESS = SYSTEM_PREFIX ++ POSIX_ACL_ACCESS;
+    pub const POSIX_ACL_DEFAULT = "posix_acl_default";
+    pub const NAME_POSIX_ACL_DEFAULT = SYSTEM_PREFIX ++ POSIX_ACL_DEFAULT;
+};
+
+pub fn getxattr(path: [:0]const u8, name: [:0]const u8, value_buf: []u8) Error!usize {
+    const rc = syscall4(
+        .getxattr,
+        @intFromPtr(path.ptr),
+        @intFromPtr(name.ptr),
+        if (value_buf.len > 0) @intFromPtr(value_buf.ptr) else 0,
+        value_buf.len,
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .@"2BIG" => error.ValueTooBig,
+        .NODATA => error.NoData,
+        .NOTSUP => error.NotSupported,
+        .RANGE => error.BufferTooSmall,
+        else => blk: {
+            log.warn("Unexpected errno for getxattr: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return safeExtendToUsize(rc);
+}
+
+// =============================================================================
+// private helpers
+// =============================================================================
+
+fn safeExtendToUsize(x: anytype) usize {
+    comptime {
+        const T = @TypeOf(x);
+        meta.expectSignedType(T);
+        assert(@sizeOf(T) <= @sizeOf(usize));
+    }
+    return @intCast(x);
+}
+
+inline fn zeroExtendToUsize(x: anytype) usize {
+    const T = @TypeOf(x);
+    const Int = blk: switch (@typeInfo(T)) {
+        .int => {
+            meta.expectSignedType(T);
+            break :blk T;
+        },
+
+        .@"struct" => |si| {
+            if (si.layout == .@"packed") {
+                break :blk si.backing_integer.?;
+            } else @compileError("Expected signed integer or packed struct");
+        },
+        else => @compileError("Expected signed integer or packed struct"),
+    };
+
+    comptime {
+        assert(@sizeOf(Int) <= @sizeOf(usize));
+    }
+
+    const UnSigned = @Int(.unsigned, @bitSizeOf(Int));
+    return @intCast(@as(UnSigned, @bitCast(x)));
+}
+
+inline fn safeTrunc(comptime T: type, x: anytype) T {
+    comptime {
+        meta.expectIntType(T);
+        const XT = @TypeOf(x);
+        meta.expectIntType(XT);
+    }
+    return @intCast(x);
 }
 
 // =============================================================================

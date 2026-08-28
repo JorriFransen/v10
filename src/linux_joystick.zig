@@ -42,7 +42,7 @@ pub const sync_ms_max = 200;
 
 pub const State = enum(u8) {
     inactive,
-    sync,
+    wait_settle,
     active,
 };
 
@@ -200,7 +200,7 @@ pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, f
 
     this.* = .{
         .fd = @intCast(fd),
-        .state = .sync,
+        .state = .wait_settle,
         .kind = kind,
         .id = id,
         .capabilities = .{ .axis = has_axis, .button = has_buttons, .rumble = has_rumble },
@@ -247,8 +247,8 @@ pub fn deinit(this: *Joystick) void {
     };
 }
 
-pub fn update(this: *Joystick, io: std.Io) void {
-    if (this.state == .sync) {
+pub fn updateState(this: *Joystick, io: std.Io) void {
+    if (this.state == .wait_settle) {
         if (this.open_timestamp.nanoseconds + (sync_ms_max * std.time.ns_per_ms) < linux_v10.getWallClock(io).nanoseconds) {
             this.activate();
             assert(this.state == .active);
@@ -317,7 +317,7 @@ pub fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         .SYN => {
             const syn: linux.SYN = @enumFromInt(event.code);
 
-            if (syn == .REPORT and this.state == .sync) {
+            if (syn == .REPORT and this.state == .wait_settle) {
                 this.sync_report_count += 1;
             }
         },
@@ -328,13 +328,13 @@ pub fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         else => {},
     }
 
-    if (this.state == .sync and this.sync_report_count >= 2) {
+    if (this.state == .wait_settle and this.sync_report_count >= 2) {
         this.activate();
     }
 }
 
 pub fn activate(this: *Joystick) void {
-    assert(this.state == .sync);
+    assert(this.state == .wait_settle);
     this.state = .active;
 }
 
