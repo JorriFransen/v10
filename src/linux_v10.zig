@@ -463,7 +463,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 const fd_open_ts = getWallClock(io);
                 if (Joystick.eventIsJoystick(fd)) {
                     addJoystick(io, entry.name, fd, fd_open_ts) catch |e| {
-                        linux.close(fd) catch {};
+                        linux.close(fd) catch |ce| {
+                            log.warn("Failed to close joystick fd: '/dev/input/{s}', error: '{}'", .{ entry.name, ce });
+                        };
                         log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ entry.name, e });
                     };
                 } else {
@@ -637,8 +639,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                                                 if (Joystick.eventIsJoystick(fd)) {
                                                     addJoystick(io, name, fd, fd_open_ts) catch |e| {
-                                                        linux.close(fd) catch {
-                                                            log.warn("Failed to close joystick fd: '/dev/input/{s}', error: '{}'", .{ name, e });
+                                                        linux.close(fd) catch |ce| {
+                                                            log.warn("Failed to close joystick fd: '/dev/input/{s}', error: '{}'", .{ name, ce });
                                                         };
                                                         log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ name, e });
                                                     };
@@ -775,9 +777,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
                     processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
 
-                    // const strong = js.axis[@intFromEnum(Joystick.Axis.right_z)];
-                    // const weak = js.axis[@intFromEnum(Joystick.Axis.left_z)];
-                    // js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
+                    const strong = js.axis[@intFromEnum(Joystick.Axis.right_z)];
+                    const weak = js.axis[@intFromEnum(Joystick.Axis.left_z)];
+                    js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
                 } else if (js.state == .inactive) {
                     new_controller.is_connected = false;
                 }
