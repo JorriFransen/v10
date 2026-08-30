@@ -20,7 +20,8 @@ const Joystick = @This();
 fd: linux.fd_t,
 state: State,
 kind: Kind,
-id: u32 = invalid_id,
+input_id: i32 = -1,
+event_id: i11 = -1,
 capabilities: Capabilities,
 
 axis: [axis_count]f32 = @splat(0),
@@ -51,11 +52,10 @@ pub const Kind = enum(u8) {
     xbox,
 };
 
-pub const Capabilities = packed struct(u8) {
+pub const Capabilities = packed struct(u3) {
     axis: bool = false,
     button: bool = false,
     rumble: bool = false,
-    __reserved__: u5 = 0,
 };
 
 pub const AxisMeta = struct {
@@ -136,11 +136,9 @@ pub const xbox_map: Map = .{
     },
 };
 
-pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
-    const id = idFromPath(event_sub_path);
-
+pub fn init(this: *Joystick, io: std.Io, event_id: u10, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
     var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{event_sub_path}) catch unreachable;
+    const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/event{}", .{event_id}) catch unreachable;
 
     var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dev_sys_path_len = try std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf);
@@ -202,7 +200,8 @@ pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, f
         .fd = @intCast(fd),
         .state = .wait_settle,
         .kind = kind,
-        .id = id,
+        .event_id = event_id,
+        .input_id = input_id,
         .capabilities = .{ .axis = has_axis, .button = has_buttons, .rumble = has_rumble },
         .map = map,
         .open_timestamp = fd_open_ts,
@@ -232,10 +231,6 @@ pub fn init(this: *Joystick, io: std.Io, event_sub_path: []const u8, fd: fd_t, f
 }
 
 pub fn deinit(this: *Joystick) void {
-    linux.close(this.fd) catch |e| {
-        log.warn("Failed to close joystick fd: '/dev/input/event{s}', error: '{}'", .{ idString(this.id), e });
-    };
-
     this.* = .{
         .fd = -1,
         .state = .inactive,
@@ -455,20 +450,4 @@ fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
     }
 
     return result;
-}
-
-pub inline fn idFromPath(path: []const u8) u32 {
-    const id = std.mem.cutPrefix(u8, path, "event").?;
-    assert(id.len <= 4);
-
-    var buf: [4]u8 align(4) = @splat(0);
-    @memcpy(buf[0..id.len], id);
-
-    return @as(*const u32, @ptrCast(&buf)).*;
-}
-
-inline fn idString(id: u32) []const u8 {
-    const id_bytes: *const [4]u8 = @ptrCast(&id);
-    const len = std.mem.findScalar(u8, id_bytes, 0) orelse id_bytes.len;
-    return id_bytes[0..len];
 }

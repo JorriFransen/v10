@@ -13,8 +13,16 @@ const math = core.math;
 const mem = core.mem;
 const win32 = core.os.win32;
 
-pub const log_scope_levels = [_]std.log.ScopeLevel{
-    .{ .scope = .asset_compiler, .level = if (options.tools_optimize == .Debug) .debug else .info },
+pub const std_options: std.Options = blk: {
+    var o = core.default_std_options;
+
+    o.log_scope_levels =
+        o.log_scope_levels ++
+        [_]std.log.ScopeLevel{
+            .{ .scope = .asset_compiler, .level = if (options.tools_optimize == .Debug) .debug else .info },
+        };
+
+    break :blk o;
 };
 
 pub const ThreadContext = struct {

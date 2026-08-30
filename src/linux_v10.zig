@@ -37,14 +37,12 @@ const getPerfDuration = common.getPerfDuration;
 const getPerfTS = common.getPerfTS;
 
 pub const std_options: std.Options = blk: {
-    var o = core.default_std_options;
+    var o = common.std_options;
 
-    o.log_scope_levels =
-        o.log_scope_levels ++
-        common.log_scope_levels ++
+    o.log_scope_levels = o.log_scope_levels ++
         [_]std.log.ScopeLevel{
-            .{ .scope = .linux_v10, .level = .info },
-            .{ .scope = .linux_joystick, .level = .info },
+            .{ .scope = .linux_v10, .level = .debug },
+            .{ .scope = .linux_joystick, .level = .debug },
             .{ .scope = .pulse, .level = .info },
         };
 
@@ -94,6 +92,10 @@ var stderr_buf: [2048]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
 var stdout_buf: [2048]u8 = undefined;
 var stdout: *std.Io.Writer = undefined;
+
+const io_uring_entry_count = 64;
+var io_uring: std.os.linux.IoUring = undefined;
+var io_in_flight: [io_uring_entry_count]IoInFlight = @splat(.{ .input_id = -1, .event_id = -1, .event_name = undefined, .event_name_len = 0 });
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = if (use_debug_allocator)
@@ -416,14 +418,18 @@ pub fn main(init: std.process.Init.Minimal) !void {
         };
     }
 
-    var inotify_init_duration: PerfDuration = .zero;
-    var input_it_duration: PerfDuration = .zero;
-    const input_scan_start = getPerfTS(io);
+    io_uring = try std.os.linux.IoUring.init(io_uring_entry_count, 0);
+    defer {
+        // TODO: sumbit, and blocking reap/wait
+        io_uring.deinit();
+    }
 
     if (std.Io.Dir.openDirAbsolute(io, "/dev/input", .{ .iterate = true })) |input_dev_dir_| {
         input_dev_dir = input_dev_dir_;
 
-        const inotify_init_start = getPerfTS(io);
+        try joystickReconcile(io, &input_dev_dir);
+        _ = try io_uring.submit();
+
         if (linux.inotify_init1(.{ .CLOEXEC = true, .NONBLOCK = true })) |inotify_fd_| {
             inotify_fd = inotify_fd_;
 
@@ -449,45 +455,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
         } else |e| {
             log.warn("Failed to open inotify fd, error: '{}'", .{e});
         }
-
-        inotify_init_duration = inotify_init_start.untilNow(io);
-
-        const input_it_start = getPerfTS(io);
-
-        var it = input_dev_dir.iterateAssumeFirstIteration();
-        while (it.next(io) catch |e| blk: {
-            log.warn("Iteration of /dev/input failed, error: '{}'", .{e});
-            break :blk null;
-        }) |entry| if (entry.kind == .character_device and std.mem.startsWith(u8, entry.name, "event")) {
-            if (linux.openat(input_dev_dir.handle, core.stackPathZ(entry.name), .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0)) |fd| {
-                const fd_open_ts = getWallClock(io);
-                if (Joystick.eventIsJoystick(fd)) {
-                    addJoystick(io, entry.name, fd, fd_open_ts) catch |e| {
-                        linux.close(fd) catch |ce| {
-                            log.warn("Failed to close joystick fd: '/dev/input/{s}', error: '{}'", .{ entry.name, ce });
-                        };
-                        log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ entry.name, e });
-                    };
-                } else {
-                    linux.close(fd) catch {};
-                }
-            } else |e| switch (e) {
-                error.PermissionDenied => {},
-                else => {
-                    log.warn("Failed to open potential joystick '/dev/input/{s}', error: '{}'", .{ entry.name, e });
-                },
-            }
-        };
-
-        input_it_duration = input_it_start.untilNow(io);
     } else |e| {
         log.warn("Failed to open '/dev/input' for iteration, error: {}", .{e});
     }
-    const input_scan_duration = input_scan_start.untilNow(io);
-
-    log.info("input scan (including inotify init and opening /dev/input fd): {f}", .{input_scan_duration});
-    log.info("inotify init                                                 : {f}", .{inotify_init_duration});
-    log.info("iterate (check and add)                                      : {f}", .{input_it_duration});
 
     var game_code = GameCode.load(io, game_lib_name);
 
@@ -589,17 +559,46 @@ pub fn main(init: std.process.Init.Minimal) !void {
             running = false;
         }
 
-        js_deinit_duration_opt = null;
-        var total_poll_duration_opt: ?PerfDuration = null;
-        var poll_call_duration: PerfDuration = .zero;
-        var js_add_duration_opt: ?PerfDuration = null;
-        var js_remove_duration_opt: ?PerfDuration = null;
-        var js_event_handling_duration_opt: ?PerfDuration = null;
+        var cqes: [io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
+        while (true) {
+            const n = io_uring.copy_cqes(&cqes, 0) catch break;
+            if (n == 0) break;
 
-        const total_poll_start = getPerfTS(io);
+            for (cqes[0..n]) |cqe| {
+                const user_data: isize = @bitCast(cqe.user_data);
+
+                if (user_data >= 0) {
+                    const in_flight_index: usize = @intCast(user_data);
+
+                    const in_flight = &io_in_flight[in_flight_index];
+                    const event_name = in_flight.event_name[0..in_flight.event_name_len :0];
+
+                    const err = cqe.err();
+                    if (err == .SUCCESS) {
+                        log.debug("uring finished opening: /dev/input/{s}", .{event_name});
+
+                        const open_ts = getWallClock(io);
+                        const fd: linux.fd_t = cqe.res;
+
+                        if (Joystick.eventIsJoystick(fd)) {
+                            try addJoystick(io, @intCast(in_flight.event_id), @intCast(in_flight.input_id), fd, open_ts);
+                        } else {
+                            log.debug("Not joystick", .{});
+                            submitDeviceFdClose(fd);
+                        }
+                    } else {
+                        log.debug("Open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+                    }
+
+                    freeIoInFlightEntryIndex(in_flight_index);
+                } else {
+                    log.debug("uring finished closing, result: {}, error: {}", .{ cqe.res, cqe.err() });
+                    // close, ignore
+                }
+            }
+        }
+
         if (try linux.poll(&poll_fds, 0) > 0) {
-            poll_call_duration = total_poll_start.untilNow(io);
-
             for (&poll_fds, 0..) |*pollfd, slot_index| {
                 const slot: PollFdSlot = @enumFromInt(slot_index);
                 const in = pollfd.revents & linux.POLL.IN != 0;
@@ -618,45 +617,45 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                 const event: *const linux.InotifyEvent = @ptrCast(@alignCast(rem.ptr));
                                 i += @sizeOf(linux.InotifyEvent) + event.len;
 
-                                if (event.mask.Q_OVERFLOW) {
-                                    if (options.internal_build) @breakpoint() else unreachable;
-                                }
-
+                                // if (event.mask.Q_OVERFLOW) {
+                                //     if (options.internal_build) @breakpoint() else unreachable;
+                                // }
+                                //
                                 if (event.wd != inotify_wd) continue;
-                                if (event.len == 0) continue;
-
-                                assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
-                                if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
-                                    const name_slice = @as([*]const u8, &event.name)[0 .. event.len - 1 :0];
-                                    const name = std.mem.sliceTo(name_slice, 0);
-
-                                    if (std.mem.startsWith(u8, name, "event")) {
-                                        if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
-                                            const js_add_start = getPerfTS(io);
-
-                                            if (linux.openat(input_dev_dir.handle, name, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0)) |fd| {
-                                                const fd_open_ts = getWallClock(io);
-
-                                                if (Joystick.eventIsJoystick(fd)) {
-                                                    addJoystick(io, name, fd, fd_open_ts) catch |e| {
-                                                        linux.close(fd) catch |ce| {
-                                                            log.warn("Failed to close joystick fd: '/dev/input/{s}', error: '{}'", .{ name, ce });
-                                                        };
-                                                        log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ name, e });
-                                                    };
-                                                }
-                                            } else |e| {
-                                                log.debug("Unable to open input device fd, path: '{s}', error: '{}'", .{ name, e });
-                                            }
-
-                                            js_add_duration_opt = js_add_start.untilNow(io);
-                                        } else if (event.mask.DELETE) {
-                                            const js_remove_start = getPerfTS(io);
-                                            removeJoystick(name, io);
-                                            js_remove_duration_opt = js_remove_start.untilNow(io);
-                                        }
-                                    }
-                                }
+                                // if (event.len == 0) continue;
+                                //
+                                // assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
+                                // if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
+                                //     const name_slice = @as([*]const u8, &event.name)[0 .. event.len - 1 :0];
+                                //     const name = std.mem.sliceTo(name_slice, 0);
+                                //
+                                //     if (std.mem.startsWith(u8, name, "event")) {
+                                //         if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
+                                //             const js_add_start = getPerfTS(io);
+                                //
+                                //             if (linux.openat(input_dev_dir.handle, name, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0)) |fd| {
+                                //                 const fd_open_ts = getWallClock(io);
+                                //
+                                //                 if (Joystick.eventIsJoystick(fd)) {
+                                //                     addJoystick(io, name, fd, fd_open_ts) catch |e| {
+                                //                         linux.close(fd) catch |ce| {
+                                //                             log.warn("Failed to close joystick fd: '/dev/input/{s}', error: '{}'", .{ name, ce });
+                                //                         };
+                                //                         log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ name, e });
+                                //                     };
+                                //                 }
+                                //             } else |e| {
+                                //                 log.debug("Unable to open input device fd, path: '{s}', error: '{}'", .{ name, e });
+                                //             }
+                                //
+                                //             js_add_duration_opt = js_add_start.untilNow(io);
+                                //         } else if (event.mask.DELETE) {
+                                //             const js_remove_start = getPerfTS(io);
+                                //             removeJoystick(name, io);
+                                //             js_remove_duration_opt = js_remove_start.untilNow(io);
+                                //         }
+                                //     }
+                                // }
                             }
                         } else |e| switch (e) {
                             error.NoData => {},
@@ -669,8 +668,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .joystick_2,
                     .joystick_3,
                     => {
-                        const js_event_handle_start = getPerfTS(io);
-
                         var events: [16]linux.InputEvent = undefined;
                         while (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
                             const num_events = bytes_read.len / @sizeOf(linux.InputEvent);
@@ -683,14 +680,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             error.NoData => {},
                             else => log.err("Failed to read joystick events, error: '{}'", .{e}),
                         }
-
-                        js_event_handling_duration_opt = js_event_handle_start.untilNow(io);
                     },
                 };
             }
-
-            total_poll_duration_opt = total_poll_start.untilNow(io);
         }
+
+        _ = try io_uring.submit();
 
         if (wld.pending_resize) |r| {
             if (wld.pending_configure_serial) |serial| {
@@ -949,25 +944,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 }
             } else {
                 log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
-            }
-
-            if (total_poll_duration_opt) |tpd| {
-                log.warn("total poll duration : {f}", .{tpd});
-                log.warn("poll call duration  : {f}", .{poll_call_duration});
-
-                if (js_add_duration_opt) |jad|
-                    log.warn("js add duration     : {f}", .{jad});
-
-                if (js_remove_duration_opt) |jrd|
-                    log.warn("js remove duration  : {f}", .{jrd});
-
-                if (js_deinit_duration_opt) |jdd|
-                    log.warn("js deinit duration  : {f}", .{jdd});
-
-                if (js_event_handling_duration_opt) |jehd|
-                    log.warn("js event duration   : {f}", .{jehd});
-
-                log.warn("\n", .{});
             }
 
             const end_counter = getWallClock(io);
@@ -1442,9 +1418,10 @@ pub const DEBUG = struct {
 
             var buf: [256]u8 = undefined;
             if (linux.read(read_fd, &buf)) |clip_str| {
+                _ = clip_str;
                 // assert(clip_str.len < buf.len); // Buffer too small ()
-                const truncated = if (clip_str.len >= buf.len) " (truncated)" else "";
-                log.debug("Clipboard{s}: \"{s}\"{s}", .{ truncated, clip_str, truncated });
+                // const truncated = if (clip_str.len >= buf.len) " (truncated)" else "";
+                // log.debug("Clipboard{s}: \"{s}\"{s}", .{ truncated, clip_str, truncated });
             } else |e| switch (e) {
                 error.EndOfFile => log.debug("Clipboard empty...", .{}),
                 else => {
@@ -1853,15 +1830,105 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
     }
 }
 
-fn addJoystick(io: std.Io, event_sub_path: []const u8, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !void {
-    log.info("Adding joystick: '/dev/input/{s}'", .{event_sub_path});
+const IoInFlight = struct {
+    input_id: i32 = -1,
+    event_id: i11,
+    event_name: [10]u8,
+    event_name_len: u8,
+};
+
+fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
+    var it = dev_input_dir.iterateAssumeFirstIteration();
+
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .character_device and std.mem.startsWith(u8, entry.name, "event")) {
+            try submitDeviceFdOpen(io, dev_input_dir.handle, entry.name);
+        }
+    }
+}
+
+fn getFreeIoInFlightEntryIndex() ?usize {
+    var result: ?usize = null;
+
+    for (&io_in_flight, 0..) |*entry, i| {
+        if (entry.input_id == -1) {
+            result = i;
+            break;
+        }
+    }
+
+    return result;
+}
+
+fn freeIoInFlightEntryIndex(index: usize) void {
+    io_in_flight[index] = .{
+        .input_id = -1,
+        .event_id = -1,
+        .event_name = undefined,
+        .event_name_len = 0,
+    };
+}
+
+fn submitDeviceFdOpen(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8) !void {
+    if (getFreeIoInFlightEntryIndex()) |in_flight_index| {
+        const in_flight = &io_in_flight[in_flight_index];
+        var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{event_name}) catch unreachable;
+
+        var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const dev_sys_path_len = try std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf);
+        const dev_sys_path = dev_sys_path_buf[0..dev_sys_path_len];
+
+        const event_id_str = std.mem.cutPrefix(u8, event_name, "event").?;
+        const event_id = try std.fmt.parseInt(u10, event_id_str, 10);
+
+        const input_num_str_prefixed = std.fs.path.basename(std.fs.path.dirname(dev_sys_path).?);
+        const input_num_str = std.mem.cutPrefix(u8, input_num_str_prefixed, "input").?;
+        const input_id = try std.fmt.parseInt(u31, input_num_str, 10);
+
+        assert(event_name.len + 1 <= in_flight.event_name.len);
+        in_flight.* = .{
+            .input_id = input_id,
+            .event_id = event_id,
+            .event_name_len = @intCast(event_name.len),
+            .event_name = @splat(0),
+        };
+        @memcpy(in_flight.event_name[0..event_name.len], event_name);
+
+        _ = io_uring.openat(
+            in_flight_index,
+            dev_input_dir_fd,
+            in_flight.event_name[0..in_flight.event_name_len :0],
+            .{ .ACCMODE = .RDWR, .NONBLOCK = true },
+            0,
+        ) catch |e| switch (e) {
+            error.SubmissionQueueFull => {
+                freeIoInFlightEntryIndex(in_flight_index);
+                log.err("In flight entries out of sync with submission queue", .{});
+
+                if (options.internal_build) @breakpoint();
+            },
+        };
+
+        log.debug("Submitted for opening: '/dev/input/{s}'", .{in_flight.event_name});
+    } else {
+        log.err("Unable to queue open op for potential joystick, out of entries: '/dev/input/{s}'", .{event_name});
+    }
+}
+
+fn submitDeviceFdClose(fd: linux.fd_t) void {
+    _ = io_uring.close(@bitCast(@as(isize, -1)), fd) catch unreachable;
+}
+
+fn addJoystick(io: std.Io, event_id: u10, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    log.info("Adding joystick: '/dev/input/event{}'", .{event_id});
 
     for (&joysticks, 0..) |*js, i| {
         if (js.state == .inactive) {
             assert(js.fd == -1);
             assert(poll_fds[PollFdSlot.first_joystick + i].fd == -1);
 
-            try Joystick.init(js, io, event_sub_path, fd, fd_open_ts);
+            try Joystick.init(js, io, event_id, input_id, fd, fd_open_ts);
 
             poll_fds[PollFdSlot.first_joystick + i] = .{
                 .fd = @intCast(js.fd),
@@ -1870,11 +1937,10 @@ fn addJoystick(io: std.Io, event_sub_path: []const u8, fd: linux.fd_t, fd_open_t
             };
             break;
         }
-    } else log.warn("Failed to add joystick, no free slots ('/dev/input/{s}')", .{event_sub_path});
+    } else log.warn("Failed to add joystick, no free slots ('/dev/input/event{}')", .{event_id});
 }
 
-var js_deinit_duration_opt: ?PerfDuration = null;
-fn removeJoystick(event_sub_path: []const u8, io: std.Io) void {
+fn removeJoystick(event_sub_path: []const u8) void {
     const id = Joystick.idFromPath(event_sub_path);
 
     for (&joysticks, 0..) |*js, ji| {
@@ -1884,10 +1950,9 @@ fn removeJoystick(event_sub_path: []const u8, io: std.Io) void {
             assert(js.state == .active or js.state == .wait_settle);
             assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
 
-            const js_deinit_start = getPerfTS(io);
+            submitDeviceFdClose(js.fd);
+
             js.deinit();
-            const duration = js_deinit_start.untilNow(io);
-            if (js_deinit_duration_opt) |*jdd| jdd.add(duration) else js_deinit_duration_opt = duration;
 
             const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
             js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
@@ -1895,6 +1960,8 @@ fn removeJoystick(event_sub_path: []const u8, io: std.Io) void {
             break;
         }
     }
+
+    unreachable; // Scan in flight
 }
 
 const AudioOutput = struct {

@@ -43,7 +43,16 @@ const RenderGroup = @import("render_group.zig");
 
 const os = @import("builtin").os.tag;
 
-pub const std_options = core.default_std_options;
+pub const std_options: std.Options = blk: {
+    var o = core.default_std_options;
+
+    o.log_scope_levels = o.log_scope_levels ++
+        [_]std.log.ScopeLevel{
+            .{ .scope = .v10, .level = .info },
+        };
+
+    break :blk o;
+};
 
 pub const LowEntity = struct {
     sim: Entity = .{},
