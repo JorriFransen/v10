@@ -622,40 +622,35 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                 // }
                                 //
                                 if (event.wd != inotify_wd) continue;
-                                // if (event.len == 0) continue;
-                                //
-                                // assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
-                                // if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
-                                //     const name_slice = @as([*]const u8, &event.name)[0 .. event.len - 1 :0];
-                                //     const name = std.mem.sliceTo(name_slice, 0);
-                                //
-                                //     if (std.mem.startsWith(u8, name, "event")) {
-                                //         if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
-                                //             const js_add_start = getPerfTS(io);
-                                //
-                                //             if (linux.openat(input_dev_dir.handle, name, .{ .ACCMODE = .RDWR, .NONBLOCK = true }, 0)) |fd| {
-                                //                 const fd_open_ts = getWallClock(io);
-                                //
-                                //                 if (Joystick.eventIsJoystick(fd)) {
-                                //                     addJoystick(io, name, fd, fd_open_ts) catch |e| {
-                                //                         linux.close(fd) catch |ce| {
-                                //                             log.warn("Failed to close joystick fd: '/dev/input/{s}', error: '{}'", .{ name, ce });
-                                //                         };
-                                //                         log.warn("Failed to add joystick: '/dev/input/{s}', error: '{}'", .{ name, e });
-                                //                     };
-                                //                 }
-                                //             } else |e| {
-                                //                 log.debug("Unable to open input device fd, path: '{s}', error: '{}'", .{ name, e });
-                                //             }
-                                //
-                                //             js_add_duration_opt = js_add_start.untilNow(io);
-                                //         } else if (event.mask.DELETE) {
-                                //             const js_remove_start = getPerfTS(io);
-                                //             removeJoystick(name, io);
-                                //             js_remove_duration_opt = js_remove_start.untilNow(io);
-                                //         }
-                                //     }
-                                // }
+                                if (event.len == 0) continue;
+
+                                assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
+                                if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
+                                    const name_slice = @as([*]const u8, &event.name)[0 .. event.len - 1 :0];
+                                    const name = std.mem.sliceTo(name_slice, 0);
+
+                                    if (std.mem.startsWith(u8, name, "event")) {
+                                        const event_num_str = std.mem.cutPrefix(u8, name, "event").?;
+                                        const event_id = try std.fmt.parseInt(u10, event_num_str, 10);
+
+                                        if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
+                                            log.debug("inotyfy add mask: {}", .{event.mask});
+                                            submitDeviceFdOpen(io, input_dev_dir.handle, name, event_id) catch |e| {
+                                                const report = switch (e) {
+                                                    error.DevSysPathMissing => !event.mask.ATTRIB,
+                                                    else => true,
+                                                };
+
+                                                if (report) {
+                                                    log.err("Failed to submit potential joystick for io_uring open: '/dev/input/{s}', error: '{}'", .{ name, e });
+                                                    return e;
+                                                }
+                                            };
+                                        } else if (event.mask.DELETE) {
+                                            removeJoystick(event_id);
+                                        }
+                                    }
+                                }
                             }
                         } else |e| switch (e) {
                             error.NoData => {},
@@ -1842,7 +1837,10 @@ fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
 
     while (try it.next(io)) |entry| {
         if (entry.kind == .character_device and std.mem.startsWith(u8, entry.name, "event")) {
-            try submitDeviceFdOpen(io, dev_input_dir.handle, entry.name);
+            const event_id_str = std.mem.cutPrefix(u8, entry.name, "event").?;
+            const event_id = try std.fmt.parseInt(u10, event_id_str, 10);
+
+            try submitDeviceFdOpen(io, dev_input_dir.handle, entry.name, event_id);
         }
     }
 }
@@ -1869,18 +1867,21 @@ fn freeIoInFlightEntryIndex(index: usize) void {
     };
 }
 
-fn submitDeviceFdOpen(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8) !void {
+fn submitDeviceFdOpen(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: u10) !void {
     if (getFreeIoInFlightEntryIndex()) |in_flight_index| {
+        errdefer freeIoInFlightEntryIndex(in_flight_index);
+
         const in_flight = &io_in_flight[in_flight_index];
         var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{event_name}) catch unreachable;
 
         var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_len = try std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf);
-        const dev_sys_path = dev_sys_path_buf[0..dev_sys_path_len];
+        const dev_sys_path_len = std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf) catch |e| switch (e) {
+            error.FileNotFound => return error.DevSysPathMissing,
+            else => return e,
+        };
 
-        const event_id_str = std.mem.cutPrefix(u8, event_name, "event").?;
-        const event_id = try std.fmt.parseInt(u10, event_id_str, 10);
+        const dev_sys_path = dev_sys_path_buf[0..dev_sys_path_len];
 
         const input_num_str_prefixed = std.fs.path.basename(std.fs.path.dirname(dev_sys_path).?);
         const input_num_str = std.mem.cutPrefix(u8, input_num_str_prefixed, "input").?;
@@ -1903,9 +1904,7 @@ fn submitDeviceFdOpen(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: [
             0,
         ) catch |e| switch (e) {
             error.SubmissionQueueFull => {
-                freeIoInFlightEntryIndex(in_flight_index);
                 log.err("In flight entries out of sync with submission queue", .{});
-
                 if (options.internal_build) @breakpoint();
             },
         };
@@ -1940,18 +1939,15 @@ fn addJoystick(io: std.Io, event_id: u10, input_id: u31, fd: linux.fd_t, fd_open
     } else log.warn("Failed to add joystick, no free slots ('/dev/input/event{}')", .{event_id});
 }
 
-fn removeJoystick(event_sub_path: []const u8) void {
-    const id = Joystick.idFromPath(event_sub_path);
-
+fn removeJoystick(event_id: u10) void {
     for (&joysticks, 0..) |*js, ji| {
-        if (js.id == id) {
-            log.info("Removing joystick: '/dev/input/{s}'", .{event_sub_path});
+        if (js.event_id == event_id) {
+            log.info("Removing joystick: '/dev/input/event{}'", .{event_id});
 
             assert(js.state == .active or js.state == .wait_settle);
             assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
 
             submitDeviceFdClose(js.fd);
-
             js.deinit();
 
             const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
@@ -1961,7 +1957,7 @@ fn removeJoystick(event_sub_path: []const u8) void {
         }
     }
 
-    unreachable; // Scan in flight
+    // TODO:  Scan in flight
 }
 
 const AudioOutput = struct {

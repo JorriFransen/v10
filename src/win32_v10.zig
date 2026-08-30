@@ -28,11 +28,10 @@ const ThreadContext = common.ThreadContext;
 const AudioBuffer = common.AudioBuffer;
 
 pub const std_options: std.Options = blk: {
-    var o = core.default_std_options;
+    var o = common.std_options;
 
     o.log_scope_levels =
         o.log_scope_levels ++
-        common.log_scope_levels ++
         [_]std.log.ScopeLevel{
             .{ .scope = .win32_v10, .level = .info },
             .{ .scope = .xinput, .level = .debug },
