@@ -1091,7 +1091,7 @@ fn processKeyEvent(new_state: *ButtonState, is_down: bool) void {
 }
 
 pub inline fn getWallClock(io: std.Io) std.Io.Timestamp {
-    return std.Io.Timestamp.now(io, .real);
+    return std.Io.Timestamp.now(io, .awake);
 }
 
 inline fn getSecondsElapsed(start: std.Io.Timestamp, end: std.Io.Timestamp) f32 {
