@@ -580,17 +580,26 @@ pub fn main(init: std.process.Init.Minimal) !void {
                         const open_ts = getWallClock(io);
                         const fd: linux.fd_t = cqe.res;
 
-                        if (Joystick.eventIsJoystick(fd)) {
-                            try addJoystick(io, @intCast(in_flight.event_id), @intCast(in_flight.input_id), fd, open_ts);
-                        } else {
-                            log.debug("Not joystick", .{});
+                        if (in_flight.flags.close_on_complete or !Joystick.eventIsJoystick(fd)) {
                             submitDeviceFdClose(fd);
+                        } else {
+                            try addJoystick(io, @intCast(in_flight.event_id), @intCast(in_flight.input_id), fd, open_ts);
                         }
                     } else {
-                        log.debug("Open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+                        if (err == .ACCES and in_flight.flags.retry_pending and !in_flight.flags.close_on_complete) {
+                            in_flight.flags.retry_pending = false;
+
+                            log.debug("Open failed, retry: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+
+                            const event_num_str = std.mem.cutPrefix(u8, event_name, "event").?;
+                            const event_id = try std.fmt.parseInt(u10, event_num_str, 10);
+                            try submitDeviceFdOpen(io, input_dev_dir.handle, event_name, event_id);
+                        } else {
+                            log.debug("Open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+                        }
                     }
 
-                    freeIoInFlightEntryIndex(in_flight_index);
+                    freeIoInFlightIndex(in_flight_index);
                 } else {
                     log.debug("uring finished closing, result: {}, error: {}", .{ cqe.res, cqe.err() });
                     // close, ignore
@@ -605,7 +614,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 if (in) switch (slot) {
                     .inotify => {
-                        const buf_len = 16 * (@sizeOf(linux.InotifyEvent) + linux.NAME_MAX);
+                        const buf_len = 16 * (@sizeOf(linux.InotifyEvent) + linux.NAME_MAX + 1);
                         var buf: [buf_len]u8 align(@alignOf(linux.InotifyEvent)) = undefined;
 
                         while (linux.read(inotify_fd, &buf)) |bytes_read| {
@@ -635,18 +644,25 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                                         if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
                                             log.debug("inotyfy add mask: {}", .{event.mask});
-                                            submitDeviceFdOpen(io, input_dev_dir.handle, name, event_id) catch |e| {
-                                                const report = switch (e) {
-                                                    error.DevSysPathMissing => !event.mask.ATTRIB,
-                                                    else => true,
-                                                };
+                                            if (hasJoystick(event_id)) {
+                                                // skip
+                                            } else if (getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
+                                                io_in_flight[in_flight_index].flags.retry_pending = true;
+                                                log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
+                                            } else {
+                                                submitDeviceFdOpen(io, input_dev_dir.handle, name, event_id) catch |e| {
+                                                    const report = switch (e) {
+                                                        error.DevSysPathMissing => !event.mask.ATTRIB,
+                                                        else => true,
+                                                    };
 
-                                                if (report) {
-                                                    log.err("Failed to submit potential joystick for io_uring open: '/dev/input/{s}', error: '{}'", .{ name, e });
-                                                    return e;
-                                                }
-                                            };
-                                        } else if (event.mask.DELETE) {
+                                                    if (report) {
+                                                        log.err("Failed to submit potential joystick for io_uring open: '/dev/input/{s}', error: '{}'", .{ name, e });
+                                                        return e;
+                                                    }
+                                                };
+                                            }
+                                        } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
                                             removeJoystick(event_id);
                                         }
                                     }
@@ -1828,8 +1844,14 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
 const IoInFlight = struct {
     input_id: i32 = -1,
     event_id: i11,
+    flags: Flags = .{},
     event_name: [10]u8,
     event_name_len: u8,
+
+    pub const Flags = packed struct(u2) {
+        retry_pending: bool = false,
+        close_on_complete: bool = false,
+    };
 };
 
 fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
@@ -1845,7 +1867,7 @@ fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
     }
 }
 
-fn getFreeIoInFlightEntryIndex() ?usize {
+fn newIoInFlightIndex() ?usize {
     var result: ?usize = null;
 
     for (&io_in_flight, 0..) |*entry, i| {
@@ -1858,7 +1880,7 @@ fn getFreeIoInFlightEntryIndex() ?usize {
     return result;
 }
 
-fn freeIoInFlightEntryIndex(index: usize) void {
+fn freeIoInFlightIndex(index: usize) void {
     io_in_flight[index] = .{
         .input_id = -1,
         .event_id = -1,
@@ -1867,9 +1889,22 @@ fn freeIoInFlightEntryIndex(index: usize) void {
     };
 }
 
+fn getIoInFlightIndexByEventId(event_id: u10) ?usize {
+    var result: ?usize = null;
+
+    for (&io_in_flight, 0..) |*in_flight, i| {
+        if (in_flight.event_id == event_id) {
+            result = i;
+            break;
+        }
+    }
+
+    return result;
+}
+
 fn submitDeviceFdOpen(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: u10) !void {
-    if (getFreeIoInFlightEntryIndex()) |in_flight_index| {
-        errdefer freeIoInFlightEntryIndex(in_flight_index);
+    if (newIoInFlightIndex()) |in_flight_index| {
+        errdefer freeIoInFlightIndex(in_flight_index);
 
         const in_flight = &io_in_flight[in_flight_index];
         var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -1942,6 +1977,8 @@ fn addJoystick(io: std.Io, event_id: u10, input_id: u31, fd: linux.fd_t, fd_open
 fn removeJoystick(event_id: u10) void {
     for (&joysticks, 0..) |*js, ji| {
         if (js.event_id == event_id) {
+            assert(js.state != .inactive);
+
             log.info("Removing joystick: '/dev/input/event{}'", .{event_id});
 
             assert(js.state == .active or js.state == .wait_settle);
@@ -1955,9 +1992,26 @@ fn removeJoystick(event_id: u10) void {
 
             break;
         }
+    } else for (&io_in_flight) |*in_flight| {
+        if (in_flight.event_id == event_id) {
+            in_flight.flags.close_on_complete = true;
+            in_flight.flags.retry_pending = false;
+            break;
+        }
+    }
+}
+
+fn hasJoystick(event_id: u10) bool {
+    var result = false;
+
+    for (&joysticks) |*js| {
+        if (js.state != .inactive and js.event_id == event_id) {
+            result = true;
+            break;
+        }
     }
 
-    // TODO:  Scan in flight
+    return result;
 }
 
 const AudioOutput = struct {
