@@ -204,13 +204,13 @@ pub const Joystick = struct {
             }
         } else |_| {}
 
-        const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
+        const ev_bits: EV.BitSet = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
 
         const has_axis = ev_bits.isSet(@intFromEnum(EV.ABS));
         const has_buttons = ev_bits.isSet(@intFromEnum(EV.KEY));
 
         const has_rumble: bool = if (ev_bits.isSet(@intFromEnum(EV.FF))) blk: {
-            const ff_bits: FF.Bitset = linux.ioctl_EVIOCGBIT(fd, FF) catch .empty;
+            const ff_bits: FF.BitSet = linux.ioctl_EVIOCGBIT(fd, FF) catch .empty;
             break :blk ff_bits.isSet(@intFromEnum(FF.RUMBLE));
         } else false;
 
@@ -227,7 +227,7 @@ pub const Joystick = struct {
         };
 
         if (has_axis) {
-            const abs_bits: ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
+            const abs_bits: ABS.BitSet = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
 
             inline for (std.meta.fields(Axis)) |field| {
                 const axis_idx = field.value;
@@ -418,16 +418,16 @@ pub const Joystick = struct {
 pub fn eventFdIsJoystick(fd: fd_t) bool {
     var result = false;
 
-    const ev_bits: EV.Bitset = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
+    const ev_bits: EV.BitSet = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
 
     if (ev_bits.isSet(@intFromEnum(EV.ABS)) or
         ev_bits.isSet(@intFromEnum(EV.KEY)))
     {
-        const abs_bits: ABS.Bitset = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
-        const key_bits: KEY.Bitset = linux.ioctl_EVIOCGBIT(fd, KEY) catch .empty;
+        const abs_bits: ABS.BitSet = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
+        const key_bits: KEY.BitSet = linux.ioctl_EVIOCGBIT(fd, KEY) catch .empty;
 
-        const check_key_bits: KEY.Bitset = comptime blk: {
-            var bits: KEY.Bitset = .empty;
+        const check_key_bits: KEY.BitSet = comptime blk: {
+            var bits: KEY.BitSet = .empty;
             bits.setRangeValue(.{
                 .start = @intFromEnum(KEY.BTN_JOYSTICK),
                 .end = @intFromEnum(KEY.BTN_THUMBR),

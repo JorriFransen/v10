@@ -897,7 +897,7 @@ pub const EVIOCSCLOCKID: _IOC = _IOW('E', 0xa0, c_int);
 
 const sizeRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
 
-fn EnumBitset(comptime T: type) type {
+fn EnumBitSet(comptime T: type) type {
     return std.StaticBitSet(T.CNT);
 }
 
@@ -1039,32 +1039,32 @@ pub inline fn ioctl_EVIOCGMTSLOTS(fd: fd_t, slot: ABS.MT, slot_count: usize, slo
 }
 
 /// Get global key state
-pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!KEY.Bitset {
+pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!KEY.BitSet {
     const result = try ioctlReadTypeSize(KEY.BitSet, fd, EVIOCGKEY);
     return result;
 }
 
 /// Get all LEDs
-pub inline fn ioctl_EVIOCGLED(fd: fd_t) IOCTLError!LED.Bitset {
+pub inline fn ioctl_EVIOCGLED(fd: fd_t) IOCTLError!LED.BitSet {
     const result = try ioctlReadTypeSize(LED.BitSet, fd, EVIOCGLED);
     return result;
 }
 
 /// Get all sounds status
-pub inline fn ioctl_EVIOCGSND(fd: fd_t) IOCTLError!SND.Bitset {
+pub inline fn ioctl_EVIOCGSND(fd: fd_t) IOCTLError!SND.BitSet {
     const result = try ioctlReadTypeSize(SND.BitSet, fd, EVIOCGSND);
     return result;
 }
 
 /// Get all switch states
-pub inline fn ioctl_EVIOCGSW(fd: fd_t) IOCTLError!SW.Bitset {
-    const result = try ioctlReadTypeSize(SW.Bitset, fd, EVIOCGSW);
+pub inline fn ioctl_EVIOCGSW(fd: fd_t) IOCTLError!SW.BitSet {
+    const result = try ioctlReadTypeSize(SW.BitSet, fd, EVIOCGSW);
     return result;
 }
 
 /// Get event bits
-pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!EnumBitset(ET) {
-    const BitSet = EnumBitset(ET);
+pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!EnumBitSet(ET) {
+    const BitSet = EnumBitSet(ET);
     var result: BitSet = .empty;
 
     const ev: u8 = @intCast(EV.uintFromType(ET));
@@ -1122,8 +1122,8 @@ pub inline fn ioctl_EVIOCREVOKE(fd: fd_t) IOCTLError!void {
 }
 
 /// Retrieve current event mask
-pub inline fn ioctl_EVIOCGMASK(fd: fd_t, comptime ET: type) IOCTLError!EnumBitset(ET) {
-    const BitSet = EnumBitset(ET);
+pub inline fn ioctl_EVIOCGMASK(fd: fd_t, comptime ET: type) IOCTLError!EnumBitSet(ET) {
+    const BitSet = EnumBitSet(ET);
     var result: BitSet = .empty;
 
     var input_mask = InputMask{
@@ -1139,10 +1139,10 @@ pub inline fn ioctl_EVIOCGMASK(fd: fd_t, comptime ET: type) IOCTLError!EnumBitse
 }
 
 /// Set event mask
-pub inline fn ioctl_EVIOCSMASK(fd: fd_t, comptime ET: type, new_mask: *const EnumBitset(ET)) IOCTLError!void {
+pub inline fn ioctl_EVIOCSMASK(fd: fd_t, comptime ET: type, new_mask: *const EnumBitSet(ET)) IOCTLError!void {
     const input_mask = InputMask{
         .type = EV.uintFromType(ET),
-        .codes_size = @sizeOf(EnumBitset(ET)),
+        .codes_size = @sizeOf(EnumBitSet(ET)),
         .codes_ptr = @intFromPtr(new_mask),
     };
 
@@ -1189,7 +1189,7 @@ pub const EV = enum(u16) {
     pub const MAX: u16 = 0x1f;
     pub const CNT: u16 = MAX + 1;
 
-    pub const Bitset = EnumBitset(@This());
+    pub const BitSet = EnumBitSet(@This());
 
     fn uintFromType(comptime T: type) u16 {
         return switch (T) {
@@ -1266,7 +1266,7 @@ pub const ABS = enum(u8) {
         TOOL_Y = @intFromEnum(ABS.MT_TOOL_Y),
     };
 
-    pub const Bitset = EnumBitset(@This());
+    pub const BitSet = EnumBitSet(@This());
 };
 
 pub const FF = enum(u16) {
@@ -1320,7 +1320,7 @@ pub const FF = enum(u16) {
     pub const MAX: u16 = 0x7f;
     pub const CNT: u16 = 0x80;
 
-    pub const Bitset = EnumBitset(@This());
+    pub const BitSet = EnumBitSet(@This());
 };
 
 pub const KEY = enum(u16) {
@@ -1972,7 +1972,7 @@ pub const KEY = enum(u16) {
 
     pub const CNT: u16 = (MAX + 1);
 
-    pub const Bitset = EnumBitset(@This());
+    pub const BitSet = EnumBitSet(@This());
 };
 
 pub const SYN = enum(u16) {
@@ -2038,7 +2038,7 @@ pub const LED = enum(u8) {
     pub const MAX: u8 = 0x0f;
     pub const CNT: u8 = MAX + 1;
 
-    pub const Bitset = EnumBitset(@This());
+    pub const BitSet = EnumBitSet(@This());
 };
 
 pub const SND = enum(u8) {
@@ -2049,7 +2049,7 @@ pub const SND = enum(u8) {
     pub const MAX: u8 = 0x07;
     pub const CNT: u8 = MAX + 1;
 
-    pub const Bitset = EnumBitset(@This());
+    pub const BitSet = EnumBitSet(@This());
 };
 
 pub const SW = enum(u8) {
@@ -2097,7 +2097,7 @@ pub const SW = enum(u8) {
     pub const MAX: u8 = 0x11;
     pub const CNT: u8 = MAX + 1;
 
-    pub const Bitset = EnumBitset(@This());
+    pub const BitSet = EnumBitSet(@This());
 };
 
 // =============================================================================
