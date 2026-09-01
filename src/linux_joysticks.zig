@@ -19,14 +19,19 @@ const linux_v10 = @import("linux_v10.zig");
 
 pub const io_uring_entry_count = 64;
 pub var io_uring: std.os.linux.IoUring = undefined;
-pub var io_in_flight: [io_uring_entry_count]IoInFlight = @splat(.{ .input_id = -1, .event_id = -1, .event_name = undefined, .event_name_len = 0 });
+pub var io_in_flight: [io_uring_entry_count]IoInFlight = @splat(.{
+    .event_id = -1,
+    .input_id = undefined,
+    .event_name = undefined,
+    .event_name_len = 0,
+});
 
 pub const invalid_id: u32 = math.maxInt(u32);
 pub const sync_ms_max = 200;
 
 const IoInFlight = struct {
-    input_id: i32 = -1,
-    event_id: i11,
+    event_id: i11 = -1,
+    input_id: u31,
     flags: Flags = .{},
     event_name: [10]u8,
     event_name_len: u8,
@@ -35,14 +40,18 @@ const IoInFlight = struct {
         retry_pending: bool = false,
         close_on_complete: bool = false,
     };
+
+    pub fn eventName(this: *const IoInFlight) [:0]const u8 {
+        return this.event_name[0..this.event_name_len :0];
+    }
 };
 
 pub const Joystick = struct {
     fd: linux.fd_t,
     state: State,
     kind: Kind,
-    input_id: i32 = -1,
     event_id: i11 = -1,
+    input_id: u31,
     capabilities: Capabilities,
 
     axis: [axis_count]f32 = @splat(0),
@@ -59,13 +68,13 @@ pub const Joystick = struct {
     open_timestamp: std.Io.Timestamp,
     sync_report_count: u8,
 
-    pub const State = enum(u8) {
+    pub const State = enum(u2) {
         inactive,
         wait_settle,
         active,
     };
 
-    pub const Kind = enum(u8) {
+    pub const Kind = enum(u1) {
         default,
         xbox,
     };
@@ -154,7 +163,9 @@ pub const Joystick = struct {
         },
     };
 
-    pub fn init(this: *Joystick, io: std.Io, event_id: u10, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    pub fn init(this: *Joystick, io: std.Io, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+        assert(event_id >= 0);
+
         var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/event{}", .{event_id}) catch unreachable;
 
@@ -253,6 +264,7 @@ pub const Joystick = struct {
             .fd = -1,
             .state = .inactive,
             .kind = undefined,
+            .input_id = undefined,
             .map = undefined,
             .capabilities = .{},
             .open_timestamp = .zero,
@@ -523,7 +535,7 @@ fn newIoInFlightIndex() ?usize {
     var result: ?usize = null;
 
     for (&io_in_flight, 0..) |*entry, i| {
-        if (entry.input_id == -1) {
+        if (entry.event_id == -1) {
             result = i;
             break;
         }
@@ -534,14 +546,16 @@ fn newIoInFlightIndex() ?usize {
 
 pub fn freeIoInFlightIndex(index: usize) void {
     io_in_flight[index] = .{
-        .input_id = -1,
         .event_id = -1,
+        .input_id = undefined,
         .event_name = undefined,
         .event_name_len = 0,
     };
 }
 
-pub fn getIoInFlightIndexByEventId(event_id: u10) ?usize {
+pub fn getIoInFlightIndexByEventId(event_id: i11) ?usize {
+    assert(event_id >= 0);
+
     var result: ?usize = null;
 
     for (&io_in_flight, 0..) |*in_flight, i| {
@@ -554,7 +568,9 @@ pub fn getIoInFlightIndexByEventId(event_id: u10) ?usize {
     return result;
 }
 
-pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: u10) !void {
+pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: i11) !void {
+    assert(event_id >= 0);
+
     if (newIoInFlightIndex()) |in_flight_index| {
         errdefer freeIoInFlightIndex(in_flight_index);
 
@@ -586,7 +602,7 @@ pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []c
         _ = io_uring.openat(
             in_flight_index,
             dev_input_dir_fd,
-            in_flight.event_name[0..in_flight.event_name_len :0],
+            in_flight.eventName(),
             .{ .ACCMODE = .RDWR, .NONBLOCK = true },
             0,
         ) catch |e| switch (e) {
