@@ -362,8 +362,6 @@ pub const Joystick = struct {
         assert(this.state == .wait_settle);
         this.state = .active;
 
-        log.debug("Joystick activated: '/dev/input/event{}'", .{this.event_id});
-
         // Query current state - this is technically only required if this joystick has been in the ready_list before init.
 
         if (this.capabilities.button) {
@@ -374,7 +372,6 @@ pub const Joystick = struct {
                 const mapped_key: KEY = @field(this.map.buttons, field.name);
 
                 this.setButtonState(button, key_bits.isSet(@intFromEnum(mapped_key)));
-                log.debug("{} (-> {}): {}", .{ button, mapped_key, key_bits.isSet(@intFromEnum(mapped_key)) });
             }
         }
 
@@ -392,10 +389,10 @@ pub const Joystick = struct {
                         0
                 else
                     0;
-
-                log.debug("{} (-> {}): {}", .{ axis, mapped_abs, this.axis[field.value] });
             }
         }
+
+        log.debug("Joystick activated: '/dev/input/event{}'", .{this.event_id});
     }
 
     pub fn setRumble(this: *Joystick, strong: f32, weak: f32) !void {
@@ -599,18 +596,20 @@ pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []c
         };
         @memcpy(in_flight.event_name[0..event_name.len], event_name);
 
-        _ = io_uring.openat(
+        if (io_uring.openat(
             in_flight_index,
             dev_input_dir_fd,
             in_flight.eventName(),
             .{ .ACCMODE = .RDWR, .NONBLOCK = true },
             0,
-        ) catch |e| switch (e) {
+        )) |cqe| {
+            cqe.flags |= std.os.linux.IOSQE_ASYNC;
+        } else |e| switch (e) {
             error.SubmissionQueueFull => {
                 log.err("In flight entries out of sync with submission queue", .{});
                 if (options.internal_build) @breakpoint();
             },
-        };
+        }
 
         log.debug("Submitted for opening: '/dev/input/{s}'", .{in_flight.event_name});
     } else {
@@ -619,5 +618,6 @@ pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []c
 }
 
 pub fn submitCloseFd(fd: linux.fd_t) void {
-    _ = io_uring.close(@bitCast(@as(isize, -1)), fd) catch unreachable;
+    const sqe = io_uring.close(@bitCast(@as(isize, -1)), fd) catch unreachable;
+    sqe.flags |= std.os.linux.IOSQE_ASYNC;
 }
