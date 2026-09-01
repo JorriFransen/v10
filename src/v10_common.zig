@@ -317,7 +317,7 @@ pub const PerfTimestamp = struct {
 
 pub fn getPerfTS(io: std.Io) PerfTimestamp {
     return .{
-        .wall = std.Io.Timestamp.now(io, .real),
+        .wall = std.Io.Timestamp.now(io, .awake),
         .cpu = std.Io.Timestamp.now(io, .cpu_thread),
     };
 }

@@ -21,7 +21,8 @@ const wl = wayland.wayland;
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
-const Joystick = @import("linux_joystick.zig");
+const Joysticks = @import("linux_joysticks.zig");
+const Joystick = Joysticks.Joystick;
 
 const common = @import("v10_common");
 const AudioBuffer = common.AudioBuffer;
@@ -50,7 +51,6 @@ pub const std_options: std.Options = blk: {
 };
 
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
-// TODO: Query initial state of controller
 // TODO: Debug repeated controller plug in/out cycles, the disconnect seems to be missed sometimes
 
 var prng: std.Random = undefined;
@@ -92,10 +92,6 @@ var stderr_buf: [2048]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
 var stdout_buf: [2048]u8 = undefined;
 var stdout: *std.Io.Writer = undefined;
-
-const io_uring_entry_count = 64;
-var io_uring: std.os.linux.IoUring = undefined;
-var io_in_flight: [io_uring_entry_count]IoInFlight = @splat(.{ .input_id = -1, .event_id = -1, .event_name = undefined, .event_name_len = 0 });
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = if (use_debug_allocator)
@@ -418,17 +414,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
         };
     }
 
-    io_uring = try std.os.linux.IoUring.init(io_uring_entry_count, 0);
+    Joysticks.io_uring = try std.os.linux.IoUring.init(Joysticks.io_uring_entry_count, 0);
     defer {
         // TODO: sumbit, and blocking reap/wait
-        io_uring.deinit();
+        Joysticks.io_uring.deinit();
     }
 
     if (std.Io.Dir.openDirAbsolute(io, "/dev/input", .{ .iterate = true })) |input_dev_dir_| {
         input_dev_dir = input_dev_dir_;
 
-        try joystickReconcile(io, &input_dev_dir);
-        _ = try io_uring.submit();
+        try Joysticks.reconcile(io, &input_dev_dir);
+        _ = try Joysticks.io_uring.submit();
 
         if (linux.inotify_init1(.{ .CLOEXEC = true, .NONBLOCK = true })) |inotify_fd_| {
             inotify_fd = inotify_fd_;
@@ -559,9 +555,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
             running = false;
         }
 
-        var cqes: [io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
+        var cqes: [Joysticks.io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
         while (true) {
-            const n = io_uring.copy_cqes(&cqes, 0) catch break;
+            const n = Joysticks.io_uring.copy_cqes(&cqes, 0) catch break;
             if (n == 0) break;
 
             for (cqes[0..n]) |cqe| {
@@ -570,7 +566,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 if (user_data >= 0) {
                     const in_flight_index: usize = @intCast(user_data);
 
-                    const in_flight = &io_in_flight[in_flight_index];
+                    const in_flight = &Joysticks.io_in_flight[in_flight_index];
                     const event_name = in_flight.event_name[0..in_flight.event_name_len :0];
 
                     const err = cqe.err();
@@ -580,8 +576,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
                         const open_ts = getWallClock(io);
                         const fd: linux.fd_t = cqe.res;
 
-                        if (in_flight.flags.close_on_complete or !Joystick.eventIsJoystick(fd)) {
-                            submitDeviceFdClose(fd);
+                        if (in_flight.flags.close_on_complete or !Joysticks.eventFdIsJoystick(fd)) {
+                            Joysticks.submitCloseFd(fd);
                         } else {
                             try addJoystick(io, @intCast(in_flight.event_id), @intCast(in_flight.input_id), fd, open_ts);
                         }
@@ -593,13 +589,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                             const event_num_str = std.mem.cutPrefix(u8, event_name, "event").?;
                             const event_id = try std.fmt.parseInt(u10, event_num_str, 10);
-                            try submitDeviceFdOpen(io, input_dev_dir.handle, event_name, event_id);
+                            try Joysticks.submitOpenFd(io, input_dev_dir.handle, event_name, event_id);
                         } else {
                             log.debug("Open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
                         }
                     }
 
-                    freeIoInFlightIndex(in_flight_index);
+                    Joysticks.freeIoInFlightIndex(in_flight_index);
                 } else {
                     log.debug("uring finished closing, result: {}, error: {}", .{ cqe.res, cqe.err() });
                     // close, ignore
@@ -646,11 +642,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                             log.debug("inotyfy add mask: {}", .{event.mask});
                                             if (hasJoystick(event_id)) {
                                                 // skip
-                                            } else if (getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
-                                                io_in_flight[in_flight_index].flags.retry_pending = true;
+                                            } else if (Joysticks.getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
+                                                Joysticks.io_in_flight[in_flight_index].flags.retry_pending = true;
                                                 log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
                                             } else {
-                                                submitDeviceFdOpen(io, input_dev_dir.handle, name, event_id) catch |e| {
+                                                Joysticks.submitOpenFd(io, input_dev_dir.handle, name, event_id) catch |e| {
                                                     const report = switch (e) {
                                                         error.DevSysPathMissing => !event.mask.ATTRIB,
                                                         else => true,
@@ -663,7 +659,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                                 };
                                             }
                                         } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
-                                            removeJoystick(event_id);
+                                            if (removeJoystick(event_id)) |fd| {
+                                                Joysticks.submitCloseFd(fd);
+                                            }
                                         }
                                     }
                                 }
@@ -696,7 +694,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
         }
 
-        _ = try io_uring.submit();
+        _ = try Joysticks.io_uring.submit();
 
         if (wld.pending_resize) |r| {
             if (wld.pending_configure_serial) |serial| {
@@ -1841,119 +1839,6 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
     }
 }
 
-const IoInFlight = struct {
-    input_id: i32 = -1,
-    event_id: i11,
-    flags: Flags = .{},
-    event_name: [10]u8,
-    event_name_len: u8,
-
-    pub const Flags = packed struct(u2) {
-        retry_pending: bool = false,
-        close_on_complete: bool = false,
-    };
-};
-
-fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
-    var it = dev_input_dir.iterateAssumeFirstIteration();
-
-    while (try it.next(io)) |entry| {
-        if (entry.kind == .character_device and std.mem.startsWith(u8, entry.name, "event")) {
-            const event_id_str = std.mem.cutPrefix(u8, entry.name, "event").?;
-            const event_id = try std.fmt.parseInt(u10, event_id_str, 10);
-
-            try submitDeviceFdOpen(io, dev_input_dir.handle, entry.name, event_id);
-        }
-    }
-}
-
-fn newIoInFlightIndex() ?usize {
-    var result: ?usize = null;
-
-    for (&io_in_flight, 0..) |*entry, i| {
-        if (entry.input_id == -1) {
-            result = i;
-            break;
-        }
-    }
-
-    return result;
-}
-
-fn freeIoInFlightIndex(index: usize) void {
-    io_in_flight[index] = .{
-        .input_id = -1,
-        .event_id = -1,
-        .event_name = undefined,
-        .event_name_len = 0,
-    };
-}
-
-fn getIoInFlightIndexByEventId(event_id: u10) ?usize {
-    var result: ?usize = null;
-
-    for (&io_in_flight, 0..) |*in_flight, i| {
-        if (in_flight.event_id == event_id) {
-            result = i;
-            break;
-        }
-    }
-
-    return result;
-}
-
-fn submitDeviceFdOpen(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: u10) !void {
-    if (newIoInFlightIndex()) |in_flight_index| {
-        errdefer freeIoInFlightIndex(in_flight_index);
-
-        const in_flight = &io_in_flight[in_flight_index];
-        var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{event_name}) catch unreachable;
-
-        var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_len = std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf) catch |e| switch (e) {
-            error.FileNotFound => return error.DevSysPathMissing,
-            else => return e,
-        };
-
-        const dev_sys_path = dev_sys_path_buf[0..dev_sys_path_len];
-
-        const input_num_str_prefixed = std.fs.path.basename(std.fs.path.dirname(dev_sys_path).?);
-        const input_num_str = std.mem.cutPrefix(u8, input_num_str_prefixed, "input").?;
-        const input_id = try std.fmt.parseInt(u31, input_num_str, 10);
-
-        assert(event_name.len + 1 <= in_flight.event_name.len);
-        in_flight.* = .{
-            .input_id = input_id,
-            .event_id = event_id,
-            .event_name_len = @intCast(event_name.len),
-            .event_name = @splat(0),
-        };
-        @memcpy(in_flight.event_name[0..event_name.len], event_name);
-
-        _ = io_uring.openat(
-            in_flight_index,
-            dev_input_dir_fd,
-            in_flight.event_name[0..in_flight.event_name_len :0],
-            .{ .ACCMODE = .RDWR, .NONBLOCK = true },
-            0,
-        ) catch |e| switch (e) {
-            error.SubmissionQueueFull => {
-                log.err("In flight entries out of sync with submission queue", .{});
-                if (options.internal_build) @breakpoint();
-            },
-        };
-
-        log.debug("Submitted for opening: '/dev/input/{s}'", .{in_flight.event_name});
-    } else {
-        log.err("Unable to queue open op for potential joystick, out of entries: '/dev/input/{s}'", .{event_name});
-    }
-}
-
-fn submitDeviceFdClose(fd: linux.fd_t) void {
-    _ = io_uring.close(@bitCast(@as(isize, -1)), fd) catch unreachable;
-}
-
 fn addJoystick(io: std.Io, event_id: u10, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !void {
     log.info("Adding joystick: '/dev/input/event{}'", .{event_id});
 
@@ -1974,17 +1859,20 @@ fn addJoystick(io: std.Io, event_id: u10, input_id: u31, fd: linux.fd_t, fd_open
     } else log.warn("Failed to add joystick, no free slots ('/dev/input/event{}')", .{event_id});
 }
 
-fn removeJoystick(event_id: u10) void {
+fn removeJoystick(event_id: u10) ?linux.fd_t {
+    var result: ?linux.fd_t = null;
+
     for (&joysticks, 0..) |*js, ji| {
         if (js.event_id == event_id) {
             assert(js.state != .inactive);
 
             log.info("Removing joystick: '/dev/input/event{}'", .{event_id});
 
+            result = js.fd;
+
             assert(js.state == .active or js.state == .wait_settle);
             assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
 
-            submitDeviceFdClose(js.fd);
             js.deinit();
 
             const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
@@ -1992,13 +1880,15 @@ fn removeJoystick(event_id: u10) void {
 
             break;
         }
-    } else for (&io_in_flight) |*in_flight| {
+    } else for (&Joysticks.io_in_flight) |*in_flight| {
         if (in_flight.event_id == event_id) {
             in_flight.flags.close_on_complete = true;
             in_flight.flags.retry_pending = false;
             break;
         }
     }
+
+    return result;
 }
 
 fn hasJoystick(event_id: u10) bool {
