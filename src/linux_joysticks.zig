@@ -349,6 +349,41 @@ pub const Joystick = struct {
     pub fn activate(this: *Joystick) void {
         assert(this.state == .wait_settle);
         this.state = .active;
+
+        log.debug("Joystick activated: '/dev/input/event{}'", .{this.event_id});
+
+        // Query current state - this is technically only required if this joystick has been in the ready_list before init.
+
+        if (this.capabilities.button) {
+            const key_bits: KEY.BitSet = linux.ioctl_EVIOCGKEY(this.fd) catch .empty;
+
+            inline for (std.meta.fields(Button)) |field| {
+                const button: Button = @enumFromInt(field.value);
+                const mapped_key: KEY = @field(this.map.buttons, field.name);
+
+                this.setButtonState(button, key_bits.isSet(@intFromEnum(mapped_key)));
+                log.debug("{} (-> {}): {}", .{ button, mapped_key, key_bits.isSet(@intFromEnum(mapped_key)) });
+            }
+        }
+
+        if (this.capabilities.axis) {
+            const abs_bits: ABS.BitSet = linux.ioctl_EVIOCGBIT(this.fd, ABS) catch .empty;
+
+            inline for (std.meta.fields(Axis)) |field| {
+                const axis: Axis = @enumFromInt(field.value);
+                const mapped_abs: ABS = @field(this.map.axis, field.name);
+
+                this.axis[field.value] = if (abs_bits.isSet(@intFromEnum(mapped_abs)))
+                    if (linux.ioctl_EVIOCGABS(this.fd, mapped_abs)) |abs_info|
+                        this.normalizedAxis(axis, abs_info.value)
+                    else |_|
+                        0
+                else
+                    0;
+
+                log.debug("{} (-> {}): {}", .{ axis, mapped_abs, this.axis[field.value] });
+            }
+        }
     }
 
     pub fn setRumble(this: *Joystick, strong: f32, weak: f32) !void {

@@ -74,6 +74,15 @@ var joysticks: [PollFdSlot.joystick_count]Joystick = @splat(.{
     .sync_report_count = 0,
 });
 
+var joystick_ready_list: [8]JoystickReadyEntry = @splat(.{});
+
+const JoystickReadyEntry = struct {
+    fd: linux.fd_t,
+    fd_open_ts: std.Io.Timestamp,
+    event_id: u10,
+    input_id: u31,
+};
+
 const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
 var poll_fds: [poll_fd_count]linux.pollfd = @splat(.{
     .fd = -1,
