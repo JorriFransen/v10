@@ -163,15 +163,15 @@ pub const Joystick = struct {
         },
     };
 
-    pub fn init(this: *Joystick, io: std.Io, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    pub fn init(this: *Joystick, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
         assert(event_id >= 0);
 
         var sys_link_buf: [32]u8 = undefined;
-        const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/event{}", .{event_id}) catch unreachable;
+        const sys_link = std.fmt.bufPrintSentinel(&sys_link_buf, "/sys/class/input/event{}", .{event_id}, 0) catch unreachable;
 
         var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_rel_len = std.Io.Dir.readLinkAbsolute(io, sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
-            error.FileNotFound => return error.DevSysPathMissing,
+        const dev_sys_path_rel_len = linux.readlink(sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
+            error.FileDoesNotExist => return error.DevSysPathMissing,
             else => return e,
         };
         const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
@@ -194,18 +194,18 @@ pub const Joystick = struct {
         }) catch unreachable;
 
         var driver_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const driver_link = std.fmt.bufPrint(&driver_link_buf, "{s}/{s}", .{
+        const driver_link = std.fmt.bufPrintSentinel(&driver_link_buf, "{s}/{s}", .{
             std.fs.path.dirname(sys_link).?,
             driver_link_rel,
-        }) catch unreachable;
+        }, 0) catch unreachable;
 
         log.debug("driver link rel: '{s}'", .{driver_link_rel});
         log.debug("driver link    : '{s}'", .{driver_link});
 
         const driver_name: []const u8 = blk: {
             var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-            const driver_path_len = std.Io.Dir.readLinkAbsolute(io, driver_link, &driver_path_buf) catch |e| switch (e) {
-                error.FileNotFound => {
+            const driver_path_len = linux.readlink(driver_link, &driver_path_buf) catch |e| switch (e) {
+                error.FileDoesNotExist => {
                     log.err("Joystick driver link does not exist: '{s}'", .{driver_link});
                     break :blk "";
                 },
@@ -577,7 +577,7 @@ pub fn getIoInFlightIndexByEventId(event_id: i11) ?usize {
     return result;
 }
 
-pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: i11) !void {
+pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: i11) !void {
     assert(event_id >= 0);
 
     if (newIoInFlightIndex()) |in_flight_index| {
@@ -585,11 +585,11 @@ pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []c
 
         const in_flight = &io_in_flight[in_flight_index];
         var sys_link_buf: [32]u8 = undefined;
-        const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{event_name}) catch unreachable;
+        const sys_link = std.fmt.bufPrintSentinel(&sys_link_buf, "/sys/class/input/{s}", .{event_name}, 0) catch unreachable;
 
         var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_rel_len = std.Io.Dir.readLinkAbsolute(io, sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
-            error.FileNotFound => return error.DevSysPathMissing,
+        const dev_sys_path_rel_len = linux.readlink(sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
+            error.FileDoesNotExist => return error.DevSysPathMissing,
             else => return e,
         };
         const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];

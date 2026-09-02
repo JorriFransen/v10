@@ -2107,7 +2107,6 @@ pub const SW = enum(u8) {
 pub const IOCTLError = Error || error{
     // Unknown,
     Unsupported,
-    ArgIsInvalidPointer,
     InvalidRequestOrArg,
     InvalidFDForRequest,
 };
@@ -2144,7 +2143,7 @@ pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
 
     if (check_errno(rc)) |e| return switch (e) {
         .BADF => error.InvalidFD,
-        .FAULT => error.ArgIsInvalidPointer,
+        .FAULT => error.InvalidPointer,
         .INVAL => error.InvalidRequestOrArg,
         .IO => error.IO,
         .NOTTY => error.InvalidFDForRequest,
@@ -2946,21 +2945,6 @@ pub fn pipe(fds: *[2]fd_t) Error!void {
     };
 }
 
-pub fn pipe2(fds: *[2]fd_t, flags: O) Error!void {
-    const rc = syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .FAULT => error.InvalidPointer,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .INVAL => error.InvalidArg,
-        .NOPKG => error.PackageNotCompiled,
-        else => blk: {
-            log.warn("Unexpected errno for pipe: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
-
 pub fn ftruncate(fd: fd_t, length: usize) !void {
     const rc = syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
     if (check_errno(rc)) |e| return switch (e) {
@@ -2987,6 +2971,75 @@ pub fn unlink(pathname: [:0]const u8) Error!void {
         .IO => error.IO,
         else => blk: {
             log.warn("Unexpected errno for unlink: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+}
+
+pub fn readlink(path: [:0]const u8, buf: []u8) Error!usize {
+    const rc = syscall3(
+        .readlink,
+        @intFromPtr(path.ptr),
+        @intFromPtr(buf.ptr),
+        buf.len,
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .FAULT => error.InvalidPointer,
+        .INVAL => error.InvalidArg,
+        .IO => error.IO,
+        .LOOP => error.TooManySymbolicLinks,
+        .NAMETOOLONG => error.NameTooLong,
+        .NOENT => error.FileDoesNotExist,
+        .NOMEM => error.NoMemory,
+        .NOTDIR => error.InvalidPath,
+        else => blk: {
+            log.warn("Unexpected errno for readlink: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @intCast(rc);
+}
+
+pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) Error!usize {
+    const rc = syscall4(
+        .readlinkat,
+        zeroExtendToUsize(dir_fd),
+        @intFromPtr(path.ptr),
+        @intFromPtr(buf.ptr),
+        buf.len,
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .ACCES => error.PermissionDenied,
+        .BADF => error.InvalidFD,
+        .FAULT => error.InvalidPointer,
+        .INVAL => error.InvalidArg,
+        .IO => error.IO,
+        .LOOP => error.TooManySymbolicLinks,
+        .NAMETOOLONG => error.NameTooLong,
+        .NOENT => error.FileDoesNotExist,
+        .NOMEM => error.NoMemory,
+        .NOTDIR => error.InvalidPath,
+        else => blk: {
+            log.warn("Unexpected errno for readlink: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @intCast(rc);
+}
+
+pub fn pipe2(fds: *[2]fd_t, flags: O) Error!void {
+    const rc = syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
+    if (check_errno(rc)) |e| return switch (e) {
+        .FAULT => error.InvalidPointer,
+        .MFILE => error.TooManyProcessFiles,
+        .NFILE => error.TooManyFiles,
+        .INVAL => error.InvalidArg,
+        .NOPKG => error.PackageNotCompiled,
+        else => blk: {
+            log.warn("Unexpected errno for pipe2: {}", .{e});
             break :blk error.UnexpectedErrno;
         },
     };

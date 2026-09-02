@@ -597,7 +597,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                         {
                             Joysticks.submitCloseFd(fd);
                         } else {
-                            if (!(addJoystick(io, in_flight.event_id, in_flight.input_id, fd, open_ts) catch |e| blk: {
+                            if (!(addJoystick(in_flight.event_id, in_flight.input_id, fd, open_ts) catch |e| blk: {
                                 Joysticks.submitCloseFd(fd);
                                 log.err("Failed to add joystick '/dev/input/{s}', error: '{}'", .{ event_name, e });
                                 break :blk false;
@@ -619,7 +619,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                             log.debug("Open failed, retry: '/dev/input/{s}', error: '{}'", .{ event_name, err });
 
-                            Joysticks.submitOpenFd(io, input_dev_dir.handle, event_name, in_flight.event_id) catch |e| {
+                            Joysticks.submitOpenFd(input_dev_dir.handle, event_name, in_flight.event_id) catch |e| {
                                 log.err("Failed to submit joystick for open: '/dev/input/{s}', error: '{}'", .{ event_name, e });
                             };
                         } else {
@@ -681,7 +681,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                                 Joysticks.io_in_flight[in_flight_index].flags.retry_pending = true;
                                                 log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
                                             } else {
-                                                Joysticks.submitOpenFd(io, input_dev_dir.handle, name, event_id) catch |e| {
+                                                Joysticks.submitOpenFd(input_dev_dir.handle, name, event_id) catch |e| {
                                                     const report = switch (e) {
                                                         error.DevSysPathMissing => !event.mask.ATTRIB,
                                                         else => true,
@@ -693,7 +693,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                                 };
                                             }
                                         } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
-                                            if (removeJoystick(io, event_id)) |fd| {
+                                            if (removeJoystick(event_id)) |fd| {
                                                 Joysticks.submitCloseFd(fd);
                                             }
                                         }
@@ -1880,14 +1880,14 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
     }
 }
 
-fn addJoystick(io: std.Io, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !bool {
+fn addJoystick(event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !bool {
     assert(event_id >= 0);
 
     var result = false;
 
     for (&joysticks, 0..) |*js, ji| {
         if (js.state == .inactive) {
-            try addJoystickInSlot(io, event_id, input_id, fd, fd_open_ts, ji);
+            try addJoystickInSlot(event_id, input_id, fd, fd_open_ts, ji);
             result = true;
             break;
         }
@@ -1896,7 +1896,7 @@ fn addJoystick(io: std.Io, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open
     return result;
 }
 
-fn addJoystickInSlot(io: std.Io, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) !void {
+fn addJoystickInSlot(event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) !void {
     assert(slot_index < joysticks.len);
 
     const js = &joysticks[slot_index];
@@ -1906,7 +1906,7 @@ fn addJoystickInSlot(io: std.Io, event_id: i11, input_id: u31, fd: linux.fd_t, f
 
     assert(poll_fds[PollFdSlot.first_joystick + slot_index].fd == -1);
 
-    try Joystick.init(js, io, event_id, input_id, fd, fd_open_ts);
+    try Joystick.init(js, event_id, input_id, fd, fd_open_ts);
 
     poll_fds[PollFdSlot.first_joystick + slot_index] = .{
         .fd = @intCast(js.fd),
@@ -1915,7 +1915,7 @@ fn addJoystickInSlot(io: std.Io, event_id: i11, input_id: u31, fd: linux.fd_t, f
     };
 }
 
-fn removeJoystick(io: std.Io, event_id: i11) ?linux.fd_t {
+fn removeJoystick(event_id: i11) ?linux.fd_t {
     assert(event_id >= 0);
 
     var result: ?linux.fd_t = null;
@@ -1931,7 +1931,7 @@ fn removeJoystick(io: std.Io, event_id: i11) ?linux.fd_t {
             removeJoystickFromSlot(ji);
 
             if (joystickQueuePop()) |entry| {
-                addJoystickInSlot(io, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
+                addJoystickInSlot(entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
                     _ = joystickQueuePush(entry);
                     log.err("Failed to add joystick '/dev/input/event{}', error: '{}'", .{ event_id, e });
                 };
@@ -1996,8 +1996,8 @@ pub fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
             const event_id_str = std.mem.cutPrefix(u8, entry.name, "event") orelse continue;
             const event_id = std.fmt.parseInt(u8, event_id_str, 10) catch continue;
 
-            const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{entry.name}) catch unreachable;
-            const sys_path_rel_len = std.Io.Dir.readLinkAbsolute(io, sys_link, &sys_path_rel_buf) catch |e| {
+            const sys_link = std.fmt.bufPrintSentinel(&sys_link_buf, "/sys/class/input/{s}", .{entry.name}, 0) catch unreachable;
+            const sys_path_rel_len = linux.readlink(sys_link, &sys_path_rel_buf) catch |e| {
                 log.err("reconcile readlink failed on: '{s}', error: '{}'", .{ sys_link, e });
                 continue;
             };
@@ -2091,7 +2091,7 @@ pub fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
         if (!found) {
             const event_name = p.event_name_buf[0..p.event_name_len];
 
-            Joysticks.submitOpenFd(io, dev_input_dir.handle, event_name, p.event_id) catch |e| {
+            Joysticks.submitOpenFd(dev_input_dir.handle, event_name, p.event_id) catch |e| {
                 log.err("Failed to submit open for '/dev/input/{s}', error: {}", .{ event_name, e });
                 continue;
             };
@@ -2107,7 +2107,7 @@ pub fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
 
         if (index_opt) |ji| {
             const entry = joystickQueuePop().?;
-            addJoystickInSlot(io, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
+            addJoystickInSlot(entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
                 _ = joystickQueuePush(entry);
                 log.err("Failed to add joystick '/dev/input/event{}', error: '{}'", .{ entry.event_id, e });
             };
