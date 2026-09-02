@@ -170,7 +170,10 @@ pub const Joystick = struct {
         const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/event{}", .{event_id}) catch unreachable;
 
         var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_rel_len = try std.Io.Dir.readLinkAbsolute(io, sys_link, &dev_sys_path_rel_buf);
+        const dev_sys_path_rel_len = std.Io.Dir.readLinkAbsolute(io, sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
+            error.FileNotFound => return error.DevSysPathMissing,
+            else => return e,
+        };
         const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
 
         const usb_iface_sys_path_rel_link = if (linux.dirnameN(dev_sys_path_rel_link, 3)) |p| core.stackPathZ(p) else "";
@@ -196,15 +199,24 @@ pub const Joystick = struct {
             driver_link_rel,
         }) catch unreachable;
 
-        var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const driver_path_len = try std.Io.Dir.readLinkAbsolute(io, driver_link, &driver_path_buf);
-        const driver_path = driver_path_buf[0..driver_path_len];
-
-        const driver_name = std.fs.path.basename(driver_path);
-
         log.debug("driver link rel: '{s}'", .{driver_link_rel});
         log.debug("driver link    : '{s}'", .{driver_link});
-        log.debug("driver path    : '{s}'", .{driver_path});
+
+        const driver_name: []const u8 = blk: {
+            var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+            const driver_path_len = std.Io.Dir.readLinkAbsolute(io, driver_link, &driver_path_buf) catch |e| switch (e) {
+                error.FileNotFound => {
+                    log.err("Joystick driver link does not exist: '{s}'", .{driver_link});
+                    break :blk "";
+                },
+                else => return e,
+            };
+
+            const driver_path = driver_path_buf[0..driver_path_len];
+            log.debug("driver path    : '{s}'", .{driver_path});
+            break :blk if (driver_path_len > 0) std.fs.path.basename(driver_path) else "";
+        };
+
         log.debug("driver name    : '{s}'", .{driver_name});
 
         const kind: Kind, var map: Map =
@@ -605,6 +617,7 @@ pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []c
             cqe.flags |= std.os.linux.IOSQE_ASYNC;
         } else |e| switch (e) {
             error.SubmissionQueueFull => {
+                freeIoInFlightIndex(in_flight_index);
                 log.err("In flight entries out of sync with submission queue", .{});
                 if (options.internal_build) @breakpoint();
             },
@@ -617,6 +630,13 @@ pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []c
 }
 
 pub fn submitCloseFd(fd: linux.fd_t) void {
-    const sqe = io_uring.close(@bitCast(@as(isize, -1)), fd) catch unreachable;
-    sqe.flags |= std.os.linux.IOSQE_ASYNC;
+    if (io_uring.close(@bitCast(@as(isize, -1)), fd)) |sqe| {
+        sqe.flags |= std.os.linux.IOSQE_ASYNC;
+    } else |submit_error| {
+        log.err("io_uring close submit failed, error: '{}'", .{submit_error});
+        log.warn("Calling blocking/sync close", .{});
+        _ = linux.close(fd) catch |close_error| {
+            log.err("io_uring forced sync close failed, error: '{}'", .{close_error});
+        };
+    }
 }
