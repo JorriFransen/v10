@@ -785,12 +785,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 }
             }
 
-            const wayland_blit = displayBufferInWindow(global_back_buffer);
-
             const work_counter = getWallClock(io);
             const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
-            var seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
+            var seconds_elapsed_for_frame = work_seconds_elapsed;
             if (seconds_elapsed_for_frame <= target_seconds_per_frame) {
                 while (seconds_elapsed_for_frame < target_seconds_per_frame) {
                     const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
@@ -798,7 +796,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     if (sleep_ms > 1) {
                         const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
                         try std.Io.sleep(io, std.Io.Duration.fromNanoseconds(s), .real);
-                        // _ = wlc.displayDispatchTimeout(display, @intCast(sleep_ms));
                     } else {
                         std.atomic.spinLoopHint();
                     }
@@ -813,6 +810,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
 
+            const wayland_blit = displayBufferInWindow(global_back_buffer);
+
+            flip_wall_clock = getWallClock(io);
+
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
             wld.old_input = tmp;
@@ -820,8 +821,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const end_cycle_count = arch.rdtsc();
             const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
             last_cycle_count = end_cycle_count;
-
-            flip_wall_clock = getWallClock(io);
 
             const fps = std.time.ms_per_s / ms_per_frame;
             const mcpf = cycles_elapsed / (1000 * 1000);
@@ -2137,7 +2136,12 @@ const PulseContext = struct {
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
 fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
-    if (!wld.should_draw) return false;
+    _ = wlc.displayDispatch(wld.display);
+
+    if (!wld.should_draw) {
+        log.warn("Failed to display buffer, should_draw=false", .{});
+        return false;
+    }
 
     if (aquireFreeBuffer()) |wl_buffer| {
         const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
@@ -2205,7 +2209,7 @@ fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
         displayWaylandBufferInWindow(wl_buffer);
         return true;
     } else {
-        _ = wlc.displayRoundtrip(wld.display);
+        // _ = wlc.displayRoundtrip(wld.display);
         log.warn("Failed to aquire wayland buffer!", .{});
         // unreachable; // might want to loop util a buffer is aquired
         // continue;

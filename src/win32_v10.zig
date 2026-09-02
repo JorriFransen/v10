@@ -440,6 +440,7 @@ pub fn windowsEntry(
 
     const desired_scheduler_ms = 1;
     const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.TIMERR_NOERROR;
+    log.info("sleep_is_granular: {}", .{sleep_is_granular});
 
     const back_buffer_width = 960;
     const back_buffer_height = 540;
@@ -883,15 +884,25 @@ pub fn windowsEntry(
 
                         var seconds_elapsed_for_frame = work_seconds_elapsed;
                         if (seconds_elapsed_for_frame < target_seconds_per_frame) {
-                            while (seconds_elapsed_for_frame < target_seconds_per_frame) {
-                                if (sleep_is_granular) {
-                                    const sleep_ms: win32.DWORD = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
-                                    if (sleep_ms > 0) {
-                                        win32.Sleep(sleep_ms);
-                                    }
+                            if (sleep_is_granular) {
+                                const sleep_ms: win32.DWORD = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
+
+                                if (sleep_ms > 0) {
+                                    win32.Sleep(sleep_ms);
                                 }
-                                seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                             }
+
+                            var test_seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
+
+                            if (test_seconds_elapsed_for_frame < target_seconds_per_frame) {
+                                // log.warn("Missed sleep! (target: {}, actual: {})", .{ target_seconds_per_frame, test_seconds_elapsed_for_frame });
+                            }
+
+                            while (test_seconds_elapsed_for_frame < target_seconds_per_frame) {
+                                test_seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
+                                std.atomic.spinLoopHint();
+                            }
+                            seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                         } else {
                             log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
                         }
