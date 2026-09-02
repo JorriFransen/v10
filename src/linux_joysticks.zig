@@ -166,22 +166,34 @@ pub const Joystick = struct {
     pub fn init(this: *Joystick, io: std.Io, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
         assert(event_id >= 0);
 
-        var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var sys_link_buf: [32]u8 = undefined;
         const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/event{}", .{event_id}) catch unreachable;
 
-        var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_len = try std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf);
-        const dev_sys_path = dev_sys_path_buf[0..dev_sys_path_len];
+        var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const dev_sys_path_rel_len = try std.Io.Dir.readLinkAbsolute(io, sys_link, &dev_sys_path_rel_buf);
+        const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
 
-        const usb_iface_sys_path = if (linux.dirnameN(dev_sys_path, 3)) |p| core.stackPathZ(p) else "";
+        const usb_iface_sys_path_rel_link = if (linux.dirnameN(dev_sys_path_rel_link, 3)) |p| core.stackPathZ(p) else "";
 
-        log.debug("sys_link          : '{s}'", .{sys_link});
-        log.debug("dev_sys_path      : '{s}'", .{dev_sys_path});
-        log.debug("usb_iface_sys_path: '{s}'", .{usb_iface_sys_path});
+        var usb_iface_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const usb_iface_sys_path = std.fmt.bufPrintSentinel(&usb_iface_sys_path_buf, "{s}/{s}", .{
+            std.fs.path.dirname(sys_link).?,
+            usb_iface_sys_path_rel_link,
+        }, 0) catch unreachable;
+
+        log.debug("sys_link                   : '{s}'", .{sys_link});
+        log.debug("dev_sys_path_rel_link      : '{s}'", .{dev_sys_path_rel_link});
+        log.debug("usb_iface_sys_path_rel_link: '{s}'", .{usb_iface_sys_path_rel_link});
+
+        var driver_link_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const driver_link_rel = std.fmt.bufPrint(&driver_link_rel_buf, "{s}/device/driver", .{
+            std.fs.path.dirname(dev_sys_path_rel_link).?,
+        }) catch unreachable;
 
         var driver_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const driver_link = std.fmt.bufPrint(&driver_link_buf, "{s}/device/driver", .{
-            std.fs.path.dirname(dev_sys_path).?,
+        const driver_link = std.fmt.bufPrint(&driver_link_buf, "{s}/{s}", .{
+            std.fs.path.dirname(sys_link).?,
+            driver_link_rel,
         }) catch unreachable;
 
         var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -190,9 +202,10 @@ pub const Joystick = struct {
 
         const driver_name = std.fs.path.basename(driver_path);
 
-        log.debug("driver link: '{s}'", .{driver_link});
-        log.debug("driver path: '{s}'", .{driver_path});
-        log.debug("driver name: '{s}'", .{driver_name});
+        log.debug("driver link rel: '{s}'", .{driver_link_rel});
+        log.debug("driver link    : '{s}'", .{driver_link});
+        log.debug("driver path    : '{s}'", .{driver_path});
+        log.debug("driver name    : '{s}'", .{driver_name});
 
         const kind: Kind, var map: Map =
             if (std.mem.eql(u8, driver_name, "xpad") or std.mem.eql(u8, driver_name, "xboxdrv"))
@@ -559,18 +572,17 @@ pub fn submitOpenFd(io: std.Io, dev_input_dir_fd: linux.dirfd_t, event_name: []c
         errdefer freeIoInFlightIndex(in_flight_index);
 
         const in_flight = &io_in_flight[in_flight_index];
-        var sys_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var sys_link_buf: [32]u8 = undefined;
         const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{event_name}) catch unreachable;
 
-        var dev_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_len = std.Io.Dir.realPathFileAbsolute(io, sys_link, &dev_sys_path_buf) catch |e| switch (e) {
+        var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const dev_sys_path_rel_len = std.Io.Dir.readLinkAbsolute(io, sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
             error.FileNotFound => return error.DevSysPathMissing,
             else => return e,
         };
+        const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
 
-        const dev_sys_path = dev_sys_path_buf[0..dev_sys_path_len];
-
-        const input_num_str_prefixed = std.fs.path.basename(std.fs.path.dirname(dev_sys_path).?);
+        const input_num_str_prefixed = std.fs.path.basename(std.fs.path.dirname(dev_sys_path_rel_link).?);
         const input_num_str = std.mem.cutPrefix(u8, input_num_str_prefixed, "input").?;
         const input_id = try std.fmt.parseInt(u31, input_num_str, 10);
 
