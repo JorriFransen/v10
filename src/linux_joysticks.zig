@@ -515,19 +515,6 @@ fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
     return result;
 }
 
-pub fn reconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
-    var it = dev_input_dir.iterateAssumeFirstIteration();
-
-    while (try it.next(io)) |entry| {
-        if (entry.kind == .character_device and std.mem.startsWith(u8, entry.name, "event")) {
-            const event_id_str = std.mem.cutPrefix(u8, entry.name, "event").?;
-            const event_id = try std.fmt.parseInt(u10, event_id_str, 10);
-
-            try submitOpenFd(io, dev_input_dir.handle, entry.name, event_id);
-        }
-    }
-}
-
 fn newIoInFlightIndex() ?usize {
     var result: ?usize = null;
 

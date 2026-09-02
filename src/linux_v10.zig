@@ -51,7 +51,6 @@ pub const std_options: std.Options = blk: {
 };
 
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
-// TODO: Debug repeated controller plug in/out cycles, the disconnect seems to be missed sometimes
 
 var prng: std.Random = undefined;
 
@@ -434,8 +433,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (std.Io.Dir.openDirAbsolute(io, "/dev/input", .{ .iterate = true })) |input_dev_dir_| {
         input_dev_dir = input_dev_dir_;
 
-        try Joysticks.reconcile(io, &input_dev_dir);
+        const reconcile_start = getPerfTS(io);
+        try joystickReconcile(io, &input_dev_dir);
+        const reconcile_duration = reconcile_start.untilNow(io);
+        log.debug("reconcile: {f}", .{reconcile_duration});
+
+        const io_uring_submit_start = getPerfTS(io);
         _ = try Joysticks.io_uring.submit();
+        const io_uring_submit_duration = io_uring_submit_start.untilNow(io);
+        log.debug("io_uring_submtit: {f}", .{io_uring_submit_duration});
 
         if (linux.inotify_init1(.{ .CLOEXEC = true, .NONBLOCK = true })) |inotify_fd_| {
             inotify_fd = inotify_fd_;
@@ -590,7 +596,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                         const fd: linux.fd_t = cqe.res;
 
                         if (in_flight.flags.close_on_complete or
-                            hasJoystickFd(in_flight.event_id) or
+                            joystickHasOpenFd(in_flight.event_id) or
                             !Joysticks.eventFdIsJoystick(fd))
                         {
                             Joysticks.submitCloseFd(fd);
@@ -667,7 +673,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                                         if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
                                             log.debug("inotyfy add mask: {}", .{event.mask});
-                                            if (hasJoystickFd(event_id)) {
+                                            if (joystickHasOpenFd(event_id)) {
                                                 // skip
                                             } else if (Joysticks.getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
                                                 Joysticks.io_in_flight[in_flight_index].flags.retry_pending = true;
@@ -728,7 +734,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
             log.debug("poll took: {f}", .{d});
         }
 
+        const io_uring_submit_start = getPerfTS(io);
         _ = try Joysticks.io_uring.submit();
+        const io_uring_submit_duration = io_uring_submit_start.untilNow(io);
+        if (io_uring_submit_duration.wall.nanoseconds >= std.time.ns_per_ms / 100) {
+            log.debug("io_uring_submtit: {f}", .{io_uring_submit_duration});
+        }
 
         if (wld.pending_resize) |r| {
             if (wld.pending_configure_serial) |serial| {
@@ -1878,9 +1889,9 @@ fn addJoystick(io: std.Io, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open
 
     var result = false;
 
-    for (&joysticks, 0..) |*js, i| {
+    for (&joysticks, 0..) |*js, ji| {
         if (js.state == .inactive) {
-            try addJoystickInSlot(io, event_id, input_id, fd, fd_open_ts, i);
+            try addJoystickInSlot(io, event_id, input_id, fd, fd_open_ts, ji);
             result = true;
             break;
         }
@@ -1921,13 +1932,7 @@ fn removeJoystick(io: std.Io, event_id: i11) !?linux.fd_t {
 
             result = js.fd;
 
-            assert(js.state == .active or js.state == .wait_settle);
-            assert(poll_fds[PollFdSlot.first_joystick + ji].fd == js.fd);
-
-            js.deinit();
-
-            const js_pollfd = &poll_fds[PollFdSlot.first_joystick + ji];
-            js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
+            removeJoystickFromSlot(ji);
 
             if (joystickQueuePop()) |entry| {
                 try addJoystickInSlot(io, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji);
@@ -1939,19 +1944,160 @@ fn removeJoystick(io: std.Io, event_id: i11) !?linux.fd_t {
         if (in_flight.event_id == event_id) {
             in_flight.flags.close_on_complete = true;
             in_flight.flags.retry_pending = false;
+
             break;
         }
     } else for (joystick_que[0..joystick_que_len], 0..) |*entry, entry_index| {
         if (entry.event_id == event_id) {
-            Joysticks.submitCloseFd(entry.fd);
+            result = entry.fd;
             joystickQueueOrderedRemove(entry_index);
+
+            break;
         }
     }
 
     return result;
 }
 
-fn hasJoystickFd(event_id: i11) bool {
+fn removeJoystickFromSlot(slot_index: usize) void {
+    assert(slot_index < joysticks.len);
+
+    const js = &joysticks[slot_index];
+    assert(js.state != .inactive);
+
+    assert(poll_fds[PollFdSlot.first_joystick + slot_index].fd == js.fd);
+
+    js.deinit();
+
+    const js_pollfd = &poll_fds[PollFdSlot.first_joystick + slot_index];
+    js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
+}
+
+pub fn joystickReconcile(io: std.Io, dev_input_dir: *std.Io.Dir) !void {
+    var sys_link_buf: [32]u8 = undefined;
+    var sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+
+    const PresentDevice = struct {
+        input_id: u31,
+        event_name_buf: [9]u8,
+        event_name_len: u8,
+    };
+
+    var present_buf: [Joysticks.io_uring_entry_count]PresentDevice = undefined;
+    var present = std.ArrayList(PresentDevice).initBuffer(&present_buf);
+
+    var it = dev_input_dir.iterateAssumeFirstIteration();
+
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .character_device and std.mem.startsWith(u8, entry.name, "event")) {
+            const sys_link = std.fmt.bufPrint(&sys_link_buf, "/sys/class/input/{s}", .{entry.name}) catch unreachable;
+            const sys_path_rel_len = try std.Io.Dir.readLinkAbsolute(io, sys_link, &sys_path_rel_buf);
+            const sys_path_rel_sys_link = sys_path_rel_buf[0..sys_path_rel_len];
+
+            const input_id_str = std.mem.cutPrefix(u8, std.fs.path.basename(std.fs.path.dirname(sys_path_rel_sys_link).?), "input").?;
+            const input_id = try std.fmt.parseInt(u31, input_id_str, 10);
+
+            if (present.addOneBounded()) |p| {
+                assert(entry.name.len <= p.event_name_buf.len);
+
+                p.* = .{
+                    .input_id = input_id,
+                    .event_name_buf = @splat(0),
+                    .event_name_len = @intCast(entry.name.len),
+                };
+
+                @memcpy(p.event_name_buf[0..entry.name.len], entry.name);
+            } else |_| {
+                // TODO Log?
+            }
+        }
+    }
+
+    for (&joysticks, 0..) |*js, ji| if (js.state != .inactive) {
+        var found = false;
+        for (present.items) |*p| {
+            if (js.input_id == p.input_id) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            Joysticks.submitCloseFd(js.fd);
+            removeJoystickFromSlot(ji);
+        }
+    };
+
+    {
+        var qi: usize = 0;
+        while (qi < joystick_que_len) {
+            const ready_entry = &joystick_que[qi];
+
+            var found = false;
+            for (present.items) |*p| {
+                if (ready_entry.input_id == p.input_id) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found) {
+                qi += 1;
+            } else {
+                Joysticks.submitCloseFd(ready_entry.fd);
+                joystickQueueOrderedRemove(qi);
+            }
+        }
+    }
+
+    for (&Joysticks.io_in_flight) |*in_flight| if (in_flight.event_id != -1) {
+        var found = false;
+        for (present.items) |*p| {
+            if (in_flight.input_id == p.input_id) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            in_flight.flags.close_on_complete = true;
+            in_flight.flags.retry_pending = false;
+        }
+    };
+
+    for (present.items) |*p| {
+        const found: bool = for (&joysticks) |*js| {
+            if (js.state != .inactive and js.input_id == p.input_id) break true;
+        } else for (joystick_que[0..joystick_que_len]) |*ready_entry| {
+            if (ready_entry.input_id == p.input_id) break true;
+        } else for (&Joysticks.io_in_flight) |*in_flight| {
+            if (in_flight.input_id == p.input_id) break true;
+        } else false;
+
+        if (!found) {
+            const event_name = p.event_name_buf[0..p.event_name_len];
+            const event_num_str = std.mem.cutPrefix(u8, event_name, "event").?;
+            const event_id = try std.fmt.parseInt(u10, event_num_str, 10);
+
+            try Joysticks.submitOpenFd(io, dev_input_dir.handle, event_name, event_id);
+        }
+    }
+
+    while (joystick_que_len > 0) {
+        const index_opt: ?usize = for (&joysticks, 0..) |*js, ji| {
+            if (js.state == .inactive) {
+                break ji;
+            }
+        } else null;
+
+        if (index_opt) |ji| {
+            const entry = joystickQueuePop().?;
+            try addJoystickInSlot(io, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji);
+        } else break;
+    }
+}
+
+fn joystickHasOpenFd(event_id: i11) bool {
     assert(event_id >= 0);
 
     var result = false;
