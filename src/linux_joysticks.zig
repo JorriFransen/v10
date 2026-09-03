@@ -7,6 +7,7 @@ const core = @import("core");
 const assert = core.assert;
 const linux = core.os.linux;
 const math = core.math;
+const mem = core.mem;
 
 const ABS = linux.ABS;
 const EV = linux.EV;
@@ -22,7 +23,7 @@ pub var io_uring: std.os.linux.IoUring = undefined;
 pub var io_in_flight: [io_uring_entry_count]IoInFlight = @splat(.{
     .event_id = -1,
     .input_id = undefined,
-    .event_name = undefined,
+    ._event_name = undefined,
     .event_name_len = 0,
 });
 
@@ -33,7 +34,7 @@ const IoInFlight = struct {
     event_id: i11 = -1,
     input_id: u31,
     flags: Flags = .{},
-    event_name: [10]u8,
+    _event_name: [10]u8,
     event_name_len: u8,
 
     pub const Flags = packed struct(u2) {
@@ -41,8 +42,8 @@ const IoInFlight = struct {
         close_on_complete: bool = false,
     };
 
-    pub fn eventName(this: *const IoInFlight) [:0]const u8 {
-        return this.event_name[0..this.event_name_len :0];
+    pub inline fn eventName(this: *const IoInFlight) [:0]const u8 {
+        return this._event_name[0..this.event_name_len :0];
     }
 };
 
@@ -205,7 +206,7 @@ pub const Joystick = struct {
             else
                 .{ .default, default_map };
 
-        const usb_iface_sys_path_rel_link = if (linux.dirnameN(dev_sys_path_rel_link, 3)) |p| core.stackPathZ(p) else "";
+        const usb_iface_sys_path_rel_link = if (linux.dirnameN(dev_sys_path_rel_link, 3)) |p| mem.stackPathZ(p) else "";
 
         log.debug("usb_iface_sys_path_rel_link: '{s}'", .{usb_iface_sys_path_rel_link});
 
@@ -541,7 +542,7 @@ pub fn freeIoInFlightIndex(index: usize) void {
     io_in_flight[index] = .{
         .event_id = -1,
         .input_id = undefined,
-        .event_name = undefined,
+        ._event_name = undefined,
         .event_name_len = 0,
     };
 }
@@ -580,14 +581,14 @@ pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: lin
         const input_num_str = std.mem.cutPrefix(u8, input_num_str_prefixed, "input").?;
         const input_id = try std.fmt.parseInt(u31, input_num_str, 10);
 
-        assert(event_name.len + 1 <= in_flight.event_name.len);
+        assert(event_name.len + 1 <= in_flight._event_name.len);
         in_flight.* = .{
             .input_id = input_id,
             .event_id = event_id,
             .event_name_len = @intCast(event_name.len),
-            .event_name = @splat(0),
+            ._event_name = @splat(0),
         };
-        @memcpy(in_flight.event_name[0..event_name.len], event_name);
+        @memcpy(in_flight._event_name[0..event_name.len], event_name);
 
         if (io_uring.openat(
             in_flight_index,
@@ -605,7 +606,7 @@ pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: lin
             },
         }
 
-        log.debug("Submitted for opening: '/dev/input/{s}'", .{in_flight.event_name});
+        log.debug("Submitted for opening: '/dev/input/{s}'", .{in_flight.eventName()});
     } else {
         log.err("Unable to queue open op for potential joystick, out of entries: '/dev/input/{s}'", .{event_name});
     }

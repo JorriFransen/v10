@@ -111,3 +111,52 @@ pub inline fn arenaAllocPrint(allocator: Allocator, comptime fmt: []const u8, ar
 
     return result;
 }
+
+/// Slices up to the sentinel, returns sentinel-terminated slice.
+/// If the input is a sentinel-terminated slice, and contains no additional
+///  sentinels, the original slice is returned.
+/// If the input is a regular slice, and contains no sentinel, this is an invalid
+///  input, causing a hard crash (assert).
+pub inline fn sliceToSentinel(ptr: anytype, comptime sentinel: std.meta.Elem(@TypeOf(ptr))) SliceToSentinelRet(@TypeOf(ptr), sentinel) {
+    const T = @TypeOf(ptr);
+    const E = std.meta.Elem(T);
+
+    var result: SliceToSentinelRet(T, sentinel) = undefined;
+
+    if (std.mem.findScalar(E, ptr, sentinel)) |sentinel_idx| {
+        result = ptr[0..sentinel_idx :sentinel];
+    } else {
+        const ti = @typeInfo(@TypeOf(ptr));
+        assert(ti.pointer.sentinel_ptr != null);
+        result = @ptrCast(ptr);
+    }
+
+    return result;
+}
+
+fn SliceToSentinelRet(comptime Slice: type, comptime sentinel: std.meta.Elem(Slice)) type {
+    switch (@typeInfo(Slice)) {
+        .pointer => |pi| {
+            const E = std.meta.Elem(Slice);
+
+            return @Pointer(.slice, .{
+                .@"const" = pi.is_const,
+                .@"volatile" = pi.is_volatile,
+                .@"allowzero" = pi.is_allowzero and pi.size != .c,
+                .@"align" = pi.alignment,
+                .@"addrspace" = pi.address_space,
+            }, E, sentinel);
+        },
+
+        else => @compileError("Invalid type given to sliceToSentinel: " ++ @typeName(Slice)),
+    }
+}
+
+/// Copy 'path' into a (inlined) stack buffer, return null terminated slice.
+pub inline fn stackPathZ(path: []const u8) [:0]const u8 {
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    assert(path.len + 1 <= buf.len);
+    @memcpy(buf[0..path.len], path);
+    buf[path.len] = 0;
+    return buf[0..path.len :0];
+}

@@ -4,6 +4,7 @@ const log = std.log.scoped(.linux);
 const arch = @import("arch/arch.zig").arch;
 const assert = @import("../../core.zig").assert;
 const math = @import("../../math.zig");
+const mem = @import("../../mem/mem.zig");
 const meta = @import("../../meta.zig");
 
 pub const abi = @import("abi/abi.zig").abi;
@@ -48,9 +49,11 @@ pub const Error = error{
     NameTooLong,
     NetworkUnreachable,
     NoData,
+    NoDeviceOrAddress,
     NoMemory,
     NoSpaceLeft,
     NotConnected,
+    NotDirectory,
     NotSocket,
     NotSupported,
     Overflow,
@@ -63,6 +66,7 @@ pub const Error = error{
     TooManySymbolicLinks,
     UnexpectedDirFD,
     UnlinkDirectoryAttempt,
+    Unseekable,
     ValueTooBig,
 
     UnexpectedErrno,
@@ -96,6 +100,40 @@ pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
 
     return if (remaining_cuts == 0) result[0..result_len] else null;
 }
+
+// =============================================================================
+// dirent.h
+// =============================================================================
+
+// Should this be in posix?
+pub const DT = enum(u8) {
+    UNKNOWN = 0,
+    FIFO = 1,
+    CHR = 2,
+    DIR = 4,
+    BLK = 6,
+    REG = 8,
+    LNK = 10,
+    SOCK = 12,
+    WHT = 14,
+};
+
+pub const Dirent64 = extern struct {
+    d_ino: u64,
+    d_off: i64,
+    d_reclen: c_ushort,
+    d_type: DT,
+    d_name: [0]u8,
+
+    /// Including null
+    pub const max_name_len = 256;
+
+    pub inline fn name(this: *const Dirent64) [:0]const u8 {
+        const name_len = this.d_reclen - @offsetOf(Dirent64, "d_name");
+        const name_slice = @as([*]const u8, @ptrCast(&this.d_name))[0..name_len];
+        return mem.sliceToSentinel(name_slice, 0);
+    }
+};
 
 // =============================================================================
 // errno.h (+ errno-base.h)
@@ -563,6 +601,20 @@ pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !c_int {
 }
 
 // =============================================================================
+// fs.h
+// =============================================================================
+
+pub const SEEK = enum(c_uint) {
+    SET = 0,
+    CUR = 1,
+    END = 2,
+    DATA = 3,
+    HOLE = 4,
+
+    pub const MAX: c_uint = @intFromEnum(.HOLE);
+};
+
+// =============================================================================
 // inotify.h
 // =============================================================================
 
@@ -571,7 +623,12 @@ pub const InotifyEvent = extern struct {
     mask: IN,
     cookie: u32,
     len: u32,
-    name: [0]u8,
+    _name: [0]u8,
+
+    pub inline fn name(this: *const InotifyEvent) [:0]const u8 {
+        const name_slice = @as([*]const u8, &this._name)[0 .. this.len - 1 :0];
+        return mem.sliceToSentinel(name_slice, 0);
+    }
 };
 
 pub const IN = packed struct(u32) {
@@ -2932,6 +2989,29 @@ pub fn close(fd: fd_t) Error!void {
     };
 }
 
+pub fn lseek(fd: fd_t, offset: off_t, whence: SEEK) Error!off_t {
+    const rc = syscall3(
+        .lseek,
+        safeExtendToUsize(fd),
+        signExtendToUsize(offset),
+        zeroExtendToUsize(whence),
+    );
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .INVAL => error.InvalidArg,
+        .NXIO => error.NoDeviceOrAddress,
+        .OVERFLOW => error.Overflow,
+        .SPIPE => error.Unseekable,
+
+        else => blk: {
+            log.warn("Unexpected errno for lseek: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @intCast(rc);
+}
+
 pub fn pipe(fds: *[2]fd_t) Error!void {
     const rc = syscall1(.pipe, @intFromPtr(fds));
     if (check_errno(rc)) |e| return switch (e) {
@@ -2995,6 +3075,25 @@ pub fn readlink(path: [:0]const u8, buf: []u8) Error!usize {
         .NOTDIR => error.InvalidPath,
         else => blk: {
             log.warn("Unexpected errno for readlink: {}", .{e});
+            break :blk error.UnexpectedErrno;
+        },
+    };
+
+    return @intCast(rc);
+}
+
+pub fn getdents64(dir_fd: dirfd_t, buf: []u8) Error!usize {
+    assert(buf.len >= @sizeOf(Dirent64) + Dirent64.max_name_len);
+
+    const rc = syscall3(.getdents64, zeroExtendToUsize(dir_fd), @intFromPtr(buf.ptr), buf.len);
+    if (check_errno(rc)) |e| return switch (e) {
+        .BADF => error.InvalidFD,
+        .FAULT => error.InvalidPointer,
+        .INVAL => error.BufferTooSmall,
+        .NOENT => error.FileDoesNotExist,
+        .NOTDIR => error.NotDirectory,
+        else => blk: {
+            log.warn("Unexpected errno for getdents64: {}", .{e});
             break :blk error.UnexpectedErrno;
         },
     };
@@ -3125,7 +3224,7 @@ pub fn getxattr(path: [:0]const u8, name: [:0]const u8, value_buf: []u8) Error!u
 // private helpers
 // =============================================================================
 
-fn safeExtendToUsize(x: anytype) usize {
+inline fn safeExtendToUsize(x: anytype) usize {
     comptime {
         const T = @TypeOf(x);
         meta.expectSignedType(T);
@@ -3134,20 +3233,29 @@ fn safeExtendToUsize(x: anytype) usize {
     return @intCast(x);
 }
 
+inline fn signExtendToUsize(x: anytype) usize {
+    meta.expectSigned(x);
+
+    return @bitCast(@as(isize, x));
+}
+
 inline fn zeroExtendToUsize(x: anytype) usize {
     const T = @TypeOf(x);
-    const Int = blk: switch (@typeInfo(T)) {
+    const Int, const x_int = blk: switch (@typeInfo(T)) {
         .int => {
             meta.expectSignedType(T);
-            break :blk T;
+            break :blk .{ T, x };
         },
 
         .@"struct" => |si| {
             if (si.layout == .@"packed") {
-                break :blk si.backing_integer.?;
-            } else @compileError("Expected signed integer or packed struct");
+                break :blk .{ si.backing_integer.?, x };
+            } else @compileError("Expected signed integer, enum or packed struct");
         },
-        else => @compileError("Expected signed integer or packed struct"),
+
+        .@"enum" => |ei| break :blk .{ ei.tag_type, @as(ei.tag_type, @intFromEnum(x)) },
+
+        else => @compileError("Expected signed integer, enum or packed struct"),
     };
 
     comptime {
@@ -3155,7 +3263,7 @@ inline fn zeroExtendToUsize(x: anytype) usize {
     }
 
     const UnSigned = @Int(.unsigned, @bitSizeOf(Int));
-    return @intCast(@as(UnSigned, @bitCast(x)));
+    return @intCast(@as(UnSigned, @bitCast(x_int)));
 }
 
 inline fn safeTrunc(comptime T: type, x: anytype) T {
