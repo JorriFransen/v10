@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Os = @import("os.zig").current;
 const AT = Os.AT;
@@ -6,6 +7,12 @@ const O = Os.O;
 const mode_t = Os.mode_t;
 const openat = Os.openat;
 const unlink = Os.unlink;
+
+pub const fd_t = switch (builtin.os.tag) {
+    else => @compileError(std.fmt.comptimePrint("Unsupported os: {s}", .{@tagName(builtin.os.tag)})),
+    .windows => @import("win32/win32.zig").HANDLE,
+    .linux => Os.fd_t,
+};
 
 // =============================================================================
 // mman.h

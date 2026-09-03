@@ -840,11 +840,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
             };
 
             if (wld.shared_state.input_recording_index > 0) {
-                recordInput(wld.shared_state, io, wld.new_input);
+                recordInput(wld.shared_state, wld.new_input);
             }
 
             if (wld.shared_state.input_playing_index > 0) {
-                playbackInput(wld.shared_state, io, wld.new_input);
+                playbackInput(wld.shared_state, wld.new_input);
             }
 
             if (game_code.updateAndRender) |updateAndRender|
@@ -1469,16 +1469,13 @@ pub const DEBUG = struct {
 
             var buf: [256]u8 = undefined;
             if (linux.read(read_fd, &buf)) |clip_str| {
-                _ = clip_str;
+                if (clip_str.len == 0) log.debug("Clipboard empty...", .{});
                 // assert(clip_str.len < buf.len); // Buffer too small ()
                 // const truncated = if (clip_str.len >= buf.len) " (truncated)" else "";
                 // log.debug("Clipboard{s}: \"{s}\"{s}", .{ truncated, clip_str, truncated });
-            } else |e| switch (e) {
-                error.EndOfFile => log.debug("Clipboard empty...", .{}),
-                else => {
-                    log.err("Clipboard read error: {}", .{e});
-                    @panic("Clipboard read error");
-                },
+            } else |e| {
+                log.err("Clipboard read error: {}", .{e});
+                @panic("Clipboard read error");
             }
         }
     }
@@ -1500,14 +1497,12 @@ pub const DEBUG = struct {
 
             var buf: [4096]u8 = undefined;
             if (linux.read(read_fd, &buf)) |clip_str| {
+                if (clip_str.len == 0) log.debug("DND empty...", .{});
                 assert(clip_str.len < buf.len - 1);
                 log.debug("DND: \"{s}\"", .{clip_str});
-            } else |e| switch (e) {
-                error.EndOfFile => log.debug("DND empty...", .{}),
-                else => {
-                    log.err("DND read error: {}", .{e});
-                    @panic("DND read error");
-                },
+            } else |e| {
+                log.err("DND read error: {}", .{e});
+                @panic("DND read error");
             }
         }
     }
@@ -1751,12 +1746,12 @@ fn handleWlKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32
                 if (wld.shared_state.input_recording_index == 0 and
                     wld.shared_state.input_playing_index == 0)
                 {
-                    beginRecordingInput(wld.shared_state, wld.io, 1);
+                    beginRecordingInput(wld.shared_state, 1);
                 } else if (wld.shared_state.input_recording_index == 1) {
-                    endRecordingInput(wld.shared_state, wld.io);
-                    beginInputPlayback(wld.shared_state, wld.io, 1);
+                    endRecordingInput(wld.shared_state);
+                    beginInputPlayback(wld.shared_state, 1);
                 } else {
-                    endInputPlayback(wld.shared_state, wld.io);
+                    endInputPlayback(wld.shared_state);
                     // TODO: Reset input, keys may be stuck in down state
                 }
             } else if ((key == .ENTER and wld.key_mods_pressed.alt) or
@@ -2629,7 +2624,7 @@ fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
     _ = wlc.displayFlush(wld.display);
 }
 
-pub fn beginRecordingInput(shared_state: *common.SharedState, io: std.Io, input_recording_index: usize) void {
+pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -2638,20 +2633,20 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, io: std.Io, input_
         var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
-        shared_state.recording_handle = std.Io.Dir.createFileAbsolute(io, file_name, .{}) catch @panic("Input recording file creation failed");
+        shared_state.recording_handle = linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true }, 0) catch @panic("Input recording file creation failed");
 
         @memcpy(replay_buffer.memory, shared_state.game_memory_block);
     } else log.warn("Invalid recording buffer: {}", .{input_recording_index});
 }
 
-pub fn endRecordingInput(shared_state: *common.SharedState, io: std.Io) void {
+pub fn endRecordingInput(shared_state: *common.SharedState) void {
     if (shared_state.input_recording_index != 0) {
-        shared_state.recording_handle.close(io);
+        _ = linux.close(shared_state.recording_handle) catch @panic("Input recording file close failed");
         shared_state.input_recording_index = 0;
     }
 }
 
-pub fn beginInputPlayback(shared_state: *common.SharedState, io: std.Io, input_playing_index: usize) void {
+pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_playing_index);
 
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
@@ -2660,37 +2655,38 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, io: std.Io, input_p
         var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
-        shared_state.playback_handle = std.Io.Dir.openFileAbsolute(io, file_name, .{ .mode = .read_only }) catch @panic("Input playback file open failed");
+        shared_state.playback_handle = linux.open(file_name, .{ .ACCMODE = .RDONLY }, 0) catch @panic("Input playback file open failed");
 
         @memcpy(shared_state.game_memory_block, replay_buffer.memory);
     } else log.warn("Invalid replay buffer: {}", .{input_playing_index});
 }
 
-pub fn endInputPlayback(shared_state: *common.SharedState, io: std.Io) void {
+pub fn endInputPlayback(shared_state: *common.SharedState) void {
     if (shared_state.input_playing_index != 0) {
-        shared_state.playback_handle.close(io);
+        _ = linux.close(shared_state.playback_handle) catch @panic("Input playback file close failed");
         shared_state.input_playing_index = 0;
     }
 }
 
-pub fn recordInput(shared_state: *common.SharedState, io: std.Io, new_input: *Input) void {
-    shared_state.recording_handle.writeStreamingAll(io, @ptrCast(new_input)) catch @panic("Input recording write failed");
+pub fn recordInput(shared_state: *common.SharedState, new_input: *Input) void {
+    const written = linux.write(shared_state.recording_handle, @ptrCast(new_input)) catch @panic("Input recording write failed");
+    assert(written == @sizeOf(Input));
 }
 
-pub fn playbackInput(shared_state: *common.SharedState, io: std.Io, new_input: *Input) void {
-    const bytes_read = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(new_input))}) catch |e| switch (e) {
-        error.EndOfStream => 0,
-        else => @panic("Input playback read failed"),
-    };
+pub fn playbackInput(shared_state: *common.SharedState, new_input: *Input) void {
+    if (linux.read(shared_state.playback_handle, @ptrCast(new_input))) |bytes_read| {
+        if (bytes_read.len == 0) {
+            const index = shared_state.input_playing_index;
 
-    if (bytes_read == 0) {
-        const index = shared_state.input_playing_index;
+            endInputPlayback(shared_state);
+            beginInputPlayback(shared_state, index);
 
-        endInputPlayback(shared_state, io);
-        beginInputPlayback(shared_state, io, index);
-
-        _ = shared_state.playback_handle.readStreaming(io, &.{@as([]u8, @ptrCast(new_input))}) catch @panic("Input playback read failed");
-    }
+            const bytes_read_2 = linux.read(shared_state.playback_handle, @ptrCast(new_input)) catch @panic("Input playback read failed");
+            assert(bytes_read_2.len == @sizeOf(Input));
+        } else {
+            assert(bytes_read.len == @sizeOf(Input));
+        }
+    } else |_| @panic("Input playback read failed");
 }
 
 pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, offer: *wl.DataOffer) void {

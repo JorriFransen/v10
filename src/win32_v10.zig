@@ -1085,15 +1085,14 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
         var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
-        const handle = win32.CreateFileA(file_name, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
-        shared_state.recording_handle = .{ .handle = handle, .flags = .{ .nonblocking = false } };
+        shared_state.recording_handle = win32.CreateFileA(file_name, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
 
         @memcpy(replay_buffer.memory, shared_state.game_memory_block);
     }
 }
 
 pub fn endRecordingInput(shared_state: *common.SharedState) void {
-    _ = win32.CloseHandle(shared_state.recording_handle.handle);
+    _ = win32.CloseHandle(shared_state.recording_handle);
     shared_state.input_recording_index = 0;
 }
 
@@ -1106,32 +1105,31 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
         var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
-        const handle = win32.CreateFileA(file_name, win32.GENERIC_READ, 0, null, win32.OPEN_EXISTING, 0, null);
-        shared_state.playback_handle = .{ .handle = handle, .flags = .{ .nonblocking = false } };
+        shared_state.playback_handle = win32.CreateFileA(file_name, win32.GENERIC_READ, 0, null, win32.OPEN_EXISTING, 0, null);
 
         @memcpy(shared_state.game_memory_block, replay_buffer.memory);
     }
 }
 
 pub fn endInputPlayback(shared_state: *common.SharedState) void {
-    _ = win32.CloseHandle(shared_state.playback_handle.handle);
+    _ = win32.CloseHandle(shared_state.playback_handle);
     shared_state.input_playing_index = 0;
 }
 
 pub fn recordInput(shared_state: *common.SharedState, input: *Input) void {
     var written: win32.DWORD = undefined;
-    _ = win32.WriteFile(shared_state.recording_handle.handle, input, @sizeOf(Input), &written, null);
+    _ = win32.WriteFile(shared_state.recording_handle, input, @sizeOf(Input), &written, null);
     assert(written == @sizeOf(Input));
 }
 
 pub fn playbackInput(shared_state: *common.SharedState, input: *Input) void {
     var read: win32.DWORD = 0;
-    if (win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null) != .FALSE) {
+    if (win32.ReadFile(shared_state.playback_handle, input, @sizeOf(Input), &read, null) != .FALSE) {
         if (read == 0) {
             const playing_index = shared_state.input_playing_index;
             endInputPlayback(shared_state);
             beginInputPlayback(shared_state, playing_index);
-            _ = win32.ReadFile(shared_state.playback_handle.handle, input, @sizeOf(Input), &read, null);
+            _ = win32.ReadFile(shared_state.playback_handle, input, @sizeOf(Input), &read, null);
             assert(read == @sizeOf(Input));
         }
     }

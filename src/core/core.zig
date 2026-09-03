@@ -1,8 +1,11 @@
+const std = @import("std");
+
 pub const DynLib = @import("dynlib.zig");
 pub const TimeParts = @import("timeparts.zig").TimeParts;
 
 pub const arch = @import("arch/arch.zig").arch;
 pub const clip = @import("clip.zig");
+pub const fs = @import("fs.zig");
 pub const intrinsics = @import("intrinsics.zig");
 pub const lib = @import("lib/lib.zig");
 pub const math = @import("math.zig");
@@ -10,8 +13,6 @@ pub const mem = @import("mem/mem.zig");
 pub const meta = @import("meta.zig");
 pub const os = @import("os/os.zig");
 pub const xml = @import("xml.zig");
-
-const std = @import("std");
 
 pub const default_log_level: std.log.Level = std.log.default_level;
 

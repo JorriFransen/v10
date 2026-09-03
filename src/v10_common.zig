@@ -6,9 +6,10 @@ const builtin = @import("builtin");
 const options = @import("options");
 
 const core = @import("core");
-const assert = core.assert;
 const DynLib = core.DynLib;
 const TimeParts = core.TimeParts;
+const assert = core.assert;
+const fs = core.fs;
 const math = core.math;
 const mem = core.mem;
 const win32 = core.os.win32;
@@ -158,10 +159,10 @@ pub const SharedState = struct {
     game_memory_block: []u8 = &.{},
     replay_buffers: [4]ReplayBuffer = undefined,
 
-    recording_handle: std.Io.File = undefined,
+    recording_handle: fs.Handle = undefined,
     input_recording_index: usize = 0,
 
-    playback_handle: std.Io.File = undefined,
+    playback_handle: fs.Handle = undefined,
     input_playing_index: usize = 0,
 
     cwd_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0),

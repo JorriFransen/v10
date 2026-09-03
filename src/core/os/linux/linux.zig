@@ -3023,7 +3023,18 @@ pub inline fn check_errno(err: isize) ?Errno {
     return null;
 }
 
-pub fn read(fd: fd_t, buf: []u8) Error![]u8 {
+pub const ReadError = error{
+    Interrupt,
+    NoData,
+    InvalidFd,
+    InvalidPointer,
+    InvalidArg,
+    IO,
+    UnexpectedDirFD,
+    UnexpectedErrno,
+};
+
+pub fn read(fd: fd_t, buf: []u8) ReadError![]u8 {
     const rc = syscall3(.read, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
     if (check_errno(rc)) |e| return switch (e) {
         .INTR => error.Interrupt,
@@ -3039,11 +3050,7 @@ pub fn read(fd: fd_t, buf: []u8) Error![]u8 {
         },
     };
 
-    if (rc == 0) {
-        return error.EndOfFile;
-    } else {
-        return buf[0..@intCast(rc)];
-    }
+    return buf[0..@intCast(rc)];
 }
 
 pub fn write(fd: fd_t, buf: []const u8) Error!usize {
