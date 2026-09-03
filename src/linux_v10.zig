@@ -1992,60 +1992,41 @@ pub fn joystickReconcile(io: std.Io, dev_input_dir_fd: linux.dirfd_t, sys_class_
     _ = &present_len;
     _ = &sys_path_rel_buf;
 
-    const entry_buf_size = 16 * (@sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len);
-    var dent_buf: [entry_buf_size]u8 align(@alignOf(linux.Dirent64)) = undefined;
+    var it = try linux.DirIterator.init(dev_input_dir_fd, .{});
 
-    _ = try linux.lseek(dev_input_dir_fd, 0, .SET);
+    while (try it.next()) |entry| {
+        if (entry.type != .char) continue;
 
-    while (true) {
-        const dents_len = try linux.getdents64(dev_input_dir_fd, &dent_buf);
-        if (dents_len == 0) break;
+        const event_id_str = std.mem.cutPrefix(u8, entry.name, "event") orelse continue;
+        const event_id = std.fmt.parseInt(u10, event_id_str, 10) catch continue;
 
-        var dents_rem = dent_buf[0..dents_len];
+        const sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, entry.name, &sys_path_rel_buf) catch |e| {
+            log.err("reconcile readlink failed on: '/sys/class/input/{s}', error: '{}'", .{ entry.name, e });
+            continue;
+        };
+        const sys_path_rel_sys_link = sys_path_rel_buf[0..sys_path_rel_len];
 
-        while (dents_rem.len >= @sizeOf(linux.Dirent64)) {
-            const dent: *linux.Dirent64 = @ptrCast(@alignCast(dents_rem.ptr));
-            dents_rem = @alignCast(dents_rem[dent.d_reclen..]);
+        const sys_path_dirname_rel_sys_link = std.fs.path.dirname(sys_path_rel_sys_link) orelse continue;
+        const input_id_str = std.mem.cutPrefix(u8, std.fs.path.basename(sys_path_dirname_rel_sys_link), "input") orelse continue;
+        const input_id = std.fmt.parseInt(u31, input_id_str, 10) catch continue;
 
-            if (dent.d_type == .CHR) {
-                const event_name = dent.name();
+        if (present_len < present.len) {
+            const p = &present[present_len];
+            present_len += 1;
+            assert(entry.name.len + 1 <= p.event_name_buf.len);
 
-                const event_id_str = std.mem.cutPrefix(u8, event_name, "event") orelse continue;
-                const event_id = std.fmt.parseInt(u10, event_id_str, 10) catch continue;
+            p.* = .{
+                .input_id = input_id,
+                .event_id = event_id,
+                .event_name_buf = @splat(0),
+                .event_name_len = @intCast(entry.name.len),
+            };
 
-                const sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &sys_path_rel_buf) catch |e| {
-                    log.err("reconcile readlink failed on: '/sys/class/input/{s}', error: '{}'", .{ event_name, e });
-                    continue;
-                };
-                const sys_path_rel_sys_link = sys_path_rel_buf[0..sys_path_rel_len];
-
-                const sys_path_dirname_rel_sys_link = std.fs.path.dirname(sys_path_rel_sys_link) orelse continue;
-                const input_id_str = std.mem.cutPrefix(u8, std.fs.path.basename(sys_path_dirname_rel_sys_link), "input") orelse continue;
-                const input_id = std.fmt.parseInt(u31, input_id_str, 10) catch continue;
-
-                if (present_len < present.len) {
-                    const p = &present[present_len];
-                    present_len += 1;
-                    assert(event_name.len + 1 <= p.event_name_buf.len);
-
-                    p.* = .{
-                        .input_id = input_id,
-                        .event_id = event_id,
-                        .event_name_buf = @splat(0),
-                        .event_name_len = @intCast(event_name.len),
-                    };
-
-                    @memcpy(p.event_name_buf[0..event_name.len], event_name);
-                } else {
-                    log.err("reconcile overflow (>{}), dropping: '/dev/input/{s}' and additional entries", .{ present.len, event_name });
-                    continue;
-                }
-            }
-
-            log.debug("dent: '{s}':{}", .{ dent.name(), dent });
+            @memcpy(p.event_name_buf[0..entry.name.len], entry.name);
+        } else {
+            log.err("reconcile overflow (>{}), dropping: '/dev/input/{s}' and additional entries", .{ present.len, entry.name });
+            continue;
         }
-
-        assert(dents_rem.len == 0);
     }
 
     for (&joysticks, 0..) |*js, ji| if (js.state != .inactive) {

@@ -38,7 +38,7 @@ pub const Error = error{
     InvalidAddressFamily,
     InvalidArg,
     InvalidDevice,
-    InvalidFD,
+    InvalidFd,
     InvalidFlags,
     InvalidPath,
     InvalidPointer,
@@ -101,6 +101,102 @@ pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
     return if (remaining_cuts == 0) result[0..result_len] else null;
 }
 
+pub const DirIterator = struct {
+    fd: dirfd_t,
+
+    dents: []u8,
+    buffer: [16 * (@sizeOf(Dirent64) + Dirent64.max_name_len)]u8 align(@alignOf(Dirent64)),
+
+    pub const Options = struct {
+        reset_fd_pos: bool = true,
+    };
+
+    pub const Entry = struct {
+        name: [:0]const u8,
+        type: Type,
+
+        pub const Type = enum {
+            unknown,
+            pipe,
+            char,
+            dir,
+            block,
+            file,
+            link,
+            socket,
+            whiteout,
+        };
+    };
+
+    pub const InitError = error{ SeekFailed, InvalidFd };
+
+    pub fn init(dir_fd: dirfd_t, options: Options) InitError!DirIterator {
+        if (options.reset_fd_pos) {
+            _ = lseek(dir_fd, 0, .SET) catch |e| switch (e) {
+                error.InvalidFd => return error.InvalidFd,
+                else => return error.SeekFailed,
+            };
+        }
+
+        return .{
+            .fd = dir_fd,
+            .dents = &.{},
+            .buffer = undefined,
+        };
+    }
+
+    pub const NextError = error{ InvalidFd, MalformedDirEntry };
+
+    pub fn next(this: *DirIterator) NextError!?Entry {
+        if (this.dents.len == 0) {
+            const new_len = getdents64(this.fd, &this.buffer) catch |e| switch (e) {
+                error.FileDoesNotExist,
+                error.NotDirectory,
+                error.InvalidFd,
+                => {
+                    return error.InvalidFd;
+                },
+
+                error.InvalidPointer => unreachable,
+                else => unreachable,
+            };
+
+            this.dents = this.buffer[0..new_len];
+        }
+
+        if (this.dents.len >= @sizeOf(Dirent64)) {
+            const dent: *Dirent64 = @ptrCast(@alignCast(this.dents.ptr));
+
+            if (dent.d_reclen == 0) return error.MalformedDirEntry;
+
+            this.dents = this.dents[dent.d_reclen..];
+
+            const name_len = dent.d_reclen - @offsetOf(Dirent64, "d_name");
+            const name_slice = @as([*]const u8, @ptrCast(&dent.d_name))[0..name_len];
+            const name = mem.sliceToSentinel(name_slice, 0);
+
+            return .{
+                .name = name,
+                .type = switch (dent.d_type) {
+                    .UNKNOWN => .unknown,
+                    .FIFO => .pipe,
+                    .CHR => .char,
+                    .DIR => .dir,
+                    .BLK => .block,
+                    .REG => .file,
+                    .LNK => .link,
+                    .SOCK => .socket,
+                    .WHT => .whiteout,
+                },
+            };
+        } else if (this.dents.len != 0) {
+            return error.MalformedDirEntry;
+        }
+
+        return null;
+    }
+};
+
 // =============================================================================
 // dirent.h
 // =============================================================================
@@ -127,12 +223,6 @@ pub const Dirent64 = extern struct {
 
     /// Including null
     pub const max_name_len = 256;
-
-    pub inline fn name(this: *const Dirent64) [:0]const u8 {
-        const name_len = this.d_reclen - @offsetOf(Dirent64, "d_name");
-        const name_slice = @as([*]const u8, @ptrCast(&this.d_name))[0..name_len];
-        return mem.sliceToSentinel(name_slice, 0);
-    }
 };
 
 // =============================================================================
@@ -570,7 +660,7 @@ pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) E
         mode,
     );
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .ACCES => error.PermissionDenied,
         .EXIST => error.FileExists,
         .ISDIR => error.IsDirectory,
@@ -711,7 +801,7 @@ pub fn inotify_add_watch(fd: fd_t, path: [:0]const u8, mask: IN) Error!c_int {
     );
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .EXIST => error.FileExists,
         .INVAL => error.InvalidArg,
         .NAMETOOLONG => error.NameTooLong,
@@ -735,7 +825,7 @@ pub fn inotify_rm_watch(fd: fd_t, wd: c_int) Error!void {
         safeExtendToUsize(wd),
     );
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .INVAL => error.InvalidArg,
         else => blk: {
             log.warn("Unexpected errno for inotify_rm_watch: {}", .{e});
@@ -2165,7 +2255,7 @@ pub const IOCTLError = Error || error{
     // Unknown,
     Unsupported,
     InvalidRequestOrArg,
-    InvalidFDForRequest,
+    InvalidFdForRequest,
 };
 
 pub const _IOC = packed struct(u32) {
@@ -2199,11 +2289,11 @@ pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
     const rc = syscall3(.ioctl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(request)), arg);
 
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INVAL => error.InvalidRequestOrArg,
         .IO => error.IO,
-        .NOTTY => error.InvalidFDForRequest,
+        .NOTTY => error.InvalidFdForRequest,
         .INTR => error.Interrupt,
         .ACCES, .PERM => error.PermissionDenied,
         .NOENT => error.FileDoesNotExist,
@@ -2280,7 +2370,7 @@ pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP
         @bitCast(offset),
     );
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .INVAL => error.InvalidArg,
         .ACCES => error.PermissionDenied,
         .NOMEM => error.NoMemory,
@@ -2347,7 +2437,7 @@ pub const pollfd = extern struct {
 pub fn poll(fds: []pollfd, timeout: c_int) Error!c_int {
     const rc = syscall3(.poll, @intFromPtr(fds.ptr), fds.len, @as(u32, @bitCast(timeout)));
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INTR => error.Interrupt,
         .INVAL => error.InvalidArg,
@@ -2652,7 +2742,7 @@ pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c
         .ADDRNOTAVAIL => error.AddressNotAvailable,
         .AFNOSUPPORT => error.InvalidAddressFamily,
         .ALREADY => error.AlreadyConnecting,
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .CONNREFUSED => error.ConnectionRefused,
         .FAULT => error.InvalidPointer,
         .INPROGRESS => error.ConnectingInProgress,
@@ -2674,7 +2764,7 @@ pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c
 pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
     const rc = syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .AGAIN => error.NoSpaceLeft, // send buffer full
         .INTR => error.Interrupt,
         .PIPE => error.ConnectionClosed, // peer closed connection
@@ -2693,12 +2783,12 @@ pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
 pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
     const rc = syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .AGAIN, .TIMEDOUT => error.Timeout,
         .FAULT => error.InvalidPointer,
         .INTR => error.Interrupt,
         .NOTCONN => error.NotConnected,
-        .NOTSOCK => error.InvalidFD,
+        .NOTSOCK => error.InvalidFd,
         .OPNOTSUPP => error.InvalidFlags,
         .INVAL => error.InvalidArg,
         .NOMEM => error.NoMemory,
@@ -2811,7 +2901,7 @@ pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
     const rc = syscall2(.stat, @intFromPtr(pathname.ptr), @intFromPtr(statbuf));
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INVAL => error.InvalidArg,
         .LOOP => error.TooManySymbolicLinks,
@@ -2837,7 +2927,7 @@ pub fn fstatat(dir_fd: dirfd_t, path: [:0]const u8, statbuf: *Stat, flags: c_int
     );
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INVAL => error.InvalidArg,
         .LOOP => error.TooManySymbolicLinks,
@@ -2938,7 +3028,7 @@ pub fn read(fd: fd_t, buf: []u8) Error![]u8 {
     if (check_errno(rc)) |e| return switch (e) {
         .INTR => error.Interrupt,
         .AGAIN => error.NoData,
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INVAL => error.InvalidArg,
         .IO => error.IO,
@@ -2961,7 +3051,7 @@ pub fn write(fd: fd_t, buf: []const u8) Error!usize {
     if (check_errno(rc)) |e| return switch (e) {
         .INTR => error.Interrupt,
         .AGAIN => error.NoData,
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INVAL => error.InvalidArg,
         .IO => error.IO,
@@ -2979,7 +3069,7 @@ pub fn write(fd: fd_t, buf: []const u8) Error!usize {
 pub fn close(fd: fd_t) Error!void {
     const rc = syscall1(.close, @as(u32, @bitCast(fd)));
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .INTR => error.Interrupt,
         .IO => error.IO,
         else => blk: {
@@ -2997,7 +3087,7 @@ pub fn lseek(fd: fd_t, offset: off_t, whence: SEEK) Error!off_t {
         zeroExtendToUsize(whence),
     );
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .INVAL => error.InvalidArg,
         .NXIO => error.NoDeviceOrAddress,
         .OVERFLOW => error.Overflow,
@@ -3028,7 +3118,7 @@ pub fn pipe(fds: *[2]fd_t) Error!void {
 pub fn ftruncate(fd: fd_t, length: usize) !void {
     const rc = syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .INVAL => error.InvalidArg,
         else => blk: {
             log.warn("Unexpected errno for ftruncate: {}", .{e});
@@ -3087,7 +3177,7 @@ pub fn getdents64(dir_fd: dirfd_t, buf: []u8) Error!usize {
 
     const rc = syscall3(.getdents64, zeroExtendToUsize(dir_fd), @intFromPtr(buf.ptr), buf.len);
     if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INVAL => error.BufferTooSmall,
         .NOENT => error.FileDoesNotExist,
@@ -3111,7 +3201,7 @@ pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) Error!usize {
     );
     if (check_errno(rc)) |e| return switch (e) {
         .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFD,
+        .BADF => error.InvalidFd,
         .FAULT => error.InvalidPointer,
         .INVAL => error.InvalidArg,
         .IO => error.IO,
