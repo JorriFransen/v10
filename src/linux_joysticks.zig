@@ -163,50 +163,30 @@ pub const Joystick = struct {
         },
     };
 
-    pub fn init(this: *Joystick, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    pub fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
         assert(event_id >= 0);
 
-        var sys_link_buf: [32]u8 = undefined;
-        const sys_link = std.fmt.bufPrintSentinel(&sys_link_buf, "/sys/class/input/event{}", .{event_id}, 0) catch unreachable;
-
         var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_rel_len = linux.readlink(sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
+        const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
             error.FileDoesNotExist => return error.DevSysPathMissing,
             else => return e,
         };
         const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
 
-        const usb_iface_sys_path_rel_link = if (linux.dirnameN(dev_sys_path_rel_link, 3)) |p| core.stackPathZ(p) else "";
-
-        var usb_iface_sys_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const usb_iface_sys_path = std.fmt.bufPrintSentinel(&usb_iface_sys_path_buf, "{s}/{s}", .{
-            std.fs.path.dirname(sys_link).?,
-            usb_iface_sys_path_rel_link,
-        }, 0) catch unreachable;
-
-        log.debug("sys_link                   : '{s}'", .{sys_link});
         log.debug("dev_sys_path_rel_link      : '{s}'", .{dev_sys_path_rel_link});
-        log.debug("usb_iface_sys_path_rel_link: '{s}'", .{usb_iface_sys_path_rel_link});
 
         var driver_link_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const driver_link_rel = std.fmt.bufPrint(&driver_link_rel_buf, "{s}/device/driver", .{
+        const driver_link_rel = std.fmt.bufPrintSentinel(&driver_link_rel_buf, "{s}/device/driver", .{
             std.fs.path.dirname(dev_sys_path_rel_link).?,
-        }) catch unreachable;
-
-        var driver_link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const driver_link = std.fmt.bufPrintSentinel(&driver_link_buf, "{s}/{s}", .{
-            std.fs.path.dirname(sys_link).?,
-            driver_link_rel,
         }, 0) catch unreachable;
 
         log.debug("driver link rel: '{s}'", .{driver_link_rel});
-        log.debug("driver link    : '{s}'", .{driver_link});
 
         const driver_name: []const u8 = blk: {
             var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-            const driver_path_len = linux.readlink(driver_link, &driver_path_buf) catch |e| switch (e) {
+            const driver_path_len = linux.readlinkat(sys_class_input_dir_fd, driver_link_rel, &driver_path_buf) catch |e| switch (e) {
                 error.FileDoesNotExist => {
-                    log.err("Joystick driver link does not exist: '{s}'", .{driver_link});
+                    log.err("Joystick driver link does not exist: '/sys/class/input/{s}'", .{driver_link_rel});
                     break :blk "";
                 },
                 else => return e,
@@ -225,9 +205,13 @@ pub const Joystick = struct {
             else
                 .{ .default, default_map };
 
-        if (linux.open(usb_iface_sys_path, .{ .ACCMODE = .RDONLY }, 0)) |usb_iface| {
+        const usb_iface_sys_path_rel_link = if (linux.dirnameN(dev_sys_path_rel_link, 3)) |p| core.stackPathZ(p) else "";
+
+        log.debug("usb_iface_sys_path_rel_link: '{s}'", .{usb_iface_sys_path_rel_link});
+
+        if (linux.openat(sys_class_input_dir_fd, usb_iface_sys_path_rel_link, .{ .ACCMODE = .RDONLY }, 0)) |usb_iface| {
             defer linux.close(usb_iface) catch |e| {
-                log.warn("Failed to close usb_interface : '{s}', error: '{}'", .{ usb_iface_sys_path, e });
+                log.warn("Failed to close usb_interface : '{s}', error: '{}'", .{ usb_iface_sys_path_rel_link, e });
             };
 
             if (std.mem.eql(u8, driver_name, "xpad") and
@@ -577,18 +561,16 @@ pub fn getIoInFlightIndexByEventId(event_id: i11) ?usize {
     return result;
 }
 
-pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, event_name: []const u8, event_id: i11) !void {
+pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11) !void {
     assert(event_id >= 0);
 
     if (newIoInFlightIndex()) |in_flight_index| {
         errdefer freeIoInFlightIndex(in_flight_index);
 
         const in_flight = &io_in_flight[in_flight_index];
-        var sys_link_buf: [32]u8 = undefined;
-        const sys_link = std.fmt.bufPrintSentinel(&sys_link_buf, "/sys/class/input/{s}", .{event_name}, 0) catch unreachable;
 
         var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const dev_sys_path_rel_len = linux.readlink(sys_link, &dev_sys_path_rel_buf) catch |e| switch (e) {
+        const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
             error.FileDoesNotExist => return error.DevSysPathMissing,
             else => return e,
         };

@@ -3022,7 +3022,7 @@ pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) Error!usize {
         .NOMEM => error.NoMemory,
         .NOTDIR => error.InvalidPath,
         else => blk: {
-            log.warn("Unexpected errno for readlink: {}", .{e});
+            log.warn("Unexpected errno for readlinkat: {}", .{e});
             break :blk error.UnexpectedErrno;
         },
     };
