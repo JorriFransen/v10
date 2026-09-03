@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const core = @import("core");
 const arch = core.arch;
 const assert = core.assert;
+const fs = core.fs;
 const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
@@ -157,7 +158,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     shared_state.exe_dir_path = shared_state.exe_dir_path_buf[0..exe_dir_path_len];
     log.info("exe_dir_path: {s}", .{shared_state.exe_dir_path});
 
-    var game_lib_name_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0);
+    var game_lib_name_buf: [fs.max_path_bytes]u8 = @splat(0);
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
     log.info("game_lib_name: {s}", .{game_lib_name});
 
@@ -197,7 +198,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     wld = .{
         .display = display,
-        .io = io,
         .shared_state = &shared_state,
     };
 
@@ -433,7 +433,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         Joysticks.io_uring.deinit();
     }
 
-    joystickReconcile(io, dev_input_dir_fd, sys_class_input_dir_fd) catch |e| {
+    joystickReconcile(dev_input_dir_fd, sys_class_input_dir_fd) catch |e| {
         log.err("Joystick initial scan (reconcile) failed, error: '{}'", .{e});
     };
 
@@ -467,7 +467,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         log.warn("Failed to open inotify fd, error: '{}'", .{e});
     }
 
-    var game_code = GameCode.load(io, game_lib_name);
+    var game_code = GameCode.load(game_lib_name);
 
     const audio_fps = 48000;
     const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
@@ -535,11 +535,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         wld.new_input.dt = target_seconds_per_frame;
 
         wld.new_input.executable_reloaded = false;
-        const new_lib_write_time = common.getLastWriteTime(io, game_lib_name);
+        const new_lib_write_time = common.getLastWriteTime(game_lib_name);
 
         if (new_lib_write_time > game_code.last_write_time) {
             game_code.unload();
-            game_code = GameCode.load(io, game_lib_name);
+            game_code = GameCode.load(game_lib_name);
             wld.new_input.executable_reloaded = true;
         }
 
@@ -660,7 +660,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                     i += @sizeOf(linux.InotifyEvent) + event.len;
 
                                     if (event.mask.Q_OVERFLOW) {
-                                        joystickReconcile(io, dev_input_dir_fd, sys_class_input_dir_fd) catch |e| {
+                                        joystickReconcile(dev_input_dir_fd, sys_class_input_dir_fd) catch |e| {
                                             log.err("reconcile after Q_OVERFLOW failed, error: '{}'", .{e});
                                             continue;
                                         };
@@ -1130,8 +1130,6 @@ const WlData = struct {
     old_input: *Input = undefined,
 
     shared_state: *common.SharedState = undefined,
-
-    io: std.Io = undefined,
 };
 
 const WlOutput = struct {
@@ -1970,9 +1968,7 @@ fn removeJoystickFromSlot(slot_index: usize) void {
     js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
 }
 
-pub fn joystickReconcile(io: std.Io, dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t) !void {
-    var sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-
+pub fn joystickReconcile(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t) linux.DirIterator.Error!void {
     const PresentDevice = struct {
         input_id: u31,
         event_id: u10,
@@ -1980,12 +1976,10 @@ pub fn joystickReconcile(io: std.Io, dev_input_dir_fd: linux.dirfd_t, sys_class_
         event_name_len: u8,
     };
 
+    var sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
+
     var present: [Joysticks.io_uring_entry_count]PresentDevice = undefined;
     var present_len: usize = 0;
-
-    _ = io;
-    _ = &present_len;
-    _ = &sys_path_rel_buf;
 
     var it = try linux.DirIterator.init(dev_input_dir_fd, .{});
 
@@ -2630,7 +2624,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_recording_index = input_recording_index;
 
-        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
         shared_state.recording_handle = linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true }, 0) catch @panic("Input recording file creation failed");
@@ -2652,7 +2646,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_playing_index = input_playing_index;
 
-        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
         shared_state.playback_handle = linux.open(file_name, .{ .ACCMODE = .RDONLY }, 0) catch @panic("Input playback file open failed");

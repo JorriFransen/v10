@@ -3,14 +3,14 @@ const log = std.log.scoped(.win32_v10);
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
-//
 
 const options = @import("options");
 
 const core = @import("core");
-const assert = core.assert;
 const arch = core.arch;
+const assert = core.assert;
 const dsound = core.lib.dsound;
+const fs = core.fs;
 const math = core.math;
 const mem = core.mem;
 const win32 = core.os.win32;
@@ -422,9 +422,9 @@ pub fn windowsEntry(
     shared_state.exe_dir_path = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
     log.info("exe dir: '{s}'", .{shared_state.exe_dir_path});
 
-    var source_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    var temp_dll_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    var gamecode_lock_file_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var source_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
+    var temp_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
+    var gamecode_lock_file_name_buf: [fs.max_path_bytes]u8 = undefined;
 
     const source_dll_name = try shared_state.buildExePathFilename(&source_dll_name_buf, "v10_game.dll");
     const temp_dll_name = try shared_state.buildExePathFilename(&temp_dll_name_buf, "v10_temp.dll");
@@ -583,15 +583,13 @@ pub fn windowsEntry(
                 for (&shared_state.replay_buffers, 1..) |*replay_buffer, i| {
                     const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
 
-                    const file_handle = win32.CreateFileA(file_name, win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
-                    replay_buffer.file_handle = .{ .handle = file_handle, .flags = .{ .nonblocking = false } };
+                    replay_buffer.file_handle = win32.CreateFileA(file_name, win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
 
                     const max_size: win32.LARGE_INTEGER = .{ .quad_part = shared_state.game_memory_block.len };
 
-                    const mapping = win32.CreateFileMappingA(file_handle, null, win32.PAGE_READWRITE, @intCast(max_size.u.high_part), max_size.u.low_part, null);
-                    replay_buffer.memory_map = .{ .handle = mapping, .flags = .{ .nonblocking = false } };
+                    replay_buffer.memory_map = win32.CreateFileMappingA(replay_buffer.file_handle, null, win32.PAGE_READWRITE, @intCast(max_size.u.high_part), max_size.u.low_part, null);
 
-                    if (win32.MapViewOfFile(mapping, win32.FILE_MAP_ALL_ACCESS, 0, 0, shared_state.game_memory_block.len)) |ptr| {
+                    if (win32.MapViewOfFile(replay_buffer.memory_map, win32.FILE_MAP_ALL_ACCESS, 0, 0, shared_state.game_memory_block.len)) |ptr| {
                         replay_buffer.memory = @as([*]u8, @ptrCast(ptr))[0..shared_state.game_memory_block.len];
                     } else {
                         log.warn("MapViewOfFile failed!", .{});
@@ -617,7 +615,7 @@ pub fn windowsEntry(
                 var audio_valid = false;
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
-                var game_code = GameCode.load(io, temp_dll_name);
+                var game_code = GameCode.load(temp_dll_name);
 
                 var last_cycle_count = arch.rdtsc();
 
@@ -625,13 +623,13 @@ pub fn windowsEntry(
                     new_input.dt = target_seconds_per_frame;
 
                     new_input.executable_reloaded = false;
-                    const new_dll_write_time = common.getLastWriteTime(io, source_dll_name);
+                    const new_dll_write_time = common.getLastWriteTime(source_dll_name);
 
                     if (new_dll_write_time > game_code.last_write_time) {
                         game_code.unload();
 
                         _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
-                        game_code = GameCode.load(io, temp_dll_name);
+                        game_code = GameCode.load(temp_dll_name);
                         new_input.executable_reloaded = true;
                     }
 
@@ -1082,7 +1080,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_recording_index = input_recording_index;
 
-        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
         shared_state.recording_handle = win32.CreateFileA(file_name, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
@@ -1102,7 +1100,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_playing_index = input_playing_index;
 
-        var file_name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
         shared_state.playback_handle = win32.CreateFileA(file_name, win32.GENERIC_READ, 0, null, win32.OPEN_EXISTING, 0, null);

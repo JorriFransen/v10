@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const fs = @import("fs.zig");
 const win32 = @import("os/os.zig").win32;
 
 const DynLib = @This();
@@ -14,7 +15,7 @@ const Inner = switch (builtin.os.tag) {
         handle: win32.HMODULE,
 
         pub fn open(path: []const u8) Error!Inner {
-            var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+            var path_buf: [fs.max_path_bytes]u8 = undefined;
             const path_z = try std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0);
 
             if (win32.LoadLibraryA(path_z)) |handle| {

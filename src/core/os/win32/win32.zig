@@ -53,7 +53,8 @@ pub const FARPROC = *anyopaque;
 
 pub const TRUE: BOOL = .TRUE;
 pub const FALSE: BOOL = .FALSE;
-pub const MAX_PATH = 260;
+pub const MAX_PATH = zig_win32.MAX_PATH;
+pub const PATH_MAX_WIDE = zig_win32.PATH_MAX_WIDE;
 
 pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
 

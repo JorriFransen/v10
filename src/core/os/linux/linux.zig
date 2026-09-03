@@ -128,6 +128,8 @@ pub const DirIterator = struct {
         };
     };
 
+    pub const Error = InitError || NextError;
+
     pub const InitError = error{ SeekFailed, InvalidFd };
 
     pub fn init(dir_fd: dirfd_t, options: Options) InitError!DirIterator {

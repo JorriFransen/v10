@@ -1,17 +1,26 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Os = @import("os.zig").current;
+const os = @import("os.zig");
+const win32 = os.win32;
+
+const Os = os.current;
 const AT = Os.AT;
 const O = Os.O;
 const mode_t = Os.mode_t;
 const openat = Os.openat;
 const unlink = Os.unlink;
 
-pub const fd_t = switch (builtin.os.tag) {
-    else => @compileError(std.fmt.comptimePrint("Unsupported os: {s}", .{@tagName(builtin.os.tag)})),
-    .windows => @import("win32/win32.zig").HANDLE,
-    .linux => Os.fd_t,
+pub const fd_t = system.fd_t;
+pub const PATH_MAX = system.PATH_MAX;
+
+const system = switch (builtin.os.tag) {
+    else => @compileError("Unsupported os: {s}" ++ @tagName(builtin.os.tag)),
+    .linux => Os,
+    .windows => struct {
+        pub const fd_t = win32.HANDLE;
+        pub const PATH_MAX = win32.MAX_PATH_WIDE;
+    },
 };
 
 // =============================================================================
@@ -21,7 +30,7 @@ pub const fd_t = switch (builtin.os.tag) {
 pub const ShmError = Os.Error || std.fmt.BufPrintError;
 
 inline fn getShmPath(name: [:0]const u8) std.fmt.BufPrintError![:0]const u8 {
-    var name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var name_buf: [PATH_MAX]u8 = undefined;
     const path_fmt = std.fs.path.fmtJoin(&.{ "/dev/shm/", name });
     return try std.fmt.bufPrintSentinel(&name_buf, "{f}", .{path_fmt}, 0);
 }

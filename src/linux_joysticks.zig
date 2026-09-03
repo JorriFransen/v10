@@ -5,6 +5,7 @@ const options = @import("options");
 
 const core = @import("core");
 const assert = core.assert;
+const fs = core.fs;
 const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
@@ -167,7 +168,7 @@ pub const Joystick = struct {
     pub fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
         assert(event_id >= 0);
 
-        var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
         const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
             error.FileDoesNotExist => return error.DevSysPathMissing,
             else => return e,
@@ -176,7 +177,7 @@ pub const Joystick = struct {
 
         log.debug("dev_sys_path_rel_link      : '{s}'", .{dev_sys_path_rel_link});
 
-        var driver_link_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var driver_link_rel_buf: [fs.max_path_bytes]u8 = undefined;
         const driver_link_rel = std.fmt.bufPrintSentinel(&driver_link_rel_buf, "{s}/device/driver", .{
             std.fs.path.dirname(dev_sys_path_rel_link).?,
         }, 0) catch unreachable;
@@ -184,7 +185,7 @@ pub const Joystick = struct {
         log.debug("driver link rel: '{s}'", .{driver_link_rel});
 
         const driver_name: []const u8 = blk: {
-            var driver_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+            var driver_path_buf: [fs.max_path_bytes]u8 = undefined;
             const driver_path_len = linux.readlinkat(sys_class_input_dir_fd, driver_link_rel, &driver_path_buf) catch |e| switch (e) {
                 error.FileDoesNotExist => {
                     log.err("Joystick driver link does not exist: '/sys/class/input/{s}'", .{driver_link_rel});
@@ -570,7 +571,7 @@ pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: lin
 
         const in_flight = &io_in_flight[in_flight_index];
 
-        var dev_sys_path_rel_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
         const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
             error.FileDoesNotExist => return error.DevSysPathMissing,
             else => return e,

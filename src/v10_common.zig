@@ -13,6 +13,7 @@ const fs = core.fs;
 const math = core.math;
 const mem = core.mem;
 const win32 = core.os.win32;
+const linux = core.os.linux;
 
 pub const std_options: std.Options = blk: {
     var o = core.default_std_options;
@@ -149,9 +150,9 @@ pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8
 }
 
 pub const ReplayBuffer = struct {
-    file_handle: std.Io.File,
-    memory_map: std.Io.File,
-    filname_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
+    file_handle: fs.Handle,
+    memory_map: fs.Handle,
+    filname_buf: [fs.max_path_bytes]u8 = @splat(0),
     memory: []u8 = &.{},
 };
 
@@ -165,9 +166,9 @@ pub const SharedState = struct {
     playback_handle: fs.Handle = undefined,
     input_playing_index: usize = 0,
 
-    cwd_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
+    cwd_buf: [fs.max_path_bytes]u8 = @splat(0),
     cwd: []const u8 = &.{},
-    exe_dir_path_buf: [std.Io.Dir.max_path_bytes]u8 = @splat(0),
+    exe_dir_path_buf: [fs.max_path_bytes]u8 = @splat(0),
     exe_dir_path: []const u8 = &.{},
 
     pub fn buildExePathFilename(shared_state: *const SharedState, buffer: []u8, sub_path: []const u8) ![:0]const u8 {
@@ -211,8 +212,8 @@ pub const GameCode = struct {
     updateAndRender: ?FN_updateAndRender = null,
     getAudioFrames: ?FN_getAudioFrames = null,
 
-    pub fn load(io: std.Io, libname: []const u8) GameCode {
-        const last_write_time = getLastWriteTime(io, libname);
+    pub fn load(libname: [:0]const u8) GameCode {
+        const last_write_time = getLastWriteTime(libname);
 
         var lib = DynLib.open(libname) catch |e| {
             log.err("Failed to load game code: {}", .{e});
@@ -248,7 +249,7 @@ pub const GameCode = struct {
     }
 };
 
-pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
+pub fn getLastWriteTime(absolute_file_name: [:0]const u8) i128 {
     var result: i128 = 0;
 
     switch (builtin.os.tag) {
@@ -261,8 +262,9 @@ pub fn getLastWriteTime(io: std.Io, absolute_file_name: []const u8) i128 {
         },
 
         else => {
-            if (std.Io.Dir.statFile(undefined, io, absolute_file_name, .{})) |stat| {
-                result = stat.mtime.toNanoseconds();
+            var stat: linux.Stat = undefined;
+            if (linux.stat(absolute_file_name, &stat)) {
+                result = stat.st_mtim.nsec + (@as(i128, stat.st_mtim.sec) * std.time.ns_per_s);
             } else |_| {}
         },
     }

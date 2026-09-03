@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const assert = @import("../core.zig").assert;
+const fs = @import("../fs.zig");
 
 pub const Arena = @import("arena.zig").Arena;
 pub const TempArena = @import("temp_arena.zig");
@@ -154,7 +155,7 @@ fn SliceToSentinelRet(comptime Slice: type, comptime sentinel: std.meta.Elem(Sli
 
 /// Copy 'path' into a (inlined) stack buffer, return null terminated slice.
 pub inline fn stackPathZ(path: []const u8) [:0]const u8 {
-    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var buf: [fs.max_path_bytes]u8 = undefined;
     assert(path.len + 1 <= buf.len);
     @memcpy(buf[0..path.len], path);
     buf[path.len] = 0;
