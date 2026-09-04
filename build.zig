@@ -378,24 +378,24 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
 
     const asset_compiler = tools.asset_compiler.?;
 
+    const asset_step = b.step("assets", "compile assets");
+
+    const asset_compiler_run = b.addRunArtifact(asset_compiler.exe);
+    asset_step.dependOn(&asset_compiler_run.step);
+
+    if (b.verbose) {
+        asset_compiler_run.addArg("-v");
+    }
+
+    asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
+    asset_compiler_run.addPrefixedDirectoryArg("-o", b.path(output_dir));
+
     switch (mode) {
         .engine => {
             engine.modules.common.addImport("asset_compiler", asset_compiler.module);
         },
 
         .build => {
-            const asset_step = b.step("assets", "compile assets");
-
-            const asset_compiler_run = b.addRunArtifact(asset_compiler.exe);
-            asset_step.dependOn(&asset_compiler_run.step);
-
-            if (b.verbose) {
-                asset_compiler_run.addArg("-v");
-            }
-
-            asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
-            asset_compiler_run.addPrefixedDirectoryArg("-o", b.path(output_dir));
-
             b.getInstallStep().dependOn(asset_step);
             engine.run.step.dependOn(asset_step);
         },
