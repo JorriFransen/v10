@@ -429,7 +429,65 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     Joysticks.io_uring = try std.os.linux.IoUring.init(Joysticks.io_uring_entry_count, 0);
     defer {
-        // TODO: sumbit, and blocking reap/wait
+        for (&joysticks, 0..) |*js, ji| if (js.state != .inactive) {
+            _ = Joysticks.submitCloseFd(js.fd);
+            removeJoystickFromSlot(ji);
+        };
+
+        for (joystick_que[0..joystick_que_len]) |*entry| {
+            _ = Joysticks.submitCloseFd(entry.fd);
+        }
+        joystick_que_len = 0;
+
+        _ = Joysticks.io_uring.submit() catch |e| {
+            log.err("io_uring submit failed, error: '{}'", .{e});
+        };
+
+        var cqes: [Joysticks.io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
+        while (Joysticks.io_in_flight_count > 0) {
+            const n = Joysticks.io_uring.copy_cqes(&cqes, Joysticks.io_in_flight_count) catch break;
+            if (n == 0) break;
+
+            Joysticks.io_in_flight_count -= n;
+
+            var closes_submitted: u32 = 0;
+
+            for (cqes[0..n]) |cqe| {
+                const user_data: isize = @bitCast(cqe.user_data);
+
+                const err = cqe.err();
+
+                if (user_data >= 0) {
+                    // open completed
+
+                    const in_flight_index: usize = @intCast(user_data);
+
+                    const in_flight = &Joysticks.io_open_in_flight[in_flight_index];
+                    const event_name = in_flight.eventName();
+
+                    if (err != .SUCCESS) {
+                        log.err("io_uring fd open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+                    } else {
+                        const fd: linux.fd_t = cqe.res;
+                        if (Joysticks.submitCloseFd(fd)) {
+                            closes_submitted += 1;
+                        }
+                    }
+                } else {
+                    // close completed
+                    if (err != .SUCCESS) {
+                        log.err("io_uring joystick fd close failed, error: '{}'", .{err});
+                    }
+                }
+            }
+
+            if (closes_submitted > 0) {
+                _ = Joysticks.io_uring.submit() catch |e| {
+                    log.err("io_uring submit failed, error: '{}'", .{e});
+                };
+            }
+        }
+
         Joysticks.io_uring.deinit();
     }
 
@@ -572,13 +630,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
             const n = Joysticks.io_uring.copy_cqes(&cqes, 0) catch break;
             if (n == 0) break;
 
+            Joysticks.io_in_flight_count -= n;
+
             for (cqes[0..n]) |cqe| {
                 const user_data: isize = @bitCast(cqe.user_data);
 
                 if (user_data >= 0) {
                     const in_flight_index: usize = @intCast(user_data);
 
-                    const in_flight = &Joysticks.io_in_flight[in_flight_index];
+                    const in_flight = &Joysticks.io_open_in_flight[in_flight_index];
                     const event_name = in_flight.eventName();
 
                     const err = cqe.err();
@@ -592,7 +652,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                             joystickHasOpenFd(in_flight.event_id) or
                             !Joysticks.eventFdIsJoystick(fd))
                         {
-                            Joysticks.submitCloseFd(fd);
+                            _ = Joysticks.submitCloseFd(fd);
                         } else {
                             if (!(addJoystick(
                                 sys_class_input_dir_fd,
@@ -602,7 +662,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                 fd,
                                 open_ts,
                             ) catch |e| blk: {
-                                Joysticks.submitCloseFd(fd);
+                                _ = Joysticks.submitCloseFd(fd);
                                 log.err("Failed to add joystick '/dev/input/{s}', error: '{}'", .{ event_name, e });
                                 break :blk false;
                             })) {
@@ -612,7 +672,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                     .event_id = @intCast(in_flight.event_id),
                                     .input_id = in_flight.input_id,
                                 })) {
-                                    Joysticks.submitCloseFd(fd);
+                                    _ = Joysticks.submitCloseFd(fd);
                                     log.err("Out of joystick slots, dropping '/dev/input/{s}", .{in_flight._event_name});
                                 }
                             }
@@ -679,7 +739,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                             if (joystickHasOpenFd(event_id)) {
                                                 // skip
                                             } else if (Joysticks.getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
-                                                Joysticks.io_in_flight[in_flight_index].flags.retry_pending = true;
+                                                Joysticks.io_open_in_flight[in_flight_index].flags.retry_pending = true;
                                                 log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
                                             } else {
                                                 Joysticks.submitOpenFd(dev_input_dir_fd, sys_class_input_dir_fd, event.name(), event_id) catch |e| {
@@ -695,7 +755,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                                             }
                                         } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
                                             if (removeJoystick(sys_class_input_dir_fd, event_id)) |fd| {
-                                                Joysticks.submitCloseFd(fd);
+                                                _ = Joysticks.submitCloseFd(fd);
                                             }
                                         }
                                     }
@@ -1935,7 +1995,7 @@ fn removeJoystick(sys_class_input_dir_fd: linux.dirfd_t, event_id: i11) ?linux.f
 
             break;
         }
-    } else for (&Joysticks.io_in_flight) |*in_flight| {
+    } else for (&Joysticks.io_open_in_flight) |*in_flight| {
         if (in_flight.event_id == event_id) {
             in_flight.flags.close_on_complete = true;
             in_flight.flags.retry_pending = false;
@@ -2028,7 +2088,7 @@ pub fn joystickReconcile(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd
         }
 
         if (!found) {
-            Joysticks.submitCloseFd(js.fd);
+            _ = Joysticks.submitCloseFd(js.fd);
             removeJoystickFromSlot(ji);
         }
     };
@@ -2049,13 +2109,13 @@ pub fn joystickReconcile(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd
             if (found) {
                 qi += 1;
             } else {
-                Joysticks.submitCloseFd(ready_entry.fd);
+                _ = Joysticks.submitCloseFd(ready_entry.fd);
                 joystickQueueOrderedRemove(qi);
             }
         }
     }
 
-    for (&Joysticks.io_in_flight) |*in_flight| if (in_flight.event_id != -1) {
+    for (&Joysticks.io_open_in_flight) |*in_flight| if (in_flight.event_id != -1) {
         var found = false;
         for (present[0..present_len]) |*p| {
             if (in_flight.input_id == p.input_id) {
@@ -2075,7 +2135,7 @@ pub fn joystickReconcile(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd
             if (js.state != .inactive and js.input_id == p.input_id) break true;
         } else for (joystick_que[0..joystick_que_len]) |*ready_entry| {
             if (ready_entry.input_id == p.input_id) break true;
-        } else for (&Joysticks.io_in_flight) |*in_flight| {
+        } else for (&Joysticks.io_open_in_flight) |*in_flight| {
             if (in_flight.input_id == p.input_id) break true;
         } else false;
 

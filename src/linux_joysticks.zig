@@ -21,7 +21,8 @@ const linux_v10 = @import("linux_v10.zig");
 
 pub const io_uring_entry_count = 64;
 pub var io_uring: std.os.linux.IoUring = undefined;
-pub var io_in_flight: [io_uring_entry_count]IoInFlight = @splat(.{
+pub var io_in_flight_count: u32 = 0;
+pub var io_open_in_flight: [io_uring_entry_count]IoOpenInFlight = @splat(.{
     .event_id = -1,
     .input_id = undefined,
     ._event_name = undefined,
@@ -31,7 +32,7 @@ pub var io_in_flight: [io_uring_entry_count]IoInFlight = @splat(.{
 pub const invalid_id: u32 = math.maxInt(u32);
 pub const sync_ms_max = 200;
 
-const IoInFlight = struct {
+const IoOpenInFlight = struct {
     event_id: i11 = -1,
     input_id: u31,
     flags: Flags = .{},
@@ -43,7 +44,7 @@ const IoInFlight = struct {
         close_on_complete: bool = false,
     };
 
-    pub inline fn eventName(this: *const IoInFlight) [:0]const u8 {
+    pub inline fn eventName(this: *const IoOpenInFlight) [:0]const u8 {
         return this._event_name[0..this.event_name_len :0];
     }
 };
@@ -529,7 +530,7 @@ fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
 fn newIoInFlightIndex() ?usize {
     var result: ?usize = null;
 
-    for (&io_in_flight, 0..) |*entry, i| {
+    for (&io_open_in_flight, 0..) |*entry, i| {
         if (entry.event_id == -1) {
             result = i;
             break;
@@ -540,7 +541,7 @@ fn newIoInFlightIndex() ?usize {
 }
 
 pub fn freeIoInFlightIndex(index: usize) void {
-    io_in_flight[index] = .{
+    io_open_in_flight[index] = .{
         .event_id = -1,
         .input_id = undefined,
         ._event_name = undefined,
@@ -553,7 +554,7 @@ pub fn getIoInFlightIndexByEventId(event_id: i11) ?usize {
 
     var result: ?usize = null;
 
-    for (&io_in_flight, 0..) |*in_flight, i| {
+    for (&io_open_in_flight, 0..) |*in_flight, i| {
         if (in_flight.event_id == event_id) {
             result = i;
             break;
@@ -569,7 +570,7 @@ pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: lin
     if (newIoInFlightIndex()) |in_flight_index| {
         errdefer freeIoInFlightIndex(in_flight_index);
 
-        const in_flight = &io_in_flight[in_flight_index];
+        const in_flight = &io_open_in_flight[in_flight_index];
 
         var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
         const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
@@ -599,6 +600,7 @@ pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: lin
             0,
         )) |cqe| {
             cqe.flags |= std.os.linux.IOSQE_ASYNC;
+            io_in_flight_count += 1;
         } else |e| switch (e) {
             error.SubmissionQueueFull => {
                 freeIoInFlightIndex(in_flight_index);
@@ -613,9 +615,13 @@ pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: lin
     }
 }
 
-pub fn submitCloseFd(fd: linux.fd_t) void {
+pub fn submitCloseFd(fd: linux.fd_t) bool {
+    var result = false;
+
     if (io_uring.close(@bitCast(@as(isize, -1)), fd)) |sqe| {
         sqe.flags |= std.os.linux.IOSQE_ASYNC;
+        io_in_flight_count += 1;
+        result = true;
     } else |submit_error| {
         log.err("io_uring close submit failed, error: '{}'", .{submit_error});
         log.warn("Calling blocking/sync close", .{});
@@ -623,4 +629,6 @@ pub fn submitCloseFd(fd: linux.fd_t) void {
             log.err("io_uring forced sync close failed, error: '{}'", .{close_error});
         };
     }
+
+    return result;
 }
