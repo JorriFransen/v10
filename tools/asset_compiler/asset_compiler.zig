@@ -120,7 +120,7 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
 
         // TODO: Consider creating the directory if it does not exist
         break :dir std.Io.Dir.cwd().openDir(context.io, context.options.output_dir, .{ .iterate = true }) catch |e| {
-            std.log.err("Unable to open input dir '{s}'", .{context.output_dir_path});
+            std.log.err("Unable to open output dir '{s}'", .{context.output_dir_path});
             std.log.err("{s}", .{@errorName(e)});
             return error.InvalidOutputDir;
         };
@@ -266,9 +266,13 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
                         {
                             defer a.main_arena_mutex.unlock(a.context.io);
 
-                            const copy = a.main_arena.alloc([]const u8, result.len) catch unreachable;
-                            for (result, copy) |source, *dest| dest.* = a.main_arena.dupe(u8, source) catch unreachable;
-                            break :blk copy;
+                            if (a.main_arena.alloc([]const u8, result.len)) |array_copy| {
+                                for (result, array_copy) |source, *dest|
+                                    if (a.main_arena.dupe(u8, source)) |string_copy| {
+                                        dest.* = string_copy;
+                                    } else |e| break :blk e;
+                                break :blk array_copy;
+                            } else |e| break :blk e;
                         }
                     } else |err| err,
                 };
@@ -306,7 +310,7 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
     verbose(context, "total time   : {f}", .{total_time});
 }
 
-const CompileError = AsepriteError || mem.Arena.Error;
+const CompileError = AsepriteError || mem.Arena.Error || error{OutputNameTooLong};
 
 fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *PerfTimers) CompileError![]const []const u8 {
     const arena_size = task_mem.len / 2;
@@ -352,7 +356,12 @@ fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timer
             const result = try arena.alloc([]const u8, layers.len);
 
             for (layers, result) |l, *output_file_name| {
-                const name = std.fmt.bufPrint(&name_buf, "{s}_{s}.bmp", .{ output_filename_prefix, l }) catch unreachable;
+                const name = std.fmt.bufPrint(&name_buf, "{s}_{s}.bmp", .{ output_filename_prefix, l }) catch |e| switch (e) {
+                    error.NoSpaceLeft => {
+                        log.err("Output file name too long: '{s}_{s}.bmp', input file: '{s}'", .{ output_filename_prefix, l, input_file.abs_path });
+                        return error.OutputNameTooLong;
+                    },
+                };
                 output_file_name.* = try pathJoin(arena, &.{ rel_dir_path, name });
             }
 
@@ -361,7 +370,13 @@ fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timer
 
             break :blk result;
         } else blk: {
-            const out_file_name = std.fmt.bufPrint(&name_buf, "{s}.bmp", .{stem(input_file.path)}) catch unreachable;
+            const input_stem = stem(input_file.path);
+            const out_file_name = std.fmt.bufPrint(&name_buf, "{s}.bmp", .{input_stem}) catch |e| switch (e) {
+                error.NoSpaceLeft => {
+                    log.err("Output file name too long: '{s}.bmp', input file: '{s}'", .{ input_stem, input_file.abs_path });
+                    return error.OutputNameTooLong;
+                },
+            };
             const rel_out_path = try pathJoin(arena, &.{ rel_dir_path, out_file_name });
             const abs_file_path = try pathJoin(tmp.a, &.{ context.output_dir_path, rel_out_path });
 
@@ -479,6 +494,8 @@ pub fn writeTimestampFile(context: *Context, output_dir: *const std.Io.Dir, rel_
 
         for (input_files) |input_file| {
             const outputs_opt = if (input_file.result_opt) |result_or_err|
+                // Failed inputs are omitted to force retry on next run
+                // Old outputs for failed inputs are still recorded in all_output_files, so --clean does not remove them
                 if (result_or_err.output_files_or_error) |output_files| output_files else |_| null
             else
                 input_file.old_outputs;
