@@ -276,7 +276,8 @@ pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Write
                 .options = .{
                     .input_scan_dir = options.asset_compiler_scan_dir,
                     .output_dir = options.asset_compiler_output_dir,
-                    .verbose = true,
+                    .verbose = options.asset_compiler_verbose,
+                    .debug = options.asset_compiler_debug,
                 },
             };
 

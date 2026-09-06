@@ -19,22 +19,8 @@ const dirname = std.fs.path.dirname;
 const stem = std.fs.path.stem;
 const pathIsAbsolute = std.fs.path.isAbsolute;
 
-/// Note: verbose() and debug() do NOT respect this, but DO print via std_options.LogFn!
-///  Set verbose/debug in the (cli) options to control verbose() and debug().
-pub const log_level: std.log.Level = .debug;
-
-pub const std_options: std.Options = blk: {
-    var o = core.default_std_options;
-
-    // o.logFn = std.log.defaultLog;
-    o.log_scope_levels =
-        o.log_scope_levels ++
-        [_]std.log.ScopeLevel{
-            .{ .scope = .asset_compiler, .level = log_level },
-        };
-
-    break :blk o;
-};
+pub const std_options: std.Options = core.default_std_options;
+const logFn = std_options.logFn;
 
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
@@ -749,11 +735,11 @@ fn asepriteExportSplitLayerBMP(context: *Context, result_arena: *mem.Arena, tmp_
 }
 
 inline fn verbose(context: *const Context, comptime fmt: []const u8, args: anytype) void {
-    if (context.options.verbose) std_options.logFn(.info, log_scope, fmt, args);
+    if (context.options.verbose) logFn(.info, log_scope, fmt, args);
 }
 
 inline fn debug(context: *const Context, comptime fmt: []const u8, args: anytype) void {
-    if (context.options.debug) std_options.logFn(.debug, log_scope, fmt, args);
+    if (context.options.debug) logFn(.debug, log_scope, fmt, args);
 }
 
 const PerfTs = struct {

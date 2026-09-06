@@ -14,6 +14,8 @@ var use_llvm: bool = false;
 var tools_optimize: OptimizeMode = .ReleaseSafe;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
+var verbose_asset_compiler: bool = true;
+var debug_asset_compiler: bool = false;
 // TODO: pulsePull requires locking during gamecode reload
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
 var cross_compile = false;
@@ -34,6 +36,9 @@ pub fn build(b: *Build) !void {
     tools_optimize = b.option(OptimizeMode, "tools_optimize", "Optimization mode for tools") orelse tools_optimize;
 
     verbose_wayland = b.option(bool, "verbose_wayland", "Verbose wayland logging") orelse verbose_wayland;
+
+    verbose_asset_compiler = b.option(bool, "verbose_asset_compiler", "Verbose asset compiler logging") orelse verbose_asset_compiler;
+    debug_asset_compiler = b.option(bool, "debug_asset_compiler", "Debug asset compiler logging") orelse debug_asset_compiler;
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
@@ -78,11 +83,12 @@ pub fn build(b: *Build) !void {
 
         try buildAssets(b, &engine, &tools, asset_mode, rel_scan_dir, rel_output_dir);
 
-        if (internal_build) {
-            if (asset_mode == .engine) {
-                options.addOption([]const u8, "asset_compiler_scan_dir", b.pathFromRoot(rel_scan_dir));
-                options.addOption([]const u8, "asset_compiler_output_dir", b.pathFromRoot(rel_output_dir));
-            }
+        if (internal_build and asset_mode == .engine) {
+            options.addOption(bool, "asset_compiler_verbose", verbose_asset_compiler);
+            options.addOption(bool, "asset_compiler_debug", debug_asset_compiler);
+
+            options.addOption([]const u8, "asset_compiler_scan_dir", b.pathFromRoot(rel_scan_dir));
+            options.addOption([]const u8, "asset_compiler_output_dir", b.pathFromRoot(rel_output_dir));
         }
     } else {
         std.log.warn("Skipping asset compilation", .{});
@@ -386,7 +392,8 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
     asset_step.dependOn(&asset_compiler_run.step);
 
     if (b.verbose) {
-        asset_compiler_run.addArg("-v");
+        if (verbose_asset_compiler) asset_compiler_run.addArg("-v");
+        if (debug_asset_compiler) asset_compiler_run.addArg("-d");
     }
 
     asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
