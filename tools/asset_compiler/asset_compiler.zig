@@ -19,6 +19,8 @@ const dirname = std.fs.path.dirname;
 const stem = std.fs.path.stem;
 const pathIsAbsolute = std.fs.path.isAbsolute;
 
+/// Note: verbose() and debug() do NOT respect this, but DO print via std_options.LogFn!
+///  Set verbose/debug in the (cli) options to control verbose() and debug().
 pub const log_level: std.log.Level = .debug;
 
 pub const std_options: std.Options = blk: {
@@ -173,17 +175,18 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
     defer all_output_files.deinit(context.gpa);
 
     if (ts_file_opt) |ts_file| {
+        debug(context, "Check found input files against timestamp file...", .{});
         for (input_files) |*input_file| {
-            debug(context, "Check new input against timestamp file: '{s}'", .{input_file.abs_path});
+            debug(context, "  Check new input against timestamp file: '{s}'", .{input_file.abs_path});
             if (ts_file.timestamp.nanoseconds <= input_file.timestamp.nanoseconds) {
                 // Input newer than timestamp
-                debug(context, "Input newer than timestamp, recompile: '{s}'", .{input_file.abs_path});
+                debug(context, "    Input newer than timestamp, recompile: '{s}'", .{input_file.abs_path});
                 try files_to_compile.append(context.gpa, input_file);
             } else if (ts_file.outputs_per_input.get(input_file.path)) |old_output_files| {
                 const up_to_date = blk: {
                     for (old_output_files) |output_file_path| {
                         const status = try outputFileStatus(context, &output_dir, output_file_path, input_file.timestamp);
-                        debug(context, "Output {s}: '{f}'", .{ @tagName(status), std.fs.path.fmtJoin(&.{ context.output_dir_path, output_file_path }) });
+                        debug(context, "    Output {s}: '{f}'", .{ @tagName(status), std.fs.path.fmtJoin(&.{ context.output_dir_path, output_file_path }) });
                         switch (status) {
                             .missing, .outOfDate => break :blk false,
                             .upToDate => {},
@@ -194,21 +197,21 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
 
                 if (up_to_date) {
                     if (old_output_files.len == 0) {
-                        debug(context, "Input has skip tag: '{s}'", .{input_file.abs_path});
+                        debug(context, "    Input has skip tag: '{s}'", .{input_file.abs_path});
                     }
                     input_file.old_outputs = old_output_files;
                 } else {
                     // Input newer than output or missing output(s)
-                    debug(context, "Output(s) out of date or missing for input: '{s}'", .{input_file.abs_path});
                     try files_to_compile.append(context.gpa, input_file);
                 }
             } else {
                 // New/unseen input
-                debug(context, "Input file unknown, compile: '{s}'", .{input_file.abs_path});
+                debug(context, "    Input file unknown, compile: '{s}'", .{input_file.abs_path});
                 try files_to_compile.append(context.gpa, input_file);
             }
         }
     } else {
+        debug(context, "Missing timestamp file, compile everything", .{});
         for (input_files) |*input_file| {
             try files_to_compile.append(context.gpa, input_file);
         }
@@ -329,6 +332,8 @@ fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timer
     const arena = result_arena.allocator();
     const tmp = mem.TempArena.init(&tmp_arena);
 
+    verbose(context, "compiling: '{s}'", .{input_file.abs_path});
+
     const tags = try asepriteTags(context, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
 
     // TODO: Do this while parsing tags in fn asepriteTags()
@@ -349,8 +354,6 @@ fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timer
     var output_file_paths: [][]const u8 = &.{};
 
     if (!tag_skip) {
-        verbose(context, "compiling: {s}", .{input_file.abs_path});
-
         const rel_dir_path = dirname(input_file.path) orelse "";
 
         var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
@@ -380,7 +383,7 @@ fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timer
             break :blk try arena.dupe([]const u8, &.{rel_out_path});
         };
     } else {
-        verbose(context, "skipping: '{s}'", .{input_file.abs_path});
+        verbose(context, "Skipping: '{s}' (skip tag found)", .{input_file.abs_path});
     }
 
     return output_file_paths;
@@ -402,14 +405,13 @@ fn readTimestampFile(context: *Context, allocator: Allocator, output_dir: *const
     const timestamp: std.Io.Timestamp = if (output_dir.statFile(context.io, rel_path, .{})) |stat|
         stat.mtime
     else |_| {
-        verbose(context, "missing timestamp file, compile everything", .{});
         return null;
     };
 
+    debug(context, "Reading timestamp file", .{});
+
     var outputs_per_input: std.StringHashMapUnmanaged([]const []const u8) = .empty;
     errdefer outputs_per_input.deinit(context.gpa);
-
-    verbose(context, "reading timestamp file", .{});
 
     if (output_dir.openFile(context.io, rel_path, .{})) |timestamp_file| {
         defer timestamp_file.close(context.io);
@@ -447,8 +449,8 @@ fn readTimestampFile(context: *Context, allocator: Allocator, output_dir: *const
                         const outputs = try allocator.dupe([]const u8, current_outputs.items);
                         try outputs_per_input.put(context.gpa, ci, outputs);
 
-                        debug(context, "input: '{s}'", .{ci});
-                        for (outputs) |o| debug(context, "\toutput: '{s}'", .{o});
+                        debug(context, "  Input: '{s}'", .{ci});
+                        for (outputs) |o| debug(context, "    Output: '{s}'", .{o});
                     }
 
                     current_outputs = .empty;
@@ -469,8 +471,8 @@ fn readTimestampFile(context: *Context, allocator: Allocator, output_dir: *const
             const outputs = try allocator.dupe([]const u8, current_outputs.items);
             try outputs_per_input.put(context.gpa, ci, outputs);
 
-            debug(context, "input: '{s}'", .{ci});
-            for (outputs) |o| debug(context, "\toutput: '{s}'", .{o});
+            debug(context, "  Input: '{s}'", .{ci});
+            for (outputs) |o| debug(context, "    Output: '{s}'", .{o});
         }
     } else |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ context.output_dir_path, rel_path });
@@ -539,6 +541,8 @@ fn collectInputFiles(context: *const Context, allocator: Allocator, scan_dir: *c
     var tmp = mem.getScratch(allocator);
     defer tmp.release();
 
+    debug(context, "Collecting input files...", .{});
+
     var input_files: std.ArrayList(InputFile) = .empty;
 
     var walker = try scan_dir.walk(tmp.a);
@@ -555,7 +559,7 @@ fn collectInputFiles(context: *const Context, allocator: Allocator, scan_dir: *c
                     .abs_path = abs_path,
                     .timestamp = stat.mtime,
                 });
-                debug(context, "Input file: {s}", .{abs_path});
+                debug(context, "  Found input file: '{s}'", .{abs_path});
             }
         }
     }
