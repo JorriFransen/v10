@@ -15,18 +15,6 @@ const mem = core.mem;
 const win32 = core.os.win32;
 const linux = core.os.linux;
 
-pub const std_options: std.Options = blk: {
-    var o = core.default_std_options;
-
-    o.log_scope_levels =
-        o.log_scope_levels ++
-        [_]std.log.ScopeLevel{
-            .{ .scope = .asset_compiler, .level = if (options.tools_optimize == .Debug) .debug else .info },
-        };
-
-    break :blk o;
-};
-
 pub const ThreadContext = struct {
     io: std.Io,
 };
@@ -280,22 +268,22 @@ pub inline fn runAssetCompiler(io: std.Io, gpa: Allocator, stderr: *std.Io.Write
             if (init_mem) mem.init();
             defer if (init_mem) mem.deinit();
 
-            var arena = try mem.Arena.init(.{ .virtual = .{} });
-            defer arena.deinit() catch {};
-
             var context = asset_compiler.Context{
                 .io = io,
-                .arena = arena.allocator(),
                 .gpa = gpa,
                 .stderr = stderr,
                 .stdout = stdout,
-                .verbose = true,
+                .options = .{
+                    .input_scan_dir = options.asset_compiler_scan_dir,
+                    .output_dir = options.asset_compiler_output_dir,
+                    .verbose = true,
+                },
             };
-            try asset_compiler.run(&context, .{
-                .input_scan_dir = options.asset_compiler_scan_dir,
-                .output_dir = options.asset_compiler_output_dir,
-                .verbose = true,
-            });
+
+            var arena = try mem.Arena.init(.{ .virtual = .{} });
+            defer arena.deinit() catch {};
+
+            try asset_compiler.run(&context, &arena);
         }
     }
 }

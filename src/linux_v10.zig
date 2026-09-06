@@ -39,9 +39,10 @@ const getPerfDuration = common.getPerfDuration;
 const getPerfTS = common.getPerfTS;
 
 pub const std_options: std.Options = blk: {
-    var o = common.std_options;
+    var o = core.default_std_options;
 
-    o.log_scope_levels = o.log_scope_levels ++
+    o.log_scope_levels =
+        o.log_scope_levels ++
         [_]std.log.ScopeLevel{
             .{ .scope = .linux_v10, .level = .debug },
             .{ .scope = .linux_joystick, .level = .debug },

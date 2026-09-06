@@ -30,6 +30,7 @@ pub fn defaultLog(comptime level: std.log.Level, comptime scope: @EnumLiteral(),
     defer std.debug.unlockStderr();
     return defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
 }
+
 pub fn defaultLogFileTerminal(
     comptime level: std.log.Level,
     comptime scope: @EnumLiteral(),
