@@ -8,6 +8,8 @@ const core = @import("core");
 const assert = core.assert;
 const clip = core.clip;
 const mem = core.mem;
+const PerfTs = core.perf.Timestamp;
+const PerfDuration = core.perf.Duration;
 
 const compile_options = @import("options");
 
@@ -751,42 +753,3 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, result_arena: *mem.Arena, tmp_aren
         script_path,
     }, perf_timers);
 }
-
-const PerfTs = struct {
-    wall: std.Io.Timestamp,
-    cpu: std.Io.Timestamp,
-
-    pub fn now(io: std.Io) PerfTs {
-        return .{
-            .wall = std.Io.Timestamp.now(io, .awake),
-            .cpu = std.Io.Timestamp.now(io, .cpu_thread),
-        };
-    }
-
-    pub fn untilNow(start: *const PerfTs, io: std.Io) PerfDuration {
-        const n = now(io);
-        return .{
-            .wall = start.wall.durationTo(n.wall),
-            .cpu = start.cpu.durationTo(n.cpu),
-        };
-    }
-};
-
-const PerfDuration = struct {
-    wall: std.Io.Duration,
-    cpu: std.Io.Duration,
-
-    pub const zero = PerfDuration{ .wall = .zero, .cpu = .zero };
-
-    pub fn add(this: *PerfDuration, other: PerfDuration) void {
-        this.wall.nanoseconds += other.wall.nanoseconds;
-        this.cpu.nanoseconds += other.cpu.nanoseconds;
-    }
-
-    pub fn format(this: *const PerfDuration, writer: *std.Io.Writer) !void {
-        try writer.print("wall: {:0<7.2}ms, cpu: {:0<7.2}ms", .{
-            @as(f64, @floatFromInt(this.wall.nanoseconds)) / std.time.ns_per_ms,
-            @as(f64, @floatFromInt(this.cpu.nanoseconds)) / std.time.ns_per_ms,
-        });
-    }
-};

@@ -28,7 +28,7 @@ const ThreadContext = common.ThreadContext;
 const AudioBuffer = common.AudioBuffer;
 
 pub const std_options: std.Options = blk: {
-    var o = common.std_options;
+    var o = core.default_std_options;
 
     o.log_scope_levels =
         o.log_scope_levels ++

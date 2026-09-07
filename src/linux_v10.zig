@@ -33,10 +33,7 @@ const GameCode = common.GameCode;
 const Input = common.Input;
 const Memory = common.Memory;
 const OffscreenBuffer = common.OffscreenBuffer;
-const PerfDuration = common.PerfDuration;
 const ThreadContext = common.ThreadContext;
-const getPerfDuration = common.getPerfDuration;
-const getPerfTS = common.getPerfTS;
 
 pub const std_options: std.Options = blk: {
     var o = core.default_std_options;

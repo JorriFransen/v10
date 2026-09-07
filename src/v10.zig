@@ -5,6 +5,8 @@ const core = @import("core");
 const assert = core.assert;
 const intrinsics = core.intrinsics;
 const mem = core.mem;
+const PerfTs = core.perf.Timestamp;
+const PerfDuration = core.perf.Duration;
 
 const math = core.math;
 const Color = math.Color;
@@ -35,10 +37,7 @@ const AudioBuffer = common.AudioBuffer;
 const Input = common.Input;
 const Memory = common.Memory;
 const OffscreenBuffer = common.OffscreenBuffer;
-const PerfDuration = common.PerfDuration;
 const ThreadContext = common.ThreadContext;
-const getPerfDuration = common.getPerfDuration;
-const getPerfTs = common.getPerfTS;
 const RenderGroup = @import("render_group.zig");
 
 const os = @import("builtin").os.tag;
@@ -509,7 +508,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const asset_prefix = "../../hh_assets/";
         // const asset_prefix = "";
 
-        const asset_load_start_ts = getPerfTs(io);
+        const asset_load_start_ts = PerfTs.now(io);
 
         game_state.grass[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass00.bmp");
         game_state.grass[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass01.bmp");
@@ -552,7 +551,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const asset_load_duration = asset_load_start_ts.untilNow(io);
         log.info("Asset loading took: {f}", .{asset_load_duration});
 
-        const world_build_start_ts = getPerfTs(io);
+        const world_build_start_ts = PerfTs.now(io);
 
         var series = Random.Series.seed(1234);
 
@@ -842,7 +841,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     }
 
                     if (furthest_buffer_opt) |furthest_buffer| {
-                        const start_ts = getPerfTs(io);
+                        const start_ts = PerfTs.now(io);
                         fillGroundChunk(game_state, tran_state, furthest_buffer, chunk_center_p);
                         const duration = start_ts.untilNow(io);
                         groundchunk_fill_duration.add(duration);
