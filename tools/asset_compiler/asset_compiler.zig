@@ -166,10 +166,10 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     ctx.debug("input_scan_dir: '{s}'", .{ctx.scan_dir_path});
     ctx.debug("output_dir: '{s}'", .{ctx.output_dir_path});
 
-    var ts_file_opt = try readTimestampFile(ctx, allocator, &output_dir, timestamp_file_sub_path);
+    var ts_file_opt = try readTimestampFile(ctx, arena, &output_dir, timestamp_file_sub_path);
     defer if (ts_file_opt) |*ts_file| ts_file.deinit(ctx);
 
-    const input_files = try collectInputFiles(ctx, allocator, &scan_dir, ctx.scan_dir_path);
+    const input_files = try collectInputFiles(ctx, arena, &scan_dir, ctx.scan_dir_path);
 
     var files_to_compile: std.ArrayList(*InputFile) = .empty;
     defer files_to_compile.deinit(ctx.gpa);
@@ -340,30 +340,16 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
     ctx.info("compiling: '{s}'", .{input_file.abs_path});
 
     const tags = try asepriteTags(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
-
-    // TODO: Do this while parsing tags in fn asepriteTags()
-    var tag_skip = false;
-    var tag_split_layers = false;
-
-    if (input_file.skip) {
-        tag_skip = true;
-    } else {
-        for (tags) |t| {
-            if (std.mem.eql(u8, "skip", t))
-                tag_skip = true
-            else if (std.mem.eql(u8, "split_layers", t))
-                tag_split_layers = true;
-        }
-    }
+    input_file.aseprite_tags = tags;
 
     var output_file_paths: [][]const u8 = &.{};
 
-    if (!tag_skip) {
+    if (!tags.skip) {
         const rel_dir_path = dirname(input_file.path) orelse "";
 
         var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
 
-        output_file_paths = if (tag_split_layers) blk: {
+        output_file_paths = if (tags.split_layers) blk: {
             const layers = try asepriteLayers(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
 
             const output_filename_prefix = stem(input_file.path);
@@ -414,7 +400,11 @@ pub const TimestampFile = struct {
     }
 };
 
-fn readTimestampFile(ctx: *Context, allocator: Allocator, output_dir: *const std.Io.Dir, rel_path: []const u8) !?TimestampFile {
+fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io.Dir, rel_path: []const u8) !?TimestampFile {
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
+
+    const allocator = _arena.a;
     var tmp = mem.getScratch(allocator);
     defer tmp.release();
 
@@ -436,9 +426,11 @@ fn readTimestampFile(ctx: *Context, allocator: Allocator, output_dir: *const std
         var current_outputs: std.ArrayList([]const u8) = .empty;
 
         while (line_it.next()) |raw_line| {
+            var flush_input: ?struct { ?[]const u8 } = null;
             const line = std.mem.trim(u8, raw_line, "\r");
+
             if (line.len > 0) {
-                if (!(line[0] == 'i' or line[0] == 'o') or line[1] != ':') {
+                if (!(line[0] == 'i' or line[0] == 'o' or line[0] == 's') or line[1] != ':') {
                     ctx.err("Invalid line in timestamp file: '{s}'", .{line});
                     return error.ReadTimestampFile;
                 }
@@ -450,6 +442,22 @@ fn readTimestampFile(ctx: *Context, allocator: Allocator, output_dir: *const std
                 }
 
                 if (line[0] == 'i') {
+                    flush_input = .{path};
+                } else if (line[0] == 'o') {
+                    if (current_input == null) {
+                        ctx.err("Invalid line in timestamp file: '{s}'", .{line});
+                        ctx.err("No associated input", .{});
+                        return error.ReadTimestampFile;
+                    }
+
+                    try current_outputs.append(tmp.a, path);
+                } else if (line[0] == 's') {
+                    flush_input = .{null};
+
+                    try outputs_per_input.put(ctx.gpa, path, &.{});
+                }
+
+                if (flush_input) |next_input| {
                     if (current_input) |ci| {
                         const outputs = try allocator.dupe([]const u8, current_outputs.items);
                         try outputs_per_input.put(ctx.gpa, ci, outputs);
@@ -459,15 +467,7 @@ fn readTimestampFile(ctx: *Context, allocator: Allocator, output_dir: *const std
                     }
 
                     current_outputs = .empty;
-                    current_input = path;
-                } else if (line[0] == 'o') {
-                    if (current_input == null) {
-                        ctx.err("Invalid line in timestamp file: '{s}'", .{line});
-                        ctx.err("No associated input", .{});
-                        return error.ReadTimestampFile;
-                    }
-
-                    try current_outputs.append(tmp.a, path);
+                    current_input = next_input[0];
                 }
             }
         }
@@ -497,17 +497,21 @@ pub fn writeTimestampFile(ctx: *Context, output_dir: *const std.Io.Dir, rel_path
         const writer = &file_writer.interface;
 
         for (input_files) |input_file| {
-            const outputs_opt = if (input_file.result_opt) |result_or_err|
-                // Failed inputs are omitted to force retry on next run
-                // Old outputs for failed inputs are still recorded in all_output_files, so --clean does not remove them
-                if (result_or_err.output_files_or_error) |output_files| output_files else |_| null
-            else
-                input_file.old_outputs;
+            if (input_file.aseprite_tags.skip) {
+                try writer.print("s:{s}\n", .{input_file.path});
+            } else {
+                const outputs_opt = if (input_file.result_opt) |result_or_err|
+                    // Failed inputs are omitted to force retry on next run
+                    // Old outputs for failed inputs are still recorded in all_output_files, so --clean does not remove them
+                    if (result_or_err.output_files_or_error) |output_files| output_files else |_| null
+                else
+                    input_file.old_outputs;
 
-            if (outputs_opt) |outputs| {
-                try writer.print("i:{s}\n", .{input_file.path});
-                for (outputs) |out_file_path| {
-                    try writer.print("o:{s}\n", .{out_file_path});
+                if (outputs_opt) |outputs| {
+                    try writer.print("i:{s}\n", .{input_file.path});
+                    for (outputs) |out_file_path| {
+                        try writer.print("o:{s}\n", .{out_file_path});
+                    }
                 }
             }
         }
@@ -519,18 +523,22 @@ pub fn writeTimestampFile(ctx: *Context, output_dir: *const std.Io.Dir, rel_path
     }
 }
 
+const AsepriteTags = packed struct(u2) {
+    skip: bool = false,
+    split_layers: bool = false,
+};
+
 pub const InputFile = struct {
     /// Relative to scan_path
     path: []const u8,
     abs_path: []const u8,
-
-    skip: bool = false,
 
     timestamp: std.Io.Timestamp,
 
     old_outputs: []const []const u8 = &.{},
 
     result_opt: ?CompileResult = null,
+    aseprite_tags: AsepriteTags,
 };
 
 pub const CompileResult = struct {
@@ -543,7 +551,11 @@ pub const PerfTimers = struct {
     aseprite_run_time: PerfDuration = .zero,
 };
 
-fn collectInputFiles(ctx: *const Context, allocator: Allocator, scan_dir: *const std.Io.Dir, scan_path: []const u8) ![]InputFile {
+fn collectInputFiles(ctx: *const Context, arena: *mem.Arena, scan_dir: *const std.Io.Dir, scan_path: []const u8) ![]InputFile {
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
+
+    const allocator = _arena.a;
     var tmp = mem.getScratch(allocator);
     defer tmp.release();
 
@@ -564,6 +576,7 @@ fn collectInputFiles(ctx: *const Context, allocator: Allocator, scan_dir: *const
                     .path = path,
                     .abs_path = abs_path,
                     .timestamp = stat.mtime,
+                    .aseprite_tags = .{},
                 });
                 ctx.debug("  Found input file: '{s}'", .{abs_path});
             }
@@ -601,8 +614,11 @@ pub const AsepriteError = error{AsepriteRunFailed} ||
     Allocator.Error ||
     std.process.RunError;
 
-fn aseprite(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, args: []const []const u8, perf_timers: *PerfTimers) AsepriteError!RunResult {
-    const allocator = result_arena.allocator();
+fn aseprite(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, args: []const []const u8, perf_timers: *PerfTimers) AsepriteError!RunResult {
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
+
+    const allocator = _arena.a;
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
@@ -656,14 +672,17 @@ fn aseprite(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, args
     }
 }
 
-fn asepriteTags(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, perf_timers: *PerfTimers) AsepriteError![]const []const u8 {
+fn asepriteTags(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, perf_timers: *PerfTimers) AsepriteError!AsepriteTags {
     assert(pathIsAbsolute(abs_input_path));
 
-    const allocator = result_arena.allocator();
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
+
+    const allocator = _arena.a;
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const tags_rr = try aseprite(ctx, tmp.arena, result_arena, &.{ "-b", "--list-tags", abs_input_path }, perf_timers);
+    const tags_rr = try aseprite(ctx, tmp.arena, arena, &.{ "-b", "--list-tags", abs_input_path }, perf_timers);
 
     var tags: std.ArrayList([]const u8) = .empty;
 
@@ -676,18 +695,30 @@ fn asepriteTags(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, 
         }
     }
 
-    return try allocator.dupe([]const u8, tags.items);
+    var result: AsepriteTags = .{};
+
+    for (tags.items) |t| {
+        if (std.mem.eql(u8, "skip", t))
+            result.skip = true
+        else if (std.mem.eql(u8, "split_layers", t))
+            result.split_layers = true;
+    }
+
+    return result;
 }
 
 // Flattens the hierarchy, replacing / with -
-fn asepriteLayers(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, perf_timers: *PerfTimers) AsepriteError![]const []const u8 {
+fn asepriteLayers(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, perf_timers: *PerfTimers) AsepriteError![]const []const u8 {
     assert(pathIsAbsolute(abs_input_path));
 
-    const allocator = result_arena.allocator();
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
+
+    const allocator = _arena.a;
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const layers_rr = try aseprite(ctx, tmp.arena, result_arena, &.{ "-b", "--all-layers", "--list-layer-hierarchy", abs_input_path }, perf_timers);
+    const layers_rr = try aseprite(ctx, tmp.arena, arena, &.{ "-b", "--all-layers", "--list-layer-hierarchy", abs_input_path }, perf_timers);
 
     var layers: std.ArrayList([]const u8) = .empty;
     var stack: std.ArrayList([]const u8) = .empty;
@@ -724,19 +755,25 @@ fn asepriteLayers(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena
     return try allocator.dupe([]const u8, layers.items);
 }
 
-fn asepriteExportBMP(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, abs_output_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
+fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, abs_output_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
     assert(pathIsAbsolute(abs_input_path));
     assert(pathIsAbsolute(abs_output_path));
+
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
 
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    _ = try aseprite(ctx, tmp.arena, result_arena, &.{ "-b", abs_input_path, "--save-as", abs_output_path }, perf_timers);
+    _ = try aseprite(ctx, tmp.arena, arena, &.{ "-b", abs_input_path, "--save-as", abs_output_path }, perf_timers);
 }
 
-fn asepriteExportSplitLayerBMP(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, abs_output_dir_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
+fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, abs_output_dir_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
     assert(pathIsAbsolute(abs_input_path));
     assert(pathIsAbsolute(abs_output_dir_path));
+
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
 
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
@@ -744,7 +781,7 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, result_arena: *mem.Arena, tmp_aren
     const out_dir_param = try std.fmt.allocPrint(tmp.a, "out_dir={s}", .{abs_output_dir_path});
     const script_path = try pathJoin(tmp.a, &.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" });
 
-    _ = try aseprite(ctx, tmp.arena, result_arena, &.{
+    _ = try aseprite(ctx, tmp.arena, arena, &.{
         "-b",
         abs_input_path,
         "--script-param",
