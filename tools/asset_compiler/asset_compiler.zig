@@ -1,6 +1,5 @@
 const std = @import("std");
 const log_scope = .asset_compiler;
-const log = std.log.scoped(log_scope);
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
@@ -44,7 +43,11 @@ pub const Context = struct {
 
     options: OptionParser.Options,
 
-    inline fn verbose(this: *const Context, comptime fmt: []const u8, args: anytype) void {
+    inline fn err(_: *const Context, comptime fmt: []const u8, args: anytype) void {
+        logFn(.err, log_scope, fmt, args);
+    }
+
+    inline fn info(this: *const Context, comptime fmt: []const u8, args: anytype) void {
         if (this.options.verbose) logFn(.info, log_scope, fmt, args);
     }
 
@@ -127,7 +130,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         }
 
         break :dir std.Io.Dir.cwd().openDir(ctx.io, ctx.scan_dir_path, .{ .iterate = true }) catch |e| {
-            std.log.err("Unable to open input dir '{s}', error: '{}'", .{ ctx.scan_dir_path, e });
+            ctx.err("Unable to open input dir '{s}', error: '{}'", .{ ctx.scan_dir_path, e });
             return error.InvalidInputScanDir;
         };
     };
@@ -142,16 +145,16 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
         break :dir std.Io.Dir.cwd().openDir(ctx.io, ctx.output_dir_path, .{ .iterate = true }) catch |e| switch (e) {
             error.FileNotFound => blk: {
-                ctx.verbose("Creating output dir: '{s}'", .{ctx.output_dir_path});
+                ctx.info("Creating output dir: '{s}'", .{ctx.output_dir_path});
 
                 break :blk std.Io.Dir.cwd().createDirPathOpen(ctx.io, ctx.output_dir_path, .{}) catch |de| {
-                    std.log.err("Unable to creat output dir '{s}', error: '{}", .{ ctx.output_dir_path, de });
+                    ctx.err("Unable to creat output dir '{s}', error: '{}", .{ ctx.output_dir_path, de });
                     return de;
                 };
             },
 
             else => {
-                std.log.err("Unable to open output dir '{s}', error: '{}'", .{ ctx.output_dir_path, e });
+                ctx.err("Unable to open output dir '{s}', error: '{}'", .{ ctx.output_dir_path, e });
                 return error.InvalidOutputDir;
             },
         };
@@ -222,7 +225,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     var pool_free_index_stack = std.ArrayList(usize).initBuffer(pool_free_index_buf);
     for (0..pool_size) |i| pool_free_index_stack.appendAssumeCapacity((pool_size - 1) - i);
 
-    ctx.verbose("start compile tasks, pool_size: {}, task_count: {}", .{ pool_size, files_to_compile.items.len });
+    ctx.info("start compile tasks, pool_size: {}, task_count: {}", .{ pool_size, files_to_compile.items.len });
 
     var main_arena_mutex = std.Io.Mutex.init;
     var pool_mutex = std.Io.Mutex.init;
@@ -301,7 +304,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
             total_aseprite_run_duration.add(result.perf_timers.aseprite_run_time);
 
             break :blk if (result.output_files_or_error) |output_files| output_files else |err| {
-                log.err("Error compiling input: '{s}', error: '{}'", .{ input_file.path, err });
+                ctx.err("Error compiling input: '{s}', error: '{}'", .{ input_file.path, err });
                 break :blk input_file.old_outputs;
             };
         } else input_file.old_outputs;
@@ -316,8 +319,8 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     // TODO: Attempt to remove any file in the output dir that's missing from all_output_files
 
     const total_time = start_time.untilNow(ctx.io);
-    ctx.verbose("aseprite time: {f}", .{total_aseprite_run_duration});
-    ctx.verbose("total time   : {f}", .{total_time});
+    ctx.info("aseprite time: {f}", .{total_aseprite_run_duration});
+    ctx.info("total time   : {f}", .{total_time});
 }
 
 const CompileError = AsepriteError || mem.Arena.Error || error{OutputNameTooLong};
@@ -332,7 +335,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
     const arena = result_arena.allocator();
     const tmp = mem.TempArena.init(&tmp_arena);
 
-    ctx.verbose("compiling: '{s}'", .{input_file.abs_path});
+    ctx.info("compiling: '{s}'", .{input_file.abs_path});
 
     const tags = try asepriteTags(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
 
@@ -368,7 +371,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
             for (layers, result) |l, *output_file_name| {
                 const name = std.fmt.bufPrint(&name_buf, "{s}_{s}.bmp", .{ output_filename_prefix, l }) catch |e| switch (e) {
                     error.NoSpaceLeft => {
-                        log.err("Output file name too long: '{s}_{s}.bmp', input file: '{s}'", .{ output_filename_prefix, l, input_file.abs_path });
+                        ctx.err("Output file name too long: '{s}_{s}.bmp', input file: '{s}'", .{ output_filename_prefix, l, input_file.abs_path });
                         return error.OutputNameTooLong;
                     },
                 };
@@ -383,7 +386,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
             const input_stem = stem(input_file.path);
             const out_file_name = std.fmt.bufPrint(&name_buf, "{s}.bmp", .{input_stem}) catch |e| switch (e) {
                 error.NoSpaceLeft => {
-                    log.err("Output file name too long: '{s}.bmp', input file: '{s}'", .{ input_stem, input_file.abs_path });
+                    ctx.err("Output file name too long: '{s}.bmp', input file: '{s}'", .{ input_stem, input_file.abs_path });
                     return error.OutputNameTooLong;
                 },
             };
@@ -394,7 +397,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
             break :blk try arena.dupe([]const u8, &.{rel_out_path});
         };
     } else {
-        ctx.verbose("Skipping: '{s}' (skip tag found)", .{input_file.abs_path});
+        ctx.info("Skipping: '{s}' (skip tag found)", .{input_file.abs_path});
     }
 
     return output_file_paths;
@@ -434,13 +437,13 @@ fn readTimestampFile(ctx: *Context, allocator: Allocator, output_dir: *const std
             const line = std.mem.trim(u8, raw_line, "\r");
             if (line.len > 0) {
                 if (!(line[0] == 'i' or line[0] == 'o') or line[1] != ':') {
-                    log.err("Invalid line in timestamp file: '{s}'", .{line});
+                    ctx.err("Invalid line in timestamp file: '{s}'", .{line});
                     return error.ReadTimestampFile;
                 }
 
                 const path = try allocator.dupe(u8, line[2..]);
                 if (path.len == 0) {
-                    log.err("Invalid line in timestamp file: '{s}'", .{line});
+                    ctx.err("Invalid line in timestamp file: '{s}'", .{line});
                     return error.ReadTimestampFile;
                 }
 
@@ -457,8 +460,8 @@ fn readTimestampFile(ctx: *Context, allocator: Allocator, output_dir: *const std
                     current_input = path;
                 } else if (line[0] == 'o') {
                     if (current_input == null) {
-                        log.err("Invalid line in timestamp file: '{s}'", .{line});
-                        log.err("No associated input", .{});
+                        ctx.err("Invalid line in timestamp file: '{s}'", .{line});
+                        ctx.err("No associated input", .{});
                         return error.ReadTimestampFile;
                     }
 
@@ -476,7 +479,7 @@ fn readTimestampFile(ctx: *Context, allocator: Allocator, output_dir: *const std
         }
     } else |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
-        std.log.err("unable to open timestamp file for reading '{s}', error: '{}'", .{ full_path, e });
+        ctx.err("unable to open timestamp file for reading '{s}', error: '{}'", .{ full_path, e });
         return error.WriteTimestampFile;
     }
 
@@ -509,7 +512,7 @@ pub fn writeTimestampFile(ctx: *Context, output_dir: *const std.Io.Dir, rel_path
 
         try writer.flush();
     } else |e| {
-        std.log.err("unable to open timestamp file for writing '{s}/{s}', error: '{}'", .{ ctx.output_dir_path, rel_path, e });
+        ctx.err("unable to open timestamp file for writing '{s}/{s}', error: '{}'", .{ ctx.output_dir_path, rel_path, e });
         return error.WriteTimestampFile;
     }
 }
@@ -637,8 +640,8 @@ fn aseprite(ctx: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, args
             }
 
             if (exit_code != 0) {
-                std.log.err("asprite stdout:\n{s}", .{result.stdout});
-                std.log.err("asprite stderr:\n{s}", .{result.stderr});
+                ctx.err("asprite stdout:\n{s}", .{result.stdout});
+                ctx.err("asprite stderr:\n{s}", .{result.stderr});
                 return error.AsepriteRunFailed;
             }
             return .{
