@@ -419,70 +419,81 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
     var outputs_per_input: std.StringHashMapUnmanaged([]const []const u8) = .empty;
     errdefer outputs_per_input.deinit(ctx.gpa);
 
-    if (output_dir.readFileAlloc(ctx.io, rel_path, tmp.a, .limited(tmp.arena.unused()))) |timestamp_file_content| {
-        var line_it = std.mem.splitScalar(u8, timestamp_file_content, '\n');
+    const ts_file = output_dir.openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
+        const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
+        ctx.err("Unable to open timestamp file for reading: '{s}', error: '{}'", .{ full_path, e });
+        return error.WriteTimestampFile;
+    };
+    defer ts_file.close(ctx.io);
 
-        var current_input: ?[]const u8 = null;
-        var current_outputs: std.ArrayList([]const u8) = .empty;
+    var read_buf: [4096]u8 = undefined;
+    var reader = ts_file.reader(ctx.io, &read_buf);
 
-        while (line_it.next()) |raw_line| {
-            var flush_input: ?struct { ?[]const u8 } = null;
-            const line = std.mem.trim(u8, raw_line, "\r");
+    const ts_len = try reader.getSize();
+    const timestamp_file_content = reader.interface.readAlloc(tmp.a, ts_len) catch |e| {
+        const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
+        ctx.err("Unable to read timestamp file: '{s}', error: '{}'", .{ full_path, e });
+        return error.WriteTimestampFile;
+    };
 
-            if (line.len > 0) {
-                if (!(line[0] == 'i' or line[0] == 'o' or line[0] == 's') or line[1] != ':') {
+    var line_it = std.mem.splitScalar(u8, timestamp_file_content, '\n');
+
+    var current_input: ?[]const u8 = null;
+    var current_outputs: std.ArrayList([]const u8) = .empty;
+
+    while (line_it.next()) |raw_line| {
+        var flush_input: ?struct { ?[]const u8 } = null;
+        const line = std.mem.trim(u8, raw_line, "\r");
+
+        if (line.len > 0) {
+            if (!(line[0] == 'i' or line[0] == 'o' or line[0] == 's') or line[1] != ':') {
+                ctx.err("Invalid line in timestamp file: '{s}'", .{line});
+                return error.ReadTimestampFile;
+            }
+
+            const path = try allocator.dupe(u8, line[2..]);
+            if (path.len == 0) {
+                ctx.err("Invalid line in timestamp file: '{s}'", .{line});
+                return error.ReadTimestampFile;
+            }
+
+            if (line[0] == 'i') {
+                flush_input = .{path};
+            } else if (line[0] == 'o') {
+                if (current_input == null) {
                     ctx.err("Invalid line in timestamp file: '{s}'", .{line});
+                    ctx.err("No associated input", .{});
                     return error.ReadTimestampFile;
                 }
 
-                const path = try allocator.dupe(u8, line[2..]);
-                if (path.len == 0) {
-                    ctx.err("Invalid line in timestamp file: '{s}'", .{line});
-                    return error.ReadTimestampFile;
+                try current_outputs.append(tmp.a, path);
+            } else if (line[0] == 's') {
+                flush_input = .{null};
+
+                try outputs_per_input.put(ctx.gpa, path, &.{});
+            }
+
+            if (flush_input) |next_input| {
+                if (current_input) |ci| {
+                    const outputs = try allocator.dupe([]const u8, current_outputs.items);
+                    try outputs_per_input.put(ctx.gpa, ci, outputs);
+
+                    ctx.debug("  Input: '{s}'", .{ci});
+                    for (outputs) |o| ctx.debug("    Output: '{s}'", .{o});
                 }
 
-                if (line[0] == 'i') {
-                    flush_input = .{path};
-                } else if (line[0] == 'o') {
-                    if (current_input == null) {
-                        ctx.err("Invalid line in timestamp file: '{s}'", .{line});
-                        ctx.err("No associated input", .{});
-                        return error.ReadTimestampFile;
-                    }
-
-                    try current_outputs.append(tmp.a, path);
-                } else if (line[0] == 's') {
-                    flush_input = .{null};
-
-                    try outputs_per_input.put(ctx.gpa, path, &.{});
-                }
-
-                if (flush_input) |next_input| {
-                    if (current_input) |ci| {
-                        const outputs = try allocator.dupe([]const u8, current_outputs.items);
-                        try outputs_per_input.put(ctx.gpa, ci, outputs);
-
-                        ctx.debug("  Input: '{s}'", .{ci});
-                        for (outputs) |o| ctx.debug("    Output: '{s}'", .{o});
-                    }
-
-                    current_outputs = .empty;
-                    current_input = next_input[0];
-                }
+                current_outputs = .empty;
+                current_input = next_input[0];
             }
         }
+    }
 
-        if (current_input) |ci| {
-            const outputs = try allocator.dupe([]const u8, current_outputs.items);
-            try outputs_per_input.put(ctx.gpa, ci, outputs);
+    if (current_input) |ci| {
+        const outputs = try allocator.dupe([]const u8, current_outputs.items);
+        try outputs_per_input.put(ctx.gpa, ci, outputs);
 
-            ctx.debug("  Input: '{s}'", .{ci});
-            for (outputs) |o| ctx.debug("    Output: '{s}'", .{o});
-        }
-    } else |e| {
-        const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
-        ctx.err("unable to open timestamp file for reading '{s}', error: '{}'", .{ full_path, e });
-        return error.WriteTimestampFile;
+        ctx.debug("  Input: '{s}'", .{ci});
+        for (outputs) |o| ctx.debug("    Output: '{s}'", .{o});
     }
 
     return .{ .timestamp = timestamp, .outputs_per_input = outputs_per_input };
