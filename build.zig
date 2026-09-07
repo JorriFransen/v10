@@ -139,6 +139,13 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     const run_exe = b.addRunArtifact(exe);
     run_exe.step.dependOn(b.getInstallStep()); // To ensure we run the installed exe, not the one in cache
 
+    if (b.build_root.path) |brp| {
+        std.Io.Dir.createDirAbsolute(b.graph.io, b.pathJoin(&.{ brp, "data" }), .default_dir) catch |e| switch (e) {
+            error.PathAlreadyExists => {},
+            else => return e,
+        };
+    }
+
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
     // run_exe.setCwd(b.graph.path(.install_prefix, ""));

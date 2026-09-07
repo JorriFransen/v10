@@ -118,7 +118,7 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
             context.scan_dir_path = try pathResolve(allocator, &.{ cwd, context.options.input_scan_dir });
         }
 
-        break :dir std.Io.Dir.cwd().openDir(context.io, context.options.input_scan_dir, .{ .iterate = true }) catch |e| {
+        break :dir std.Io.Dir.cwd().openDir(context.io, context.scan_dir_path, .{ .iterate = true }) catch |e| {
             std.log.err("Unable to open input dir '{s}', error: '{}'", .{ context.scan_dir_path, e });
             return error.InvalidInputScanDir;
         };
@@ -132,10 +132,20 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
             context.output_dir_path = try pathResolve(allocator, &.{ cwd, context.options.output_dir });
         }
 
-        // TODO: Consider creating the directory if it does not exist
-        break :dir std.Io.Dir.cwd().openDir(context.io, context.options.output_dir, .{ .iterate = true }) catch |e| {
-            std.log.err("Unable to open output dir '{s}', error: '{}'", .{ context.output_dir_path, e });
-            return error.InvalidOutputDir;
+        break :dir std.Io.Dir.cwd().openDir(context.io, context.output_dir_path, .{ .iterate = true }) catch |e| switch (e) {
+            error.FileNotFound => blk: {
+                verbose(context, "Creating output dir: '{s}'", .{context.output_dir_path});
+
+                break :blk std.Io.Dir.cwd().createDirPathOpen(context.io, context.output_dir_path, .{}) catch |de| {
+                    std.log.err("Unable to creat output dir '{s}', error: '{}", .{ context.output_dir_path, de });
+                    return de;
+                };
+            },
+
+            else => {
+                std.log.err("Unable to open output dir '{s}', error: '{}'", .{ context.output_dir_path, e });
+                return error.InvalidOutputDir;
+            },
         };
     };
     defer output_dir.close(context.io);

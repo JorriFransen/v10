@@ -4,3 +4,6 @@ zig-out/
 
 .nvim.lua
 
+
+data/.timestamps
+
