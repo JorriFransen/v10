@@ -101,7 +101,7 @@ pub fn build(b: *Build) !void {
     if (enable_tests) {
         const tests = try buildTests(b, target);
         engine.run.step.dependOn(&tests.run.step);
-        engine.install.step.dependOn(&tests.install.step);
+        // engine.install.step.dependOn(&tests.install.step);
     }
 }
 
@@ -366,7 +366,7 @@ const Tools = struct {
                 .use_llvm = use_llvm,
             });
 
-            b.installArtifact(asset_compiler_exe);
+            // b.installArtifact(asset_compiler_exe);
 
             return .{
                 .exe = asset_compiler_exe,

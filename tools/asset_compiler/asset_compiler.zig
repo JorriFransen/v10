@@ -25,10 +25,12 @@ const logFn = std_options.logFn;
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
     clip.option(@as([]const u8, ""), "output_dir", 'o', "Output directory"),
-    clip.option(@as([]const u8, ".timestamps"), "timestamp_file_path", 't', "Timestamp file path relative to output_dir"),
     clip.option(false, "verbose", 'v', "Verbose output"),
     clip.option(false, "debug", 'd', "Debug output"),
 });
+
+/// Relative to output_dir
+const timestamp_file_sub_path = ".timestamps";
 
 pub const Context = struct {
     io: std.Io,
@@ -43,16 +45,14 @@ pub const Context = struct {
     options: OptionParser.Options,
 };
 
-var timestamp_file_buf: [4096]u8 = undefined;
-
 pub fn main(init: std.process.Init) !u8 {
     mem.init();
     defer mem.deinit();
 
-    var stderr_buf: [2048]u8 = undefined;
+    var stderr_buf: [256]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(init.io, &stderr_buf);
 
-    var stdout_buf: [2048]u8 = undefined;
+    var stdout_buf: [256]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
     defer {
         stderr_writer.flush() catch {};
@@ -111,6 +111,20 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
 
     const cwd = try std.process.currentPathAlloc(context.io, allocator);
 
+    const scan_dir = dir: {
+        if (pathIsAbsolute(context.options.input_scan_dir)) {
+            context.scan_dir_path = try allocator.dupe(u8, context.options.input_scan_dir);
+        } else {
+            context.scan_dir_path = try pathResolve(allocator, &.{ cwd, context.options.input_scan_dir });
+        }
+
+        break :dir std.Io.Dir.cwd().openDir(context.io, context.options.input_scan_dir, .{ .iterate = true }) catch |e| {
+            std.log.err("Unable to open input dir '{s}', error: '{}'", .{ context.scan_dir_path, e });
+            return error.InvalidInputScanDir;
+        };
+    };
+    defer scan_dir.close(context.io);
+
     const output_dir = dir: {
         if (pathIsAbsolute(context.options.output_dir)) {
             context.output_dir_path = try allocator.dupe(u8, context.options.output_dir);
@@ -120,39 +134,19 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
 
         // TODO: Consider creating the directory if it does not exist
         break :dir std.Io.Dir.cwd().openDir(context.io, context.options.output_dir, .{ .iterate = true }) catch |e| {
-            std.log.err("Unable to open output dir '{s}'", .{context.output_dir_path});
-            std.log.err("{s}", .{@errorName(e)});
+            std.log.err("Unable to open output dir '{s}', error: '{}'", .{ context.output_dir_path, e });
             return error.InvalidOutputDir;
         };
     };
-    errdefer output_dir.close(context.io);
-
-    const scan_dir = dir: {
-        // TODO: Use path relative to cwd
-        if (pathIsAbsolute(context.options.input_scan_dir)) {
-            context.scan_dir_path = try allocator.dupe(u8, context.options.input_scan_dir);
-        } else {
-            context.scan_dir_path = try pathResolve(allocator, &.{ cwd, context.options.input_scan_dir });
-        }
-
-        break :dir std.Io.Dir.cwd().openDir(context.io, context.options.input_scan_dir, .{ .iterate = true }) catch |e| {
-            std.log.err("Unable to open input dir '{s}'", .{context.scan_dir_path});
-            std.log.err("{s}", .{@errorName(e)});
-            return error.InvalidInputScanDir;
-        };
-    };
+    defer output_dir.close(context.io);
 
     debug(context, "input_scan_dir: '{s}'", .{context.scan_dir_path});
     debug(context, "output_dir: '{s}'", .{context.output_dir_path});
 
-    var ts_file_opt = try readTimestampFile(context, allocator, &output_dir, context.options.timestamp_file_path);
+    var ts_file_opt = try readTimestampFile(context, allocator, &output_dir, timestamp_file_sub_path);
     defer if (ts_file_opt) |*ts_file| ts_file.deinit(context);
 
-    const input_files = collectInputFiles(context, allocator, &scan_dir, context.scan_dir_path) catch |e| {
-        scan_dir.close(context.io);
-        return e;
-    };
-    scan_dir.close(context.io);
+    const input_files = try collectInputFiles(context, allocator, &scan_dir, context.scan_dir_path);
 
     var files_to_compile: std.ArrayList(*InputFile) = .empty;
     defer files_to_compile.deinit(context.gpa);
@@ -203,7 +197,7 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
         }
     }
 
-    const mem_per_task = 4 * mem.MiB;
+    const mem_per_task = 1 * mem.MiB;
     const pool_size = @min(files_to_compile.items.len, std.Thread.getCpuCount() catch 4);
     const mem_pool = try allocator.alloc([mem_per_task]u8, pool_size);
     const pool_free_index_buf = try allocator.alloc(usize, pool_size);
@@ -299,11 +293,9 @@ pub fn run(context: *Context, arena: *mem.Arena) !void {
         }
     }
 
-    try writeTimestampFile(context, &output_dir, context.options.timestamp_file_path, input_files);
+    try writeTimestampFile(context, &output_dir, timestamp_file_sub_path, input_files);
 
     // TODO: Attempt to remove any file in the output dir that's missing from all_output_files
-
-    output_dir.close(context.io);
 
     const total_time = start_time.untilNow(context.io);
     verbose(context, "aseprite time: {f}", .{total_aseprite_run_duration});
@@ -366,7 +358,7 @@ fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timer
             }
 
             const abs_out_dir = try pathJoin(tmp.a, &.{ context.output_dir_path, rel_dir_path });
-            _ = try asepriteExportSplitLayerBMP(context, &result_arena, tmp.arena, input_file.abs_path, abs_out_dir, perf_timers);
+            _ = try asepriteExportSplitLayerBMP(context, tmp.arena, &result_arena, input_file.abs_path, abs_out_dir, perf_timers);
 
             break :blk result;
         } else blk: {
@@ -380,7 +372,7 @@ fn compile(context: *Context, input_file: *InputFile, task_mem: []u8, perf_timer
             const rel_out_path = try pathJoin(arena, &.{ rel_dir_path, out_file_name });
             const abs_file_path = try pathJoin(tmp.a, &.{ context.output_dir_path, rel_out_path });
 
-            _ = try asepriteExportBMP(context, &result_arena, tmp.arena, input_file.abs_path, abs_file_path, perf_timers);
+            _ = try asepriteExportBMP(context, tmp.arena, &result_arena, input_file.abs_path, abs_file_path, perf_timers);
             break :blk try arena.dupe([]const u8, &.{rel_out_path});
         };
     } else {
@@ -414,18 +406,7 @@ fn readTimestampFile(context: *Context, allocator: Allocator, output_dir: *const
     var outputs_per_input: std.StringHashMapUnmanaged([]const []const u8) = .empty;
     errdefer outputs_per_input.deinit(context.gpa);
 
-    if (output_dir.openFile(context.io, rel_path, .{})) |timestamp_file| {
-        defer timestamp_file.close(context.io);
-
-        var file_reader = timestamp_file.reader(context.io, &timestamp_file_buf);
-        const reader = &file_reader.interface;
-
-        const timestamp_file_content_size = try file_reader.getSize();
-        const timestamp_file_content = try tmp.a.alloc(u8, timestamp_file_content_size);
-        defer tmp.release();
-
-        try reader.readSliceAll(timestamp_file_content);
-
+    if (output_dir.readFileAlloc(context.io, rel_path, tmp.a, .limited(tmp.arena.unused()))) |timestamp_file_content| {
         var line_it = std.mem.splitScalar(u8, timestamp_file_content, '\n');
 
         var current_input: ?[]const u8 = null;
@@ -477,8 +458,7 @@ fn readTimestampFile(context: *Context, allocator: Allocator, output_dir: *const
         }
     } else |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ context.output_dir_path, rel_path });
-        std.log.err("unable to open timestamp file for reading '{s}'", .{full_path});
-        std.log.err("{s}", .{@errorName(e)});
+        std.log.err("unable to open timestamp file for reading '{s}', error: '{}'", .{ full_path, e });
         return error.WriteTimestampFile;
     }
 
@@ -489,7 +469,8 @@ pub fn writeTimestampFile(context: *Context, output_dir: *const std.Io.Dir, rel_
     if (output_dir.createFile(context.io, rel_path, .{ .truncate = true })) |timestamp_file| {
         defer timestamp_file.close(context.io);
 
-        var file_writer = timestamp_file.writer(context.io, &timestamp_file_buf);
+        var write_buf: [4096]u8 = undefined;
+        var file_writer = timestamp_file.writer(context.io, &write_buf);
         const writer = &file_writer.interface;
 
         for (input_files) |input_file| {
@@ -510,8 +491,7 @@ pub fn writeTimestampFile(context: *Context, output_dir: *const std.Io.Dir, rel_
 
         try writer.flush();
     } else |e| {
-        std.log.err("unable to open timestamp file for writing '{s}/{s}'", .{ context.output_dir_path, rel_path });
-        std.log.err("{s}", .{@errorName(e)});
+        std.log.err("unable to open timestamp file for writing '{s}/{s}', error: '{}'", .{ context.output_dir_path, rel_path, e });
         return error.WriteTimestampFile;
     }
 }
@@ -614,8 +594,8 @@ fn aseprite(context: *Context, result_arena: *mem.Arena, tmp_arena: *mem.Arena, 
     perf_timers.aseprite_run_time.add(run_duration);
 
     if (context.options.verbose) {
-        var buf: [64]u8 = undefined;
-        const w = std.debug.lockStderr(&buf).terminal().writer;
+        var buf: [512]u8 = undefined;
+        const w = &std.debug.lockStderr(&buf).file_writer.interface;
         defer std.debug.unlockStderr();
 
         for (argv, 0..) |a, i| {

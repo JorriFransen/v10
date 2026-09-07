@@ -283,7 +283,11 @@ pub const Arena = struct {
         }
     }
 
-    pub fn reset(this: *Arena) void {
+    pub inline fn unused(this: *Arena) usize {
+        return this.data.len - this.used;
+    }
+
+    pub inline fn reset(this: *Arena) void {
         this.used = 0;
     }
 };
