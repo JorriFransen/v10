@@ -185,9 +185,9 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
                 // Input newer than timestamp
                 ctx.debug("    Input newer than timestamp, recompile: '{s}'", .{input_file.abs_path});
                 try files_to_compile.append(ctx.gpa, input_file);
-            } else if (ts_file.outputs_per_input.get(input_file.path)) |old_output_files| {
+            } else if (ts_file.inputs.get(input_file.path)) |old_input| {
                 const up_to_date = blk: {
-                    for (old_output_files) |output_file_path| {
+                    for (old_input.outputs) |output_file_path| {
                         const status = try outputFileStatus(ctx, &output_dir, output_file_path, input_file.timestamp);
                         ctx.debug("    Output {s}: '{f}'", .{ @tagName(status), std.fs.path.fmtJoin(&.{ ctx.output_dir_path, output_file_path }) });
                         switch (status) {
@@ -199,10 +199,11 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
                 };
 
                 if (up_to_date) {
-                    if (old_output_files.len == 0) {
+                    if (old_input.skip) {
+                        input_file.skip = true;
                         ctx.debug("    Input has skip tag: '{s}'", .{input_file.abs_path});
                     }
-                    input_file.old_outputs = old_output_files;
+                    input_file.old_outputs = old_input.outputs;
                 } else {
                     // Input newer than output or missing output(s)
                     try files_to_compile.append(ctx.gpa, input_file);
@@ -340,7 +341,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
     ctx.info("compiling: '{s}'", .{input_file.abs_path});
 
     const tags = try asepriteTags(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
-    input_file.aseprite_tags = tags;
+    if (!input_file.skip and tags.skip) input_file.skip = true;
 
     var output_file_paths: [][]const u8 = &.{};
 
@@ -393,10 +394,15 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
 
 pub const TimestampFile = struct {
     timestamp: std.Io.Timestamp,
-    outputs_per_input: std.StringHashMapUnmanaged([]const []const u8),
+    inputs: std.StringHashMapUnmanaged(Input),
+
+    pub const Input = struct {
+        skip: bool = false,
+        outputs: []const []const u8 = &.{},
+    };
 
     pub fn deinit(this: *TimestampFile, ctx: *const Context) void {
-        this.outputs_per_input.deinit(ctx.gpa);
+        this.inputs.deinit(ctx.gpa);
     }
 };
 
@@ -416,8 +422,8 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
 
     ctx.debug("Reading timestamp file", .{});
 
-    var outputs_per_input: std.StringHashMapUnmanaged([]const []const u8) = .empty;
-    errdefer outputs_per_input.deinit(ctx.gpa);
+    var inputs: std.StringHashMapUnmanaged(TimestampFile.Input) = .empty;
+    errdefer inputs.deinit(ctx.gpa);
 
     const ts_file = output_dir.openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
@@ -470,13 +476,13 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
             } else if (line[0] == 's') {
                 flush_input = .{null};
 
-                try outputs_per_input.put(ctx.gpa, path, &.{});
+                try inputs.put(ctx.gpa, path, .{ .skip = true });
             }
 
             if (flush_input) |next_input| {
                 if (current_input) |ci| {
                     const outputs = try allocator.dupe([]const u8, current_outputs.items);
-                    try outputs_per_input.put(ctx.gpa, ci, outputs);
+                    try inputs.put(ctx.gpa, ci, .{ .outputs = outputs });
 
                     ctx.debug("  Input: '{s}'", .{ci});
                     for (outputs) |o| ctx.debug("    Output: '{s}'", .{o});
@@ -490,13 +496,13 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
 
     if (current_input) |ci| {
         const outputs = try allocator.dupe([]const u8, current_outputs.items);
-        try outputs_per_input.put(ctx.gpa, ci, outputs);
+        try inputs.put(ctx.gpa, ci, .{ .outputs = outputs });
 
         ctx.debug("  Input: '{s}'", .{ci});
         for (outputs) |o| ctx.debug("    Output: '{s}'", .{o});
     }
 
-    return .{ .timestamp = timestamp, .outputs_per_input = outputs_per_input };
+    return .{ .timestamp = timestamp, .inputs = inputs };
 }
 
 pub fn writeTimestampFile(ctx: *Context, output_dir: *const std.Io.Dir, rel_path: []const u8, input_files: []const InputFile) !void {
@@ -508,7 +514,7 @@ pub fn writeTimestampFile(ctx: *Context, output_dir: *const std.Io.Dir, rel_path
         const writer = &file_writer.interface;
 
         for (input_files) |input_file| {
-            if (input_file.aseprite_tags.skip) {
+            if (input_file.skip) {
                 try writer.print("s:{s}\n", .{input_file.path});
             } else {
                 const outputs_opt = if (input_file.result_opt) |result_or_err|
@@ -548,8 +554,8 @@ pub const InputFile = struct {
 
     old_outputs: []const []const u8 = &.{},
 
+    skip: bool = false,
     result_opt: ?CompileResult = null,
-    aseprite_tags: AsepriteTags,
 };
 
 pub const CompileResult = struct {
@@ -587,7 +593,7 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena, scan_dir: *const st
                     .path = path,
                     .abs_path = abs_path,
                     .timestamp = stat.mtime,
-                    .aseprite_tags = .{},
+                    .skip = false,
                 });
                 ctx.debug("  Found input file: '{s}'", .{abs_path});
             }
