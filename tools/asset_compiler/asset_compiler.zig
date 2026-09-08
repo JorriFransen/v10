@@ -384,7 +384,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
         var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
 
         output_file_paths = if (tags.split_layers) blk: {
-            const layers = try asepriteLayers(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
+            const layers = try asepriteLayers(ctx, tmp.arena, &result_arena, input_file, perf_timers);
 
             const output_filename_prefix = stem(input_file.path);
 
@@ -400,8 +400,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
                 output_file_name.* = try pathJoin(arena, &.{ rel_dir_path, name });
             }
 
-            const abs_out_dir = try pathJoin(tmp.a, &.{ ctx.output_dir_path, rel_dir_path });
-            _ = try asepriteExportSplitLayerBMP(ctx, tmp.arena, &result_arena, input_file.abs_path, abs_out_dir, perf_timers);
+            _ = try asepriteExportSplitLayerBMP(ctx, tmp.arena, &result_arena, input_file, rel_dir_path, perf_timers);
 
             break :blk result;
         } else blk: {
@@ -413,9 +412,9 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
                 },
             };
             const rel_out_path = try pathJoin(arena, &.{ rel_dir_path, out_file_name });
-            const abs_file_path = try pathJoin(tmp.a, &.{ ctx.output_dir_path, rel_out_path });
 
-            _ = try asepriteExportBMP(ctx, tmp.arena, &result_arena, input_file.abs_path, abs_file_path, perf_timers);
+            _ = try asepriteExportBMP(ctx, tmp.arena, &result_arena, input_file, rel_out_path, perf_timers);
+
             break :blk try arena.dupe([]const u8, &.{rel_out_path});
         };
     } else {
@@ -688,7 +687,7 @@ const RunResult = struct {
     stderr: []const u8,
 };
 
-pub const AsepriteError = error{AsepriteRunFailed} ||
+pub const AsepriteError = error{ AsepriteRunFailed, CreateOutputDirFailed } ||
     Allocator.Error ||
     std.process.RunError;
 
@@ -786,8 +785,8 @@ fn asepriteTags(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_inp
 }
 
 // Flattens the hierarchy, replacing / with -
-fn asepriteLayers(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, perf_timers: *PerfTimers) AsepriteError![]const []const u8 {
-    assert(pathIsAbsolute(abs_input_path));
+fn asepriteLayers(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, input_file: *const InputFile, perf_timers: *PerfTimers) AsepriteError![]const []const u8 {
+    assert(pathIsAbsolute(input_file.abs_path));
 
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
@@ -796,7 +795,7 @@ fn asepriteLayers(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_i
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const layers_rr = try aseprite(ctx, tmp.arena, arena, &.{ "-b", "--all-layers", "--list-layer-hierarchy", abs_input_path }, perf_timers);
+    const layers_rr = try aseprite(ctx, tmp.arena, arena, &.{ "-b", "--all-layers", "--list-layer-hierarchy", input_file.abs_path }, perf_timers);
 
     var layers: std.ArrayList([]const u8) = .empty;
     var stack: std.ArrayList([]const u8) = .empty;
@@ -833,35 +832,47 @@ fn asepriteLayers(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_i
     return try allocator.dupe([]const u8, layers.items);
 }
 
-fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, abs_output_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
-    assert(pathIsAbsolute(abs_input_path));
+fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, input_file: *const InputFile, rel_output_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
+    var _arena = mem.TempArena.init(arena);
+    errdefer _arena.release();
+
+    var tmp = mem.TempArena.init(tmp_arena);
+    defer tmp.release();
+
+    const abs_output_path = try pathJoin(tmp.a, &.{ ctx.output_dir_path, rel_output_path });
+
+    assert(pathIsAbsolute(input_file.abs_path));
     assert(pathIsAbsolute(abs_output_path));
 
-    var _arena = mem.TempArena.init(arena);
-    errdefer _arena.release();
+    if (dirname(rel_output_path)) |output_sub_dir_path| {
+        ctx.output_dir.createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
+    }
 
-    var tmp = mem.TempArena.init(tmp_arena);
-    defer tmp.release();
-
-    _ = try aseprite(ctx, tmp.arena, arena, &.{ "-b", abs_input_path, "--save-as", abs_output_path }, perf_timers);
+    _ = try aseprite(ctx, tmp.arena, arena, &.{ "-b", input_file.abs_path, "--save-as", abs_output_path }, perf_timers);
 }
 
-fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_input_path: []const u8, abs_output_dir_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
-    assert(pathIsAbsolute(abs_input_path));
-    assert(pathIsAbsolute(abs_output_dir_path));
+fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, input_file: *const InputFile, rel_output_dir_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
+    assert(pathIsAbsolute(input_file.abs_path));
 
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
 
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
+
+    const abs_output_dir_path = try pathJoin(tmp.a, &.{ ctx.output_dir_path, rel_output_dir_path });
+    assert(pathIsAbsolute(abs_output_dir_path));
 
     const out_dir_param = try std.fmt.allocPrint(tmp.a, "out_dir={s}", .{abs_output_dir_path});
     const script_path = try pathJoin(tmp.a, &.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" });
 
+    if (dirname(rel_output_dir_path)) |output_sub_dir_path| {
+        ctx.output_dir.createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
+    }
+
     _ = try aseprite(ctx, tmp.arena, arena, &.{
         "-b",
-        abs_input_path,
+        input_file.abs_path,
         "--script-param",
         out_dir_param,
         "--script",
