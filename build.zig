@@ -398,10 +398,10 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
     const asset_compiler_run = b.addRunArtifact(asset_compiler.exe);
     asset_step.dependOn(&asset_compiler_run.step);
 
-    if (b.verbose) {
-        if (verbose_asset_compiler) asset_compiler_run.addArg("-v");
-        if (debug_asset_compiler) asset_compiler_run.addArg("-d");
-    }
+    if (verbose_asset_compiler) asset_compiler_run.addArg("-v");
+    if (debug_asset_compiler) asset_compiler_run.addArg("-d");
+
+    if (b.args) |a| asset_compiler_run.addArgs(a);
 
     asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
     asset_compiler_run.addPrefixedDirectoryArg("-o", b.path(output_dir));

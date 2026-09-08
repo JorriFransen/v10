@@ -19,6 +19,7 @@ const extension = std.fs.path.extension;
 const dirname = std.fs.path.dirname;
 const stem = std.fs.path.stem;
 const pathIsAbsolute = std.fs.path.isAbsolute;
+const fmtAlt = std.fmt.alt;
 
 pub const std_options: std.Options = core.default_std_options;
 const logFn = std_options.logFn;
@@ -40,6 +41,9 @@ pub const Context = struct {
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 
+    scan_dir: std.Io.Dir = undefined,
+    output_dir: std.Io.Dir = undefined,
+
     scan_dir_path: []const u8 = undefined,
     output_dir_path: []const u8 = undefined,
 
@@ -49,8 +53,12 @@ pub const Context = struct {
         logFn(.err, log_scope, fmt, args);
     }
 
-    inline fn info(this: *const Context, comptime fmt: []const u8, args: anytype) void {
+    inline fn verbose(this: *const Context, comptime fmt: []const u8, args: anytype) void {
         if (this.options.verbose) logFn(.info, log_scope, fmt, args);
+    }
+
+    inline fn info(_: *const Context, comptime fmt: []const u8, args: anytype) void {
+        logFn(.info, log_scope, fmt, args);
     }
 
     inline fn debug(this: *const Context, comptime fmt: []const u8, args: anytype) void {
@@ -110,6 +118,8 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
     const allocator = arena.allocator();
 
+    if (ctx.options.debug) ctx.options.verbose = true;
+
     if (ctx.options.input_scan_dir.len == 0) {
         try ctx.stderr.print("error: missing argument 'input_scan_dir'\n", .{});
         try OptionParser.usage(ctx.stderr);
@@ -124,7 +134,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
     const cwd = try std.process.currentPathAlloc(ctx.io, allocator);
 
-    const scan_dir = dir: {
+    ctx.scan_dir = dir: {
         if (pathIsAbsolute(ctx.options.input_scan_dir)) {
             ctx.scan_dir_path = try allocator.dupe(u8, ctx.options.input_scan_dir);
         } else {
@@ -136,9 +146,9 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
             return error.InvalidInputScanDir;
         };
     };
-    defer scan_dir.close(ctx.io);
+    defer ctx.scan_dir.close(ctx.io);
 
-    const output_dir = dir: {
+    ctx.output_dir = dir: {
         if (pathIsAbsolute(ctx.options.output_dir)) {
             ctx.output_dir_path = try allocator.dupe(u8, ctx.options.output_dir);
         } else {
@@ -147,7 +157,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
         break :dir std.Io.Dir.cwd().openDir(ctx.io, ctx.output_dir_path, .{ .iterate = true }) catch |e| switch (e) {
             error.FileNotFound => blk: {
-                ctx.info("Creating output dir: '{s}'", .{ctx.output_dir_path});
+                ctx.verbose("Creating output dir: '{s}'", .{ctx.output_dir_path});
 
                 break :blk std.Io.Dir.cwd().createDirPathOpen(ctx.io, ctx.output_dir_path, .{}) catch |de| {
                     ctx.err("Unable to creat output dir '{s}', error: '{}", .{ ctx.output_dir_path, de });
@@ -161,15 +171,15 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
             },
         };
     };
-    defer output_dir.close(ctx.io);
+    defer ctx.output_dir.close(ctx.io);
 
     ctx.debug("input_scan_dir: '{s}'", .{ctx.scan_dir_path});
     ctx.debug("output_dir: '{s}'", .{ctx.output_dir_path});
 
-    var ts_file_opt = try readTimestampFile(ctx, arena, &output_dir, timestamp_file_sub_path);
+    var ts_file_opt = try readTimestampFile(ctx, arena);
     defer if (ts_file_opt) |*ts_file| ts_file.deinit(ctx);
 
-    const input_files = try collectInputFiles(ctx, arena, &scan_dir, ctx.scan_dir_path);
+    const input_files = try collectInputFiles(ctx, arena);
 
     var files_to_compile: std.ArrayList(*InputFile) = .empty;
     defer files_to_compile.deinit(ctx.gpa);
@@ -188,7 +198,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
             } else if (ts_file.inputs.get(input_file.path)) |old_input| {
                 const up_to_date = blk: {
                     for (old_input.outputs) |output_file_path| {
-                        const status = try outputFileStatus(ctx, &output_dir, output_file_path, input_file.timestamp);
+                        const status = try outputFileStatus(ctx, output_file_path, input_file.timestamp);
                         ctx.debug("    Output {s}: '{f}'", .{ @tagName(status), std.fs.path.fmtJoin(&.{ ctx.output_dir_path, output_file_path }) });
                         switch (status) {
                             .missing, .outOfDate => break :blk false,
@@ -228,7 +238,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     var pool_free_index_stack = std.ArrayList(usize).initBuffer(pool_free_index_buf);
     for (0..pool_size) |i| pool_free_index_stack.appendAssumeCapacity((pool_size - 1) - i);
 
-    ctx.info("start compile tasks, pool_size: {}, task_count: {}", .{ pool_size, files_to_compile.items.len });
+    ctx.verbose("start compile tasks, pool_size: {}, task_count: {}", .{ pool_size, files_to_compile.items.len });
 
     var main_arena_mutex = std.Io.Mutex.init;
     var pool_mutex = std.Io.Mutex.init;
@@ -300,11 +310,11 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
     try g.await(ctx.io);
 
-    var total_aseprite_run_duration: PerfDuration = .zero;
+    var total_durations = PerfTimers{};
 
     for (input_files) |*input_file| {
         const outputs = if (input_file.result_opt) |result| blk: {
-            total_aseprite_run_duration.add(result.perf_timers.aseprite_run_time);
+            total_durations.add(&result.perf_timers);
 
             break :blk if (result.output_files_or_error) |output_files| output_files else |err| {
                 ctx.err("Error compiling input: '{s}', error: '{}'", .{ input_file.path, err });
@@ -317,18 +327,23 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         }
     }
 
-    try writeTimestampFile(ctx, &output_dir, timestamp_file_sub_path, input_files);
+    try writeTimestampFile(ctx, timestamp_file_sub_path, input_files);
 
     // TODO: Attempt to remove any file in the output dir that's missing from all_output_files
 
     const total_time = start_time.untilNow(ctx.io);
-    ctx.info("aseprite time: {f}", .{total_aseprite_run_duration});
-    ctx.info("total time   : {f}", .{total_time});
+    ctx.info("compile             | {f}", .{fmtAlt(total_durations.total_run, .formatColumns)});
+    ctx.info("aseprite            | {f}", .{fmtAlt(total_durations.aseprite_run, .formatColumns)});
+    ctx.info("output verification | {f}", .{fmtAlt(total_durations.output_verification, .formatColumns)});
+    ctx.info("total wall          | {f}", .{fmtAlt(total_time, .formatColumns)});
 }
 
-const CompileError = AsepriteError || mem.Arena.Error || error{OutputNameTooLong};
+const CompileError = AsepriteError || mem.Arena.Error || error{ OutputNameTooLong, OutputMissing };
 
 fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *PerfTimers) CompileError![]const []const u8 {
+    const start = PerfTs.now(ctx.io);
+    defer perf_timers.total_run.add(start.untilNow(ctx.io));
+
     const arena_size = task_mem.len / 2;
     assert(arena_size >= 512 * mem.KiB);
 
@@ -338,7 +353,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
     const arena = result_arena.allocator();
     const tmp = mem.TempArena.init(&tmp_arena);
 
-    ctx.info("compiling: '{s}'", .{input_file.abs_path});
+    ctx.verbose("compiling: '{s}'", .{input_file.abs_path});
 
     const tags = try asepriteTags(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
     if (!input_file.skip and tags.skip) input_file.skip = true;
@@ -386,7 +401,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
             break :blk try arena.dupe([]const u8, &.{rel_out_path});
         };
     } else {
-        ctx.info("Skipping: '{s}' (skip tag found)", .{input_file.abs_path});
+        ctx.verbose("Skipping: '{s}' (skip tag found)", .{input_file.abs_path});
     }
 
     return output_file_paths;
@@ -406,7 +421,7 @@ pub const TimestampFile = struct {
     }
 };
 
-fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io.Dir, rel_path: []const u8) !?TimestampFile {
+fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
 
@@ -414,7 +429,9 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
     var tmp = mem.getScratch(allocator);
     defer tmp.release();
 
-    const timestamp: std.Io.Timestamp = if (output_dir.statFile(ctx.io, rel_path, .{})) |stat|
+    const rel_path = timestamp_file_sub_path;
+
+    const timestamp: std.Io.Timestamp = if (ctx.output_dir.statFile(ctx.io, rel_path, .{})) |stat|
         stat.mtime
     else |_| {
         return null;
@@ -425,7 +442,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
     var inputs: std.StringHashMapUnmanaged(TimestampFile.Input) = .empty;
     errdefer inputs.deinit(ctx.gpa);
 
-    const ts_file = output_dir.openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
+    const ts_file = ctx.output_dir.openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
         ctx.err("Unable to open timestamp file for reading: '{s}', error: '{}'", .{ full_path, e });
         return error.ReadTimestampFile;
@@ -506,8 +523,8 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
     return .{ .timestamp = timestamp, .inputs = inputs };
 }
 
-pub fn writeTimestampFile(ctx: *Context, output_dir: *const std.Io.Dir, rel_path: []const u8, input_files: []const InputFile) !void {
-    if (output_dir.createFile(ctx.io, rel_path, .{ .truncate = true })) |timestamp_file| {
+pub fn writeTimestampFile(ctx: *Context, rel_path: []const u8, input_files: []const InputFile) !void {
+    if (ctx.output_dir.createFile(ctx.io, rel_path, .{ .truncate = true })) |timestamp_file| {
         defer timestamp_file.close(ctx.io);
 
         var write_buf: [4096]u8 = undefined;
@@ -566,10 +583,18 @@ pub const CompileResult = struct {
 };
 
 pub const PerfTimers = struct {
-    aseprite_run_time: PerfDuration = .zero,
+    total_run: PerfDuration = .zero,
+    aseprite_run: PerfDuration = .zero,
+    output_verification: PerfDuration = .zero,
+
+    pub inline fn add(this: *PerfTimers, other: *const PerfTimers) void {
+        this.total_run.add(other.total_run);
+        this.aseprite_run.add(other.aseprite_run);
+        this.output_verification.add(other.output_verification);
+    }
 };
 
-fn collectInputFiles(ctx: *const Context, arena: *mem.Arena, scan_dir: *const std.Io.Dir, scan_path: []const u8) ![]InputFile {
+fn collectInputFiles(ctx: *const Context, arena: *mem.Arena) ![]InputFile {
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
 
@@ -581,14 +606,14 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena, scan_dir: *const st
 
     var input_files: std.ArrayList(InputFile) = .empty;
 
-    var walker = try scan_dir.walk(tmp.a);
+    var walker = try ctx.scan_dir.walk(tmp.a);
     while (try walker.next(ctx.io)) |entry| {
         if (entry.kind == .file) {
             if (std.mem.eql(u8, ".aseprite", extension(entry.basename))) {
                 const tmp_input_path = try tmp.a.dupe(u8, entry.path);
-                const abs_path = try pathJoin(allocator, &.{ scan_path, tmp_input_path });
+                const abs_path = try pathJoin(allocator, &.{ ctx.scan_dir_path, tmp_input_path });
                 const path = abs_path[abs_path.len - tmp_input_path.len ..];
-                const stat = try scan_dir.statFile(ctx.io, entry.path, .{});
+                const stat = try ctx.scan_dir.statFile(ctx.io, entry.path, .{});
 
                 try input_files.append(tmp.a, .{
                     .path = path,
@@ -610,8 +635,8 @@ const OutputFileStatus = enum(u2) {
     upToDate,
 };
 
-fn outputFileStatus(ctx: *const Context, output_dir: *const std.Io.Dir, dir_rel_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
-    const result: OutputFileStatus = if (output_dir.statFile(ctx.io, dir_rel_path, .{})) |stat|
+fn outputFileStatus(ctx: *const Context, dir_rel_path: []const u8, input_timestamp: std.Io.Timestamp) !OutputFileStatus {
+    const result: OutputFileStatus = if (ctx.output_dir.statFile(ctx.io, dir_rel_path, .{})) |stat|
         if (stat.mtime.nanoseconds <= input_timestamp.nanoseconds)
             .outOfDate
         else
@@ -648,7 +673,7 @@ fn aseprite(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, args: []con
     const start_ts = PerfTs.now(ctx.io);
     const result_or_err = std.process.run(tmp.a, ctx.io, .{ .argv = argv });
     const run_duration = start_ts.untilNow(ctx.io);
-    perf_timers.aseprite_run_time.add(run_duration);
+    perf_timers.aseprite_run.add(run_duration);
 
     if (ctx.options.verbose) {
         var buf: [512]u8 = undefined;

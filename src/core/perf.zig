@@ -36,10 +36,17 @@ pub const Duration = struct {
             this.cpu.nanoseconds == other.cpu.nanoseconds;
     }
 
-    pub fn format(this: *const Duration, writer: *std.Io.Writer) !void {
-        try writer.print("wall: {:0<7.2}ms, cpu: {:0<7.2}ms", .{
-            @as(f64, @floatFromInt(this.wall.nanoseconds)) / std.time.ns_per_ms,
-            @as(f64, @floatFromInt(this.cpu.nanoseconds)) / std.time.ns_per_ms,
-        });
+    pub fn format(this: *const Duration, writer: *std.Io.Writer) error{WriteFailed}!void {
+        try writer.print("wall: {f}, cpu: {f}", .{ this.wall, this.cpu });
+    }
+
+    pub fn formatColumns(this: Duration, writer: *std.Io.Writer) error{WriteFailed}!void {
+        var buf: [64]u8 = undefined;
+        const fmt = "{s: >12}";
+
+        const wall = std.fmt.bufPrint(&buf, "{f}", .{this.wall}) catch return error.WriteFailed;
+        try writer.print("wall: " ++ fmt ++ ",    ", .{wall});
+        const cpu = std.fmt.bufPrint(&buf, "{f}", .{this.cpu}) catch return error.WriteFailed;
+        try writer.print("cpu: " ++ fmt, .{cpu});
     }
 };
