@@ -404,6 +404,23 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
         ctx.verbose("Skipping: '{s}' (skip tag found)", .{input_file.abs_path});
     }
 
+    const verify_start = PerfTs.now(ctx.io);
+    {
+        defer perf_timers.output_verification.add(verify_start.untilNow(ctx.io));
+        for (output_file_paths) |output_file_path| {
+            _ = ctx.output_dir.statFile(ctx.io, output_file_path, .{}) catch |e| switch (e) {
+                error.FileNotFound => {
+                    ctx.err("Output file missing after compilation, input: '{s}', output: '{s}'", .{ input_file.path, output_file_path });
+                    return error.OutputMissing;
+                },
+
+                else => {
+                    ctx.err("Ouput file verification (stat) failed, output: '{s}', error: '{}'", .{ output_file_path, e });
+                },
+            };
+        }
+    }
+
     return output_file_paths;
 }
 
