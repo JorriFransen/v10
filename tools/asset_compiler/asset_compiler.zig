@@ -428,26 +428,27 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena, output_dir: *const std.Io
     const ts_file = output_dir.openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
         ctx.err("Unable to open timestamp file for reading: '{s}', error: '{}'", .{ full_path, e });
-        return error.WriteTimestampFile;
+        return error.ReadTimestampFile;
     };
     defer ts_file.close(ctx.io);
 
-    var read_buf: [4096]u8 = undefined;
+    // Should be big enough to fit an entire line
+    var read_buf: [std.Io.Dir.max_path_bytes + 16]u8 = undefined;
     var reader = ts_file.reader(ctx.io, &read_buf);
-
-    const ts_len = try reader.getSize();
-    const timestamp_file_content = reader.interface.readAlloc(tmp.a, ts_len) catch |e| {
-        const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
-        ctx.err("Unable to read timestamp file: '{s}', error: '{}'", .{ full_path, e });
-        return error.WriteTimestampFile;
-    };
-
-    var line_it = std.mem.splitScalar(u8, timestamp_file_content, '\n');
 
     var current_input: ?[]const u8 = null;
     var current_outputs: std.ArrayList([]const u8) = .empty;
 
-    while (line_it.next()) |raw_line| {
+    var line_n: usize = 1;
+
+    while (reader.interface.takeDelimiter('\n') catch |e| {
+        const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
+        switch (e) {
+            error.ReadFailed => ctx.err("Unable to read timestamp file: '{s}', error: '{}'", .{ full_path, e }),
+            error.StreamTooLong => ctx.err("Timestamp line {} longer than expected max, timestamp file: '{s}'", .{ line_n, full_path }),
+        }
+        return error.ReadTimestampFile;
+    }) |raw_line| : (line_n += 1) {
         var flush_input: ?struct { ?[]const u8 } = null;
         const line = std.mem.trim(u8, raw_line, "\r");
 
