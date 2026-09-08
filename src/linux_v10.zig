@@ -102,7 +102,7 @@ var stderr: *std.Io.Writer = undefined;
 var stdout_buf: [2048]u8 = undefined;
 var stdout: *std.Io.Writer = undefined;
 
-pub fn main(init: std.process.Init.Minimal) !void {
+pub fn main(init: std.process.Init.Minimal) !u8 {
     const gpa = if (use_debug_allocator)
         debug_allocator.allocator()
     else if (builtin.link_libc)
@@ -140,7 +140,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .io = io,
     };
 
-    try common.runAssetCompiler(io, gpa, stderr, stdout);
+    common.runAssetCompiler(io, gpa, stderr, stdout) catch |e| {
+        log.err("Asset compiler error: '{s}'", .{@errorName(e)});
+        return 1;
+    };
 
     const prng_seed = std.Io.Timestamp.now(io, .real).toNanoseconds();
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
@@ -1087,6 +1090,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             // wld.toplevel.setTitle(t);
         }
     }
+
+    return 0;
 }
 
 const LinuxOffscreenBuffer = struct {

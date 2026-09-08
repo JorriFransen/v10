@@ -109,8 +109,14 @@ pub fn main(init: std.process.Init) !u8 {
         .options = args,
     };
 
-    try run(&ctx, &main_arena);
-    return 0;
+    var rc: u8 = 0;
+
+    run(&ctx, &main_arena) catch |e| {
+        ctx.err("Error: '{s}'", .{@errorName(e)});
+        rc = 1;
+    };
+
+    return rc;
 }
 
 pub fn run(ctx: *Context, arena: *mem.Arena) !void {
@@ -142,7 +148,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         }
 
         break :dir std.Io.Dir.cwd().openDir(ctx.io, ctx.scan_dir_path, .{ .iterate = true }) catch |e| {
-            ctx.err("Unable to open input dir '{s}', error: '{}'", .{ ctx.scan_dir_path, e });
+            ctx.err("Unable to open input dir '{s}', error: '{s}'", .{ ctx.scan_dir_path, @errorName(e) });
             return error.InvalidInputScanDir;
         };
     };
@@ -160,13 +166,13 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
                 ctx.verbose("Creating output dir: '{s}'", .{ctx.output_dir_path});
 
                 break :blk std.Io.Dir.cwd().createDirPathOpen(ctx.io, ctx.output_dir_path, .{}) catch |de| {
-                    ctx.err("Unable to creat output dir '{s}', error: '{}", .{ ctx.output_dir_path, de });
+                    ctx.err("Unable to creat output dir '{s}', error: '{s}'", .{ ctx.output_dir_path, @errorName(de) });
                     return de;
                 };
             },
 
             else => {
-                ctx.err("Unable to open output dir '{s}', error: '{}'", .{ ctx.output_dir_path, e });
+                ctx.err("Unable to open output dir '{s}', error: '{s}'", .{ ctx.output_dir_path, @errorName(e) });
                 return error.InvalidOutputDir;
             },
         };
@@ -312,13 +318,23 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
     var total_durations = PerfTimers{};
 
+    var errors = false;
+
     for (input_files) |*input_file| {
         const outputs = if (input_file.result_opt) |result| blk: {
             total_durations.add(&result.perf_timers);
 
-            break :blk if (result.output_files_or_error) |output_files| output_files else |err| {
-                ctx.err("Error compiling input: '{s}', error: '{}'", .{ input_file.path, err });
-                break :blk input_file.old_outputs;
+            break :blk if (result.output_files_or_error) |output_files|
+                output_files
+            else |err| {
+                errors = true;
+
+                ctx.err("Error compiling input: '{s}', error: '{s}'", .{ input_file.path, @errorName(err) });
+
+                break :blk switch (err) {
+                    error.OutputMissing => &.{},
+                    else => input_file.old_outputs,
+                };
             };
         } else input_file.old_outputs;
 
@@ -336,6 +352,8 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     ctx.info("aseprite            | {f}", .{fmtAlt(total_durations.aseprite_run, .formatColumns)});
     ctx.info("output verification | {f}", .{fmtAlt(total_durations.output_verification, .formatColumns)});
     ctx.info("total wall          | {f}", .{fmtAlt(total_time, .formatColumns)});
+
+    if (errors) return error.SomeInputsFailed;
 }
 
 const CompileError = AsepriteError || mem.Arena.Error || error{ OutputNameTooLong, OutputMissing };
@@ -415,7 +433,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
                 },
 
                 else => {
-                    ctx.err("Ouput file verification (stat) failed, output: '{s}', error: '{}'", .{ output_file_path, e });
+                    ctx.err("Ouput file verification (stat) failed, output: '{s}', error: '{s}'", .{ output_file_path, @errorName(e) });
                 },
             };
         }
@@ -461,7 +479,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
 
     const ts_file = ctx.output_dir.openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
-        ctx.err("Unable to open timestamp file for reading: '{s}', error: '{}'", .{ full_path, e });
+        ctx.err("Unable to open timestamp file for reading: '{s}', error: '{s}'", .{ full_path, @errorName(e) });
         return error.ReadTimestampFile;
     };
     defer ts_file.close(ctx.io);
@@ -478,7 +496,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     while (reader.interface.takeDelimiter('\n') catch |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
         switch (e) {
-            error.ReadFailed => ctx.err("Unable to read timestamp file: '{s}', error: '{}'", .{ full_path, e }),
+            error.ReadFailed => ctx.err("Unable to read timestamp file: '{s}', error: '{s}'", .{ full_path, @errorName(e) }),
             error.StreamTooLong => ctx.err("Timestamp line {} longer than expected max, timestamp file: '{s}'", .{ line_n, full_path }),
         }
         return error.ReadTimestampFile;
@@ -570,7 +588,7 @@ pub fn writeTimestampFile(ctx: *Context, rel_path: []const u8, input_files: []co
 
         try writer.flush();
     } else |e| {
-        ctx.err("unable to open timestamp file for writing '{s}/{s}', error: '{}'", .{ ctx.output_dir_path, rel_path, e });
+        ctx.err("unable to open timestamp file for writing '{s}/{s}', error: '{s}'", .{ ctx.output_dir_path, rel_path, @errorName(e) });
         return error.WriteTimestampFile;
     }
 }

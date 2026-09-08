@@ -410,7 +410,10 @@ pub fn windowsEntry(
     var shared_state: common.SharedState = .{};
     var thread_context: ThreadContext = .{ .io = io };
 
-    try common.runAssetCompiler(io, gpa, stderr, stdout);
+    common.runAssetCompiler(io, gpa, stderr, stdout) catch |e| {
+        log.err("Asset compiler error: '{s}'", .{@errorName(e)});
+        return 1;
+    };
 
     const cwd_len = win32.GetCurrentDirectoryA(shared_state.cwd_buf.len, @ptrCast(&shared_state.cwd_buf));
     shared_state.cwd = shared_state.cwd_buf[0..cwd_len];
