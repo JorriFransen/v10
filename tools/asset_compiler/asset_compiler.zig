@@ -27,6 +27,7 @@ const logFn = std_options.logFn;
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
     clip.option(@as([]const u8, ""), "output_dir", 'o', "Output directory"),
+    clip.option(@as(usize, 0), "max_threads", 'n', "Max concurrent compilation threads (default to 'std.Thread.getCpuCount() catch 1')"),
     clip.option(false, "verbose", 'v', "Verbose output"),
     clip.option(false, "debug", 'd', "Debug output"),
 });
@@ -237,8 +238,14 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         }
     }
 
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    const max_threads = if (ctx.options.max_threads == 0)
+        cpu_count
+    else
+        @min(ctx.options.max_threads, cpu_count);
+
     const mem_per_task = 1 * mem.MiB;
-    const pool_size = @min(files_to_compile.items.len, std.Thread.getCpuCount() catch 4);
+    const pool_size = @min(files_to_compile.items.len, max_threads);
     const mem_pool = try allocator.alloc([mem_per_task]u8, pool_size);
     const pool_free_index_buf = try allocator.alloc(usize, pool_size);
     var pool_free_index_stack = std.ArrayList(usize).initBuffer(pool_free_index_buf);
