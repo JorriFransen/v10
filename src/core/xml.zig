@@ -260,7 +260,7 @@ pub const Reader = struct {
             this.toss(1);
         }
 
-        return buffer.items;
+        return buffer.toOwnedSlice(this.node_tmp.a) catch unreachable;
     }
 
     fn parseString(this: *Reader) Error![]const u8 {
@@ -279,7 +279,7 @@ pub const Reader = struct {
             if (try this.match("->")) break;
         }
 
-        return buf.items;
+        return buf.toOwnedSlice(this.node_tmp.a) catch unreachable;
     }
 
     fn expect(this: *Reader, comptime str: []const u8) Error!void {
@@ -338,7 +338,7 @@ pub const Reader = struct {
         try buf.appendSlice(this.node_tmp.a, rest);
         this.toss(rest.len);
 
-        return buf.items;
+        return buf.toOwnedSlice(this.node_tmp.a) catch unreachable;
     }
 
     fn takeDelimiterInclusive(this: *Reader, delim: u8) Error![]const u8 {
