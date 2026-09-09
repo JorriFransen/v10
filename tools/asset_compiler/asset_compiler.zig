@@ -298,22 +298,15 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
                 }
 
                 var perf_timers = PerfTimers{};
-                const result_or_err = compile(a.ctx, a.input_file, &mp[pool_index], &perf_timers);
+                const output_or_err = compile(a.ctx, a.input_file, &mp[pool_index], &perf_timers);
 
                 a.input_file.result_opt = CompileResult{
                     .perf_timers = perf_timers,
-                    .output_files_or_error = if (result_or_err) |result| blk: {
+                    .output_or_err = if (output_or_err) |output| blk: {
                         a.main_arena_mutex.lockUncancelable(a.ctx.io);
                         {
                             defer a.main_arena_mutex.unlock(a.ctx.io);
-
-                            if (a.main_arena.alloc([]const u8, result.len)) |array_copy| {
-                                for (result, array_copy) |source, *dest|
-                                    if (a.main_arena.dupe(u8, source)) |string_copy| {
-                                        dest.* = string_copy;
-                                    } else |e| break :blk e;
-                                break :blk array_copy;
-                            } else |e| break :blk e;
+                            break :blk output.dupe(a.main_arena);
                         }
                     } else |err| err,
                 };
@@ -331,9 +324,10 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         const outputs = if (input_file.result_opt) |result| blk: {
             total_durations.add(&result.perf_timers);
 
-            break :blk if (result.output_files_or_error) |output_files|
-                output_files
-            else |err| {
+            if (result.output_or_err) |output| {
+                input_file.skip = output.skip;
+                break :blk output.files;
+            } else |err| {
                 errors = true;
 
                 ctx.err("Error compiling input: '{s}', error: '{s}'", .{ input_file.path, @errorName(err) });
@@ -342,7 +336,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
                     error.OutputMissing => &.{},
                     else => input_file.old_outputs,
                 };
-            };
+            }
         } else input_file.old_outputs;
 
         for (outputs) |output_file_path| {
@@ -365,7 +359,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
 const CompileError = AsepriteError || mem.Arena.Error || error{ OutputNameTooLong, OutputMissing };
 
-fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *PerfTimers) CompileError![]const []const u8 {
+fn compile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, perf_timers: *PerfTimers) CompileError!CompileOutput {
     const start = PerfTs.now(ctx.io);
     defer perf_timers.total_run.add(start.untilNow(ctx.io));
 
@@ -381,7 +375,6 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
     ctx.verbose("compiling: '{s}'", .{input_file.abs_path});
 
     const tags = try asepriteTags(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
-    if (!input_file.skip and tags.skip) input_file.skip = true;
 
     var output_file_paths: [][]const u8 = &.{};
 
@@ -445,7 +438,7 @@ fn compile(ctx: *Context, input_file: *InputFile, task_mem: []u8, perf_timers: *
         }
     }
 
-    return output_file_paths;
+    return .{ .skip = tags.skip, .files = output_file_paths };
 }
 
 pub const TimestampFile = struct {
@@ -572,14 +565,14 @@ pub fn writeTimestampFile(ctx: *Context, rel_path: []const u8, input_files: []co
         var file_writer = timestamp_file.writer(ctx.io, &write_buf);
         const writer = &file_writer.interface;
 
-        for (input_files) |input_file| {
+        for (input_files) |*input_file| {
             if (input_file.skip) {
                 try writer.print("s:{s}\n", .{input_file.path});
             } else {
                 const outputs_opt = if (input_file.result_opt) |result_or_err|
                     // Failed inputs are omitted to force retry on next run
                     // Old outputs for failed inputs are still recorded in all_output_files, so --clean does not remove them
-                    if (result_or_err.output_files_or_error) |output_files| output_files else |_| null
+                    if (result_or_err.output_or_err) |output| output.files else |_| null
                 else
                     input_file.old_outputs;
 
@@ -618,9 +611,26 @@ pub const InputFile = struct {
 };
 
 pub const CompileResult = struct {
-    output_files_or_error: CompileError![]const []const u8,
+    output_or_err: CompileError!CompileOutput,
 
-    perf_timers: PerfTimers = .{},
+    perf_timers: PerfTimers,
+};
+
+pub const CompileOutput = struct {
+    skip: bool,
+    files: []const []const u8,
+
+    pub inline fn dupe(this: *const CompileOutput, allocator: Allocator) !CompileOutput {
+        var result = this.*;
+
+        const files = try allocator.alloc([]const u8, this.files.len);
+        for (this.files, files) |source, *dest| {
+            dest.* = try allocator.dupe(u8, source);
+        }
+        result.files = files;
+
+        return result;
+    }
 };
 
 pub const PerfTimers = struct {
