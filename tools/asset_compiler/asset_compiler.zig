@@ -14,7 +14,6 @@ const PerfDuration = core.perf.Duration;
 const compile_options = @import("options");
 
 const pathResolve = std.fs.path.resolve;
-const pathJoin = std.fs.path.join;
 const extension = std.fs.path.extension;
 const dirname = std.fs.path.dirname;
 const stem = std.fs.path.stem;
@@ -52,6 +51,10 @@ pub const Context = struct {
 
     inline fn err(_: *const Context, comptime fmt: []const u8, args: anytype) void {
         logFn(.err, log_scope, fmt, args);
+    }
+
+    inline fn warn(_: *const Context, comptime fmt: []const u8, args: anytype) void {
+        logFn(.warn, log_scope, fmt, args);
     }
 
     inline fn verbose(this: *const Context, comptime fmt: []const u8, args: anytype) void {
@@ -200,7 +203,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     else
         @min(ctx.options.max_threads, cpu_count);
 
-    const mem_per_task = 1 * mem.MiB;
+    const mem_per_task = 256 * mem.KiB;
     const pool_size = @min(files_indices_to_compile.len, max_threads);
     const mem_pool = try allocator.alloc([mem_per_task]u8, pool_size);
     const pool_free_index_buf = try allocator.alloc(usize, pool_size);
@@ -333,7 +336,6 @@ fn compile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, perf_tim
     defer perf_timers.total_run.add(start.untilNow(ctx.io));
 
     const arena_size = task_mem.len / 2;
-    assert(arena_size >= 512 * mem.KiB);
 
     var result_arena = try mem.Arena.init(.{ .slice = .{ .data = task_mem[0..arena_size] } });
     var tmp_arena = try mem.Arena.init(.{ .slice = .{ .data = task_mem[arena_size..] } });
@@ -366,7 +368,7 @@ fn compile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, perf_tim
                         return error.OutputNameTooLong;
                     },
                 };
-                output_file_name.* = try pathJoin(arena, &.{ rel_dir_path, name });
+                output_file_name.* = try std.fs.path.join(arena, &.{ rel_dir_path, name });
             }
 
             _ = try asepriteExportSplitLayerBMP(ctx, tmp.arena, &result_arena, input_file, rel_dir_path, perf_timers);
@@ -380,7 +382,7 @@ fn compile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, perf_tim
                     return error.OutputNameTooLong;
                 },
             };
-            const rel_out_path = try pathJoin(arena, &.{ rel_dir_path, out_file_name });
+            const rel_out_path = try std.fs.path.join(arena, &.{ rel_dir_path, out_file_name });
 
             _ = try asepriteExportBMP(ctx, tmp.arena, &result_arena, input_file, rel_out_path, perf_timers);
 
@@ -630,7 +632,7 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena) ![]InputFile {
         if (entry.kind == .file) {
             if (std.mem.eql(u8, ".aseprite", extension(entry.basename))) {
                 const tmp_input_path = try tmp.a.dupe(u8, entry.path);
-                const abs_path = try pathJoin(allocator, &.{ ctx.scan_dir_path, tmp_input_path });
+                const abs_path = try std.fs.path.join(allocator, &.{ ctx.scan_dir_path, tmp_input_path });
                 const path = abs_path[abs_path.len - tmp_input_path.len ..];
                 const stat = try ctx.scan_dir.statFile(ctx.io, entry.path, .{});
 
@@ -725,11 +727,30 @@ const RunResult = struct {
     stderr: []const u8,
 };
 
-pub const AsepriteError = error{ AsepriteRunFailed, CreateOutputDirFailed } ||
+pub const AsepriteError = error{
+    AsepriteMaxLayerDepthExceeded,
+    AsepriteRunFailed,
+    CreateOutputDirFailed,
+    OutputPathTooLong,
+    ScriptPathTooLong,
+} ||
     Allocator.Error ||
     std.process.RunError;
 
-fn aseprite(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, args: []const []const u8, perf_timers: *PerfTimers) AsepriteError!RunResult {
+const AsepriteArgv = struct {
+    values: []const []const u8,
+
+    inline fn args(a: anytype) AsepriteArgv {
+        var result: [a.len + 1][]const u8 = undefined;
+        const _a: []const []const u8 = a;
+        result[0] = compile_options.aseprite_exe_path;
+        @memcpy(result[1..], _a);
+
+        return .{ .values = &result };
+    }
+};
+
+fn aseprite(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, args: AsepriteArgv, perf_timers: *PerfTimers) AsepriteError!RunResult {
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
 
@@ -737,13 +758,8 @@ fn aseprite(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, args: []con
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const argv = try tmp.a.alloc([]const u8, args.len + 1);
-
-    argv[0] = compile_options.aseprite_exe_path;
-    @memcpy(argv[1..], args);
-
     const start_ts = PerfTs.now(ctx.io);
-    const result_or_err = std.process.run(tmp.a, ctx.io, .{ .argv = argv });
+    const result_or_err = std.process.run(tmp.a, ctx.io, .{ .argv = args.values });
     const run_duration = start_ts.untilNow(ctx.io);
     perf_timers.aseprite_run.add(run_duration);
 
@@ -752,7 +768,7 @@ fn aseprite(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, args: []con
         const w = &std.debug.lockStderr(&buf).file_writer.interface;
         defer std.debug.unlockStderr();
 
-        for (argv, 0..) |a, i| {
+        for (args.values, 0..) |a, i| {
             if (i > 0) w.writeByte(' ') catch {};
             w.writeAll(a) catch {};
         }
@@ -793,30 +809,24 @@ fn asepriteTags(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, abs_inp
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
 
-    const allocator = _arena.a;
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const tags_rr = try aseprite(ctx, tmp.arena, arena, &.{ "-b", "--list-tags", abs_input_path }, perf_timers);
+    const tags_rr = try aseprite(ctx, tmp.arena, arena, .args(&.{ "-b", "--list-tags", abs_input_path }), perf_timers);
 
-    var tags: std.ArrayList([]const u8) = .empty;
+    var result: AsepriteTags = .{};
 
     var line_it = std.mem.splitScalar(u8, tags_rr.stdout, '\n');
     while (line_it.next()) |line| {
         const tag = std.mem.trimEnd(u8, line, "\r");
         if (tag.len > 0) {
-            const t = try allocator.dupe(u8, tag);
-            try tags.append(tmp.a, t);
+            if (std.mem.eql(u8, "skip", tag))
+                result.skip = true
+            else if (std.mem.eql(u8, "split_layers", tag))
+                result.split_layers = true
+            else
+                ctx.warn("Unknown tag '{s}' in '{s}'", .{ tag, abs_input_path });
         }
-    }
-
-    var result: AsepriteTags = .{};
-
-    for (tags.items) |t| {
-        if (std.mem.eql(u8, "skip", t))
-            result.skip = true
-        else if (std.mem.eql(u8, "split_layers", t))
-            result.split_layers = true;
     }
 
     return result;
@@ -833,10 +843,12 @@ fn asepriteLayers(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, input
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const layers_rr = try aseprite(ctx, tmp.arena, arena, &.{ "-b", "--all-layers", "--list-layer-hierarchy", input_file.abs_path }, perf_timers);
+    const layers_rr = try aseprite(ctx, tmp.arena, arena, .args(&.{ "-b", "--all-layers", "--list-layer-hierarchy", input_file.abs_path }), perf_timers);
 
     var layers: std.ArrayList([]const u8) = .empty;
-    var stack: std.ArrayList([]const u8) = .empty;
+
+    var stack_buf: [64][]const u8 = undefined;
+    var stack: std.ArrayList([]const u8) = .initBuffer(&stack_buf);
 
     var line_it = std.mem.splitScalar(u8, layers_rr.stdout, '\n');
     while (line_it.next()) |line| {
@@ -852,16 +864,29 @@ fn asepriteLayers(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, input
             indent /= 2;
 
             while (indent < stack.items.len) {
+                assert(stack.items.len > 0);
                 _ = stack.pop();
             }
 
             if (layer_name[layer_name.len - 1] == '/') {
-                try stack.append(tmp.a, layer_name[indent * 2 ..]);
+                stack.appendBounded(layer_name[indent * 2 ..]) catch |e| switch (e) {
+                    error.OutOfMemory => {
+                        ctx.err("Max layer depth exceeded ({}), input: '{s}'", .{ stack_buf.len, input_file.abs_path });
+                        return error.AsepriteMaxLayerDepthExceeded;
+                    },
+                };
             } else {
-                const folder = try std.mem.concat(tmp.a, u8, stack.items);
-                std.mem.replaceScalar(u8, folder, '/', '_');
+                stack.appendBounded(layer_name[indent * 2 ..]) catch |e| switch (e) {
+                    error.OutOfMemory => {
+                        ctx.err("Max layer depth exceeded ({}), input: '{s}'", .{ stack_buf.len, input_file.abs_path });
+                        return error.AsepriteMaxLayerDepthExceeded;
+                    },
+                };
 
-                const full_layer_name = try std.mem.concat(allocator, u8, &.{ folder, layer_name[indent * 2 ..] });
+                const full_layer_name = try std.mem.concat(allocator, u8, stack.items);
+                _ = stack.pop();
+
+                std.mem.replaceScalar(u8, full_layer_name, '/', '_');
                 try layers.append(tmp.a, full_layer_name);
             }
         }
@@ -877,7 +902,13 @@ fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, in
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const abs_output_path = try pathJoin(tmp.a, &.{ ctx.output_dir_path, rel_output_path });
+    const abs_output_path = stackPathJoin(&.{ ctx.output_dir_path, rel_output_path }) catch {
+        ctx.err("Output path too long: '{f}', input: '{s}'", .{
+            std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_path }),
+            input_file.abs_path,
+        });
+        return error.OutputPathTooLong;
+    };
 
     assert(pathIsAbsolute(input_file.abs_path));
     assert(pathIsAbsolute(abs_output_path));
@@ -886,7 +917,7 @@ fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, in
         ctx.output_dir.createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
     }
 
-    _ = try aseprite(ctx, tmp.arena, arena, &.{ "-b", input_file.abs_path, "--save-as", abs_output_path }, perf_timers);
+    _ = try aseprite(ctx, tmp.arena, arena, .args(&.{ "-b", input_file.abs_path, "--save-as", abs_output_path }), perf_timers);
 }
 
 fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, input_file: *const InputFile, rel_output_dir_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
@@ -898,22 +929,42 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const abs_output_dir_path = try pathJoin(tmp.a, &.{ ctx.output_dir_path, rel_output_dir_path });
+    const abs_output_dir_path = stackPathJoin(&.{ ctx.output_dir_path, rel_output_dir_path }) catch {
+        ctx.err("Output path too long: '{f}', input: '{s}'", .{
+            std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path }),
+            input_file.abs_path,
+        });
+
+        return error.OutputPathTooLong;
+    };
     assert(pathIsAbsolute(abs_output_dir_path));
 
-    const out_dir_param = try std.fmt.allocPrint(tmp.a, "out_dir={s}", .{abs_output_dir_path});
-    const script_path = try pathJoin(tmp.a, &.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" });
+    const out_dir_param_fmt = "out_dir={s}";
+    var out_dir_param_buf: [std.Io.Dir.max_path_bytes + out_dir_param_fmt.len]u8 = undefined;
+    const out_dir_param = std.fmt.bufPrint(&out_dir_param_buf, "out_dir={s}", .{abs_output_dir_path}) catch unreachable;
+    const script_path = stackPathJoin(&.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" }) catch {
+        ctx.err("Script path too long: '{f}'", .{std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path })});
+        return error.ScriptPathTooLong;
+    };
 
     if (dirname(rel_output_dir_path)) |output_sub_dir_path| {
         ctx.output_dir.createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
     }
 
-    _ = try aseprite(ctx, tmp.arena, arena, &.{
+    _ = try aseprite(ctx, tmp.arena, arena, .args(&.{
         "-b",
         input_file.abs_path,
         "--script-param",
         out_dir_param,
         "--script",
         script_path,
-    }, perf_timers);
+    }), perf_timers);
+}
+
+inline fn stackPathJoin(paths: []const []const u8) error{PathTooLong}![]const u8 {
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+
+    return std.fmt.bufPrint(&path_buf, "{f}", .{std.fs.path.fmtJoin(paths)}) catch |e| switch (e) {
+        error.NoSpaceLeft => return error.PathTooLong,
+    };
 }
