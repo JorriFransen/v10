@@ -199,14 +199,22 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     const files_indices_to_compile = try collectFileIndicesToCompile(ctx, arena, ts_file_opt, input_files);
     const input_select_duration = input_select_start.untilNow(ctx.io);
 
-    const compile_start = PerfTs.now(ctx.io);
-    var results = try compile(ctx, allocator, ts_file_opt, input_files, files_indices_to_compile);
+    var compile_duration: PerfDuration = .zero;
+    var results: CompileResults = if (files_indices_to_compile.len > 0) blk: {
+        const compile_start = PerfTs.now(ctx.io);
+        defer compile_duration = compile_start.untilNow(ctx.io);
+        break :blk try compile(ctx, allocator, ts_file_opt, input_files, files_indices_to_compile);
+    } else blk: {
+        break :blk .{ .errors = false, .per_input = &.{}, .total_durations = .{}, .aggregate_duration = .zero };
+    };
     defer results.deinit(ctx);
-    const compile_duration = compile_start.untilNow(ctx.io);
 
-    const timestamp_write_start = PerfTs.now(ctx.io);
-    try writeTimestampFile(ctx, ts_file_opt, input_files, &results);
-    const timestamp_write_duration = timestamp_write_start.untilNow(ctx.io);
+    var timestamp_write_duration: PerfDuration = .zero;
+    if (files_indices_to_compile.len > 0) {
+        const timestamp_write_start = PerfTs.now(ctx.io);
+        try writeTimestampFile(ctx, ts_file_opt, input_files, &results);
+        timestamp_write_duration = timestamp_write_start.untilNow(ctx.io);
+    }
 
     // TODO: Attempt to remove any file in the output dir that's missing from all_output_files
 
