@@ -799,7 +799,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     }
 
     {
-        var groundchunk_fill_duration: PerfDuration = .zero;
+        var groundchunk_fill_duration: PerfDuration = .{};
 
         const min_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.min);
         const max_chunk_p = game_state.camera_pos.offset(world, camera_bounds_meters.max);
@@ -853,7 +853,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             }
         }
 
-        if (!groundchunk_fill_duration.eql(.zero)) {
+        if (!groundchunk_fill_duration.eql(.{})) {
             log.info("groundchunck fill took: {f}", .{groundchunk_fill_duration});
         }
     }

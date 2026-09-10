@@ -4,14 +4,14 @@ pub const Timestamp = struct {
     wall: std.Io.Timestamp,
     cpu: std.Io.Timestamp,
 
-    pub fn now(io: std.Io) Timestamp {
+    pub inline fn now(io: std.Io) Timestamp {
         return .{
             .wall = std.Io.Timestamp.now(io, .awake),
             .cpu = std.Io.Timestamp.now(io, .cpu_thread),
         };
     }
 
-    pub fn untilNow(start: *const Timestamp, io: std.Io) Duration {
+    pub inline fn untilNow(start: *const Timestamp, io: std.Io) Duration {
         const n = now(io);
         return .{
             .wall = start.wall.durationTo(n.wall),
@@ -21,10 +21,8 @@ pub const Timestamp = struct {
 };
 
 pub const Duration = struct {
-    wall: std.Io.Duration,
-    cpu: std.Io.Duration,
-
-    pub const zero = Duration{ .wall = .zero, .cpu = .zero };
+    wall: std.Io.Duration = .zero,
+    cpu: std.Io.Duration = .zero,
 
     pub inline fn add(this: *Duration, other: Duration) void {
         this.wall.nanoseconds += other.wall.nanoseconds;
@@ -49,4 +47,17 @@ pub const Duration = struct {
         const cpu = std.fmt.bufPrint(&buf, "{f}", .{this.cpu}) catch return error.WriteFailed;
         try writer.print("cpu: " ++ fmt, .{cpu});
     }
+};
+
+pub const VoidTimestamp = struct {
+    pub inline fn now(_: std.Io) VoidTimestamp {
+        return .{};
+    }
+    pub inline fn untilNow(_: *const VoidTimestamp, _: std.Io) VoidDuration {
+        return .{};
+    }
+};
+
+pub const VoidDuration = struct {
+    pub inline fn add(_: *VoidDuration, _: VoidDuration) void {}
 };

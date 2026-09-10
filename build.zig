@@ -16,6 +16,7 @@ var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var verbose_asset_compiler: bool = true;
 var debug_asset_compiler: bool = false;
+var asset_compiler_perf_timers: bool = true;
 // TODO: pulsePull requires locking during gamecode reload
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
 var cross_compile = false;
@@ -39,6 +40,7 @@ pub fn build(b: *Build) !void {
 
     verbose_asset_compiler = b.option(bool, "verbose_asset_compiler", "Verbose asset compiler logging") orelse verbose_asset_compiler;
     debug_asset_compiler = b.option(bool, "debug_asset_compiler", "Debug asset compiler logging") orelse debug_asset_compiler;
+    asset_compiler_perf_timers = b.option(bool, "asset_compiler_perf_timers", "Enable performance timers for asset compiler") orelse asset_compiler_perf_timers;
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
@@ -352,6 +354,7 @@ const Tools = struct {
             };
 
             const options = b.addOptions();
+            options.addOption(bool, "perf_timers", asset_compiler_perf_timers);
             options.addOption([]const u8, "aseprite_exe_path", aseprite_exe);
             options.addOptionPath("aseprite_script_path", b.path("tools/aseprite/"));
 
