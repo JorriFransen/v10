@@ -26,7 +26,7 @@ const PerfDuration = if (compile_options.perf_timers) core.perf.Duration else co
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
     clip.option(@as([]const u8, ""), "output_dir", 'o', "Output directory"),
-    clip.option(false, "clean", 'c', "Remove stale files and directories from output directory"),
+    // clip.option(false, "clean", 'c', "Remove stale files and directories from output directory (stale outputs from failed inputs are not removed)"),
     clip.option(@as(usize, 0), "max_threads", 'n', "Max concurrent compilation threads (default to 'std.Thread.getCpuCount() catch 1')"),
     clip.option(false, "verbose", 'v', "Verbose output"),
     clip.option(false, "debug", 'd', "Debug output"),
@@ -190,17 +190,18 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     ctx.debug("output_dir: '{s}'", .{ctx.output_dir_path});
 
     const ts_start = PerfTs.now(ctx.io);
-    var ts_file_opt = try readTimestampFile(ctx, arena);
-    defer if (ts_file_opt) |*ts_file| ts_file.deinit(ctx);
+    var ts_file = try readTimestampFile(ctx, arena);
+    defer ts_file.deinit(ctx);
     const ts_read_duration = ts_start.untilNow(ctx.io);
 
     const input_collect_start = PerfTs.now(ctx.io);
     const input_files = try collectInputFiles(ctx, arena);
     const input_collect_duration = input_collect_start.untilNow(ctx.io);
 
-    const input_select_start = PerfTs.now(ctx.io);
-    const files_indices_to_compile = try collectFileIndicesToCompile(ctx, arena, ts_file_opt, input_files);
-    const input_select_duration = input_select_start.untilNow(ctx.io);
+    const input_compare_start = PerfTs.now(ctx.io);
+    var force_timestamp_write = false;
+    const files_indices_to_compile = try compareInputFilesAgainstTimestampFile(ctx, arena, ts_file, input_files, &force_timestamp_write);
+    const input_compare_duration = input_compare_start.untilNow(ctx.io);
 
     ctx.info("Compiling {} inputs", .{files_indices_to_compile.len});
     var compile_duration: PerfDuration = .{};
@@ -217,12 +218,11 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     defer all_output_files.deinit(ctx.gpa);
 
     if (files_indices_to_compile.len > 0) {
-        const err_opt = aggregate(ctx, input_files, ts_file_opt, results, &total_durations, &all_output_files);
+        const err_opt = try aggregate(ctx, input_files, ts_file, results, &total_durations, &all_output_files);
         errors = err_opt != null;
     } else {
         for (input_files) |*input_file| {
-            const old_input_opt = if (ts_file_opt) |tsf| tsf.inputs.get(input_file.path) orelse null else null;
-            if (old_input_opt) |old_input| {
+            if (ts_file.inputs.get(input_file.path)) |old_input| {
                 for (old_input.outputs) |output_file_path| {
                     try all_output_files.putNoClobber(ctx.gpa, output_file_path, undefined);
                 }
@@ -233,9 +233,9 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     const aggregate_duration = aggregate_start.untilNow(ctx.io);
 
     var timestamp_write_duration: PerfDuration = .{};
-    if (files_indices_to_compile.len > 0) {
+    if (force_timestamp_write or files_indices_to_compile.len > 0) {
         const timestamp_write_start = PerfTs.now(ctx.io);
-        try writeTimestampFile(ctx, ts_file_opt, input_files, results);
+        try writeTimestampFile(ctx, ts_file, input_files, results);
         timestamp_write_duration = timestamp_write_start.untilNow(ctx.io);
     }
 
@@ -245,7 +245,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         const total_time = start_time.untilNow(ctx.io);
         ctx.info("ts file read/parse  | {f}", .{fmtAlt(ts_read_duration, .formatColumns)});
         ctx.info("input collect       | {f}", .{fmtAlt(input_collect_duration, .formatColumns)});
-        ctx.info("input select        | {f}", .{fmtAlt(input_select_duration, .formatColumns)});
+        ctx.info("input compare       | {f}", .{fmtAlt(input_compare_duration, .formatColumns)});
         ctx.info("compile             | {f}", .{fmtAlt(compile_duration, .formatColumns)});
         ctx.info("compile aggregate   | {f}", .{fmtAlt(aggregate_duration, .formatColumns)});
         ctx.info("compile aseprite    | {f}", .{fmtAlt(total_durations.total_run, .formatColumns)});
@@ -349,12 +349,11 @@ fn compile(ctx: *Context, allocator: Allocator, input_files: []const InputFile, 
     return results_per_input;
 }
 
-fn aggregate(ctx: *Context, input_files: []const InputFile, ts_file_opt: ?TimestampFile, results: []const ?CompileResult, total_durations: *PerfTimers, all_output_files: *std.StringHashMapUnmanaged(void)) ?CompileError {
+fn aggregate(ctx: *Context, input_files: []const InputFile, ts_file: TimestampFile, results: []const ?CompileResult, total_durations: *PerfTimers, all_output_files: *std.StringHashMapUnmanaged(void)) !?CompileError {
     var result: ?CompileError = null;
 
     for (input_files, 0..) |*input_file, i| {
-        const old_input_opt = if (ts_file_opt) |tsf| tsf.inputs.get(input_file.path) orelse null else null;
-        const old_outputs = if (old_input_opt) |oi| oi.outputs else &.{};
+        const old_outputs = if (ts_file.inputs.get(input_file.path)) |oi| oi.outputs else &.{};
 
         const outputs = if (results[i]) |input_result| blk: {
             total_durations.add(&input_result.perf_timers);
@@ -478,7 +477,7 @@ pub const TimestampFile = struct {
     }
 };
 
-fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
+fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !TimestampFile {
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
 
@@ -491,7 +490,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     const timestamp: std.Io.Timestamp = if (ctx.output_dir.statFile(ctx.io, rel_path, .{})) |stat|
         stat.mtime
     else |_| {
-        return null;
+        return .{ .timestamp = .{ .nanoseconds = 0 }, .inputs = .empty };
     };
 
     ctx.debug("Reading timestamp file", .{});
@@ -580,8 +579,10 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     return .{ .timestamp = timestamp, .inputs = inputs };
 }
 
-pub fn writeTimestampFile(ctx: *Context, input_ts_file_opt: ?TimestampFile, input_files: []const InputFile, results: []const ?CompileResult) !void {
+pub fn writeTimestampFile(ctx: *Context, input_ts_file: TimestampFile, input_files: []const InputFile, results: []const ?CompileResult) !void {
     const rel_path = timestamp_file_sub_path;
+
+    assert(results.len == input_files.len or results.len == 0);
 
     if (ctx.output_dir.createFile(ctx.io, rel_path, .{ .truncate = true })) |timestamp_file| {
         defer timestamp_file.close(ctx.io);
@@ -590,24 +591,40 @@ pub fn writeTimestampFile(ctx: *Context, input_ts_file_opt: ?TimestampFile, inpu
         var file_writer = timestamp_file.writer(ctx.io, &write_buf);
         const writer = &file_writer.interface;
 
-        for (input_files, 0..) |*input_file, i| {
-            const old_input_opt = if (input_ts_file_opt) |tsf| tsf.inputs.get(input_file.path) orelse null else null;
-            const old_outputs = if (old_input_opt) |oi| oi.outputs else &.{};
-            const old_skip = if (old_input_opt) |oi| oi.skip else false;
+        if (results.len > 0) {
+            for (input_files, 0..) |*input_file, i| {
+                const old_input_opt = input_ts_file.inputs.get(input_file.path);
+                const old_outputs = if (old_input_opt) |oi| oi.outputs else &.{};
+                const old_skip = if (old_input_opt) |oi| oi.skip else false;
 
-            const outputs_opt, const skip = if (results[i]) |result_or_err|
-                // Failed inputs are omitted to force retry on next run
-                // Old outputs for failed inputs are still recorded in all_output_files, so --clean does not remove them
-                if (result_or_err.output_or_err) |output| .{ output.files, output.skip } else |_| .{ null, false }
-            else
-                .{ old_outputs, old_skip };
+                const outputs_opt, const skip = if (results[i]) |result_or_err|
+                    // Failed inputs are omitted to force retry on next run
+                    // Old outputs for failed inputs are still recorded in all_output_files, so --clean does not remove them
+                    if (result_or_err.output_or_err) |output| .{ output.files, output.skip } else |_| .{ null, false }
+                else
+                    .{ old_outputs, old_skip };
 
-            if (skip) {
-                try writer.print("s:{s}\n", .{input_file.path});
-            } else if (outputs_opt) |outputs| {
-                try writer.print("i:{s}\n", .{input_file.path});
-                for (outputs) |out_file_path| {
-                    try writer.print("o:{s}\n", .{out_file_path});
+                if (skip) {
+                    try writer.print("s:{s}\n", .{input_file.path});
+                } else if (outputs_opt) |outputs| {
+                    try writer.print("i:{s}\n", .{input_file.path});
+                    for (outputs) |out_file_path| {
+                        try writer.print("o:{s}\n", .{out_file_path});
+                    }
+                }
+            }
+        } else {
+            // Didn't compile anything, rewrite with still existing inputs
+            for (input_files) |*input_file| {
+                if (input_ts_file.inputs.get(input_file.path)) |old_input| {
+                    if (old_input.skip) {
+                        try writer.print("s:{s}\n", .{input_file.path});
+                    } else {
+                        try writer.print("i:{s}\n", .{input_file.path});
+                        for (old_input.outputs) |out_file_path| {
+                            try writer.print("o:{s}\n", .{out_file_path});
+                        }
+                    }
                 }
             }
         }
@@ -701,58 +718,63 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena) ![]InputFile {
     return try allocator.dupe(InputFile, input_files.items);
 }
 
-fn collectFileIndicesToCompile(ctx: *Context, arena: *mem.Arena, ts_file_opt: ?TimestampFile, input_files: []const InputFile) ![]usize {
+fn compareInputFilesAgainstTimestampFile(ctx: *Context, arena: *mem.Arena, ts_file: TimestampFile, input_files: []const InputFile, force_timestamp_write: *bool) ![]usize {
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
     const allocator = _arena.a;
 
-    var result: std.ArrayList(usize) = .empty;
+    var file_indices_to_compile: std.ArrayList(usize) = .empty;
 
-    if (ts_file_opt) |ts_file| {
-        ctx.debug("Check found input files against timestamp file...", .{});
+    ctx.debug("Check found input files against timestamp file...", .{});
 
-        for (input_files, 0..) |*input_file, i| {
-            ctx.debug("  Check new input against timestamp file: '{s}'", .{input_file.abs_path});
-            if (ts_file.timestamp.nanoseconds <= input_file.timestamp.nanoseconds) {
-                // Input newer than timestamp
-                ctx.debug("    Input newer than timestamp, recompile: '{s}'", .{input_file.abs_path});
-                try result.append(allocator, i);
-            } else if (ts_file.inputs.get(input_file.path)) |old_input| {
-                const up_to_date = blk: {
-                    for (old_input.outputs) |output_file_path| {
-                        const status = try outputFileStatus(ctx, output_file_path, input_file.timestamp);
-                        ctx.debug("    Output {s}: '{f}'", .{ @tagName(status), std.fs.path.fmtJoin(&.{ ctx.output_dir_path, output_file_path }) });
-                        switch (status) {
-                            .missing, .outOfDate => break :blk false,
-                            .upToDate => {},
-                        }
+    var all_inputs: std.StringHashMapUnmanaged(void) = .empty;
+    defer all_inputs.deinit(ctx.gpa);
+
+    for (input_files, 0..) |*input_file, i| {
+        try all_inputs.putNoClobber(ctx.gpa, input_file.path, undefined);
+
+        ctx.debug("  Check new input against timestamp file: '{s}'", .{input_file.abs_path});
+        if (ts_file.timestamp.nanoseconds <= input_file.timestamp.nanoseconds) {
+            // Input newer than timestamp
+            ctx.debug("    Input newer than timestamp, recompile: '{s}'", .{input_file.abs_path});
+            try file_indices_to_compile.append(allocator, i);
+        } else if (ts_file.inputs.get(input_file.path)) |old_input| {
+            const up_to_date = blk: {
+                for (old_input.outputs) |output_file_path| {
+                    const status = try outputFileStatus(ctx, output_file_path, input_file.timestamp);
+                    ctx.debug("    Output {s}: '{f}'", .{ @tagName(status), std.fs.path.fmtJoin(&.{ ctx.output_dir_path, output_file_path }) });
+                    switch (status) {
+                        .missing, .outOfDate => break :blk false,
+                        .upToDate => {},
                     }
-                    break :blk true;
-                };
+                }
+                break :blk true;
+            };
 
-                if (up_to_date) {
-                    if (old_input.skip) {
-                        ctx.debug("    Input has skip tag: '{s}'", .{input_file.abs_path});
-                    }
-                } else {
-                    // Input newer than output or missing output(s)
-                    try result.append(allocator, i);
+            if (up_to_date) {
+                if (old_input.skip) {
+                    ctx.debug("    Input has skip tag: '{s}'", .{input_file.abs_path});
                 }
             } else {
-                // New/unseen input
-                ctx.debug("    Input file unknown, compile: '{s}'", .{input_file.abs_path});
-                try result.append(allocator, i);
+                // Input newer than output or missing output(s)
+                try file_indices_to_compile.append(allocator, i);
             }
-        }
-    } else {
-        ctx.debug("Missing timestamp file, compile everything", .{});
-
-        for (0..input_files.len) |i| {
-            try result.append(allocator, i);
+        } else {
+            // New/unseen input
+            ctx.debug("    Input file unknown, compile: '{s}'", .{input_file.abs_path});
+            try file_indices_to_compile.append(allocator, i);
         }
     }
 
-    return result.toOwnedSlice(allocator) catch unreachable;
+    var ts_input_it = ts_file.inputs.keyIterator();
+    while (ts_input_it.next()) |ts_input_path| {
+        if (!all_inputs.contains(ts_input_path.*)) {
+            force_timestamp_write.* = true;
+            break;
+        }
+    }
+
+    return file_indices_to_compile.toOwnedSlice(allocator) catch unreachable;
 }
 
 const OutputFileStatus = enum(u2) {
