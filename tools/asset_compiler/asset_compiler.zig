@@ -26,7 +26,7 @@ const PerfDuration = if (compile_options.perf_timers) core.perf.Duration else co
 const OptionParser = clip.OptionParser("asset_compiler", &.{
     clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
     clip.option(@as([]const u8, ""), "output_dir", 'o', "Output directory"),
-    // clip.option(false, "clean", 'c', "Remove stale files and directories from output directory (stale outputs from failed inputs are not removed)"),
+    clip.option(false, "clean", 'c', "Remove stale files and directories from output directory (stale outputs from failed inputs are not removed)"),
     clip.option(@as(usize, 0), "max_threads", 'n', "Max concurrent compilation threads (default to 'std.Thread.getCpuCount() catch 1')"),
     clip.option(false, "verbose", 'v', "Verbose output"),
     clip.option(false, "debug", 'd', "Debug output"),
@@ -190,7 +190,9 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     ctx.debug("output_dir: '{s}'", .{ctx.output_dir_path});
 
     const ts_start = PerfTs.now(ctx.io);
-    var ts_file = try readTimestampFile(ctx, arena);
+    var ts_file: TimestampFile, const ts_file_exists = if (try readTimestampFile(ctx, arena)) |tsf| .{ tsf, true } else blk: {
+        break :blk .{ .{ .timestamp = .{ .nanoseconds = 0 }, .inputs = .empty }, false };
+    };
     defer ts_file.deinit(ctx);
     const ts_read_duration = ts_start.untilNow(ctx.io);
 
@@ -200,15 +202,23 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
 
     const input_compare_start = PerfTs.now(ctx.io);
     var force_timestamp_write = false;
-    const files_indices_to_compile = try compareInputFilesAgainstTimestampFile(ctx, arena, ts_file, input_files, &force_timestamp_write);
+    const file_indices_to_compile: []usize = if (ts_file_exists)
+        try compareInputFilesAgainstTimestampFile(ctx, arena, ts_file, input_files, &force_timestamp_write)
+    else blk: {
+        const indices = try allocator.alloc(usize, input_files.len);
+        for (indices, 0..) |*dst, i| {
+            dst.* = i;
+        }
+        break :blk indices;
+    };
     const input_compare_duration = input_compare_start.untilNow(ctx.io);
 
-    ctx.info("Compiling {} inputs", .{files_indices_to_compile.len});
+    ctx.info("Compiling {} inputs", .{file_indices_to_compile.len});
     var compile_duration: PerfDuration = .{};
-    const results = if (files_indices_to_compile.len > 0) blk: {
+    const results = if (file_indices_to_compile.len > 0) blk: {
         const compile_start = PerfTs.now(ctx.io);
         defer compile_duration = compile_start.untilNow(ctx.io);
-        break :blk try compile(ctx, allocator, input_files, files_indices_to_compile);
+        break :blk try compile(ctx, allocator, input_files, file_indices_to_compile);
     } else &.{};
 
     const aggregate_start = PerfTs.now(ctx.io);
@@ -217,7 +227,9 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     var all_output_files: std.StringHashMapUnmanaged(void) = .empty;
     defer all_output_files.deinit(ctx.gpa);
 
-    if (files_indices_to_compile.len > 0) {
+    try all_output_files.putNoClobber(ctx.gpa, timestamp_file_sub_path, undefined);
+
+    if (file_indices_to_compile.len > 0) {
         const err_opt = try aggregate(ctx, input_files, ts_file, results, &total_durations, &all_output_files);
         errors = err_opt != null;
     } else {
@@ -233,13 +245,18 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     const aggregate_duration = aggregate_start.untilNow(ctx.io);
 
     var timestamp_write_duration: PerfDuration = .{};
-    if (force_timestamp_write or files_indices_to_compile.len > 0) {
+    if (force_timestamp_write or file_indices_to_compile.len > 0) {
         const timestamp_write_start = PerfTs.now(ctx.io);
         try writeTimestampFile(ctx, ts_file, input_files, results);
         timestamp_write_duration = timestamp_write_start.untilNow(ctx.io);
     }
 
-    // TODO: Attempt to remove any file in the output dir that's missing from all_output_files
+    var clean_duration_opt: ?PerfDuration = null;
+    if (ctx.options.clean) {
+        const clean_start = PerfTs.now(ctx.io);
+        try clean(ctx, &all_output_files);
+        clean_duration_opt = clean_start.untilNow(ctx.io);
+    }
 
     if (compile_options.perf_timers) {
         const total_time = start_time.untilNow(ctx.io);
@@ -252,6 +269,8 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         ctx.info("aseprite (external) | {f}", .{fmtAlt(total_durations.aseprite_run, .formatColumns)});
         ctx.info("output verification | {f}", .{fmtAlt(total_durations.output_verification, .formatColumns)});
         ctx.info("ts write            | {f}", .{fmtAlt(timestamp_write_duration, .formatColumns)});
+        if (clean_duration_opt) |cdo|
+            ctx.info("clean               | {f}", .{fmtAlt(cdo, .formatColumns)});
         ctx.info("total wall          | {f}", .{fmtAlt(total_time, .formatColumns)});
     }
 
@@ -382,6 +401,66 @@ fn aggregate(ctx: *Context, input_files: []const InputFile, ts_file: TimestampFi
     return result;
 }
 
+fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !void {
+    const Entry = struct {
+        it: std.Io.Dir.Iterator,
+        path: []const u8,
+        entry_count: u32 = 0,
+    };
+
+    var stack: std.ArrayList(Entry) = try .initCapacity(ctx.gpa, 8);
+    defer stack.deinit(ctx.gpa);
+
+    try stack.append(ctx.gpa, .{
+        .it = ctx.output_dir.iterate(),
+        .path = "", // To skip close at the end
+    });
+
+    while (stack.items.len > 0) {
+        var top = &stack.items[stack.items.len - 1];
+
+        if (try top.it.next(ctx.io)) |entry| {
+            top.entry_count += 1;
+
+            const full_name = try std.fs.path.join(ctx.gpa, &.{ top.path, entry.name });
+
+            if (entry.kind == .directory) {
+                ctx.debug("enter dir: {s}", .{entry.name});
+                const dir = try top.it.reader.dir.openDir(ctx.io, entry.name, .{ .iterate = true });
+                try stack.append(ctx.gpa, .{ .it = dir.iterateAssumeFirstIteration(), .path = full_name });
+            } else {
+                ctx.debug("Check output for stale: {s}", .{full_name});
+                if (!all_output_files.contains(full_name)) {
+                    ctx.debug("Removing stale output: '{s}'", .{entry.name});
+
+                    try top.it.reader.dir.deleteFile(ctx.io, entry.name);
+                    top.entry_count -= 1;
+                }
+
+                ctx.gpa.free(full_name);
+            }
+        } else {
+            const old_top = stack.pop().?;
+
+            if (old_top.path.len > 0) {
+                const new_top = &stack.items[stack.items.len - 1];
+
+                old_top.it.reader.dir.close(ctx.io);
+
+                if (old_top.entry_count == 0) {
+                    ctx.debug("Removing empty dir: '{s}'", .{old_top.path});
+                    const sub_path = std.fs.path.basename(old_top.path);
+                    try new_top.it.reader.dir.deleteDir(ctx.io, sub_path);
+                    assert(new_top.entry_count > 0);
+                    new_top.entry_count -= 1;
+                }
+
+                ctx.gpa.free(old_top.path);
+            }
+        }
+    }
+}
+
 fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, perf_timers: *PerfTimers) CompileError!CompileOutput {
     const start = PerfTs.now(ctx.io);
     defer perf_timers.total_run.add(start.untilNow(ctx.io));
@@ -394,7 +473,7 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
     const arena = result_arena.allocator();
     const tmp = mem.TempArena.init(&tmp_arena);
 
-    ctx.verbose("Compiling: '{s}'", .{input_file.abs_path});
+    ctx.debug("Compiling: '{s}'", .{input_file.abs_path});
 
     const tags = try asepriteTags(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
 
@@ -477,7 +556,7 @@ pub const TimestampFile = struct {
     }
 };
 
-fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !TimestampFile {
+fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();
 
@@ -490,7 +569,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !TimestampFile {
     const timestamp: std.Io.Timestamp = if (ctx.output_dir.statFile(ctx.io, rel_path, .{})) |stat|
         stat.mtime
     else |_| {
-        return .{ .timestamp = .{ .nanoseconds = 0 }, .inputs = .empty };
+        return null;
     };
 
     ctx.debug("Reading timestamp file", .{});

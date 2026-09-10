@@ -16,7 +16,7 @@ var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var verbose_asset_compiler: bool = true;
 var debug_asset_compiler: bool = false;
-var asset_compiler_perf_timers: bool = true;
+var asset_compiler_perf_timers: bool = false;
 // TODO: pulsePull requires locking during gamecode reload
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
 var cross_compile = false;
@@ -401,13 +401,17 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
     const asset_compiler_run = b.addRunArtifact(asset_compiler.exe);
     asset_step.dependOn(&asset_compiler_run.step);
 
-    if (verbose_asset_compiler) asset_compiler_run.addArg("-v");
-    if (debug_asset_compiler) asset_compiler_run.addArg("-d");
+    if (debug_asset_compiler)
+        asset_compiler_run.addArg("--debug")
+    else if (verbose_asset_compiler)
+        asset_compiler_run.addArg("--verbose");
 
-    if (b.args) |a| asset_compiler_run.addArgs(a);
+    asset_compiler_run.addArg("--clean");
 
     asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
     asset_compiler_run.addPrefixedDirectoryArg("-o", b.path(output_dir));
+
+    if (b.args) |a| asset_compiler_run.addArgs(a);
 
     switch (mode) {
         .engine => {
