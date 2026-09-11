@@ -379,6 +379,9 @@ pub fn drawRectangle(buffer: *const LoadedBitmap, min: V2, max: V2, color: Color
 pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, y_axis: V2, color: Color, texture: *const LoadedBitmap) void {
     const bpp = LoadedBitmap.bytes_per_pixel;
 
+    // Non hh, prevent crash on unloaded bitmap
+    if (texture.width == 0 or texture.height == 0) return;
+
     const inv_x_axis_length_sq = 1 / x_axis.lengthSquared();
     const inv_y_axis_length_sq = 1 / y_axis.lengthSquared();
 
