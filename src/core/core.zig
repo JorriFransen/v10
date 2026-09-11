@@ -4,6 +4,7 @@ pub const DynLib = @import("dynlib.zig");
 pub const TimeParts = @import("timeparts.zig").TimeParts;
 
 pub const arch = @import("arch/arch.zig").arch;
+pub const assert = @import("assert.zig").assert;
 pub const clip = @import("clip.zig");
 pub const fs = @import("fs.zig");
 pub const intrinsics = @import("intrinsics.zig");
@@ -45,6 +46,7 @@ pub fn defaultLogFileTerminal(
         .info => .green,
         .debug => .magenta,
     };
+
     const ts = std.Io.Timestamp.now(std.Options.debug_io, .real);
     const tp = TimeParts.fromMsTimestamp(@bitCast(ts.toMilliseconds()));
 
@@ -61,20 +63,6 @@ pub fn defaultLogFileTerminal(
 
     try t.setColor(.reset);
     try t.writer.print(format ++ "\n", args);
-}
-
-pub fn assert(cond: bool) void {
-    if (@inComptime()) {
-        if (!cond) {
-            @trap();
-        }
-    } else {
-        if (!cond) {
-            @branchHint(.cold);
-            std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
-            @breakpoint();
-        }
-    }
 }
 
 test {

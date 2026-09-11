@@ -1,7 +1,6 @@
 const std = @import("std");
 
-const core = @import("src/core/core.zig");
-const assert = core.assert;
+const assert = @import("src/core/assert.zig").assert;
 
 const Build = std.Build;
 const Module = Build.Module;
