@@ -333,11 +333,11 @@ const Tools = struct {
             const run_wayland_gen_exe = b.addRunArtifact(this.gen_exe);
 
             _ = run_wayland_gen_exe.addPrefixedFileArg("--wayland=", b.path(core_xml_path));
-            for (protocol_xml_paths) |protocol_xml_path| {
-                _ = run_wayland_gen_exe.addPrefixedFileArg("--protocols=", b.path(protocol_xml_path));
-            }
-
             const wayland_source_dir = run_wayland_gen_exe.addPrefixedOutputDirectoryArg("--out=", "wayland");
+
+            for (protocol_xml_paths) |protocol_xml_path| {
+                _ = run_wayland_gen_exe.addFileArg(b.path(protocol_xml_path));
+            }
 
             const result = b.createModule(.{
                 .optimize = optimize,

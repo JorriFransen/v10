@@ -12,10 +12,9 @@ const resolve = @import("resolver.zig");
 
 const OptionParser = core.cli_arg_parser.Parser(&.{
     .string("", "wayland", 'w', "Wayland xml path"),
-    .stringArray(&.{}, "protocols", 'p', "Protocol xml path"),
     .string("", "out", 'o', "Output directory path"),
     .bool(false, "help", 'h', "Print this help message"),
-}, .{});
+}, .{ .usage_positionals_label_opt = "[PROTOCOL XML FILES]" });
 
 pub const Context = struct {
     io: std.Io,
@@ -158,7 +157,9 @@ fn run(context: *Context) !void {
     var protocols: std.ArrayList(AST.Protocol) = .empty;
     defer protocols.deinit(context.gpa);
 
-    for (context.args.protocols) |protocol_path| {
+    const protocol_xml_paths = context.args.positionals;
+
+    for (protocol_xml_paths) |protocol_path| {
         if (std.Io.Dir.openFileAbsolute(context.io, protocol_path, .{})) |protocol_xml_file| {
             var protocol = parser.parse(context, &stderr_writer.interface, protocol_path) catch |e| {
                 protocol_xml_file.close(context.io);
