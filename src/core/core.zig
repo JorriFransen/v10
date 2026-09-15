@@ -5,7 +5,7 @@ pub const TimeParts = @import("timeparts.zig").TimeParts;
 
 pub const arch = @import("arch/arch.zig").arch;
 pub const assert = @import("assert.zig").assert;
-pub const clip = @import("clip.zig");
+pub const cli_arg_parser = @import("cli_arg_parser.zig");
 pub const fs = @import("fs.zig");
 pub const intrinsics = @import("intrinsics.zig");
 pub const lib = @import("lib/lib.zig");
@@ -69,6 +69,6 @@ test {
     const t = std.testing;
 
     t.refAllDecls(os);
-    t.refAllDecls(clip);
+    t.refAllDecls(cli_arg_parser);
     t.refAllDecls(mem);
 }

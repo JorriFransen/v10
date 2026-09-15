@@ -100,10 +100,25 @@ pub fn build(b: *Build) !void {
     }
 
     if (enable_tests) {
-        const tests = try buildTests(b, target);
+        const tests = try buildTests(b, target, optimize);
         engine.run.step.dependOn(&tests.run.step);
-        // engine.install.step.dependOn(&tests.install.step);
+        engine.install.step.dependOn(&tests.run.step);
     }
+
+    const clip_example_module = b.createModule(.{
+        .root_source_file = b.path("src/core/cli_arg_parse.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const clip_example_exe = b.addExecutable(.{
+        .name = "clip_example",
+        .root_module = clip_example_module,
+    });
+
+    const clip_run = b.addRunArtifact(clip_example_exe);
+    if (b.args) |a| clip_run.addArgs(a);
+    const clip_example = b.step("clip_example", "");
+    clip_example.dependOn(&clip_run.step);
 }
 
 const Modules = struct {
@@ -319,7 +334,7 @@ const Tools = struct {
 
             _ = run_wayland_gen_exe.addPrefixedFileArg("--wayland=", b.path(core_xml_path));
             for (protocol_xml_paths) |protocol_xml_path| {
-                _ = run_wayland_gen_exe.addPrefixedFileArg("--protocol=", b.path(protocol_xml_path));
+                _ = run_wayland_gen_exe.addPrefixedFileArg("--protocols=", b.path(protocol_xml_path));
             }
 
             const wayland_source_dir = run_wayland_gen_exe.addPrefixedOutputDirectoryArg("--out=", "wayland");
@@ -430,13 +445,14 @@ pub const Tests = struct {
     install: *Step.InstallArtifact,
 };
 
-pub fn buildTests(b: *Build, target: ResolvedTarget) !Tests {
+pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: OptimizeMode) !Tests {
     const test_step = b.step("test", "run all tests");
     const test_install_step = b.step("test_install", "install tests");
 
     const core_test_module = b.createModule(.{
         .target = target,
         .root_source_file = b.path(src_path ++ "/core/core.zig"),
+        .optimize = optimize,
     });
 
     // Workaround for wine related output in stderr: even if all tests pass, the build process prints
@@ -450,7 +466,7 @@ pub fn buildTests(b: *Build, target: ResolvedTarget) !Tests {
 
     const core_test_exe = b.addTest(.{
         .root_module = core_test_module,
-        .name = "core tests",
+        .name = "core_tests",
         .test_runner = test_runner,
     });
 

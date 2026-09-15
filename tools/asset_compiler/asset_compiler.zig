@@ -6,7 +6,6 @@ const builtin = @import("builtin");
 
 const core = @import("core");
 const assert = core.assert;
-const clip = core.clip;
 const mem = core.mem;
 
 const compile_options = @import("options");
@@ -18,19 +17,18 @@ const stem = std.fs.path.stem;
 const pathIsAbsolute = std.fs.path.isAbsolute;
 const fmtAlt = std.fmt.alt;
 
-pub const std_options: std.Options = core.default_std_options;
-
 const PerfTs = if (compile_options.perf_timers) core.perf.Timestamp else core.perf.VoidTimestamp;
 const PerfDuration = if (compile_options.perf_timers) core.perf.Duration else core.perf.VoidDuration;
 
-const OptionParser = clip.OptionParser("asset_compiler", &.{
-    clip.option(@as([]const u8, ""), "input_scan_dir", 'i', "Directory to scan for input files"),
-    clip.option(@as([]const u8, ""), "output_dir", 'o', "Output directory"),
-    clip.option(false, "clean", 'c', "Remove stale files and directories from output directory (stale outputs from failed inputs are not removed)"),
-    clip.option(@as(usize, 0), "max_threads", 'n', "Max concurrent compilation threads (default to 'std.Thread.getCpuCount() catch 1')"),
-    clip.option(false, "verbose", 'v', "Verbose output"),
-    clip.option(false, "debug", 'd', "Debug output"),
-});
+const OptionParser = core.cli_arg_parser.Parser(&.{
+    .string("", "input_scan_dir", 'i', "Directory to scan for input files"),
+    .string("", "output_dir", 'o', "Output directory"),
+    .bool(false, "clean", 'c', "Remove stale files and directories from output directory (stale outputs from failed inputs are not removed)"),
+    .int(usize, 0, "max_threads", 'n', "Max concurrent compilation threads (default to 'std.Thread.getCpuCount() catch 1')"),
+    .bool(false, "verbose", 'v', "Verbose output"),
+    .bool(false, "debug", 'd', "Debug output"),
+    .bool(false, "help", 'h', "Print this help"),
+}, .{});
 
 /// Relative to output_dir
 const timestamp_file_sub_path = ".timestamps";
@@ -50,7 +48,10 @@ pub const Context = struct {
 
     options: OptionParser.Options,
 
-    const logFn = std_options.logFn;
+    const logFn = if (@hasDecl(@import("root"), "std_options"))
+        @import("root").std_options.logFn
+    else
+        (std.Options{}).logFn;
 
     inline fn err(_: *const Context, comptime fmt: []const u8, args: anytype) void {
         logFn(.err, log_scope, fmt, args);
@@ -89,24 +90,21 @@ pub fn main(init: std.process.Init) !u8 {
 
     var main_arena = try mem.Arena.init(.{ .virtual = .{} });
 
-    const args: OptionParser.Options = blk: {
-        var arg_tmp = mem.getScratch(main_arena.allocator());
-        defer arg_tmp.release();
+    const raw_args = try init.minimal.args.toSlice(main_arena.allocator());
 
-        const raw_args = try init.minimal.args.toSlice(arg_tmp.a);
-        break :blk OptionParser.parse(
-            raw_args[1..],
-            main_arena.allocator(),
-            arg_tmp.a,
-            &stderr_writer.interface,
-        ) catch |e| switch (e) {
-            error.OutOfMemory => @panic("OOM"),
-            else => {
-                try OptionParser.usage(&stderr_writer.interface);
-                return error.ArgParseError;
-            },
-        };
+    const parser = OptionParser.init(raw_args[0], .{ .err_writer = &stderr_writer.interface });
+    const args = parser.parse(main_arena.allocator(), raw_args[1..]) catch |e| switch (e) {
+        error.OutOfMemory => return e,
+        else => {
+            try parser.usage(&stderr_writer.interface);
+            return 1;
+        },
     };
+
+    if (args.help) {
+        try parser.help(&stdout_writer.interface);
+        return 0;
+    }
 
     var ctx = Context{
         .io = init.io,
@@ -116,14 +114,12 @@ pub fn main(init: std.process.Init) !u8 {
         .options = args,
     };
 
-    var rc: u8 = 0;
-
-    run(&ctx, &main_arena) catch |e| {
-        ctx.err("Error: '{s}'", .{@errorName(e)});
-        rc = 1;
+    run(&ctx, &main_arena) catch {
+        try parser.usage(&stderr_writer.interface);
+        return 1;
     };
 
-    return rc;
+    return 0;
 }
 
 pub fn run(ctx: *Context, arena: *mem.Arena) !void {
@@ -134,14 +130,12 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     if (ctx.options.debug) ctx.options.verbose = true;
 
     if (ctx.options.input_scan_dir.len == 0) {
-        try ctx.stderr.print("error: missing argument 'input_scan_dir'\n", .{});
-        try OptionParser.usage(ctx.stderr);
+        ctx.err("missing argument 'input_scan_dir'", .{});
         return error.MissingInputScanDir;
     }
 
     if (ctx.options.output_dir.len == 0) {
-        try ctx.stderr.print("error: missing argument 'output_dir'\n", .{});
-        try OptionParser.usage(ctx.stderr);
+        ctx.err("missing argument 'output_dir'", .{});
         return error.MissingOutputDir;
     }
 

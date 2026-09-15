@@ -6,9 +6,8 @@ pub inline fn typeNameLeaf(comptime T: type) []const u8 {
     const full_name = @typeName(T);
     var result: []const u8 = full_name;
 
-    if (std.mem.lastIndexOfScalar(u8, full_name, '.')) |dot_idx| {
-        assert(dot_idx < full_name.len - 1);
-        result = full_name[dot_idx + 1 ..];
+    if (std.mem.cutScalarLast(u8, full_name, '.')) |r| {
+        result = r[1];
     }
 
     return result;
@@ -65,6 +64,10 @@ pub inline fn matchUnsigned(x: anytype) bool {
     return unsigned;
 }
 
+pub inline fn matchEnumType(comptime T: type) bool {
+    return matchType(T, &.{.@"enum"});
+}
+
 pub inline fn expectTypeIds(x: anytype, comptime type_ids: []const std.lang.TypeId) void {
     if (!matchTypeIds(x, type_ids))
         @compileError(std.fmt.comptimePrint("Expected one of: '{any}', got: '{}'", .{ type_ids, std.meta.activeTag(@typeInfo(@TypeOf(x))) }));
@@ -82,6 +85,11 @@ pub inline fn expectPtrType(comptime T: type) void {
 
 pub inline fn expectFloat(x: anytype) void {
     if (!matchFloatType(@TypeOf(x)))
+        @compileError("Expected float type");
+}
+
+pub inline fn expectFloatType(comptime T: type) void {
+    if (!matchFloatType(T))
         @compileError("Expected float type");
 }
 
@@ -109,4 +117,10 @@ pub inline fn expectSignedType(comptime T: type) void {
 pub inline fn expectUnsigned(x: anytype) void {
     if (!matchUnsigned(x))
         @compileError("Expected signed integer type");
+}
+
+pub inline fn expectEnumType(comptime T: type) void {
+    if (!matchEnumType(T)) {
+        @compileError("Expected enum type");
+    }
 }

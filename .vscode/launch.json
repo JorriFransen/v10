@@ -12,6 +12,13 @@
             "program": "${workspaceRoot}/zig-out/v10",
             "args": [],
             "cwd": "${workspaceRoot}/data"
+        },
+        {
+            "name": "Core tests",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceRoot}/zig-out/test/core_tests",
+            "args": [],
         }
     ]
 }

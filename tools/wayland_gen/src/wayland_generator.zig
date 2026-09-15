@@ -3,7 +3,6 @@ const Allocator = std.mem.Allocator;
 
 const core = @import("core");
 const assert = core.assert;
-const clip = core.clip;
 const mem = core.mem;
 
 const parser = @import("parser.zig");
@@ -11,14 +10,12 @@ const AST = @import("ast.zig");
 const emit = @import("emit.zig");
 const resolve = @import("resolver.zig");
 
-pub const std_options = core.default_std_options;
-
-const OptionParser = clip.OptionParser("wayland-gen", &.{
-    clip.option(@as([]const u8, ""), "wayland", 'w', "Wayland xml path"),
-    clip.arrayOption([]const u8, "protocol", 'p', "Protocol xml path"),
-    clip.option(@as([]const u8, ""), "out", 'o', "Output directory path"),
-    clip.option(false, "help", 'h', "Print this help message"),
-});
+const OptionParser = core.cli_arg_parser.Parser(&.{
+    .string("", "wayland", 'w', "Wayland xml path"),
+    .stringArray(&.{}, "protocols", 'p', "Protocol xml path"),
+    .string("", "out", 'o', "Output directory path"),
+    .bool(false, "help", 'h', "Print this help message"),
+}, .{});
 
 pub const Context = struct {
     io: std.Io,
@@ -52,24 +49,21 @@ pub fn main(init: std.process.Init) !u8 {
     stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buf);
     defer stdout_writer.flush() catch unreachable;
 
-    const args: OptionParser.Options = blk: {
-        var arg_tmp = mem.getScratch(arena);
-        defer arg_tmp.release();
+    const raw_args = try init.minimal.args.toSlice(arena);
 
-        const raw_args = try init.minimal.args.toSlice(arg_tmp.a);
-        break :blk OptionParser.parse(
-            raw_args[1..],
-            arena,
-            arg_tmp.a,
-            &stdout_writer.interface,
-        ) catch |e| switch (e) {
-            error.OutOfMemory => @panic("OOM"),
-            else => {
-                try OptionParser.usage(&stderr_writer.interface);
-                return error.ArgParseError;
-            },
-        };
+    const option_parser = OptionParser.init(raw_args[0], .{ .err_writer = &stderr_writer.interface });
+    const args = option_parser.parse(arena, raw_args[1..]) catch |e| switch (e) {
+        error.OutOfMemory => return e,
+        else => {
+            try option_parser.usage(&stderr_writer.interface);
+            return 1;
+        },
     };
+
+    if (args.help) {
+        try option_parser.help(&stdout_writer.interface);
+        return 0;
+    }
 
     var context = Context{
         .io = init.io,
@@ -86,37 +80,32 @@ pub fn main(init: std.process.Init) !u8 {
         context.signatures.deinit(context.gpa);
     }
 
-    run(&context) catch |e| {
-        try context.stderr.print("{}", .{e});
+    run(&context) catch {
+        try option_parser.usage(&stderr_writer.interface);
         return 1;
     };
     return 0;
 }
 
 fn run(context: *Context) !void {
-    if (context.args.help) {
-        try OptionParser.usage(context.stdout);
-        return;
-    }
-
     var args_valid = true;
+
     if (context.args.wayland.len == 0) {
-        try context.stderr.print("Missing --wayland option", .{});
+        try context.stderr.print("Missing --wayland option\n", .{});
         args_valid = false;
     }
 
     if (context.args.out.len == 0) {
-        try context.stderr.print("Missing --out option", .{});
+        try context.stderr.print("Missing --out option\n", .{});
         args_valid = false;
     }
 
     if (!args_valid) {
-        try OptionParser.usage(context.stderr);
         return error.InvalidArgs;
     }
 
     const output_dir = std.Io.Dir.openDirAbsolute(context.io, context.args.out, .{}) catch {
-        try context.stderr.print("Invalid output directory: {s}", .{context.args.out});
+        try context.stderr.print("Invalid output directory: {s}\n", .{context.args.out});
         return error.OutputDirDoesNotExist;
     };
     defer output_dir.close(context.io);
@@ -169,7 +158,7 @@ fn run(context: *Context) !void {
     var protocols: std.ArrayList(AST.Protocol) = .empty;
     defer protocols.deinit(context.gpa);
 
-    for (context.args.protocol.items) |protocol_path| {
+    for (context.args.protocols) |protocol_path| {
         if (std.Io.Dir.openFileAbsolute(context.io, protocol_path, .{})) |protocol_xml_file| {
             var protocol = parser.parse(context, &stderr_writer.interface, protocol_path) catch |e| {
                 protocol_xml_file.close(context.io);
