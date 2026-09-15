@@ -22,8 +22,9 @@ const wl = wayland.wayland;
 const xdg_shell = wayland.xdg_shell;
 const xdg_decoration = wayland.xdg_decoration_unstable_v1;
 
-const Joysticks = @import("linux_joysticks.zig");
-const Joystick = Joysticks.Joystick;
+const joysticks = @import("linux_joysticks.zig");
+const Joystick = joysticks.Joystick;
+const JS = joysticks.System(4);
 
 const common = @import("v10_common");
 const AudioBuffer = common.AudioBuffer;
@@ -61,34 +62,6 @@ var global_back_buffer: LinuxOffscreenBuffer = .{};
 var running: bool = false;
 var pause: bool = false;
 var wld: WlData = .{};
-
-var joysticks: [PollFdSlot.joystick_count]Joystick = @splat(.{
-    .fd = -1,
-    .state = .inactive,
-    .kind = undefined,
-    .input_id = undefined,
-    .capabilities = .{},
-    .map = undefined,
-    .open_timestamp = .zero,
-    .sync_report_count = 0,
-});
-
-var joystick_que: [16]JoystickQueueEntry = undefined;
-var joystick_que_len: usize = 0;
-
-const JoystickQueueEntry = struct {
-    fd: linux.fd_t,
-    fd_open_ts: std.Io.Timestamp,
-    event_id: u10,
-    input_id: u31,
-};
-
-const poll_fd_count = @typeInfo(PollFdSlot).@"enum".fields.len;
-var poll_fds: [poll_fd_count]linux.pollfd = @splat(.{
-    .fd = -1,
-    .events = undefined,
-    .revents = undefined,
-});
 
 const use_debug_allocator = switch (builtin.mode) {
     .Debug => true,
@@ -404,127 +377,9 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         }
     }
 
-    const dev_input_dir_fd = try linux.open("/dev/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
-    defer _ = linux.close(dev_input_dir_fd) catch |e| {
-        log.err("Failed to close dir fd: '/dev/input', error: '{}'", .{e});
-    };
-
-    const sys_class_input_dir_fd = try linux.open("/sys/class/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
-    defer _ = linux.close(sys_class_input_dir_fd) catch |e| {
-        log.err("Failed to close dir fd: '/sys/class/input', error: '{}'", .{e});
-    };
-
-    var inotify_fd: linux.fd_t = -1;
-    var inotify_wd: c_int = -1;
-    defer {
-        if (inotify_wd >= 0) {
-            assert(inotify_fd >= 0);
-            if (inotify_fd >= 0) linux.inotify_rm_watch(inotify_fd, inotify_wd) catch |e| {
-                log.warn("Failed to remove inotify watch '/dev/input', error: '{}'", .{e});
-            };
-        }
-        if (inotify_fd >= 0) linux.close(inotify_fd) catch |e| {
-            log.warn("Failed to close inotify fd, error: '{}'", .{e});
-        };
-    }
-
-    Joysticks.io_uring = try std.os.linux.IoUring.init(Joysticks.io_uring_entry_count, 0);
-    defer {
-        for (&joysticks, 0..) |*js, ji| if (js.state != .inactive) {
-            _ = Joysticks.submitCloseFd(js.fd);
-            removeJoystickFromSlot(ji);
-        };
-
-        for (joystick_que[0..joystick_que_len]) |*entry| {
-            _ = Joysticks.submitCloseFd(entry.fd);
-        }
-        joystick_que_len = 0;
-
-        _ = Joysticks.io_uring.submit() catch |e| {
-            log.err("io_uring submit failed, error: '{}'", .{e});
-        };
-
-        var cqes: [Joysticks.io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
-        while (Joysticks.io_in_flight_count > 0) {
-            const n = Joysticks.io_uring.copy_cqes(&cqes, Joysticks.io_in_flight_count) catch break;
-            if (n == 0) break;
-
-            Joysticks.io_in_flight_count -= n;
-
-            var closes_submitted: u32 = 0;
-
-            for (cqes[0..n]) |cqe| {
-                const user_data: isize = @bitCast(cqe.user_data);
-
-                const err = cqe.err();
-
-                if (user_data >= 0) {
-                    // open completed
-
-                    const in_flight_index: usize = @intCast(user_data);
-
-                    const in_flight = &Joysticks.io_open_in_flight[in_flight_index];
-                    const event_name = in_flight.eventName();
-
-                    if (err != .SUCCESS) {
-                        log.err("io_uring fd open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
-                    } else {
-                        const fd: linux.fd_t = cqe.res;
-                        if (Joysticks.submitCloseFd(fd)) {
-                            closes_submitted += 1;
-                        }
-                    }
-                } else {
-                    // close completed
-                    if (err != .SUCCESS) {
-                        log.err("io_uring joystick fd close failed, error: '{}'", .{err});
-                    }
-                }
-            }
-
-            if (closes_submitted > 0) {
-                _ = Joysticks.io_uring.submit() catch |e| {
-                    log.err("io_uring submit failed, error: '{}'", .{e});
-                };
-            }
-        }
-
-        Joysticks.io_uring.deinit();
-    }
-
-    joystickReconcile(dev_input_dir_fd, sys_class_input_dir_fd) catch |e| {
-        log.err("Joystick initial scan (reconcile) failed, error: '{}'", .{e});
-    };
-
-    _ = Joysticks.io_uring.submit() catch |e| {
-        log.err("io_uring submit failed, error: '{}'", .{e});
-    };
-
-    if (linux.inotify_init1(.{ .CLOEXEC = true, .NONBLOCK = true })) |inotify_fd_| {
-        inotify_fd = inotify_fd_;
-
-        if (linux.inotify_add_watch(inotify_fd, "/dev/input", .{
-            .CREATE = true,
-            .ATTRIB = true,
-            .MOVED_FROM = true,
-            .MOVED_TO = true,
-            .DELETE = true,
-        })) |inotify_wd_| {
-            inotify_wd = inotify_wd_;
-
-            poll_fds[@intFromEnum(PollFdSlot.inotify)] = .{ .fd = inotify_fd, .events = linux.POLL.IN, .revents = undefined };
-        } else |e| {
-            linux.close(inotify_fd) catch |ce| {
-                log.warn("Failed to close inotify fd, error: '{}'", .{ce});
-            };
-
-            inotify_fd = -1;
-
-            log.warn("Failed to add inotify watch '/dev/input', error: '{}'", .{e});
-        }
-    } else |e| {
-        log.warn("Failed to open inotify fd, error: '{}'", .{e});
-    }
+    var joystick_context_opt_: ?JS = JS.init() catch null;
+    const joystick_context_opt: ?*JS = if (joystick_context_opt_) |_| &(joystick_context_opt_.?) else null;
+    defer if (joystick_context_opt) |jc| jc.deinit();
 
     var game_code = GameCode.load(game_lib_name);
 
@@ -622,182 +477,11 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             }
         }
 
+        if (joystick_context_opt) |jc| jc.update(thread_context.io);
+
         if (wlc.displayDispatch(display) == -1) {
             running = false;
         }
-
-        var cqes: [Joysticks.io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
-        while (true) {
-            const n = Joysticks.io_uring.copy_cqes(&cqes, 0) catch break;
-            if (n == 0) break;
-
-            Joysticks.io_in_flight_count -= n;
-
-            for (cqes[0..n]) |cqe| {
-                const user_data: isize = @bitCast(cqe.user_data);
-
-                if (user_data >= 0) {
-                    const in_flight_index: usize = @intCast(user_data);
-
-                    const in_flight = &Joysticks.io_open_in_flight[in_flight_index];
-                    const event_name = in_flight.eventName();
-
-                    const err = cqe.err();
-                    if (err == .SUCCESS) {
-                        log.debug("uring finished opening: '/dev/input/{s}'", .{event_name});
-
-                        const open_ts = getWallClock(io);
-                        const fd: linux.fd_t = cqe.res;
-
-                        if (in_flight.flags.close_on_complete or
-                            joystickHasOpenFd(in_flight.event_id) or
-                            !Joysticks.eventFdIsJoystick(fd))
-                        {
-                            _ = Joysticks.submitCloseFd(fd);
-                        } else {
-                            if (!(addJoystick(
-                                sys_class_input_dir_fd,
-                                in_flight.eventName(),
-                                in_flight.event_id,
-                                in_flight.input_id,
-                                fd,
-                                open_ts,
-                            ) catch |e| blk: {
-                                _ = Joysticks.submitCloseFd(fd);
-                                log.err("Failed to add joystick '/dev/input/{s}', error: '{}'", .{ event_name, e });
-                                break :blk false;
-                            })) {
-                                if (!joystickQueuePush(.{
-                                    .fd = fd,
-                                    .fd_open_ts = open_ts,
-                                    .event_id = @intCast(in_flight.event_id),
-                                    .input_id = in_flight.input_id,
-                                })) {
-                                    _ = Joysticks.submitCloseFd(fd);
-                                    log.err("Out of joystick slots, dropping '/dev/input/{s}", .{in_flight._event_name});
-                                }
-                            }
-                        }
-                    } else {
-                        if (err == .ACCES and in_flight.flags.retry_pending and !in_flight.flags.close_on_complete) {
-                            in_flight.flags.retry_pending = false;
-
-                            log.debug("Open failed, retry: '/dev/input/{s}', error: '{}'", .{ event_name, err });
-
-                            Joysticks.submitOpenFd(dev_input_dir_fd, sys_class_input_dir_fd, event_name, in_flight.event_id) catch |e| {
-                                log.err("Failed to submit joystick for open: '/dev/input/{s}', error: '{}'", .{ event_name, e });
-                            };
-                        } else {
-                            log.debug("Open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
-                        }
-                    }
-
-                    Joysticks.freeIoInFlightIndex(in_flight_index);
-                } else {
-                    log.debug("uring finished closing, result: {}, error: {}", .{ cqe.res, cqe.err() });
-                    // close, ignore
-                }
-            }
-        }
-
-        if (linux.poll(&poll_fds, 0)) |poll_rc| {
-            if (poll_rc > 0) {
-                for (&poll_fds, 0..) |*pollfd, slot_index| {
-                    const slot: PollFdSlot = @enumFromInt(slot_index);
-                    const in = pollfd.revents & linux.POLL.IN != 0;
-
-                    if (in) switch (slot) {
-                        .inotify => {
-                            const buf_len = 16 * (@sizeOf(linux.InotifyEvent) + linux.NAME_MAX + 1);
-                            var buf: [buf_len]u8 align(@alignOf(linux.InotifyEvent)) = undefined;
-
-                            while (linux.read(inotify_fd, &buf)) |bytes_read| {
-                                var i: usize = 0;
-                                while (i < bytes_read.len) {
-                                    const rem = bytes_read[i..];
-                                    assert(rem.len >= @sizeOf(linux.InotifyEvent));
-
-                                    const event: *const linux.InotifyEvent = @ptrCast(@alignCast(rem.ptr));
-                                    i += @sizeOf(linux.InotifyEvent) + event.len;
-
-                                    if (event.mask.Q_OVERFLOW) {
-                                        joystickReconcile(dev_input_dir_fd, sys_class_input_dir_fd) catch |e| {
-                                            log.err("reconcile after Q_OVERFLOW failed, error: '{}'", .{e});
-                                            continue;
-                                        };
-                                    }
-
-                                    if (event.wd != inotify_wd) continue;
-                                    if (event.len == 0) continue;
-
-                                    assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
-                                    if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
-                                        const event_num_str = std.mem.cutPrefix(u8, event.name(), "event") orelse continue;
-                                        const event_id = std.fmt.parseInt(u10, event_num_str, 10) catch continue;
-
-                                        if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
-                                            log.debug("inotyfy add mask: {}", .{event.mask});
-                                            if (joystickHasOpenFd(event_id)) {
-                                                // skip
-                                            } else if (Joysticks.getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
-                                                Joysticks.io_open_in_flight[in_flight_index].flags.retry_pending = true;
-                                                log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
-                                            } else {
-                                                Joysticks.submitOpenFd(dev_input_dir_fd, sys_class_input_dir_fd, event.name(), event_id) catch |e| {
-                                                    const report = switch (e) {
-                                                        error.DevSysPathMissing => !event.mask.ATTRIB,
-                                                        else => true,
-                                                    };
-
-                                                    if (report) {
-                                                        log.err("Failed to submit potential joystick for io_uring open: '/dev/input/{s}', error: '{}'", .{ event.name(), e });
-                                                    }
-                                                };
-                                            }
-                                        } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
-                                            if (removeJoystick(sys_class_input_dir_fd, event_id)) |fd| {
-                                                _ = Joysticks.submitCloseFd(fd);
-                                            }
-                                        }
-                                    }
-                                }
-                            } else |e| switch (e) {
-                                error.NoData => {},
-                                else => log.err("Failed to read inotify events, error: '{}'", .{e}),
-                            }
-                        },
-
-                        .joystick_0,
-                        .joystick_1,
-                        .joystick_2,
-                        .joystick_3,
-                        => {
-                            var events: [16]linux.InputEvent = undefined;
-                            while (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
-                                const num_events = bytes_read.len / @sizeOf(linux.InputEvent);
-                                for (events[0..num_events]) |*event| {
-                                    const jid = slot_index - PollFdSlot.first_joystick;
-                                    const joystick = &joysticks[jid];
-                                    joystick.handleEvent(event);
-                                }
-                            } else |e| switch (e) {
-                                error.NoData => {},
-                                else => log.err("Failed to read joystick events, error: '{}'", .{e}),
-                            }
-                        },
-                    };
-                }
-            }
-        } else |e| switch (e) {
-            error.Interrupt => {},
-            else => {
-                log.err("Poll failed, error: '{}", .{e});
-            },
-        }
-
-        _ = Joysticks.io_uring.submit() catch |e| {
-            log.err("io_uring submit failed, error: '{}'", .{e});
-        };
 
         if (wld.pending_resize) |r| {
             if (wld.pending_configure_serial) |serial| {
@@ -807,88 +491,88 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         }
 
         if (!pause) {
-            var max_controller_count: usize = joysticks.len;
-            if (max_controller_count > (wld.new_input.controllers.len - 1)) max_controller_count = (wld.new_input.controllers.len - 1);
+            if (joystick_context_opt) |joystick_context| {
+                var max_controller_count: usize = joystick_context.joysticks.len;
+                if (max_controller_count > (wld.new_input.controllers.len - 1)) max_controller_count = (wld.new_input.controllers.len - 1);
 
-            for (joysticks[0..max_controller_count], 1..) |*js, i| {
-                js.updateState(io);
+                for (joystick_context.joysticks[0..max_controller_count], 1..) |*js, i| {
+                    const old_controller = &wld.old_input.controllers[i];
+                    var new_controller = &wld.new_input.controllers[i];
 
-                const old_controller = &wld.old_input.controllers[i];
-                var new_controller = &wld.new_input.controllers[i];
+                    const old_buttons = &old_controller.buttons.named;
+                    const new_buttons = &new_controller.buttons.named;
 
-                const old_buttons = &old_controller.buttons.named;
-                const new_buttons = &new_controller.buttons.named;
+                    if (js.state == .active) {
+                        new_controller.is_connected = true;
+                        new_controller.is_analog = old_controller.is_analog;
 
-                if (js.state == .active) {
-                    new_controller.is_connected = true;
-                    new_controller.is_analog = old_controller.is_analog;
+                        new_controller.stick_average_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
+                        new_controller.stick_average_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
 
-                    new_controller.stick_average_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
-                    new_controller.stick_average_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
+                        if (new_controller.stick_average_x != 0 or new_controller.stick_average_y != 0) {
+                            new_controller.is_analog = true;
+                        }
 
-                    if (new_controller.stick_average_x != 0 or new_controller.stick_average_y != 0) {
-                        new_controller.is_analog = true;
+                        if (js.getButtonState(.dpad_up)) {
+                            new_controller.stick_average_y = 1;
+                            new_controller.is_analog = false;
+                        }
+                        if (js.getButtonState(.dpad_down)) {
+                            new_controller.stick_average_y = -1;
+                            new_controller.is_analog = false;
+                        }
+                        if (js.getButtonState(.dpad_left)) {
+                            new_controller.stick_average_x = -1;
+                            new_controller.is_analog = false;
+                        }
+                        if (js.getButtonState(.dpad_right)) {
+                            new_controller.stick_average_x = 1;
+                            new_controller.is_analog = false;
+                        }
+
+                        const threshold = 0.5;
+
+                        processDigitalButton(
+                            .{ .mask = if (new_controller.stick_average_x < -threshold) 1 else 0 },
+                            &old_buttons.move_left,
+                            @enumFromInt(0),
+                            &new_buttons.move_left,
+                        );
+                        processDigitalButton(
+                            .{ .mask = if (new_controller.stick_average_x > threshold) 1 else 0 },
+                            &old_buttons.move_right,
+                            @enumFromInt(0),
+                            &new_buttons.move_right,
+                        );
+                        processDigitalButton(
+                            .{ .mask = if (new_controller.stick_average_y < -threshold) 1 else 0 },
+                            &old_buttons.move_down,
+                            @enumFromInt(0),
+                            &new_buttons.move_down,
+                        );
+                        processDigitalButton(
+                            .{ .mask = if (new_controller.stick_average_y > threshold) 1 else 0 },
+                            &old_buttons.move_up,
+                            @enumFromInt(0),
+                            &new_buttons.move_up,
+                        );
+
+                        // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
+                        processDigitalButton(js.buttons, &old_buttons.action_up, .north, &new_buttons.action_up);
+                        processDigitalButton(js.buttons, &old_buttons.action_down, .south, &new_buttons.action_down);
+                        processDigitalButton(js.buttons, &old_buttons.action_left, .west, &new_buttons.action_left);
+                        processDigitalButton(js.buttons, &old_buttons.action_right, .east, &new_buttons.action_right);
+                        processDigitalButton(js.buttons, &old_buttons.left_shoulder, .shoulder_left, &new_buttons.left_shoulder);
+                        processDigitalButton(js.buttons, &old_buttons.right_shoulder, .shoulder_right, &new_buttons.right_shoulder);
+                        processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
+                        processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
+
+                        const strong = js.axis[@intFromEnum(Joystick.Axis.right_z)];
+                        const weak = js.axis[@intFromEnum(Joystick.Axis.left_z)];
+                        js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
+                    } else if (js.state == .inactive) {
+                        new_controller.is_connected = false;
                     }
-
-                    if (js.getButtonState(.dpad_up)) {
-                        new_controller.stick_average_y = 1;
-                        new_controller.is_analog = false;
-                    }
-                    if (js.getButtonState(.dpad_down)) {
-                        new_controller.stick_average_y = -1;
-                        new_controller.is_analog = false;
-                    }
-                    if (js.getButtonState(.dpad_left)) {
-                        new_controller.stick_average_x = -1;
-                        new_controller.is_analog = false;
-                    }
-                    if (js.getButtonState(.dpad_right)) {
-                        new_controller.stick_average_x = 1;
-                        new_controller.is_analog = false;
-                    }
-
-                    const threshold = 0.5;
-
-                    processDigitalButton(
-                        .{ .mask = if (new_controller.stick_average_x < -threshold) 1 else 0 },
-                        &old_buttons.move_left,
-                        @enumFromInt(0),
-                        &new_buttons.move_left,
-                    );
-                    processDigitalButton(
-                        .{ .mask = if (new_controller.stick_average_x > threshold) 1 else 0 },
-                        &old_buttons.move_right,
-                        @enumFromInt(0),
-                        &new_buttons.move_right,
-                    );
-                    processDigitalButton(
-                        .{ .mask = if (new_controller.stick_average_y < -threshold) 1 else 0 },
-                        &old_buttons.move_down,
-                        @enumFromInt(0),
-                        &new_buttons.move_down,
-                    );
-                    processDigitalButton(
-                        .{ .mask = if (new_controller.stick_average_y > threshold) 1 else 0 },
-                        &old_buttons.move_up,
-                        @enumFromInt(0),
-                        &new_buttons.move_up,
-                    );
-
-                    // TODO: This could(/should?!) be done when we receive the event above, so we can count transitions
-                    processDigitalButton(js.buttons, &old_buttons.action_up, .north, &new_buttons.action_up);
-                    processDigitalButton(js.buttons, &old_buttons.action_down, .south, &new_buttons.action_down);
-                    processDigitalButton(js.buttons, &old_buttons.action_left, .west, &new_buttons.action_left);
-                    processDigitalButton(js.buttons, &old_buttons.action_right, .east, &new_buttons.action_right);
-                    processDigitalButton(js.buttons, &old_buttons.left_shoulder, .shoulder_left, &new_buttons.left_shoulder);
-                    processDigitalButton(js.buttons, &old_buttons.right_shoulder, .shoulder_right, &new_buttons.right_shoulder);
-                    processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
-                    processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
-
-                    const strong = js.axis[@intFromEnum(Joystick.Axis.right_z)];
-                    const weak = js.axis[@intFromEnum(Joystick.Axis.left_z)];
-                    js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
-                } else if (js.state == .inactive) {
-                    new_controller.is_connected = false;
                 }
             }
 
@@ -1254,21 +938,6 @@ const WlToplevel = union(enum) {
 const WlPendingResize = struct {
     width: i32,
     height: i32,
-};
-
-const PollFdSlot = enum(usize) {
-    inotify,
-
-    // NOTE: !!! Update first/last when changing this!
-    joystick_0,
-    joystick_1,
-    joystick_2,
-    joystick_3,
-    // NOTE: !!! Update first/last when changing this!
-
-    pub const first_joystick: usize = @intFromEnum(PollFdSlot.joystick_0);
-    pub const last_joystick: usize = @intFromEnum(PollFdSlot.joystick_3);
-    pub const joystick_count: usize = last_joystick - first_joystick + 1;
 };
 
 fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const ButtonState, btn: Joystick.Button, new_state: *ButtonState) void {
@@ -1934,298 +1603,6 @@ fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mo
         wld.max_height = height;
 
         // TODO: Create new shm pool, delete old when all buffers are released
-    }
-}
-
-fn addJoystick(sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !bool {
-    assert(event_id >= 0);
-
-    var result = false;
-
-    for (&joysticks, 0..) |*js, ji| {
-        if (js.state == .inactive) {
-            try addJoystickInSlot(sys_class_input_dir_fd, event_name, event_id, input_id, fd, fd_open_ts, ji);
-            result = true;
-            break;
-        }
-    }
-
-    return result;
-}
-
-fn addJoystickInSlot(sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) !void {
-    assert(slot_index < joysticks.len);
-
-    const js = &joysticks[slot_index];
-    assert(js.state == .inactive);
-
-    log.info("Adding joystick: '/dev/input/event{}' (slot index: {})", .{ event_id, slot_index });
-
-    assert(poll_fds[PollFdSlot.first_joystick + slot_index].fd == -1);
-
-    try Joystick.init(js, sys_class_input_dir_fd, event_name, event_id, input_id, fd, fd_open_ts);
-
-    poll_fds[PollFdSlot.first_joystick + slot_index] = .{
-        .fd = @intCast(js.fd),
-        .events = linux.POLL.IN,
-        .revents = undefined,
-    };
-}
-
-fn removeJoystick(sys_class_input_dir_fd: linux.dirfd_t, event_id: i11) ?linux.fd_t {
-    assert(event_id >= 0);
-
-    var result: ?linux.fd_t = null;
-
-    for (&joysticks, 0..) |*js, ji| {
-        if (js.event_id == event_id) {
-            assert(js.state != .inactive);
-
-            log.info("Removing joystick: '/dev/input/event{}'", .{event_id});
-
-            result = js.fd;
-
-            removeJoystickFromSlot(ji);
-
-            if (joystickQueuePop()) |entry| {
-                var event_name_buf: [10]u8 = undefined;
-                const event_name = std.fmt.bufPrintSentinel(&event_name_buf, "event{}", .{entry.event_id}, 0) catch unreachable;
-                addJoystickInSlot(sys_class_input_dir_fd, event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
-                    _ = joystickQueuePush(entry);
-                    log.err("Failed to add joystick '/dev/input/event{}', error: '{}'", .{ event_id, e });
-                };
-            }
-
-            break;
-        }
-    } else for (&Joysticks.io_open_in_flight) |*in_flight| {
-        if (in_flight.event_id == event_id) {
-            in_flight.flags.close_on_complete = true;
-            in_flight.flags.retry_pending = false;
-
-            break;
-        }
-    } else for (joystick_que[0..joystick_que_len], 0..) |*entry, entry_index| {
-        if (entry.event_id == event_id) {
-            result = entry.fd;
-            joystickQueueOrderedRemove(entry_index);
-
-            break;
-        }
-    }
-
-    return result;
-}
-
-fn removeJoystickFromSlot(slot_index: usize) void {
-    assert(slot_index < joysticks.len);
-
-    const js = &joysticks[slot_index];
-    assert(js.state != .inactive);
-
-    assert(poll_fds[PollFdSlot.first_joystick + slot_index].fd == js.fd);
-
-    js.deinit();
-
-    const js_pollfd = &poll_fds[PollFdSlot.first_joystick + slot_index];
-    js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
-}
-
-pub fn joystickReconcile(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t) linux.DirIterator.Error!void {
-    const PresentDevice = struct {
-        input_id: u31,
-        event_id: u10,
-        event_name_buf: [10]u8,
-        event_name_len: u8,
-    };
-
-    var sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
-
-    var present: [Joysticks.io_uring_entry_count]PresentDevice = undefined;
-    var present_len: usize = 0;
-
-    var it = try linux.DirIterator.init(dev_input_dir_fd, .{});
-
-    while (try it.next()) |entry| {
-        if (entry.type != .char) continue;
-
-        const event_id_str = std.mem.cutPrefix(u8, entry.name, "event") orelse continue;
-        const event_id = std.fmt.parseInt(u10, event_id_str, 10) catch continue;
-
-        const sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, entry.name, &sys_path_rel_buf) catch |e| {
-            log.err("reconcile readlink failed on: '/sys/class/input/{s}', error: '{}'", .{ entry.name, e });
-            continue;
-        };
-        const sys_path_rel_sys_link = sys_path_rel_buf[0..sys_path_rel_len];
-
-        const sys_path_dirname_rel_sys_link = std.fs.path.dirname(sys_path_rel_sys_link) orelse continue;
-        const input_id_str = std.mem.cutPrefix(u8, std.fs.path.basename(sys_path_dirname_rel_sys_link), "input") orelse continue;
-        const input_id = std.fmt.parseInt(u31, input_id_str, 10) catch continue;
-
-        if (present_len < present.len) {
-            const p = &present[present_len];
-            present_len += 1;
-            assert(entry.name.len + 1 <= p.event_name_buf.len);
-
-            p.* = .{
-                .input_id = input_id,
-                .event_id = event_id,
-                .event_name_buf = @splat(0),
-                .event_name_len = @intCast(entry.name.len),
-            };
-
-            @memcpy(p.event_name_buf[0..entry.name.len], entry.name);
-        } else {
-            log.err("reconcile overflow (>{}), dropping: '/dev/input/{s}' and additional entries", .{ present.len, entry.name });
-            continue;
-        }
-    }
-
-    for (&joysticks, 0..) |*js, ji| if (js.state != .inactive) {
-        var found = false;
-        for (present[0..present_len]) |*p| {
-            if (js.input_id == p.input_id) {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            _ = Joysticks.submitCloseFd(js.fd);
-            removeJoystickFromSlot(ji);
-        }
-    };
-
-    {
-        var qi: usize = 0;
-        while (qi < joystick_que_len) {
-            const ready_entry = &joystick_que[qi];
-
-            var found = false;
-            for (present[0..present_len]) |*p| {
-                if (ready_entry.input_id == p.input_id) {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (found) {
-                qi += 1;
-            } else {
-                _ = Joysticks.submitCloseFd(ready_entry.fd);
-                joystickQueueOrderedRemove(qi);
-            }
-        }
-    }
-
-    for (&Joysticks.io_open_in_flight) |*in_flight| if (in_flight.event_id != -1) {
-        var found = false;
-        for (present[0..present_len]) |*p| {
-            if (in_flight.input_id == p.input_id) {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            in_flight.flags.close_on_complete = true;
-            in_flight.flags.retry_pending = false;
-        }
-    };
-
-    for (present[0..present_len]) |*p| {
-        const found: bool = for (&joysticks) |*js| {
-            if (js.state != .inactive and js.input_id == p.input_id) break true;
-        } else for (joystick_que[0..joystick_que_len]) |*ready_entry| {
-            if (ready_entry.input_id == p.input_id) break true;
-        } else for (&Joysticks.io_open_in_flight) |*in_flight| {
-            if (in_flight.input_id == p.input_id) break true;
-        } else false;
-
-        if (!found) {
-            const event_name = p.event_name_buf[0..p.event_name_len :0];
-
-            Joysticks.submitOpenFd(dev_input_dir_fd, sys_class_input_dir_fd, event_name, p.event_id) catch |e| {
-                log.err("Failed to submit open for '/dev/input/{s}', error: {}", .{ event_name, e });
-                continue;
-            };
-        }
-    }
-
-    while (joystick_que_len > 0) {
-        const index_opt: ?usize = for (&joysticks, 0..) |*js, ji| {
-            if (js.state == .inactive) {
-                break ji;
-            }
-        } else null;
-
-        if (index_opt) |ji| {
-            const entry = joystickQueuePop().?;
-
-            var event_name_buf: [10]u8 = undefined;
-            const event_name = std.fmt.bufPrintSentinel(&event_name_buf, "event{}", .{entry.event_id}, 0) catch unreachable;
-            addJoystickInSlot(sys_class_input_dir_fd, event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
-                _ = joystickQueuePush(entry);
-                log.err("Failed to add joystick '/dev/input/{s}', error: '{}'", .{ event_name, e });
-            };
-        } else break;
-    }
-}
-
-fn joystickHasOpenFd(event_id: i11) bool {
-    assert(event_id >= 0);
-
-    var result = false;
-
-    for (&joysticks) |*js| {
-        if (js.state != .inactive and js.event_id == event_id) {
-            result = true;
-            break;
-        }
-    } else for (joystick_que[0..joystick_que_len]) |*ready_entry| {
-        if (ready_entry.event_id == event_id) {
-            result = true;
-            break;
-        }
-    }
-
-    return result;
-}
-
-fn joystickQueuePush(entry: JoystickQueueEntry) bool {
-    var result = false;
-
-    if (joystick_que_len < joystick_que.len) {
-        joystick_que[joystick_que_len] = entry;
-        joystick_que_len += 1;
-        result = true;
-    }
-
-    return result;
-}
-
-fn joystickQueuePop() ?JoystickQueueEntry {
-    var result: ?JoystickQueueEntry = null;
-
-    if (joystick_que_len > 0) {
-        result = joystick_que[0];
-
-        joystick_que_len -= 1;
-        @memmove(joystick_que[0..joystick_que_len], joystick_que[1..][0..joystick_que_len]);
-    }
-
-    return result;
-}
-
-fn joystickQueueOrderedRemove(index: usize) void {
-    assert(index < joystick_que_len);
-    if (index < joystick_que_len) {
-        const rem_len = joystick_que_len - (index + 1);
-        if (rem_len > 0) {
-            @memmove(joystick_que[index..][0..rem_len], joystick_que[index + 1 ..][0..rem_len]);
-        }
-
-        joystick_que_len -= 1;
     }
 }
 

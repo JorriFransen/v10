@@ -19,35 +19,7 @@ const fd_t = linux.fd_t;
 
 const linux_v10 = @import("linux_v10.zig");
 
-pub const io_uring_entry_count = 64;
-pub var io_uring: std.os.linux.IoUring = undefined;
-pub var io_in_flight_count: u32 = 0;
-pub var io_open_in_flight: [io_uring_entry_count]IoOpenInFlight = @splat(.{
-    .event_id = -1,
-    .input_id = undefined,
-    ._event_name = undefined,
-    .event_name_len = 0,
-});
-
-pub const invalid_id: u32 = math.maxInt(u32);
-pub const sync_ms_max = 200;
-
-const IoOpenInFlight = struct {
-    event_id: i11 = -1,
-    input_id: u31,
-    flags: Flags = .{},
-    _event_name: [10]u8,
-    event_name_len: u8,
-
-    pub const Flags = packed struct(u2) {
-        retry_pending: bool = false,
-        close_on_complete: bool = false,
-    };
-
-    pub inline fn eventName(this: *const IoOpenInFlight) [:0]const u8 {
-        return this._event_name[0..this.event_name_len :0];
-    }
-};
+const wait_settle_ms_max = 200;
 
 pub const Joystick = struct {
     fd: linux.fd_t,
@@ -71,13 +43,13 @@ pub const Joystick = struct {
     open_timestamp: std.Io.Timestamp,
     sync_report_count: u8,
 
-    pub const State = enum(u2) {
+    const State = enum(u2) {
         inactive,
         wait_settle,
         active,
     };
 
-    pub const Kind = enum(u1) {
+    const Kind = enum(u1) {
         default,
         xbox,
     };
@@ -166,7 +138,7 @@ pub const Joystick = struct {
         },
     };
 
-    pub fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
         assert(event_id >= 0);
 
         var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
@@ -271,11 +243,12 @@ pub const Joystick = struct {
         }
     }
 
-    pub fn deinit(this: *Joystick) void {
+    fn deinit(this: *Joystick) void {
         this.* = .{
             .fd = -1,
             .state = .inactive,
             .kind = undefined,
+            .event_id = -1,
             .input_id = undefined,
             .map = undefined,
             .capabilities = .{},
@@ -284,24 +257,22 @@ pub const Joystick = struct {
         };
     }
 
-    pub fn updateState(this: *Joystick, io: std.Io) void {
+    fn updateState(this: *Joystick, io: std.Io) void {
         if (this.state == .wait_settle) {
-            if (this.open_timestamp.nanoseconds + (sync_ms_max * std.time.ns_per_ms) < linux_v10.getWallClock(io).nanoseconds) {
+            if (this.open_timestamp.nanoseconds + (wait_settle_ms_max * std.time.ns_per_ms) < linux_v10.getWallClock(io).nanoseconds) {
                 this.activate();
                 assert(this.state == .active);
             }
         }
     }
 
-    pub fn handleEvent(this: *Joystick, event: *const InputEvent) void {
+    fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         switch (event.type) {
             .ABS => {
-                const abs: ABS = @enumFromInt(event.code);
-
                 inline for (std.meta.fields(Axis)) |field| {
                     const mapped_abs_axis = @field(this.map.axis, field.name);
 
-                    if (abs == mapped_abs_axis) {
+                    if (event.code == @intFromEnum(mapped_abs_axis)) {
                         const axis_idx: usize = field.value;
                         const axis = @field(Axis, field.name);
 
@@ -338,12 +309,10 @@ pub const Joystick = struct {
             },
 
             .KEY => {
-                const key: KEY = @enumFromInt(event.code);
-
                 inline for (std.meta.fields(Button)) |field| {
                     const mapped_key: KEY = @field(this.map.buttons, field.name);
 
-                    if (key == mapped_key) {
+                    if (event.code == @intFromEnum(mapped_key)) {
                         const button = @field(Button, field.name);
                         this.setButtonState(button, event.value != 0);
                         break;
@@ -352,9 +321,7 @@ pub const Joystick = struct {
             },
 
             .SYN => {
-                const syn: linux.SYN = @enumFromInt(event.code);
-
-                if (syn == .REPORT and this.state == .wait_settle) {
+                if (event.code == @intFromEnum(linux.SYN.REPORT) and this.state == .wait_settle) {
                     this.sync_report_count += 1;
                 }
             },
@@ -370,7 +337,7 @@ pub const Joystick = struct {
         }
     }
 
-    pub fn activate(this: *Joystick) void {
+    fn activate(this: *Joystick) void {
         assert(this.state == .wait_settle);
         this.state = .active;
 
@@ -452,11 +419,11 @@ pub const Joystick = struct {
         return this.buttons.isSet(@intFromEnum(button));
     }
 
-    pub inline fn setButtonState(this: *Joystick, button: Button, state: bool) void {
+    inline fn setButtonState(this: *Joystick, button: Button, state: bool) void {
         this.buttons.setValue(@intFromEnum(button), state);
     }
 
-    pub fn normalizedAxis(this: *const Joystick, axis: Axis, raw: i32) f32 {
+    fn normalizedAxis(this: *const Joystick, axis: Axis, raw: i32) f32 {
         var result: f32 = 0;
 
         const meta = &this.axis_meta[@intFromEnum(axis)];
@@ -471,7 +438,787 @@ pub const Joystick = struct {
     }
 };
 
-pub fn eventFdIsJoystick(fd: fd_t) bool {
+// pub const Context = struct {
+pub fn System(comptime joystick_count: usize) type {
+    return struct {
+        const Context = @This();
+
+        const joystick_slot_count = joystick_count;
+        const io_uring_entry_count = joystick_count * 32;
+        const inotify_pollfd_idx = 0;
+        const first_joystick_pollfd_idx = 1;
+
+        dev_input_dir_fd: linux.dirfd_t,
+        sys_class_input_dir_fd: linux.dirfd_t,
+
+        joysticks: [joystick_slot_count]Joystick = @splat(.{
+            .fd = -1,
+            .state = .inactive,
+            .kind = undefined,
+            .input_id = undefined,
+            .capabilities = .{},
+            .map = undefined,
+            .open_timestamp = .zero,
+            .sync_report_count = 0,
+        }),
+
+        inotify_fd: linux.fd_t,
+        inotify_wd: c_int,
+
+        wait_que: [joystick_count * 8]WaitQueueEntry = undefined,
+        wait_que_len: usize = 0,
+
+        poll_fds: [joystick_slot_count + first_joystick_pollfd_idx]linux.pollfd = @splat(.{
+            .fd = -1,
+            .events = undefined,
+            .revents = undefined,
+        }),
+
+        io_uring: std.os.linux.IoUring,
+        io_in_flight_count: u32 = 0,
+        io_open_in_flight: [io_uring_entry_count]IoOpenInFlight = @splat(.{
+            .event_id = -1,
+            .input_id = undefined,
+            ._event_name = undefined,
+            .event_name_len = 0,
+        }),
+
+        pub fn init() !Context {
+            var result: Context = .{
+                .dev_input_dir_fd = -1,
+                .sys_class_input_dir_fd = -1,
+                .inotify_fd = -1,
+                .inotify_wd = -1,
+                .io_uring = undefined,
+            };
+
+            result.dev_input_dir_fd = try linux.open("/dev/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+            errdefer _ = linux.close(result.dev_input_dir_fd) catch |e| {
+                log.err("Failed to close dir fd: '/dev/input', error: '{}'", .{e});
+            };
+
+            result.sys_class_input_dir_fd = try linux.open("/sys/class/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+            errdefer _ = linux.close(result.sys_class_input_dir_fd) catch |e| {
+                log.err("Failed to close dir fd: '/sys/class/input', error: '{}'", .{e});
+            };
+
+            result.io_uring = try std.os.linux.IoUring.init(io_uring_entry_count, 0);
+            errdefer result.io_uring.deinit();
+
+            result.reconcile(result.dev_input_dir_fd, result.sys_class_input_dir_fd) catch |e| {
+                log.err("Joystick initial scan (reconcile) failed, error: '{}'", .{e});
+            };
+
+            _ = result.io_uring.submit() catch |e| {
+                log.err("io_uring submit failed, error: '{}'", .{e});
+            };
+            result.inotify_fd = linux.inotify_init1(.{ .CLOEXEC = true, .NONBLOCK = true }) catch |e| {
+                log.err("Failed to open inotify fd, error: '{}'", .{e});
+                return e;
+            };
+            errdefer linux.close(result.inotify_fd) catch |e| {
+                log.warn("Failed to close inotify fd, error: '{}'", .{e});
+            };
+
+            result.inotify_wd = linux.inotify_add_watch(
+                result.inotify_fd,
+                "/dev/input",
+                .{ .CREATE = true, .ATTRIB = true, .MOVED_FROM = true, .MOVED_TO = true, .DELETE = true },
+            ) catch |e| {
+                log.err("Failed to add inotify watch '/dev/input', error: '{}'", .{e});
+                return e;
+            };
+            errdefer linux.inotify_rm_watch(result.inotify_fd, result.inotify_wd) catch |e| {
+                log.err("Failed to remove inotify watch '/dev/input', error: '{}'", .{e});
+            };
+
+            result.poll_fds[0] = .{ .fd = result.inotify_fd, .events = linux.POLL.IN, .revents = undefined };
+
+            return result;
+        }
+
+        pub fn deinit(this: *Context) void {
+            _ = linux.close(this.dev_input_dir_fd) catch |e| {
+                log.err("Failed to close dir fd: '/dev/input', error: '{}'", .{e});
+            };
+            this.dev_input_dir_fd = -1;
+
+            _ = linux.close(this.sys_class_input_dir_fd) catch |e| {
+                log.err("Failed to close dir fd: '/sys/class/input', error: '{}'", .{e});
+            };
+            this.sys_class_input_dir_fd = -1;
+
+            this.flushIoUring();
+            this.io_uring.deinit();
+
+            _ = linux.inotify_rm_watch(this.inotify_fd, this.inotify_wd) catch |e| {
+                log.err("Failed to remove inotify watch '/dev/input', error: '{}'", .{e});
+            };
+            this.inotify_wd = -1;
+
+            _ = linux.close(this.inotify_fd) catch |e| {
+                log.warn("Failed to close inotify fd, error: '{}'", .{e});
+            };
+            this.inotify_fd = -1;
+        }
+
+        pub fn update(this: *Context, io: std.Io) void {
+            var cqes: [io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
+            while (true) {
+                const n = this.io_uring.copy_cqes(&cqes, 0) catch break;
+                if (n == 0) break;
+
+                this.io_in_flight_count -= n;
+
+                for (cqes[0..n]) |cqe| {
+                    const user_data: isize = @bitCast(cqe.user_data);
+
+                    if (user_data >= 0) {
+                        const in_flight_index: usize = @intCast(user_data);
+
+                        const in_flight = &this.io_open_in_flight[in_flight_index];
+                        const event_name = in_flight.eventName();
+
+                        const err = cqe.err();
+                        if (err == .SUCCESS) {
+                            log.debug("uring finished opening: '/dev/input/{s}'", .{event_name});
+
+                            const open_ts = linux_v10.getWallClock(io);
+                            const fd: linux.fd_t = cqe.res;
+
+                            if (in_flight.flags.close_on_complete or
+                                this.eventIdMatchesRegisteredOrWaiting(in_flight.event_id) or !eventFdIsJoystick(fd))
+                            {
+                                _ = this.submitCloseFd(fd);
+                            } else {
+                                if (!(this.register(
+                                    this.sys_class_input_dir_fd,
+                                    in_flight.eventName(),
+                                    in_flight.event_id,
+                                    in_flight.input_id,
+                                    fd,
+                                    open_ts,
+                                ) catch |e| blk: {
+                                    _ = this.submitCloseFd(fd);
+                                    log.err("Failed to add joystick '/dev/input/{s}', error: '{}'", .{ event_name, e });
+                                    break :blk false;
+                                })) {
+                                    if (!this.waitQueuePush(.{
+                                        .fd = fd,
+                                        .fd_open_ts = open_ts,
+                                        .event_id = @intCast(in_flight.event_id),
+                                        .input_id = in_flight.input_id,
+                                    })) {
+                                        _ = this.submitCloseFd(fd);
+                                        log.err("Out of joystick slots, dropping '/dev/input/{s}", .{in_flight._event_name});
+                                    }
+                                }
+                            }
+                        } else {
+                            if (err == .ACCES and in_flight.flags.retry_pending and !in_flight.flags.close_on_complete) {
+                                in_flight.flags.retry_pending = false;
+
+                                log.debug("Open failed, retry: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+
+                                this.submitOpenFd(this.dev_input_dir_fd, this.sys_class_input_dir_fd, event_name, in_flight.event_id) catch |e| {
+                                    log.err("Failed to submit joystick for open: '/dev/input/{s}', error: '{}'", .{ event_name, e });
+                                };
+                            } else {
+                                log.debug("Open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+                            }
+                        }
+
+                        this.freeIoInFlightIndex(in_flight_index);
+                    } else {
+                        log.debug("uring finished closing, result: {}, error: {}", .{ cqe.res, cqe.err() });
+                        // close, ignore
+                    }
+                }
+            }
+
+            if (linux.poll(&this.poll_fds, 0)) |poll_rc| {
+                if (poll_rc > 0) {
+                    for (&this.poll_fds, 0..) |*pollfd, pollfd_idx| {
+                        const in = pollfd.revents & linux.POLL.IN != 0;
+
+                        if (in) if (pollfd_idx < first_joystick_pollfd_idx) {
+                            assert(pollfd_idx == inotify_pollfd_idx);
+
+                            const buf_len = 16 * (@sizeOf(linux.InotifyEvent) + linux.NAME_MAX + 1);
+                            var buf: [buf_len]u8 align(@alignOf(linux.InotifyEvent)) = undefined;
+
+                            while (linux.read(this.inotify_fd, &buf)) |bytes_read| {
+                                var i: usize = 0;
+                                while (i < bytes_read.len) {
+                                    const rem = bytes_read[i..];
+                                    assert(rem.len >= @sizeOf(linux.InotifyEvent));
+
+                                    const event: *const linux.InotifyEvent = @ptrCast(@alignCast(rem.ptr));
+                                    i += @sizeOf(linux.InotifyEvent) + event.len;
+
+                                    if (event.mask.Q_OVERFLOW) {
+                                        this.reconcile(this.dev_input_dir_fd, this.sys_class_input_dir_fd) catch |e| {
+                                            log.err("reconcile after Q_OVERFLOW failed, error: '{}'", .{e});
+                                            continue;
+                                        };
+                                    }
+
+                                    if (event.wd != this.inotify_wd) continue;
+                                    if (event.len == 0) continue;
+
+                                    assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
+                                    if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
+                                        const event_num_str = std.mem.cutPrefix(u8, event.name(), "event") orelse continue;
+                                        const event_id = std.fmt.parseInt(u10, event_num_str, 10) catch continue;
+
+                                        if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
+                                            log.debug("inotyfy add mask: {}", .{event.mask});
+                                            if (this.eventIdMatchesRegisteredOrWaiting(event_id)) {
+                                                // skip
+                                            } else if (this.getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
+                                                this.io_open_in_flight[in_flight_index].flags.retry_pending = true;
+                                                log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
+                                            } else {
+                                                this.submitOpenFd(this.dev_input_dir_fd, this.sys_class_input_dir_fd, event.name(), event_id) catch |e| {
+                                                    const report = switch (e) {
+                                                        error.DevSysPathMissing => !event.mask.ATTRIB,
+                                                        else => true,
+                                                    };
+
+                                                    if (report) {
+                                                        log.err("Failed to submit potential joystick for io_uring open: '/dev/input/{s}', error: '{}'", .{ event.name(), e });
+                                                    }
+                                                };
+                                            }
+                                        } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
+                                            if (this.unregister(this.sys_class_input_dir_fd, event_id)) |fd| {
+                                                _ = this.submitCloseFd(fd);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else |e| switch (e) {
+                                error.NoData => {},
+                                else => log.err("Failed to read inotify events, error: '{}'", .{e}),
+                            }
+                        } else {
+                            var events: [16]linux.InputEvent = undefined;
+                            while (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
+                                const num_events = bytes_read.len / @sizeOf(linux.InputEvent);
+                                for (events[0..num_events]) |*event| {
+                                    const jid = pollfd_idx - first_joystick_pollfd_idx;
+                                    const joystick = &this.joysticks[jid];
+                                    joystick.handleEvent(event);
+                                }
+                            } else |e| switch (e) {
+                                error.NoData => {},
+                                else => log.err("Failed to read joystick events, error: '{}'", .{e}),
+                            }
+                        };
+                    }
+                }
+            } else |e| switch (e) {
+                error.Interrupt => {},
+                else => {
+                    log.err("Poll failed, error: '{}", .{e});
+                },
+            }
+
+            _ = this.io_uring.submit() catch |e| {
+                log.err("io_uring submit failed, error: '{}'", .{e});
+            };
+
+            for (&this.joysticks) |*js| {
+                js.updateState(io);
+            }
+        }
+
+        fn flushIoUring(this: *Context) void {
+            for (&this.joysticks, 0..) |*js, ji| if (js.state != .inactive) {
+                _ = this.submitCloseFd(js.fd);
+                this.unregisterFromSlot(ji);
+            };
+
+            for (this.wait_que[0..this.wait_que_len]) |*entry| {
+                _ = this.submitCloseFd(entry.fd);
+            }
+            this.wait_que_len = 0;
+
+            _ = this.io_uring.submit() catch |e| {
+                log.err("io_uring submit failed, error: '{}'", .{e});
+            };
+
+            var cqes: [io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
+            while (this.io_in_flight_count > 0) {
+                const n = this.io_uring.copy_cqes(&cqes, this.io_in_flight_count) catch break;
+                if (n == 0) break;
+
+                this.io_in_flight_count -= n;
+
+                var closes_submitted: u32 = 0;
+
+                for (cqes[0..n]) |cqe| {
+                    const user_data: isize = @bitCast(cqe.user_data);
+
+                    const err = cqe.err();
+
+                    if (user_data >= 0) {
+                        // open completed
+
+                        const in_flight_index: usize = @intCast(user_data);
+
+                        const in_flight = &this.io_open_in_flight[in_flight_index];
+                        const event_name = in_flight.eventName();
+
+                        if (err != .SUCCESS) {
+                            log.err("io_uring fd open failed: '/dev/input/{s}', error: '{}'", .{ event_name, err });
+                        } else {
+                            const fd: linux.fd_t = cqe.res;
+                            if (this.submitCloseFd(fd)) {
+                                closes_submitted += 1;
+                            }
+                        }
+                    } else {
+                        // close completed
+                        if (err != .SUCCESS) {
+                            log.err("io_uring joystick fd close failed, error: '{}'", .{err});
+                        }
+                    }
+                }
+
+                if (closes_submitted > 0) {
+                    _ = this.io_uring.submit() catch |e| {
+                        log.err("io_uring submit failed, error: '{}'", .{e});
+                    };
+                }
+            }
+        }
+
+        fn reconcile(this: *Context, dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t) linux.DirIterator.Error!void {
+            const PresentDevice = struct {
+                input_id: u31,
+                event_id: u10,
+                event_name_buf: [10]u8,
+                event_name_len: u8,
+            };
+
+            var sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
+
+            var present: [io_uring_entry_count]PresentDevice = undefined;
+            var present_len: usize = 0;
+
+            var it = try linux.DirIterator.init(dev_input_dir_fd, .{});
+
+            while (try it.next()) |entry| {
+                if (entry.type != .char) continue;
+
+                const event_id_str = std.mem.cutPrefix(u8, entry.name, "event") orelse continue;
+                const event_id = std.fmt.parseInt(u10, event_id_str, 10) catch continue;
+
+                const sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, entry.name, &sys_path_rel_buf) catch |e| {
+                    log.err("reconcile readlink failed on: '/sys/class/input/{s}', error: '{}'", .{ entry.name, e });
+                    continue;
+                };
+                const sys_path_rel_sys_link = sys_path_rel_buf[0..sys_path_rel_len];
+
+                const sys_path_dirname_rel_sys_link = std.fs.path.dirname(sys_path_rel_sys_link) orelse continue;
+                const input_id_str = std.mem.cutPrefix(u8, std.fs.path.basename(sys_path_dirname_rel_sys_link), "input") orelse continue;
+                const input_id = std.fmt.parseInt(u31, input_id_str, 10) catch continue;
+
+                if (present_len < present.len) {
+                    const p = &present[present_len];
+                    present_len += 1;
+                    assert(entry.name.len + 1 <= p.event_name_buf.len);
+
+                    p.* = .{
+                        .input_id = input_id,
+                        .event_id = event_id,
+                        .event_name_buf = @splat(0),
+                        .event_name_len = @intCast(entry.name.len),
+                    };
+
+                    @memcpy(p.event_name_buf[0..entry.name.len], entry.name);
+                } else {
+                    log.err("reconcile overflow (>{}), dropping: '/dev/input/{s}' and additional entries", .{ present.len, entry.name });
+                    continue;
+                }
+            }
+
+            for (&this.joysticks, 0..) |*js, ji| if (js.state != .inactive) {
+                var found = false;
+                for (present[0..present_len]) |*p| {
+                    if (js.input_id == p.input_id) {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    _ = this.submitCloseFd(js.fd);
+                    this.unregisterFromSlot(ji);
+                }
+            };
+
+            {
+                var qi: usize = 0;
+                while (qi < this.wait_que_len) {
+                    const ready_entry = &this.wait_que[qi];
+
+                    var found = false;
+                    for (present[0..present_len]) |*p| {
+                        if (ready_entry.input_id == p.input_id) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (found) {
+                        qi += 1;
+                    } else {
+                        _ = this.submitCloseFd(ready_entry.fd);
+                        this.waitQueueOrderedRemove(qi);
+                    }
+                }
+            }
+
+            for (&this.io_open_in_flight) |*in_flight| if (in_flight.event_id != -1) {
+                var found = false;
+                for (present[0..present_len]) |*p| {
+                    if (in_flight.input_id == p.input_id) {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    in_flight.flags.close_on_complete = true;
+                    in_flight.flags.retry_pending = false;
+                }
+            };
+
+            for (present[0..present_len]) |*p| {
+                const found: bool = for (&this.joysticks) |*js| {
+                    if (js.state != .inactive and js.input_id == p.input_id) break true;
+                } else for (this.wait_que[0..this.wait_que_len]) |*ready_entry| {
+                    if (ready_entry.input_id == p.input_id) break true;
+                } else for (&this.io_open_in_flight) |*in_flight| {
+                    if (in_flight.input_id == p.input_id) break true;
+                } else false;
+
+                if (!found) {
+                    const event_name = p.event_name_buf[0..p.event_name_len :0];
+
+                    this.submitOpenFd(dev_input_dir_fd, sys_class_input_dir_fd, event_name, p.event_id) catch |e| {
+                        log.err("Failed to submit open for '/dev/input/{s}', error: {}", .{ event_name, e });
+                        continue;
+                    };
+                }
+            }
+
+            while (this.wait_que_len > 0) {
+                const index_opt: ?usize = for (&this.joysticks, 0..) |*js, ji| {
+                    if (js.state == .inactive) {
+                        break ji;
+                    }
+                } else null;
+
+                if (index_opt) |ji| {
+                    const entry = this.waitQueuePop().?;
+
+                    var event_name_buf: [10]u8 = undefined;
+                    const event_name = std.fmt.bufPrintSentinel(&event_name_buf, "event{}", .{entry.event_id}, 0) catch unreachable;
+                    this.registerInSlot(sys_class_input_dir_fd, event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
+                        _ = this.waitQueuePush(entry);
+                        log.err("Failed to add joystick '/dev/input/{s}', error: '{}'", .{ event_name, e });
+                    };
+                } else break;
+            }
+        }
+
+        fn newIoInFlightIndex(this: *Context) ?usize {
+            var result: ?usize = null;
+
+            for (&this.io_open_in_flight, 0..) |*entry, i| {
+                if (entry.event_id == -1) {
+                    result = i;
+                    break;
+                }
+            }
+
+            return result;
+        }
+
+        fn freeIoInFlightIndex(this: *Context, index: usize) void {
+            this.io_open_in_flight[index] = .{
+                .event_id = -1,
+                .input_id = undefined,
+                ._event_name = undefined,
+                .event_name_len = 0,
+            };
+        }
+
+        fn getIoInFlightIndexByEventId(this: *Context, event_id: i11) ?usize {
+            assert(event_id >= 0);
+
+            var result: ?usize = null;
+
+            for (&this.io_open_in_flight, 0..) |*in_flight, i| {
+                if (in_flight.event_id == event_id) {
+                    result = i;
+                    break;
+                }
+            }
+
+            return result;
+        }
+
+        fn submitOpenFd(this: *Context, dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11) !void {
+            assert(event_id >= 0);
+
+            if (this.newIoInFlightIndex()) |in_flight_index| {
+                errdefer this.freeIoInFlightIndex(in_flight_index);
+
+                const in_flight = &this.io_open_in_flight[in_flight_index];
+
+                var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
+                const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
+                    error.FileDoesNotExist => return error.DevSysPathMissing,
+                    else => return e,
+                };
+                const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
+
+                const input_num_str_prefixed = std.fs.path.basename(std.fs.path.dirname(dev_sys_path_rel_link).?);
+                const input_num_str = std.mem.cutPrefix(u8, input_num_str_prefixed, "input").?;
+                const input_id = try std.fmt.parseInt(u31, input_num_str, 10);
+
+                assert(event_name.len + 1 <= in_flight._event_name.len);
+                in_flight.* = .{
+                    .input_id = input_id,
+                    .event_id = event_id,
+                    .event_name_len = @intCast(event_name.len),
+                    ._event_name = @splat(0),
+                };
+                @memcpy(in_flight._event_name[0..event_name.len], event_name);
+
+                if (this.io_uring.openat(
+                    in_flight_index,
+                    dev_input_dir_fd,
+                    in_flight.eventName(),
+                    .{ .ACCMODE = .RDWR, .NONBLOCK = true },
+                    0,
+                )) |cqe| {
+                    cqe.flags |= std.os.linux.IOSQE_ASYNC;
+                    this.io_in_flight_count += 1;
+                } else |e| switch (e) {
+                    error.SubmissionQueueFull => {
+                        this.freeIoInFlightIndex(in_flight_index);
+                        log.err("In flight entries out of sync with submission queue", .{});
+                        if (options.internal_build) @breakpoint();
+                    },
+                }
+
+                log.debug("Submitted for opening: '/dev/input/{s}'", .{in_flight.eventName()});
+            } else {
+                log.err("Unable to queue open op for potential joystick, out of entries: '/dev/input/{s}'", .{event_name});
+            }
+        }
+
+        fn submitCloseFd(this: *Context, fd: linux.fd_t) bool {
+            var result = false;
+
+            if (this.io_uring.close(@bitCast(@as(isize, -1)), fd)) |sqe| {
+                sqe.flags |= std.os.linux.IOSQE_ASYNC;
+                this.io_in_flight_count += 1;
+                result = true;
+            } else |submit_error| {
+                log.err("io_uring close submit failed, error: '{}'", .{submit_error});
+                log.warn("Calling blocking/sync close", .{});
+                _ = linux.close(fd) catch |close_error| {
+                    log.err("io_uring forced sync close failed, error: '{}'", .{close_error});
+                };
+            }
+
+            return result;
+        }
+
+        fn register(this: *Context, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !bool {
+            assert(event_id >= 0);
+
+            var result = false;
+
+            for (&this.joysticks, 0..) |*js, ji| {
+                if (js.state == .inactive) {
+                    try this.registerInSlot(sys_class_input_dir_fd, event_name, event_id, input_id, fd, fd_open_ts, ji);
+                    result = true;
+                    break;
+                }
+            }
+
+            return result;
+        }
+
+        fn registerInSlot(this: *Context, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) !void {
+            assert(slot_index < this.joysticks.len);
+
+            const js = &this.joysticks[slot_index];
+            assert(js.state == .inactive);
+
+            log.info("Adding joystick: '/dev/input/event{}' (slot index: {})", .{ event_id, slot_index });
+
+            assert(this.poll_fds[first_joystick_pollfd_idx + slot_index].fd == -1);
+
+            try Joystick.init(js, sys_class_input_dir_fd, event_name, event_id, input_id, fd, fd_open_ts);
+
+            this.poll_fds[first_joystick_pollfd_idx + slot_index] = .{
+                .fd = @intCast(js.fd),
+                .events = linux.POLL.IN,
+                .revents = undefined,
+            };
+        }
+
+        fn unregister(this: *Context, sys_class_input_dir_fd: linux.dirfd_t, event_id: i11) ?linux.fd_t {
+            assert(event_id >= 0);
+
+            var result: ?linux.fd_t = null;
+
+            for (&this.joysticks, 0..) |*js, ji| {
+                if (js.event_id == event_id) {
+                    assert(js.state != .inactive);
+
+                    log.info("Removing joystick: '/dev/input/event{}'", .{event_id});
+
+                    result = js.fd;
+
+                    this.unregisterFromSlot(ji);
+
+                    if (this.waitQueuePop()) |entry| {
+                        var event_name_buf: [10]u8 = undefined;
+                        const event_name = std.fmt.bufPrintSentinel(&event_name_buf, "event{}", .{entry.event_id}, 0) catch unreachable;
+                        this.registerInSlot(sys_class_input_dir_fd, event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
+                            _ = this.waitQueuePush(entry);
+                            log.err("Failed to add joystick '/dev/input/event{}', error: '{}'", .{ event_id, e });
+                        };
+                    }
+
+                    break;
+                }
+            } else for (&this.io_open_in_flight) |*in_flight| {
+                if (in_flight.event_id == event_id) {
+                    in_flight.flags.close_on_complete = true;
+                    in_flight.flags.retry_pending = false;
+
+                    break;
+                }
+            } else for (this.wait_que[0..this.wait_que_len], 0..) |*entry, entry_index| {
+                if (entry.event_id == event_id) {
+                    result = entry.fd;
+                    this.waitQueueOrderedRemove(entry_index);
+
+                    break;
+                }
+            }
+
+            return result;
+        }
+
+        fn unregisterFromSlot(this: *Context, slot_index: usize) void {
+            assert(slot_index < this.joysticks.len);
+
+            const js = &this.joysticks[slot_index];
+            assert(js.state != .inactive);
+
+            assert(this.poll_fds[first_joystick_pollfd_idx + slot_index].fd == js.fd);
+
+            js.deinit();
+
+            const js_pollfd = &this.poll_fds[first_joystick_pollfd_idx + slot_index];
+            js_pollfd.* = .{ .fd = -1, .events = undefined, .revents = undefined };
+        }
+
+        fn eventIdMatchesRegisteredOrWaiting(this: *Context, event_id: i11) bool {
+            assert(event_id >= 0);
+
+            var result = false;
+
+            for (&this.joysticks) |*js| {
+                if (js.state != .inactive and js.event_id == event_id) {
+                    result = true;
+                    break;
+                }
+            } else for (this.wait_que[0..this.wait_que_len]) |*ready_entry| {
+                if (ready_entry.event_id == event_id) {
+                    result = true;
+                    break;
+                }
+            }
+
+            return result;
+        }
+
+        fn waitQueuePush(this: *Context, entry: WaitQueueEntry) bool {
+            var result = false;
+
+            if (this.wait_que_len < this.wait_que.len) {
+                this.wait_que[this.wait_que_len] = entry;
+                this.wait_que_len += 1;
+                result = true;
+            }
+
+            return result;
+        }
+
+        fn waitQueuePop(this: *Context) ?WaitQueueEntry {
+            var result: ?WaitQueueEntry = null;
+
+            if (this.wait_que_len > 0) {
+                result = this.wait_que[0];
+
+                this.wait_que_len -= 1;
+                @memmove(this.wait_que[0..this.wait_que_len], this.wait_que[1..][0..this.wait_que_len]);
+            }
+
+            return result;
+        }
+
+        fn waitQueueOrderedRemove(this: *Context, index: usize) void {
+            assert(index < this.wait_que_len);
+            if (index < this.wait_que_len) {
+                const rem_len = this.wait_que_len - (index + 1);
+                if (rem_len > 0) {
+                    @memmove(this.wait_que[index..][0..rem_len], this.wait_que[index + 1 ..][0..rem_len]);
+                }
+
+                this.wait_que_len -= 1;
+            }
+        }
+    };
+}
+
+const WaitQueueEntry = struct {
+    fd: linux.fd_t,
+    fd_open_ts: std.Io.Timestamp,
+    event_id: u10,
+    input_id: u31,
+};
+
+const IoOpenInFlight = struct {
+    event_id: i11 = -1,
+    input_id: u31,
+    flags: Flags = .{},
+    _event_name: [10]u8,
+    event_name_len: u8,
+
+    const Flags = packed struct(u2) {
+        retry_pending: bool = false,
+        close_on_complete: bool = false,
+    };
+
+    inline fn eventName(this: *const IoOpenInFlight) [:0]const u8 {
+        return this._event_name[0..this.event_name_len :0];
+    }
+};
+
+fn eventFdIsJoystick(fd: fd_t) bool {
     var result = false;
 
     const ev_bits: EV.BitSet = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
@@ -522,112 +1269,6 @@ fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
     } else |e| switch (e) {
         error.FileDoesNotExist => {},
         else => log.warn("Failed to open sysfs attribute fd: '{s}', error: '{}'", .{ attr, e }),
-    }
-
-    return result;
-}
-
-fn newIoInFlightIndex() ?usize {
-    var result: ?usize = null;
-
-    for (&io_open_in_flight, 0..) |*entry, i| {
-        if (entry.event_id == -1) {
-            result = i;
-            break;
-        }
-    }
-
-    return result;
-}
-
-pub fn freeIoInFlightIndex(index: usize) void {
-    io_open_in_flight[index] = .{
-        .event_id = -1,
-        .input_id = undefined,
-        ._event_name = undefined,
-        .event_name_len = 0,
-    };
-}
-
-pub fn getIoInFlightIndexByEventId(event_id: i11) ?usize {
-    assert(event_id >= 0);
-
-    var result: ?usize = null;
-
-    for (&io_open_in_flight, 0..) |*in_flight, i| {
-        if (in_flight.event_id == event_id) {
-            result = i;
-            break;
-        }
-    }
-
-    return result;
-}
-
-pub fn submitOpenFd(dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11) !void {
-    assert(event_id >= 0);
-
-    if (newIoInFlightIndex()) |in_flight_index| {
-        errdefer freeIoInFlightIndex(in_flight_index);
-
-        const in_flight = &io_open_in_flight[in_flight_index];
-
-        var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
-        const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
-            error.FileDoesNotExist => return error.DevSysPathMissing,
-            else => return e,
-        };
-        const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
-
-        const input_num_str_prefixed = std.fs.path.basename(std.fs.path.dirname(dev_sys_path_rel_link).?);
-        const input_num_str = std.mem.cutPrefix(u8, input_num_str_prefixed, "input").?;
-        const input_id = try std.fmt.parseInt(u31, input_num_str, 10);
-
-        assert(event_name.len + 1 <= in_flight._event_name.len);
-        in_flight.* = .{
-            .input_id = input_id,
-            .event_id = event_id,
-            .event_name_len = @intCast(event_name.len),
-            ._event_name = @splat(0),
-        };
-        @memcpy(in_flight._event_name[0..event_name.len], event_name);
-
-        if (io_uring.openat(
-            in_flight_index,
-            dev_input_dir_fd,
-            in_flight.eventName(),
-            .{ .ACCMODE = .RDWR, .NONBLOCK = true },
-            0,
-        )) |cqe| {
-            cqe.flags |= std.os.linux.IOSQE_ASYNC;
-            io_in_flight_count += 1;
-        } else |e| switch (e) {
-            error.SubmissionQueueFull => {
-                freeIoInFlightIndex(in_flight_index);
-                log.err("In flight entries out of sync with submission queue", .{});
-                if (options.internal_build) @breakpoint();
-            },
-        }
-
-        log.debug("Submitted for opening: '/dev/input/{s}'", .{in_flight.eventName()});
-    } else {
-        log.err("Unable to queue open op for potential joystick, out of entries: '/dev/input/{s}'", .{event_name});
-    }
-}
-
-pub fn submitCloseFd(fd: linux.fd_t) bool {
-    var result = false;
-
-    if (io_uring.close(@bitCast(@as(isize, -1)), fd)) |sqe| {
-        sqe.flags |= std.os.linux.IOSQE_ASYNC;
-        io_in_flight_count += 1;
-        result = true;
-    } else |submit_error| {
-        log.err("io_uring close submit failed, error: '{}'", .{submit_error});
-        log.warn("Calling blocking/sync close", .{});
-        _ = linux.close(fd) catch |close_error| {
-            log.err("io_uring forced sync close failed, error: '{}'", .{close_error});
-        };
     }
 
     return result;
