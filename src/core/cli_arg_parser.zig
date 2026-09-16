@@ -119,7 +119,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
 
     const array_count = blk: {
         var n: usize = 0;
-        inline for (option_defs) |d| if (isSlice(d.Type)) {
+        inline for (option_defs) |d| if (isArray(d.Type)) {
             n += 1;
         };
         break :blk n;
@@ -275,14 +275,14 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
                                 return e;
                             };
 
-                            if (array_count > 0 and isSlice(def.Type)) {
+                            if (array_count > 0 and isArray(def.Type)) {
                                 array_counts[array_idx] += 1;
                             }
 
                             break :def_loop;
                         }
 
-                        if (isSlice(def.Type)) {
+                        if (isArray(def.Type)) {
                             array_idx += 1;
                         }
                     } else {
@@ -303,7 +303,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
                                     return e;
                                 };
 
-                                if (array_count > 0 and isSlice(def.Type)) {
+                                if (array_count > 0 and isArray(def.Type)) {
                                     array_counts[array_idx] += 1;
                                 }
 
@@ -311,7 +311,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
                                 break :def_loop;
                             }
 
-                            if (isSlice(def.Type)) {
+                            if (isArray(def.Type)) {
                                 array_idx += 1;
                             }
                         } else {
@@ -329,7 +329,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
                 // Allocate arrays
                 var array_idx: usize = 0;
                 inline for (option_defs) |*def| {
-                    if (comptime isSlice(def.Type)) {
+                    if (comptime isArray(def.Type)) {
                         if (array_counts[array_idx] > 0)
                             @field(result, def.name) = try allocator.alloc(std.meta.Elem(def.OptionType), array_counts[array_idx]);
                         array_idx += 1;
@@ -369,7 +369,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
                             break :def_loop;
                         }
 
-                        if (comptime isSlice(def.Type)) {
+                        if (comptime isArray(def.Type)) {
                             array_index += 1;
                         }
                     } else unreachable; // Option not found
@@ -392,7 +392,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
                                 break :def_loop;
                             }
 
-                            if (isSlice(def.Type)) {
+                            if (isArray(def.Type)) {
                                 array_index += 1;
                             }
                         } else unreachable; // Option not found
@@ -457,7 +457,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
         }
 
         inline fn setValue(def: *const OptionDefinition, options: *Options, array_fill_indices: *[array_count]usize, array_index: usize, value: anytype) void {
-            if (comptime isSlice(def.Type)) {
+            if (comptime isArray(def.Type)) {
                 const dst: []std.meta.Elem(def.OptionType) = @constCast(@field(options, def.name));
                 dst[array_fill_indices[array_index]] = value;
                 array_fill_indices[array_index] += 1;
@@ -466,7 +466,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
             }
         }
 
-        inline fn parseValueString(this: *const @This(), comptime def: *const OptionDefinition, value_str: anytype, name: []const u8) !if (isSlice(def.Type))
+        inline fn parseValueString(this: *const @This(), comptime def: *const OptionDefinition, value_str: anytype, name: []const u8) !if (isArray(def.Type))
             std.meta.Elem(def.OptionType)
         else
             def.OptionType {
@@ -534,7 +534,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
         pub fn freeOptions(o: *const Options, allocator: Allocator) void {
             inline for (option_defs) |*def| {
                 skip: {
-                    if (comptime isSlice(def.Type)) {
+                    if (comptime isArray(def.Type)) {
                         const slice = @field(o, def.name);
                         if (slice.len == 0) break :skip;
 
@@ -631,7 +631,7 @@ fn typeName(comptime T: type) []const u8 {
 
             .@"enum" => core.meta.typeNameLeaf(T),
 
-            else => if (isSlice(T))
+            else => if (isArray(T))
                 "[]" ++ comptime typeName(std.meta.Elem(T))
             else
                 unreachable,
@@ -639,7 +639,7 @@ fn typeName(comptime T: type) []const u8 {
     };
 }
 
-fn isSlice(comptime T: type) bool {
+fn isArray(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .pointer => |pi| pi.size == .slice and pi.is_const,
         else => false,
