@@ -438,7 +438,6 @@ pub const Joystick = struct {
     }
 };
 
-// pub const Context = struct {
 pub fn System(comptime joystick_count: usize) type {
     return struct {
         const Context = @This();
@@ -505,7 +504,7 @@ pub fn System(comptime joystick_count: usize) type {
             result.io_uring = try std.os.linux.IoUring.init(io_uring_entry_count, 0);
             errdefer result.io_uring.deinit();
 
-            result.reconcile(result.dev_input_dir_fd, result.sys_class_input_dir_fd) catch |e| {
+            result.reconcile() catch |e| {
                 log.err("Joystick initial scan (reconcile) failed, error: '{}'", .{e});
             };
 
@@ -592,7 +591,6 @@ pub fn System(comptime joystick_count: usize) type {
                                 _ = this.submitCloseFd(fd);
                             } else {
                                 if (!(this.register(
-                                    this.sys_class_input_dir_fd,
                                     in_flight.eventName(),
                                     in_flight.event_id,
                                     in_flight.input_id,
@@ -620,7 +618,7 @@ pub fn System(comptime joystick_count: usize) type {
 
                                 log.debug("Open failed, retry: '/dev/input/{s}', error: '{}'", .{ event_name, err });
 
-                                this.submitOpenFd(this.dev_input_dir_fd, this.sys_class_input_dir_fd, event_name, in_flight.event_id) catch |e| {
+                                this.submitOpenFd(event_name, in_flight.event_id) catch |e| {
                                     log.err("Failed to submit joystick for open: '/dev/input/{s}', error: '{}'", .{ event_name, e });
                                 };
                             } else {
@@ -657,7 +655,7 @@ pub fn System(comptime joystick_count: usize) type {
                                     i += @sizeOf(linux.InotifyEvent) + event.len;
 
                                     if (event.mask.Q_OVERFLOW) {
-                                        this.reconcile(this.dev_input_dir_fd, this.sys_class_input_dir_fd) catch |e| {
+                                        this.reconcile() catch |e| {
                                             log.err("reconcile after Q_OVERFLOW failed, error: '{}'", .{e});
                                             continue;
                                         };
@@ -679,7 +677,7 @@ pub fn System(comptime joystick_count: usize) type {
                                                 this.io_open_in_flight[in_flight_index].flags.retry_pending = true;
                                                 log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
                                             } else {
-                                                this.submitOpenFd(this.dev_input_dir_fd, this.sys_class_input_dir_fd, event.name(), event_id) catch |e| {
+                                                this.submitOpenFd(event.name(), event_id) catch |e| {
                                                     const report = switch (e) {
                                                         error.DevSysPathMissing => !event.mask.ATTRIB,
                                                         else => true,
@@ -691,7 +689,7 @@ pub fn System(comptime joystick_count: usize) type {
                                                 };
                                             }
                                         } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
-                                            if (this.unregister(this.sys_class_input_dir_fd, event_id)) |fd| {
+                                            if (this.unregister(event_id)) |fd| {
                                                 _ = this.submitCloseFd(fd);
                                             }
                                         }
@@ -794,7 +792,7 @@ pub fn System(comptime joystick_count: usize) type {
             }
         }
 
-        fn reconcile(this: *Context, dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t) linux.DirIterator.Error!void {
+        fn reconcile(this: *Context) linux.DirIterator.Error!void {
             const PresentDevice = struct {
                 input_id: u31,
                 event_id: u10,
@@ -807,7 +805,7 @@ pub fn System(comptime joystick_count: usize) type {
             var present: [io_uring_entry_count]PresentDevice = undefined;
             var present_len: usize = 0;
 
-            var it = try linux.DirIterator.init(dev_input_dir_fd, .{});
+            var it = try linux.DirIterator.init(this.dev_input_dir_fd, .{});
 
             while (try it.next()) |entry| {
                 if (entry.type != .char) continue;
@@ -815,7 +813,7 @@ pub fn System(comptime joystick_count: usize) type {
                 const event_id_str = std.mem.cutPrefix(u8, entry.name, "event") orelse continue;
                 const event_id = std.fmt.parseInt(u10, event_id_str, 10) catch continue;
 
-                const sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, entry.name, &sys_path_rel_buf) catch |e| {
+                const sys_path_rel_len = linux.readlinkat(this.sys_class_input_dir_fd, entry.name, &sys_path_rel_buf) catch |e| {
                     log.err("reconcile readlink failed on: '/sys/class/input/{s}', error: '{}'", .{ entry.name, e });
                     continue;
                 };
@@ -908,7 +906,7 @@ pub fn System(comptime joystick_count: usize) type {
                 if (!found) {
                     const event_name = p.event_name_buf[0..p.event_name_len :0];
 
-                    this.submitOpenFd(dev_input_dir_fd, sys_class_input_dir_fd, event_name, p.event_id) catch |e| {
+                    this.submitOpenFd(event_name, p.event_id) catch |e| {
                         log.err("Failed to submit open for '/dev/input/{s}', error: {}", .{ event_name, e });
                         continue;
                     };
@@ -927,7 +925,7 @@ pub fn System(comptime joystick_count: usize) type {
 
                     var event_name_buf: [10]u8 = undefined;
                     const event_name = std.fmt.bufPrintSentinel(&event_name_buf, "event{}", .{entry.event_id}, 0) catch unreachable;
-                    this.registerInSlot(sys_class_input_dir_fd, event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
+                    this.registerInSlot(event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
                         _ = this.waitQueuePush(entry);
                         log.err("Failed to add joystick '/dev/input/{s}', error: '{}'", .{ event_name, e });
                     };
@@ -972,7 +970,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn submitOpenFd(this: *Context, dev_input_dir_fd: linux.dirfd_t, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11) !void {
+        fn submitOpenFd(this: *Context, event_name: [:0]const u8, event_id: i11) !void {
             assert(event_id >= 0);
 
             if (this.newIoInFlightIndex()) |in_flight_index| {
@@ -981,7 +979,7 @@ pub fn System(comptime joystick_count: usize) type {
                 const in_flight = &this.io_open_in_flight[in_flight_index];
 
                 var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
-                const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
+                const dev_sys_path_rel_len = linux.readlinkat(this.sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
                     error.FileDoesNotExist => return error.DevSysPathMissing,
                     else => return e,
                 };
@@ -1002,7 +1000,7 @@ pub fn System(comptime joystick_count: usize) type {
 
                 if (this.io_uring.openat(
                     in_flight_index,
-                    dev_input_dir_fd,
+                    this.dev_input_dir_fd,
                     in_flight.eventName(),
                     .{ .ACCMODE = .RDWR, .NONBLOCK = true },
                     0,
@@ -1041,14 +1039,14 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn register(this: *Context, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !bool {
+        fn register(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !bool {
             assert(event_id >= 0);
 
             var result = false;
 
             for (&this.joysticks, 0..) |*js, ji| {
                 if (js.state == .inactive) {
-                    try this.registerInSlot(sys_class_input_dir_fd, event_name, event_id, input_id, fd, fd_open_ts, ji);
+                    try this.registerInSlot(event_name, event_id, input_id, fd, fd_open_ts, ji);
                     result = true;
                     break;
                 }
@@ -1057,7 +1055,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn registerInSlot(this: *Context, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) !void {
+        fn registerInSlot(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) !void {
             assert(slot_index < this.joysticks.len);
 
             const js = &this.joysticks[slot_index];
@@ -1067,7 +1065,7 @@ pub fn System(comptime joystick_count: usize) type {
 
             assert(this.poll_fds[first_joystick_pollfd_idx + slot_index].fd == -1);
 
-            try Joystick.init(js, sys_class_input_dir_fd, event_name, event_id, input_id, fd, fd_open_ts);
+            try Joystick.init(js, this.sys_class_input_dir_fd, event_name, event_id, input_id, fd, fd_open_ts);
 
             this.poll_fds[first_joystick_pollfd_idx + slot_index] = .{
                 .fd = @intCast(js.fd),
@@ -1076,7 +1074,7 @@ pub fn System(comptime joystick_count: usize) type {
             };
         }
 
-        fn unregister(this: *Context, sys_class_input_dir_fd: linux.dirfd_t, event_id: i11) ?linux.fd_t {
+        fn unregister(this: *Context, event_id: i11) ?linux.fd_t {
             assert(event_id >= 0);
 
             var result: ?linux.fd_t = null;
@@ -1094,7 +1092,7 @@ pub fn System(comptime joystick_count: usize) type {
                     if (this.waitQueuePop()) |entry| {
                         var event_name_buf: [10]u8 = undefined;
                         const event_name = std.fmt.bufPrintSentinel(&event_name_buf, "event{}", .{entry.event_id}, 0) catch unreachable;
-                        this.registerInSlot(sys_class_input_dir_fd, event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
+                        this.registerInSlot(event_name, entry.event_id, entry.input_id, entry.fd, entry.fd_open_ts, ji) catch |e| {
                             _ = this.waitQueuePush(entry);
                             log.err("Failed to add joystick '/dev/input/event{}', error: '{}'", .{ event_id, e });
                         };
