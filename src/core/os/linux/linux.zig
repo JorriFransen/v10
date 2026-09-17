@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.linux);
 
+const builtin = @import("builtin");
+
 const arch = @import("arch/arch.zig").arch;
 const assert = @import("../../core.zig").assert;
 const math = @import("../../math.zig");
@@ -19,58 +21,44 @@ pub const syscall6 = arch.syscall6;
 
 pub const page_size = std.heap.page_size_min;
 
-pub const Error = error{
-    AddressNotAvailable,
-    AlreadyConnecting,
-    BufferTooSmall,
-    ConnectingInProgress,
-    ConnectionClosed,
-    ConnectionRefused,
-    ConnectionReset,
-    DiskQuotaExceeded,
-    EndOfFile,
-    FileBusy,
-    FileDoesNotExist,
-    FileExists,
-    HostUnreachable,
-    IO,
-    Interrupt,
-    InvalidAddressFamily,
-    InvalidArg,
-    InvalidDevice,
-    InvalidFd,
-    InvalidFlags,
-    InvalidPath,
-    InvalidPointer,
-    InvalidProtocol,
-    IsDirectory,
-    Lock,
-    MessageTooBig,
-    NameTooLong,
-    NetworkUnreachable,
-    NoData,
-    NoDeviceOrAddress,
-    NoMemory,
-    NoSpaceLeft,
-    NotConnected,
-    NotDirectory,
-    NotSocket,
-    NotSupported,
-    Overflow,
-    PackageNotCompiled,
-    PermissionDenied,
-    ReadOnly,
-    Timeout,
-    TooManyFiles,
-    TooManyProcessFiles,
-    TooManySymbolicLinks,
-    UnexpectedDirFD,
-    UnlinkDirectoryAttempt,
-    Unseekable,
-    ValueTooBig,
+inline fn handleErrno(comptime E: type, rc: isize) E!void {
+    if (rc < 0) {
+        if (std.math.cast(@typeInfo(Errno).@"enum".tag_type, -%rc)) |nrc| {
+            const e: Errno = @enumFromInt(nrc);
+            inline for (std.meta.fields(E)) |field| {
+                if (@hasField(Errno, field.name) or @hasDecl(Errno, field.name)) {
+                    if (e == @field(Errno, field.name)) {
+                        return @field(E, field.name);
+                    }
+                } else if (comptime !std.mem.eql(u8, field.name, "UnexpectedErrno")) {
+                    @compileError(std.fmt.comptimePrint("Error code not in 'Errno': '{s}'", .{field.name}));
+                }
+            } else {
+                if (!builtin.is_test) {
+                    log.warn("Unexpected errno for {s}: {s} ({})", .{ @typeName(E), std.enums.tagName(Errno, e) orelse "", @intFromEnum(e) });
+                }
+                return error.UnexpectedErrno;
+            }
+        } else {
+            if (!builtin.is_test) {
+                log.warn("Unexpected errno for {s}: {}", .{ @typeName(E), -%rc });
+            }
+            return error.UnexpectedErrno;
+        }
+    }
+}
 
-    UnexpectedErrno,
-};
+test "handleErrno" {
+    try handleErrno(OpenatError, 0);
+    try handleErrno(OpenatError, 42);
+
+    try std.testing.expectError(error.ACCES, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.ACCES))));
+    try std.testing.expectError(error.NOENT, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.NOENT))));
+    try std.testing.expectError(error.TXTBSY, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.TXTBSY))));
+
+    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.ADDRINUSE))));
+    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.SRCH))));
+}
 
 const sep = std.fs.path.sep_posix;
 const sep_str = std.fs.path.sep_str_posix;
@@ -135,7 +123,7 @@ pub const DirIterator = struct {
     pub fn init(dir_fd: dirfd_t, options: Options) InitError!DirIterator {
         if (options.reset_fd_pos) {
             _ = lseek(dir_fd, 0, .SET) catch |e| switch (e) {
-                error.InvalidFd => return error.InvalidFd,
+                error.BADF => return error.InvalidFd,
                 else => return error.SeekFailed,
             };
         }
@@ -147,20 +135,22 @@ pub const DirIterator = struct {
         };
     }
 
-    pub const NextError = error{ InvalidFd, MalformedDirEntry };
+    pub const NextError = error{ InvalidFd, MalformedDirEntry, UnexpectedErrno };
 
     pub fn next(this: *DirIterator) NextError!?Entry {
         if (this.dents.len == 0) {
             const new_len = getdents64(this.fd, &this.buffer) catch |e| switch (e) {
-                error.FileDoesNotExist,
-                error.NotDirectory,
-                error.InvalidFd,
-                => {
-                    return error.InvalidFd;
-                },
+                error.BADF,
+                error.NOENT,
+                error.NOTDIR,
+                error.IO,
+                => return error.InvalidFd,
 
-                error.InvalidPointer => unreachable,
-                else => unreachable,
+                error.FAULT,
+                error.INVAL,
+                => unreachable,
+
+                error.UnexpectedErrno => return @errorCast(e),
             };
 
             this.dents = this.buffer[0..new_len];
@@ -231,7 +221,7 @@ pub const Dirent64 = extern struct {
 // errno.h (+ errno-base.h)
 // =============================================================================
 
-pub const Errno = enum(u16) {
+pub const Errno = enum(u12) {
     /// No error occurred.
     /// Same code used for `NSROK`.
     SUCCESS = 0,
@@ -540,6 +530,7 @@ pub const Errno = enum(u16) {
 
     _,
 
+    pub const WOULDBLOCK = Errno.AGAIN;
     pub const NOTSUP = Errno.OPNOTSUPP;
 };
 
@@ -632,28 +623,75 @@ pub const AT = struct {
     pub const HANDLE_FID = REMOVEDIR;
 };
 
-pub fn open(path: [:0]const u8, flags: O, mode: mode_t) Error!fd_t {
-    const rc = syscall3(.open, @intFromPtr(path.ptr), @as(u32, @bitCast(flags)), mode);
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .EXIST => error.FileExists,
-        .ISDIR => error.UnexpectedDirFD,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NODEV => error.InvalidDevice,
-        .NOENT => error.FileDoesNotExist,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        else => blk: {
-            log.warn("Unexpected errno for open: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+pub const OpenError = error{
+    ACCES,
+    BUSY,
+    DQUOT,
+    EXIST,
+    FAULT,
+    FBIG,
+    INTR,
+    INVAL,
+    ISDIR,
+    LOOP,
+    MFILE,
+    NAMETOOLONG,
+    NFILE,
+    NODEV,
+    NOENT,
+    NOMEM,
+    NOSPC,
+    NOTDIR,
+    NXIO,
+    OPNOTSUPP,
+    OVERFLOW,
+    PERM,
+    ROFS,
+    TXTBSY,
+    WOULDBLOCK,
 
-    return @intCast(rc);
+    UnexpectedErrno,
+};
+pub fn open(path: [:0]const u8, flags: O, mode: mode_t) OpenError!fd_t {
+    const result = openat(AT.FDCWD, path, flags, mode) catch |e| switch (e) {
+        error.BADF => unreachable,
+        else => return @errorCast(e),
+    };
+    return result;
 }
 
-pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) Error!fd_t {
+pub const OpenatError = error{
+    ACCES,
+    BADF,
+    BUSY,
+    DQUOT,
+    EXIST,
+    FAULT,
+    FBIG,
+    INTR,
+    INVAL,
+    ISDIR,
+    LOOP,
+    MFILE,
+    NAMETOOLONG,
+    NFILE,
+    NODEV,
+    NOENT,
+    NOMEM,
+    NOSPC,
+    NOTDIR,
+    NXIO,
+    OPNOTSUPP,
+    OVERFLOW,
+    PERM,
+    ROFS,
+    TXTBSY,
+    WOULDBLOCK,
+
+    UnexpectedErrno,
+};
+
+pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) OpenatError!fd_t {
     const rc = syscall4(
         .openat,
         zeroExtendToUsize(dir_fd),
@@ -661,34 +699,29 @@ pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) E
         zeroExtendToUsize(flags),
         mode,
     );
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .ACCES => error.PermissionDenied,
-        .EXIST => error.FileExists,
-        .ISDIR => error.IsDirectory,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NOENT => error.FileDoesNotExist,
-        .NOTDIR => error.InvalidPath,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        else => blk: {
-            log.warn("Unexpected errno for openat: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(OpenatError, rc);
     return safeTrunc(c_int, rc);
 }
 
-pub fn fcntl(fd: fd_t, op: c_int, arg: usize) !c_int {
+pub const FcntlError = error{
+    ACCES,
+    AGAIN,
+    BADF,
+    BUSY,
+    DEADLK,
+    FAULT,
+    INTR,
+    INVAL,
+    MFILE,
+    NOLCK,
+    PERM,
+
+    UnexpectedErrno,
+};
+
+pub fn fcntl(fd: fd_t, op: c_int, arg: usize) FcntlError!c_int {
     const rc = syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
-    if (check_errno(rc)) |e| return switch (e) {
-        else => blk: {
-            log.warn("Unexpected errno for fcntl: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(FcntlError, rc);
     return @as(c_int, @intCast(rc));
 }
 
@@ -760,80 +793,65 @@ pub const IN = packed struct(u32) {
     pub const MOVE: IN = .{ .MOVED_FROM = true, .MOVED_TO = true };
 };
 
-pub fn inotify_init() Error!fd_t {
-    const rc = syscall0(.inotify_init);
-    if (check_errno(rc)) |e| return switch (e) {
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NOMEM => error.NoMemory,
-        else => blk: {
-            log.warn("Unexpected errno for inotify_init: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+pub const InotifyInit1Error = error{
+    INVAL,
+    MFILE,
+    NFILE,
+    NOMEM,
 
-    return safeTrunc(fd_t, rc);
-}
+    UnexpectedErrno,
+};
 
-pub fn inotify_init1(flags: O) Error!fd_t {
+pub fn inotify_init1(flags: O) InotifyInit1Error!fd_t {
     const rc = syscall1(
         .inotify_init1,
         zeroExtendToUsize(flags),
     );
-    if (check_errno(rc)) |e| return switch (e) {
-        .INVAL => error.InvalidArg,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NOMEM => error.NoMemory,
-        else => blk: {
-            log.warn("Unexpected errno for inotify_init1: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(InotifyInit1Error, rc);
     return safeTrunc(fd_t, rc);
 }
 
-pub fn inotify_add_watch(fd: fd_t, path: [:0]const u8, mask: IN) Error!c_int {
+pub const InotifyAddWatchError = error{
+    ACCES,
+    BADF,
+    EXIST,
+    FAULT,
+    INVAL,
+    NAMETOOLONG,
+    NOENT,
+    NOMEM,
+    NOSPC,
+    NOTDIR,
+
+    UnexpectedErrno,
+};
+
+pub fn inotify_add_watch(fd: fd_t, path: [:0]const u8, mask: IN) InotifyAddWatchError!c_int {
     const rc = syscall3(
         .inotify_add_watch,
         safeExtendToUsize(fd),
         @intFromPtr(path.ptr),
         zeroExtendToUsize(mask),
     );
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFd,
-        .EXIST => error.FileExists,
-        .INVAL => error.InvalidArg,
-        .NAMETOOLONG => error.NameTooLong,
-        .NOENT => error.FileDoesNotExist,
-        .NOMEM => error.NoMemory,
-        .NOSPC => error.NoSpaceLeft,
-        .NOTDIR => error.InvalidPath,
-        else => blk: {
-            log.warn("Unexpected errno for inotify_add_watch: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(InotifyAddWatchError, rc);
     return safeTrunc(c_int, rc);
 }
 
-pub fn inotify_rm_watch(fd: fd_t, wd: c_int) Error!void {
+pub const InotifyRmWatchError = error{
+    BADF,
+    INVAL,
+
+    UnexpectedErrno,
+};
+
+pub fn inotify_rm_watch(fd: fd_t, wd: c_int) InotifyRmWatchError!void {
     const rc = syscall2(
         .inotify_rm_watch,
         safeExtendToUsize(fd),
         safeExtendToUsize(wd),
     );
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for inotify_rm_watch: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(InotifyRmWatchError, rc);
+    assert(rc == 0);
 }
 
 // =============================================================================
@@ -1050,20 +1068,20 @@ fn EnumBitSet(comptime T: type) type {
     return std.StaticBitSet(T.CNT);
 }
 
-pub inline fn ioctlRead(fd: fd_t, request: _IOC, arg: *anyopaque) IOCTLError!usize {
+pub inline fn ioctlRead(fd: fd_t, request: _IOC, arg: *anyopaque) IoctlError!usize {
     assert(request.dir & IOC.READ == IOC.READ);
     const result = ioctl(fd, request, @intFromPtr(arg));
     return result;
 }
 
-pub inline fn ioctlWrite(fd: fd_t, request: _IOC, arg: *const anyopaque) IOCTLError!void {
+pub inline fn ioctlWrite(fd: fd_t, request: _IOC, arg: *const anyopaque) IoctlError!void {
     assert(request.dir & IOC.WRITE == IOC.WRITE);
     const result = try ioctl(fd, request, @intFromPtr(arg));
     assert(result == 0);
 }
 
 /// Functional buf size is buf.len - 1, null terminator is included
-inline fn ioctlString(fd: fd_t, buf: []u8, comptime requestFn: sizeRequestFn) IOCTLError![:0]const u8 {
+inline fn ioctlString(fd: fd_t, buf: []u8, comptime requestFn: sizeRequestFn) IoctlError![:0]const u8 {
     assert(buf.len >= 1);
 
     const rc = try ioctlRead(fd, requestFn(@intCast(buf.len - 1)), buf.ptr);
@@ -1074,14 +1092,14 @@ inline fn ioctlString(fd: fd_t, buf: []u8, comptime requestFn: sizeRequestFn) IO
     return result;
 }
 
-inline fn ioctlReadType(comptime T: type, fd: fd_t, comptime request: _IOC) IOCTLError!T {
+inline fn ioctlReadType(comptime T: type, fd: fd_t, comptime request: _IOC) IoctlError!T {
     var result: T = std.mem.zeroes(T);
     const rc = try ioctlRead(fd, request, &result);
     assert(rc == 0);
     return result;
 }
 
-inline fn ioctlReadTypeSize(comptime T: type, fd: fd_t, comptime requestFn: sizeRequestFn) IOCTLError!T {
+inline fn ioctlReadTypeSize(comptime T: type, fd: fd_t, comptime requestFn: sizeRequestFn) IoctlError!T {
     var result: T = std.mem.zeroes(T);
     const rc = try ioctlRead(fd, requestFn(@sizeOf(T)), &result);
     assert(rc == @sizeOf(T));
@@ -1089,13 +1107,13 @@ inline fn ioctlReadTypeSize(comptime T: type, fd: fd_t, comptime requestFn: size
 }
 
 /// Get device id
-pub inline fn ioctl_EVIOCGID(fd: fd_t) IOCTLError!InputId {
+pub inline fn ioctl_EVIOCGID(fd: fd_t) IoctlError!InputId {
     const result = try ioctlReadType(InputId, fd, EVIOCGID);
     return result;
 }
 
 /// Get repeat settings
-pub inline fn ioctl_EVIOCGREP(fd: fd_t) IOCTLError!?[2]c_uint {
+pub inline fn ioctl_EVIOCGREP(fd: fd_t) IoctlError!?[2]c_uint {
     const result = ioctlReadType([2]c_uint, fd, EVIOCGREP) catch |e| switch (e) {
         error.Unsupported => null,
         else => e,
@@ -1104,12 +1122,12 @@ pub inline fn ioctl_EVIOCGREP(fd: fd_t) IOCTLError!?[2]c_uint {
 }
 
 /// Set repeat settings
-pub inline fn ioctl_EVIOCSREP(fd: fd_t, rep: [2]c_uint) IOCTLError!void {
+pub inline fn ioctl_EVIOCSREP(fd: fd_t, rep: [2]c_uint) IoctlError!void {
     try ioctlWrite(fd, EVIOCSREP, &rep);
 }
 
 /// Get keycode
-pub inline fn ioctl_EVIOCGKEYCODE(fd: fd_t, scancode: c_uint) IOCTLError!c_uint {
+pub inline fn ioctl_EVIOCGKEYCODE(fd: fd_t, scancode: c_uint) IoctlError!c_uint {
     var result: [2]c_uint = .{ scancode, 0 };
     const rc = try ioctlRead(fd, EVIOCGKEYCODE, &result);
     assert(rc == 0);
@@ -1117,8 +1135,8 @@ pub inline fn ioctl_EVIOCGKEYCODE(fd: fd_t, scancode: c_uint) IOCTLError!c_uint 
 }
 
 /// Get keycode
-pub inline fn ioctl_EVIOCGKEYCODE_V2(fd: fd_t, index: u16) IOCTLError!?InputKeymapEntry {
-    var result: IOCTLError!?InputKeymapEntry = null;
+pub inline fn ioctl_EVIOCGKEYCODE_V2(fd: fd_t, index: u16) IoctlError!?InputKeymapEntry {
+    var result: IoctlError!?InputKeymapEntry = null;
     var entry: InputKeymapEntry = .{ .index = index, .flags = .{ .KEYMAP_BY_INDEX = true } };
 
     if (ioctl(fd, EVIOCGKEYCODE_V2, @intFromPtr(&entry))) |rc| {
@@ -1132,27 +1150,27 @@ pub inline fn ioctl_EVIOCGKEYCODE_V2(fd: fd_t, index: u16) IOCTLError!?InputKeym
 }
 
 /// Set keycode
-pub inline fn ioctl_EVIOCSKEYCODE(fd: fd_t, scancode: c_uint, keycode: c_uint) IOCTLError!void {
+pub inline fn ioctl_EVIOCSKEYCODE(fd: fd_t, scancode: c_uint, keycode: c_uint) IoctlError!void {
     const new_map: [2]c_uint = .{ scancode, keycode };
     try ioctlWrite(fd, EVIOCSKEYCODE, &new_map);
 }
 
 /// Set keycode
-pub inline fn ioctl_EVIOCSKEYCODE_V2(fd: fd_t, entry: *const InputKeymapEntry) IOCTLError!void {
+pub inline fn ioctl_EVIOCSKEYCODE_V2(fd: fd_t, entry: *const InputKeymapEntry) IoctlError!void {
     try ioctlWrite(fd, EVIOCSKEYCODE_V2, entry);
 }
 
 /// Get device name
 /// Functional buf size is buf.len - 1, null terminator is included
-pub inline fn ioctl_EVIOCGNAME(fd: fd_t, buf: []u8) IOCTLError![:0]const u8 {
+pub inline fn ioctl_EVIOCGNAME(fd: fd_t, buf: []u8) IoctlError![:0]const u8 {
     const result = try ioctlString(fd, buf, EVIOCGNAME);
     return result;
 }
 
 /// Get physical location
 /// Functional buf size is buf.len - 1, null terminator is included
-pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[:0]const u8 {
-    const result: IOCTLError!?[:0]const u8 = ioctlString(fd, buf, EVIOCGPHYS) catch |e| switch (e) {
+pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IoctlError!?[:0]const u8 {
+    const result: IoctlError!?[:0]const u8 = ioctlString(fd, buf, EVIOCGPHYS) catch |e| switch (e) {
         error.FileDoesNotExist => null,
         else => e,
     };
@@ -1162,8 +1180,8 @@ pub inline fn ioctl_EVIOCGPHYS(fd: fd_t, buf: []u8) IOCTLError!?[:0]const u8 {
 
 /// Get unique identifier
 /// Functional buf size is buf.len - 1, null terminator is included
-pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IOCTLError!?[:0]const u8 {
-    const result: IOCTLError!?[:0]const u8 = ioctlString(fd, buf, EVIOCGUNIQ) catch |e| switch (e) {
+pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IoctlError!?[:0]const u8 {
+    const result: IoctlError!?[:0]const u8 = ioctlString(fd, buf, EVIOCGUNIQ) catch |e| switch (e) {
         error.FileDoesNotExist => null,
         else => e,
     };
@@ -1172,14 +1190,14 @@ pub inline fn ioctl_EVIOCGUNIQ(fd: fd_t, buf: []u8) IOCTLError!?[:0]const u8 {
 }
 
 /// Get device properties
-pub inline fn ioctl_EVIOCGPROP(fd: fd_t) IOCTLError!InputProp {
+pub inline fn ioctl_EVIOCGPROP(fd: fd_t) IoctlError!InputProp {
     const result = try ioctlReadTypeSize(InputProp, fd, EVIOCGPROP);
     return result;
 }
 
 /// Get MT slot values
 /// The length of 'slot_buf' must be 'slot_count + 1' because the code is put in the first slot for the ioctl request.
-pub inline fn ioctl_EVIOCGMTSLOTS(fd: fd_t, slot: ABS.MT, slot_count: usize, slot_buf: []i32) IOCTLError![]i32 {
+pub inline fn ioctl_EVIOCGMTSLOTS(fd: fd_t, slot: ABS.MT, slot_count: usize, slot_buf: []i32) IoctlError![]i32 {
     assert(slot_count + 1 == slot_buf.len);
     slot_buf[0] = @intFromEnum(slot);
     const rc = try ioctlRead(fd, EVIOCGMTSLOTS(@intCast(slot_buf.len * @sizeOf(i32))), slot_buf.ptr);
@@ -1188,31 +1206,31 @@ pub inline fn ioctl_EVIOCGMTSLOTS(fd: fd_t, slot: ABS.MT, slot_count: usize, slo
 }
 
 /// Get global key state
-pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IOCTLError!KEY.BitSet {
+pub inline fn ioctl_EVIOCGKEY(fd: fd_t) IoctlError!KEY.BitSet {
     const result = try ioctlReadTypeSize(KEY.BitSet, fd, EVIOCGKEY);
     return result;
 }
 
 /// Get all LEDs
-pub inline fn ioctl_EVIOCGLED(fd: fd_t) IOCTLError!LED.BitSet {
+pub inline fn ioctl_EVIOCGLED(fd: fd_t) IoctlError!LED.BitSet {
     const result = try ioctlReadTypeSize(LED.BitSet, fd, EVIOCGLED);
     return result;
 }
 
 /// Get all sounds status
-pub inline fn ioctl_EVIOCGSND(fd: fd_t) IOCTLError!SND.BitSet {
+pub inline fn ioctl_EVIOCGSND(fd: fd_t) IoctlError!SND.BitSet {
     const result = try ioctlReadTypeSize(SND.BitSet, fd, EVIOCGSND);
     return result;
 }
 
 /// Get all switch states
-pub inline fn ioctl_EVIOCGSW(fd: fd_t) IOCTLError!SW.BitSet {
+pub inline fn ioctl_EVIOCGSW(fd: fd_t) IoctlError!SW.BitSet {
     const result = try ioctlReadTypeSize(SW.BitSet, fd, EVIOCGSW);
     return result;
 }
 
 /// Get event bits
-pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!EnumBitSet(ET) {
+pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IoctlError!EnumBitSet(ET) {
     const BitSet = EnumBitSet(ET);
     var result: BitSet = .empty;
 
@@ -1225,7 +1243,7 @@ pub inline fn ioctl_EVIOCGBIT(fd: fd_t, comptime ET: type) IOCTLError!EnumBitSet
 }
 
 /// Get abs value/limits
-pub inline fn ioctl_EVIOCGABS(fd: fd_t, abs: ABS) IOCTLError!InputAbsInfo {
+pub inline fn ioctl_EVIOCGABS(fd: fd_t, abs: ABS) IoctlError!InputAbsInfo {
     var result: InputAbsInfo = .{};
     const rc = try ioctlRead(fd, EVIOCGABS(abs), &result);
     assert(rc == 0);
@@ -1233,13 +1251,13 @@ pub inline fn ioctl_EVIOCGABS(fd: fd_t, abs: ABS) IOCTLError!InputAbsInfo {
 }
 
 /// Set abs value/limits
-pub inline fn ioctl_EVIOCSABS(fd: fd_t, abs: ABS, abs_info: InputAbsInfo) IOCTLError!void {
+pub inline fn ioctl_EVIOCSABS(fd: fd_t, abs: ABS, abs_info: InputAbsInfo) IoctlError!void {
     try ioctlWrite(fd, EVIOCSABS(abs), &abs_info);
 }
 
 /// Send a force effect to a force feedback device
 /// New id is written back to 'effect'
-pub inline fn ioctl_EVIOCSFF(fd: fd_t, effect: *FfEffect) IOCTLError!void {
+pub inline fn ioctl_EVIOCSFF(fd: fd_t, effect: *FfEffect) IoctlError!void {
     // Note: ioctlWrite takes a '*const anyopaque' and converts it to usize.
     //        Because the original pointer is mutable, the pointed-to storage can
     //        be written to by the kernel.
@@ -1247,31 +1265,31 @@ pub inline fn ioctl_EVIOCSFF(fd: fd_t, effect: *FfEffect) IOCTLError!void {
 }
 
 /// Erase a force effect
-pub inline fn ioctl_EVIOCRMFF(fd: fd_t, id: u16) IOCTLError!void {
+pub inline fn ioctl_EVIOCRMFF(fd: fd_t, id: u16) IoctlError!void {
     const rc = try ioctl(fd, EVIOCRMFF, id);
     assert(rc == 0);
 }
 
 /// Report number of effect playable at the same time
-pub inline fn ioctl_EVIOCGEFFECTS(fd: fd_t) IOCTLError!c_int {
+pub inline fn ioctl_EVIOCGEFFECTS(fd: fd_t) IoctlError!c_int {
     const result = try ioctlReadType(c_int, fd, EVIOCGEFFECTS);
     return result;
 }
 
 /// Grab/Release device
-pub inline fn ioctl_EVIOCGRAB(fd: fd_t, grab: bool) IOCTLError!void {
+pub inline fn ioctl_EVIOCGRAB(fd: fd_t, grab: bool) IoctlError!void {
     const rc = try ioctl(fd, EVIOCGRAB, @intFromBool(grab));
     assert(rc == 0);
 }
 
 /// Revoke device access
-pub inline fn ioctl_EVIOCREVOKE(fd: fd_t) IOCTLError!void {
+pub inline fn ioctl_EVIOCREVOKE(fd: fd_t) IoctlError!void {
     const rc = try ioctl(fd, EVIOCREVOKE, 0);
     assert(rc == 0);
 }
 
 /// Retrieve current event mask
-pub inline fn ioctl_EVIOCGMASK(fd: fd_t, comptime ET: type) IOCTLError!EnumBitSet(ET) {
+pub inline fn ioctl_EVIOCGMASK(fd: fd_t, comptime ET: type) IoctlError!EnumBitSet(ET) {
     const BitSet = EnumBitSet(ET);
     var result: BitSet = .empty;
 
@@ -1288,7 +1306,7 @@ pub inline fn ioctl_EVIOCGMASK(fd: fd_t, comptime ET: type) IOCTLError!EnumBitSe
 }
 
 /// Set event mask
-pub inline fn ioctl_EVIOCSMASK(fd: fd_t, comptime ET: type, new_mask: *const EnumBitSet(ET)) IOCTLError!void {
+pub inline fn ioctl_EVIOCSMASK(fd: fd_t, comptime ET: type, new_mask: *const EnumBitSet(ET)) IoctlError!void {
     const input_mask = InputMask{
         .type = EV.uintFromType(ET),
         .codes_size = @sizeOf(EnumBitSet(ET)),
@@ -1299,7 +1317,7 @@ pub inline fn ioctl_EVIOCSMASK(fd: fd_t, comptime ET: type, new_mask: *const Enu
 }
 
 /// Set clockid to be used for timestamps
-pub inline fn ioctl_EVIOCSCLOCKID(fd: fd_t, id: c_int) IOCTLError!void {
+pub inline fn ioctl_EVIOCSCLOCKID(fd: fd_t, id: c_int) IoctlError!void {
     try ioctlWrite(fd, EVIOCSCLOCKID, &id);
 }
 
@@ -2253,13 +2271,6 @@ pub const SW = enum(u8) {
 // ioctl.h
 // =============================================================================
 
-pub const IOCTLError = Error || error{
-    // Unknown,
-    Unsupported,
-    InvalidRequestOrArg,
-    InvalidFdForRequest,
-};
-
 pub const _IOC = packed struct(u32) {
     pub const SizeInt = @Int(.unsigned, IOC.SIZE);
     pub const DirectionInt = @Int(.unsigned, IOC.DIR);
@@ -2287,26 +2298,32 @@ pub inline fn _IOWR(@"type": u8, nr: u8, comptime T: type) _IOC {
     return _IOC.init(IOC.READ | IOC.WRITE, @"type", nr, @sizeOf(T));
 }
 
-pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IOCTLError!usize {
+pub const IoctlError = error{
+    ACCES,
+    AGAIN,
+    BADF,
+    BUSY,
+    FAULT,
+    INTR,
+    INVAL,
+    IO,
+    NODEV,
+    NOENT,
+    NOMEM,
+    NOSPC,
+    NOSYS,
+    NOTTY,
+    NXIO,
+    OPNOTSUPP,
+    PERM,
+    TIMEDOUT,
+
+    UnexpectedErrno,
+};
+
+pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IoctlError!usize {
     const rc = syscall3(.ioctl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(request)), arg);
-
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidRequestOrArg,
-        .IO => error.IO,
-        .NOTTY => error.InvalidFdForRequest,
-        .INTR => error.Interrupt,
-        .ACCES, .PERM => error.PermissionDenied,
-        .NOENT => error.FileDoesNotExist,
-        .NODEV => error.InvalidDevice,
-        .NOSYS => error.Unsupported,
-        else => blk: {
-            log.warn("Unexpected errno for ioctl: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(IoctlError, rc);
     return @intCast(rc);
 }
 
@@ -2361,7 +2378,23 @@ pub const MAP_TYPE = enum(u4) {
     DROPPABLE = 0x08,
 };
 
-pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP, fd: fd_t, offset: off_t) Error![]align(page_size) u8 {
+pub const MmapError = error{
+    ACCES,
+    AGAIN,
+    BADF,
+    EXIST,
+    INVAL,
+    NFILE,
+    NODEV,
+    NOMEM,
+    OVERFLOW,
+    PERM,
+    TXTBSY,
+
+    UnexpectedErrno,
+};
+
+pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP, fd: fd_t, offset: off_t) MmapError![]align(page_size) u8 {
     const rc = syscall6(
         .mmap,
         @intFromPtr(addr),
@@ -2371,41 +2404,35 @@ pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP
         @as(u32, @bitCast(fd)),
         @bitCast(offset),
     );
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .INVAL => error.InvalidArg,
-        .ACCES => error.PermissionDenied,
-        .NOMEM => error.NoMemory,
-        .AGAIN => error.Lock,
-        else => blk: {
-            log.warn("Unexpected errno for mmap: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(MmapError, rc);
     return @as([*]align(page_size) u8, @ptrFromInt(@as(usize, @bitCast(rc))))[0..length];
 }
 
-pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) Error!void {
+pub const MprotectError = error{
+    ACCES,
+    INVAL,
+    NOMEM,
+
+    UnexpectedErrno,
+};
+
+pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) MprotectError!void {
     const rc = syscall3(.mprotect, @intFromPtr(slice.ptr), slice.len, @as(u32, @bitCast(prot)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for mprotect: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(MprotectError, rc);
+    assert(rc == 0);
 }
 
-pub fn munmap(memory: []align(page_size) const u8) Error!void {
+pub const MunmapError = error{
+    INVAL,
+    NOMEM,
+
+    UnexpectedErrno,
+};
+
+pub fn munmap(memory: []align(page_size) const u8) MunmapError!void {
     const rc = syscall2(.munmap, @intFromPtr(memory.ptr), memory.len);
-    if (check_errno(rc)) |e| return switch (e) {
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for munmap: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(MunmapError, rc);
+    assert(rc == 0);
 }
 
 // =============================================================================
@@ -2436,18 +2463,18 @@ pub const pollfd = extern struct {
     revents: i16,
 };
 
-pub fn poll(fds: []pollfd, timeout: c_int) Error!c_int {
+pub const PollError = error{
+    FAULT,
+    INTR,
+    INVAL,
+    NOMEM,
+
+    UnexpectedErrno,
+};
+
+pub fn poll(fds: []pollfd, timeout: c_int) PollError!c_int {
     const rc = syscall3(.poll, @intFromPtr(fds.ptr), fds.len, @as(u32, @bitCast(timeout)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INTR => error.Interrupt,
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for poll: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(PollError, rc);
     return @intCast(rc);
 }
 
@@ -2718,87 +2745,128 @@ pub const SCM = struct {
     pub const TXTIME = SO.TXTIME;
 };
 
-pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) Error!fd_t {
+pub const SocketError = error{
+    ACCES,
+    AFNOSUPPORT,
+    INVAL,
+    MFILE,
+    NFILE,
+    NOBUFS,
+    NOMEM,
+    PERM,
+    PROTONOSUPPORT,
+    SOCKTNOSUPPORT,
+
+    UnexpectedErrno,
+};
+
+pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) SocketError!fd_t {
     const rc = syscall3(.socket, @as(u32, @bitCast(domain)), @"type", protocol);
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .AFNOSUPPORT => error.InvalidAddressFamily,
-        .INVAL => error.InvalidArg,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .NOBUFS, .NOMEM => error.NoMemory,
-        .PROTONOSUPPORT => error.InvalidProtocol,
-        else => blk: {
-            log.warn("Unexpected errno for socket: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(SocketError, rc);
     return @intCast(rc);
 }
 
-pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) Error!c_int {
+pub const ConnectError = error{
+    ACCES,
+    ADDRINUSE,
+    ADDRNOTAVAIL,
+    AFNOSUPPORT,
+    AGAIN,
+    ALREADY,
+    BADF,
+    CONNABORTED,
+    CONNREFUSED,
+    CONNRESET,
+    FAULT,
+    HOSTUNREACH,
+    INPROGRESS,
+    INTR,
+    INVAL,
+    ISCONN,
+    LOOP,
+    NAMETOOLONG,
+    NETUNREACH,
+    NOBUFS,
+    NOENT,
+    NOMEM,
+    NOTDIR,
+    NOTSOCK,
+    PERM,
+    PIPE,
+    PROTOTYPE,
+    TIMEDOUT,
+
+    UnexpectedErrno,
+};
+
+pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) ConnectError!void {
     const rc = syscall3(.connect, @as(u32, @bitCast(sock_fd)), @intFromPtr(addr), addrlen);
-    if (check_errno(rc)) |e| return switch (e) {
-        .PERM, .ACCES => error.PermissionDenied,
-        .ADDRNOTAVAIL => error.AddressNotAvailable,
-        .AFNOSUPPORT => error.InvalidAddressFamily,
-        .ALREADY => error.AlreadyConnecting,
-        .BADF => error.InvalidFd,
-        .CONNREFUSED => error.ConnectionRefused,
-        .FAULT => error.InvalidPointer,
-        .INPROGRESS => error.ConnectingInProgress,
-        .INTR => error.Interrupt,
-        .INVAL => error.InvalidArg,
-        .NOTSOCK => error.NotSocket,
-        .TIMEDOUT => error.Timeout,
-        .NETUNREACH => error.NetworkUnreachable,
-        .HOSTUNREACH => error.HostUnreachable,
-        else => blk: {
-            log.warn("Unexpected errno for connect: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(ConnectError, rc);
     assert(rc == 0);
-    return @intCast(rc);
 }
 
-pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
+pub const SendmsgError = error{
+    ACCES,
+    ADDRNOTAVAIL,
+    AFNOSUPPORT,
+    AGAIN,
+    ALREADY,
+    BADF,
+    CONNREFUSED,
+    CONNRESET,
+    DESTADDRREQ,
+    FAULT,
+    HOSTUNREACH,
+    INPROGRESS,
+    INTR,
+    INVAL,
+    ISCONN,
+    MSGSIZE,
+    NETUNREACH,
+    NOBUFS,
+    NOMEM,
+    NOTCONN,
+    NOTSOCK,
+    OPNOTSUPP,
+    PERM,
+    PIPE,
+    PROTOTYPE,
+    TIMEDOUT,
+
+    UnexpectedErrno,
+};
+
+pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) SendmsgError!usize {
     const rc = syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .AGAIN => error.NoSpaceLeft, // send buffer full
-        .INTR => error.Interrupt,
-        .PIPE => error.ConnectionClosed, // peer closed connection
-        .CONNRESET => error.ConnectionReset,
-        .MSGSIZE => error.MessageTooBig,
-        .INVAL => error.InvalidArg,
-        .NOMEM => error.NoMemory,
-        else => blk: {
-            log.warn("Unexpected errno for sendmsg: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(SendmsgError, rc);
     return @intCast(rc);
 }
 
-pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) Error!usize {
+pub const RecvmsgError = error{
+    ACCES,
+    BADF,
+    CONNREFUSED,
+    CONNRESET,
+    FAULT,
+    HOSTUNREACH,
+    INTR,
+    INVAL,
+    NETUNREACH,
+    NOBUFS,
+    NOMEM,
+    NOTCONN,
+    NOTSOCK,
+    OPNOTSUPP,
+    PERM,
+    TIMEDOUT,
+    WOULDBLOCK,
+
+    UnexpectedErrno,
+};
+
+pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) RecvmsgError!usize {
     const rc = syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .AGAIN, .TIMEDOUT => error.Timeout,
-        .FAULT => error.InvalidPointer,
-        .INTR => error.Interrupt,
-        .NOTCONN => error.NotConnected,
-        .NOTSOCK => error.InvalidFd,
-        .OPNOTSUPP => error.InvalidFlags,
-        .INVAL => error.InvalidArg,
-        .NOMEM => error.NoMemory,
-        else => blk: {
-            log.warn("Unexpected errno for recvmsg: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(RecvmsgError, rc);
     return @intCast(rc);
 }
 
@@ -2899,50 +2967,26 @@ pub const S = struct {
 pub const Stat = abi.Stat;
 pub const mode_t = u32;
 
-pub fn stat(pathname: [:0]const u8, statbuf: *Stat) Error!void {
-    const rc = syscall2(.stat, @intFromPtr(pathname.ptr), @intFromPtr(statbuf));
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        .NOENT => error.FileDoesNotExist,
-        .NOMEM => error.NoMemory,
-        .NOTDIR => error.InvalidPath,
-        .OVERFLOW => error.Overflow,
-        else => blk: {
-            log.warn("Unexpected errno for stat: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-}
+pub const StatError = error{
+    ACCES,
+    FAULT,
+    LOOP,
+    NAMETOOLONG,
+    NOENT,
+    NOMEM,
+    NOTDIR,
+    OVERFLOW,
+    PERM,
+    STALE,
+    IO,
 
-pub fn fstatat(dir_fd: dirfd_t, path: [:0]const u8, statbuf: *Stat, flags: c_int) Error!void {
-    const rc = syscall4(
-        .fstatat64,
-        zeroExtendToUsize(dir_fd),
-        @intFromPtr(path.ptr),
-        @intFromPtr(statbuf),
-        zeroExtendToUsize(flags),
-    );
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        .NOENT => error.FileDoesNotExist,
-        .NOMEM => error.NoMemory,
-        .NOTDIR => error.InvalidPath,
-        .OVERFLOW => error.Overflow,
-        else => blk: {
-            log.warn("Unexpected errno for stat: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    UnexpectedErrno,
+};
+
+pub fn stat(pathname: [:0]const u8, statbuf: *Stat) StatError!void {
+    const rc = syscall2(.stat, @intFromPtr(pathname.ptr), @intFromPtr(statbuf));
+    try handleErrno(StatError, rc);
+    assert(rc == 0);
 }
 
 // =============================================================================
@@ -3018,189 +3062,223 @@ pub const fd_t = c_int;
 pub const dirfd_t = c_int;
 pub const off_t = isize;
 
-pub inline fn check_errno(err: isize) ?Errno {
-    if (err < 0) {
-        return @enumFromInt(-err);
-    }
-    return null;
-}
-
 pub const ReadError = error{
-    Interrupt,
-    NoData,
-    InvalidFd,
-    InvalidPointer,
-    InvalidArg,
+    AGAIN,
+    BADF,
+    CONNRESET,
+    FAULT,
+    INTR,
+    INVAL,
     IO,
-    UnexpectedDirFD,
+    ISDIR,
+    NODEV,
+    NOMEM,
+    NOTCONN,
+    NXIO,
+    OPNOTSUPP,
+    PERM,
+    STALE,
+    TIMEDOUT,
+
     UnexpectedErrno,
 };
 
 pub fn read(fd: fd_t, buf: []u8) ReadError![]u8 {
     const rc = syscall3(.read, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
-    if (check_errno(rc)) |e| return switch (e) {
-        .INTR => error.Interrupt,
-        .AGAIN => error.NoData,
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .IO => error.IO,
-        .ISDIR => error.UnexpectedDirFD,
-        else => blk: {
-            log.warn("Unexpected errno for read: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(ReadError, rc);
     return buf[0..@intCast(rc)];
 }
 
-pub fn write(fd: fd_t, buf: []const u8) Error!usize {
-    const rc = syscall3(.write, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
-    if (check_errno(rc)) |e| return switch (e) {
-        .INTR => error.Interrupt,
-        .AGAIN => error.NoData,
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .IO => error.IO,
-        .NOSPC => error.NoSpaceLeft,
-        .DQUOT => error.DiskQuotaExceeded,
-        else => blk: {
-            log.warn("Unexpected errno for write: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+pub const WriteError = error{
+    ACCES,
+    AGAIN,
+    BADF,
+    CONNREFUSED,
+    CONNRESET,
+    DESTADDRREQ,
+    DQUOT,
+    FAULT,
+    FBIG,
+    HOSTUNREACH,
+    INTR,
+    INVAL,
+    IO,
+    NETUNREACH,
+    NOBUFS,
+    NOMEM,
+    NOSPC,
+    NOTCONN,
+    OPNOTSUPP,
+    PERM,
+    PIPE,
+    ROFS,
+    STALE,
+    TIMEDOUT,
 
+    UnexpectedErrno,
+};
+
+pub fn write(fd: fd_t, buf: []const u8) WriteError!usize {
+    const rc = syscall3(.write, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
+    try handleErrno(WriteError, rc);
     return @intCast(rc);
 }
 
-pub fn close(fd: fd_t) Error!void {
+pub const CloseError = error{
+    BADF,
+    DQUOT,
+    FBIG,
+    INTR,
+    IO,
+    NOMEM,
+    NOSPC,
+    ROFS,
+    STALE,
+
+    UnexpectedErrno,
+};
+
+pub fn close(fd: fd_t) void {
     const rc = syscall1(.close, @as(u32, @bitCast(fd)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .INTR => error.Interrupt,
-        .IO => error.IO,
-        else => blk: {
-            log.warn("Unexpected errno for close: {}", .{e});
-            break :blk error.UnexpectedErrno;
+
+    if (handleErrno(CloseError, rc)) {
+        assert(rc == 0);
+    } else |e| switch (e) {
+        error.INTR => {},
+
+        error.BADF => if (builtin.mode == .Debug) { // Double close of use after close
+            @breakpoint();
+            unreachable;
         },
-    };
+
+        else => if (builtin.mode == .Debug) {
+            @breakpoint();
+            unreachable;
+        },
+    }
 }
 
-pub fn lseek(fd: fd_t, offset: off_t, whence: SEEK) Error!off_t {
+pub const LseekError = error{
+    BADF,
+    INVAL,
+    NXIO,
+    OVERFLOW,
+    SPIPE,
+
+    UnexpectedErrno,
+};
+
+pub fn lseek(fd: fd_t, offset: off_t, whence: SEEK) LseekError!off_t {
     const rc = syscall3(
         .lseek,
         safeExtendToUsize(fd),
         signExtendToUsize(offset),
         zeroExtendToUsize(whence),
     );
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .INVAL => error.InvalidArg,
-        .NXIO => error.NoDeviceOrAddress,
-        .OVERFLOW => error.Overflow,
-        .SPIPE => error.Unseekable,
-
-        else => blk: {
-            log.warn("Unexpected errno for lseek: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(LseekError, rc);
     return @intCast(rc);
 }
 
-pub fn pipe(fds: *[2]fd_t) Error!void {
-    const rc = syscall1(.pipe, @intFromPtr(fds));
-    if (check_errno(rc)) |e| return switch (e) {
-        .FAULT => error.InvalidPointer,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        else => blk: {
-            log.warn("Unexpected errno for pipe: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
+pub const PipeError = error{
+    FAULT,
+    MFILE,
+    NFILE,
+    NOMEM,
+
+    UnexpectedErrno,
+};
+
+pub fn pipe(fds: *[2]fd_t) PipeError!void {
+    pipe2(fds, .{}) catch |e| switch (e) {
+        .INVAL, .NOPKG => unreachable,
+        else => return e,
     };
 }
 
-pub fn ftruncate(fd: fd_t, length: usize) !void {
+pub const FtruncateError = error{
+    ACCES,
+    BADF,
+    DQUOT,
+    FBIG,
+    INTR,
+    INVAL,
+    IO,
+    NOMEM,
+    NOSPC,
+    PERM,
+    ROFS,
+    STALE,
+    TXTBSY,
+
+    UnexpectedErrno,
+};
+
+pub fn ftruncate(fd: fd_t, length: usize) FtruncateError!void {
     const rc = syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .INVAL => error.InvalidArg,
-        else => blk: {
-            log.warn("Unexpected errno for ftruncate: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(FtruncateError, rc);
+    assert(rc == 0);
 }
 
-pub fn unlink(pathname: [:0]const u8) Error!void {
+pub const UnlinkError = error{
+    ACCES,
+    BUSY,
+    FAULT,
+    IO,
+    ISDIR,
+    LOOP,
+    NAMETOOLONG,
+    NOENT,
+    NOMEM,
+    NOTDIR,
+    PERM,
+    ROFS,
+    STALE,
+
+    UnexpectedErrno,
+};
+
+pub fn unlink(pathname: [:0]const u8) UnlinkError!void {
     const rc = syscall1(.unlink, @intFromPtr(pathname.ptr));
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .PERM => error.UnlinkDirectoryAttempt,
-        .NOENT => error.FileDoesNotExist,
-        .BUSY => error.FileBusy,
-        .ROFS => error.ReadOnly,
-        .NOTDIR => error.InvalidPath,
-        .NAMETOOLONG => error.NameTooLong,
-        .LOOP => error.TooManySymbolicLinks,
-        .IO => error.IO,
-        else => blk: {
-            log.warn("Unexpected errno for unlink: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(UnlinkError, rc);
+    assert(rc == 0);
 }
 
-pub fn readlink(path: [:0]const u8, buf: []u8) Error!usize {
-    const rc = syscall3(
-        .readlink,
-        @intFromPtr(path.ptr),
-        @intFromPtr(buf.ptr),
-        buf.len,
-    );
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .IO => error.IO,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        .NOENT => error.FileDoesNotExist,
-        .NOMEM => error.NoMemory,
-        .NOTDIR => error.InvalidPath,
-        else => blk: {
-            log.warn("Unexpected errno for readlink: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+pub const Getdents64Error = error{
+    BADF,
+    FAULT,
+    INVAL,
+    IO,
+    NOENT,
+    NOTDIR,
 
-    return @intCast(rc);
-}
+    UnexpectedErrno,
+};
 
-pub fn getdents64(dir_fd: dirfd_t, buf: []u8) Error!usize {
+pub fn getdents64(dir_fd: dirfd_t, buf: []u8) Getdents64Error!usize {
     assert(buf.len >= @sizeOf(Dirent64) + Dirent64.max_name_len);
 
     const rc = syscall3(.getdents64, zeroExtendToUsize(dir_fd), @intFromPtr(buf.ptr), buf.len);
-    if (check_errno(rc)) |e| return switch (e) {
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.BufferTooSmall,
-        .NOENT => error.FileDoesNotExist,
-        .NOTDIR => error.NotDirectory,
-        else => blk: {
-            log.warn("Unexpected errno for getdents64: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(Getdents64Error, rc);
     return @intCast(rc);
 }
 
-pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) Error!usize {
+pub const ReadlinkatError = error{
+    ACCES,
+    BADF,
+    FAULT,
+    INVAL,
+    IO,
+    LOOP,
+    NAMETOOLONG,
+    NOENT,
+    NOMEM,
+    NOTDIR,
+    STALE,
+
+    UnexpectedErrno,
+};
+
+pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) ReadlinkatError!usize {
     const rc = syscall4(
         .readlinkat,
         zeroExtendToUsize(dir_fd),
@@ -3208,39 +3286,25 @@ pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) Error!usize {
         @intFromPtr(buf.ptr),
         buf.len,
     );
-    if (check_errno(rc)) |e| return switch (e) {
-        .ACCES => error.PermissionDenied,
-        .BADF => error.InvalidFd,
-        .FAULT => error.InvalidPointer,
-        .INVAL => error.InvalidArg,
-        .IO => error.IO,
-        .LOOP => error.TooManySymbolicLinks,
-        .NAMETOOLONG => error.NameTooLong,
-        .NOENT => error.FileDoesNotExist,
-        .NOMEM => error.NoMemory,
-        .NOTDIR => error.InvalidPath,
-        else => blk: {
-            log.warn("Unexpected errno for readlinkat: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
+    try handleErrno(ReadlinkatError, rc);
     return @intCast(rc);
 }
 
-pub fn pipe2(fds: *[2]fd_t, flags: O) Error!void {
+pub const Pipe2Error = error{
+    FAULT,
+    INVAL,
+    MFILE,
+    NFILE,
+    NOMEM,
+    NOPKG,
+
+    UnexpectedErrno,
+};
+
+pub fn pipe2(fds: *[2]fd_t, flags: O) Pipe2Error!void {
     const rc = syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
-    if (check_errno(rc)) |e| return switch (e) {
-        .FAULT => error.InvalidPointer,
-        .MFILE => error.TooManyProcessFiles,
-        .NFILE => error.TooManyFiles,
-        .INVAL => error.InvalidArg,
-        .NOPKG => error.PackageNotCompiled,
-        else => blk: {
-            log.warn("Unexpected errno for pipe2: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
+    try handleErrno(Pipe2Error, rc);
+    assert(rc == 0);
 }
 
 // =============================================================================
@@ -3297,28 +3361,6 @@ pub const XATTR = struct {
     pub const NAME_POSIX_ACL_DEFAULT = SYSTEM_PREFIX ++ POSIX_ACL_DEFAULT;
 };
 
-pub fn getxattr(path: [:0]const u8, name: [:0]const u8, value_buf: []u8) Error!usize {
-    const rc = syscall4(
-        .getxattr,
-        @intFromPtr(path.ptr),
-        @intFromPtr(name.ptr),
-        if (value_buf.len > 0) @intFromPtr(value_buf.ptr) else 0,
-        value_buf.len,
-    );
-    if (check_errno(rc)) |e| return switch (e) {
-        .@"2BIG" => error.ValueTooBig,
-        .NODATA => error.NoData,
-        .NOTSUP => error.NotSupported,
-        .RANGE => error.BufferTooSmall,
-        else => blk: {
-            log.warn("Unexpected errno for getxattr: {}", .{e});
-            break :blk error.UnexpectedErrno;
-        },
-    };
-
-    return safeExtendToUsize(rc);
-}
-
 // =============================================================================
 // private helpers
 // =============================================================================
@@ -3344,6 +3386,12 @@ inline fn zeroExtendToUsize(x: anytype) usize {
         .int => {
             meta.expectSignedType(T);
             break :blk .{ T, x };
+        },
+
+        .comptime_int => {
+            meta.expectSigned(x);
+            assert(x >= math.minInt(isize) and x <= math.maxInt(isize));
+            break :blk .{ isize, @as(isize, x) };
         },
 
         .@"struct" => |si| {

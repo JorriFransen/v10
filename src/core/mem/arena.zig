@@ -85,7 +85,7 @@ pub const Arena = struct {
                     -1,
                     0,
                 ) catch |err| switch (err) {
-                    error.NoMemory => return error.OutOfMemory,
+                    error.NOMEM => return error.OutOfMemory,
                     else => return error.Unexpected,
                 };
 
@@ -138,14 +138,7 @@ pub const Arena = struct {
             switch (builtin.os.tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
                 .linux => linux.munmap(@alignCast(this.data)) catch |e| return switch (e) {
-                    error.PermissionDenied,
-                    error.ReadOnly,
-                    => error.AccessDenied,
-
-                    error.NoSpaceLeft,
-                    error.NoMemory,
-                    => error.OutOfMemory,
-
+                    error.NOMEM => error.OutOfMemory,
                     else => error.Unexpected,
                 },
                 .windows => _ = win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),

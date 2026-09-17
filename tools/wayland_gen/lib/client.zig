@@ -123,8 +123,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
             }
 
             sock_addr.family = linux.AF.UNIX;
-            const r = linux.connect(fd, @ptrCast(&sock_addr), @sizeOf(@TypeOf(sock_addr))) catch unreachable; // TODO: Handle error
-            assert(r == 0);
+            linux.connect(fd, @ptrCast(&sock_addr), @sizeOf(@TypeOf(sock_addr))) catch unreachable; // TODO: Handle error
 
             glob_display = .{
                 .fd = fd,
@@ -190,7 +189,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
 }
 
 pub fn displayDisconnect(display: *Display) void {
-    linux.close(display.fd) catch unreachable;
+    linux.close(display.fd);
 }
 
 pub fn displayRoundtrip(display: *Display) usize {

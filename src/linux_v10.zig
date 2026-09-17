@@ -995,9 +995,7 @@ fn alloc_shm() ShmError!void {
         log.err("shm_open failed, error: {}", .{e});
         return error.ShmOpenFailed;
     };
-    defer linux.close(fd) catch |e| {
-        log.err("close shm fd failed, error: {}", .{e});
-    };
+    defer linux.close(fd);
 
     posix.shm_unlink(name) catch |e| {
         log.err("shm_unlink failed, error: {}", .{e});
@@ -1136,9 +1134,7 @@ pub const DEBUG = struct {
                 log.warn("Failed to stat file '{s}', error: {}", .{ path, e });
             }
 
-            linux.close(fd) catch |e| {
-                log.warn("Failed to close file '{s}', error: {}", .{ path, e });
-            };
+            linux.close(fd);
         } else |e| {
             log.warn("Failed to open file: '{s}', error: {}", .{ path, e });
         }
@@ -1159,9 +1155,7 @@ pub const DEBUG = struct {
                 log.err("Failed to write to file: '{s}', error: {}", .{ path, e });
             }
 
-            linux.close(fd) catch |e| {
-                log.err("Failed to close file: '{s}', error: {}", .{ path, e });
-            };
+            linux.close(fd);
         } else |e| {
             log.err("Failed to open file: '{s}', error: {}", .{ path, e });
         }
@@ -1192,10 +1186,10 @@ pub const DEBUG = struct {
 
             const read_fd = fds[0];
             const write_fd = fds[1];
-            defer linux.close(read_fd) catch unreachable;
+            defer linux.close(read_fd);
 
             offer.receive(wld.selection_mime.?, write_fd);
-            linux.close(write_fd) catch unreachable;
+            linux.close(write_fd);
 
             var buf: [256]u8 = undefined;
             if (linux.read(read_fd, &buf)) |clip_str| {
@@ -1219,10 +1213,10 @@ pub const DEBUG = struct {
 
             const read_fd = fds[0];
             const write_fd = fds[1];
-            defer linux.close(read_fd) catch unreachable;
+            defer linux.close(read_fd);
 
             offer.receive(wld.dnd_mime.?, write_fd);
-            linux.close(write_fd) catch unreachable;
+            linux.close(write_fd);
             defer offer.finish();
 
             var buf: [4096]u8 = undefined;
@@ -2075,7 +2069,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
 
 pub fn endRecordingInput(shared_state: *common.SharedState) void {
     if (shared_state.input_recording_index != 0) {
-        _ = linux.close(shared_state.recording_handle) catch @panic("Input recording file close failed");
+        linux.close(shared_state.recording_handle);
         shared_state.input_recording_index = 0;
     }
 }
@@ -2097,7 +2091,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
 
 pub fn endInputPlayback(shared_state: *common.SharedState) void {
     if (shared_state.input_playing_index != 0) {
-        _ = linux.close(shared_state.playback_handle) catch @panic("Input playback file close failed");
+        linux.close(shared_state.playback_handle);
         shared_state.input_playing_index = 0;
     }
 }

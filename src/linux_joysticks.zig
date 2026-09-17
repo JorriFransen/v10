@@ -143,7 +143,7 @@ pub const Joystick = struct {
 
         var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
         const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
-            error.FileDoesNotExist => return error.DevSysPathMissing,
+            error.NOENT => return error.DevSysPathMissing,
             else => return e,
         };
         const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
@@ -160,7 +160,7 @@ pub const Joystick = struct {
         const driver_name: []const u8 = blk: {
             var driver_path_buf: [fs.max_path_bytes]u8 = undefined;
             const driver_path_len = linux.readlinkat(sys_class_input_dir_fd, driver_link_rel, &driver_path_buf) catch |e| switch (e) {
-                error.FileDoesNotExist => {
+                error.NOENT => {
                     log.err("Joystick driver link does not exist: '/sys/class/input/{s}'", .{driver_link_rel});
                     break :blk "";
                 },
@@ -185,9 +185,7 @@ pub const Joystick = struct {
         log.debug("usb_iface_sys_path_rel_link: '{s}'", .{usb_iface_sys_path_rel_link});
 
         if (linux.openat(sys_class_input_dir_fd, usb_iface_sys_path_rel_link, .{ .ACCMODE = .RDONLY }, 0)) |usb_iface| {
-            defer linux.close(usb_iface) catch |e| {
-                log.warn("Failed to close usb_interface : '{s}', error: '{}'", .{ usb_iface_sys_path_rel_link, e });
-            };
+            defer linux.close(usb_iface);
 
             if (std.mem.eql(u8, driver_name, "xpad") and
                 sysAttrEql(usb_iface, "bInterfaceClass", "ff") and
@@ -492,14 +490,10 @@ pub fn System(comptime joystick_count: usize) type {
             };
 
             result.dev_input_dir_fd = try linux.open("/dev/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
-            errdefer _ = linux.close(result.dev_input_dir_fd) catch |e| {
-                log.err("Failed to close dir fd: '/dev/input', error: '{}'", .{e});
-            };
+            errdefer linux.close(result.dev_input_dir_fd);
 
             result.sys_class_input_dir_fd = try linux.open("/sys/class/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
-            errdefer _ = linux.close(result.sys_class_input_dir_fd) catch |e| {
-                log.err("Failed to close dir fd: '/sys/class/input', error: '{}'", .{e});
-            };
+            errdefer linux.close(result.sys_class_input_dir_fd);
 
             result.io_uring = try std.os.linux.IoUring.init(io_uring_entry_count, 0);
             errdefer result.io_uring.deinit();
@@ -515,9 +509,7 @@ pub fn System(comptime joystick_count: usize) type {
                 log.err("Failed to open inotify fd, error: '{}'", .{e});
                 return e;
             };
-            errdefer linux.close(result.inotify_fd) catch |e| {
-                log.warn("Failed to close inotify fd, error: '{}'", .{e});
-            };
+            errdefer linux.close(result.inotify_fd);
 
             result.inotify_wd = linux.inotify_add_watch(
                 result.inotify_fd,
@@ -537,14 +529,10 @@ pub fn System(comptime joystick_count: usize) type {
         }
 
         pub fn deinit(this: *Context) void {
-            _ = linux.close(this.dev_input_dir_fd) catch |e| {
-                log.err("Failed to close dir fd: '/dev/input', error: '{}'", .{e});
-            };
+            linux.close(this.dev_input_dir_fd);
             this.dev_input_dir_fd = -1;
 
-            _ = linux.close(this.sys_class_input_dir_fd) catch |e| {
-                log.err("Failed to close dir fd: '/sys/class/input', error: '{}'", .{e});
-            };
+            linux.close(this.sys_class_input_dir_fd);
             this.sys_class_input_dir_fd = -1;
 
             this.flushIoUring();
@@ -555,9 +543,7 @@ pub fn System(comptime joystick_count: usize) type {
             };
             this.inotify_wd = -1;
 
-            _ = linux.close(this.inotify_fd) catch |e| {
-                log.warn("Failed to close inotify fd, error: '{}'", .{e});
-            };
+            linux.close(this.inotify_fd);
             this.inotify_fd = -1;
         }
 
@@ -696,7 +682,7 @@ pub fn System(comptime joystick_count: usize) type {
                                     }
                                 }
                             } else |e| switch (e) {
-                                error.NoData => {},
+                                error.AGAIN => {},
                                 else => log.err("Failed to read inotify events, error: '{}'", .{e}),
                             }
                         } else {
@@ -709,14 +695,14 @@ pub fn System(comptime joystick_count: usize) type {
                                     joystick.handleEvent(event);
                                 }
                             } else |e| switch (e) {
-                                error.NoData => {},
+                                error.AGAIN => {},
                                 else => log.err("Failed to read joystick events, error: '{}'", .{e}),
                             }
                         };
                     }
                 }
             } else |e| switch (e) {
-                error.Interrupt => {},
+                error.INTR => {},
                 else => {
                     log.err("Poll failed, error: '{}", .{e});
                 },
@@ -814,7 +800,10 @@ pub fn System(comptime joystick_count: usize) type {
                 const event_id = std.fmt.parseInt(u10, event_id_str, 10) catch continue;
 
                 const sys_path_rel_len = linux.readlinkat(this.sys_class_input_dir_fd, entry.name, &sys_path_rel_buf) catch |e| {
-                    log.err("reconcile readlink failed on: '/sys/class/input/{s}', error: '{}'", .{ entry.name, e });
+                    switch (e) {
+                        error.NOTDIR, error.BADF => unreachable,
+                        else => log.err("reconcile readlink failed on: '/sys/class/input/{s}', error: '{}'", .{ entry.name, e }),
+                    }
                     continue;
                 };
                 const sys_path_rel_sys_link = sys_path_rel_buf[0..sys_path_rel_len];
@@ -980,7 +969,7 @@ pub fn System(comptime joystick_count: usize) type {
 
                 var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
                 const dev_sys_path_rel_len = linux.readlinkat(this.sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
-                    error.FileDoesNotExist => return error.DevSysPathMissing,
+                    error.NOENT => return error.DevSysPathMissing,
                     else => return e,
                 };
                 const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
@@ -1031,9 +1020,7 @@ pub fn System(comptime joystick_count: usize) type {
             } else |submit_error| {
                 log.err("io_uring close submit failed, error: '{}'", .{submit_error});
                 log.warn("Calling blocking/sync close", .{});
-                _ = linux.close(fd) catch |close_error| {
-                    log.err("io_uring forced sync close failed, error: '{}'", .{close_error});
-                };
+                linux.close(fd);
             }
 
             return result;
@@ -1252,9 +1239,7 @@ fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
     var result = false;
 
     if (linux.openat(dir_fd, attr, .{ .ACCMODE = .RDONLY }, 0)) |attr_fd| {
-        defer linux.close(attr_fd) catch |e| {
-            log.warn("Failed to close sysfs attribute fd: '{s}', error: '{}'", .{ attr, e });
-        };
+        defer linux.close(attr_fd);
 
         var attr_buf: [16]u8 = @splat(0);
 
@@ -1265,7 +1250,7 @@ fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
             log.warn("Failed to read from attribute fd: '{s}', error: '{}'", .{ attr, e });
         }
     } else |e| switch (e) {
-        error.FileDoesNotExist => {},
+        error.NOENT => {},
         else => log.warn("Failed to open sysfs attribute fd: '{s}', error: '{}'", .{ attr, e }),
     }
 

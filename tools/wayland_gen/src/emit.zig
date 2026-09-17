@@ -180,7 +180,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             if (!options.verbose_wayland and (fd_arg_count + newid_arg_count != 0)) {
                 try writer.appendi(1, "\nif (object.zombie or first_listener_node == null) {\n");
                 for (types, 1..) |t, i| {
-                    if (t.tag == .h) try writer.appendif(2, "linux.close(arg{}) catch @panic(\"unhandled fd close failed\");\n", .{i});
+                    if (t.tag == .h) try writer.appendif(2, "linux.close(arg{});\n", .{i});
                 }
                 try writer.appendi(1,
                     \\    return 0;
