@@ -2474,8 +2474,8 @@ pub const POLL = abi.POLL;
 
 pub const pollfd = extern struct {
     fd: fd_t,
-    events: i16,
-    revents: i16,
+    events: POLL,
+    revents: POLL,
 };
 
 pub const PollError = error{

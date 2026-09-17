@@ -85,15 +85,22 @@ pub const PROT = packed struct(u32) {
 // poll.h
 // =============================================================================
 
-pub const POLL = struct {
-    pub const IN = 0x001;
-    pub const PRI = 0x002;
-    pub const OUT = 0x004;
-    pub const ERR = 0x008;
-    pub const HUP = 0x010;
-    pub const NVAL = 0x020;
-    pub const RDNORM = 0x040;
-    pub const RDBAND = 0x080;
+pub const POLL = packed struct(u16) {
+    IN: bool = false,
+    PRI: bool = false,
+    OUT: bool = false,
+    ERR: bool = false,
+    HUP: bool = false,
+    NVAL: bool = false,
+    RDNORM: bool = false,
+    RDBAND: bool = false,
+    WRNORM: bool = false,
+    WRBAND: bool = false,
+    MSG: bool = false,
+    __reserved__: u1 = 0,
+    REMOVE: bool = false,
+    RDHUP: bool = false,
+    __reserved2__: u2 = 0,
 };
 
 // =============================================================================

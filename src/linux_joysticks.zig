@@ -523,7 +523,7 @@ pub fn System(comptime joystick_count: usize) type {
                 log.err("Failed to remove inotify watch '/dev/input', error: '{}'", .{e});
             };
 
-            result.poll_fds[0] = .{ .fd = result.inotify_fd, .events = linux.POLL.IN, .revents = undefined };
+            result.poll_fds[0] = .{ .fd = result.inotify_fd, .events = .{ .IN = true }, .revents = undefined };
 
             return result;
         }
@@ -620,93 +620,109 @@ pub fn System(comptime joystick_count: usize) type {
                 }
             }
 
-            if (linux.poll(&this.poll_fds, 0)) |poll_rc| {
-                if (poll_rc > 0) {
-                    for (&this.poll_fds, 0..) |*pollfd, pollfd_idx| {
-                        const in = pollfd.revents & linux.POLL.IN != 0;
+            const poll_rc: c_int = linux.poll(&this.poll_fds, 0) catch |e| blk: {
+                switch (e) {
+                    error.INTR => {},
+                    else => log.err("Poll failed, error: '{}'", .{e}),
+                }
+                break :blk 0;
+            };
 
-                        if (in) if (pollfd_idx < first_joystick_pollfd_idx) {
-                            assert(pollfd_idx == inotify_pollfd_idx);
+            if (poll_rc > 0) for (&this.poll_fds, 0..) |*pollfd, pollfd_idx| {
+                if (@as(u16, @bitCast(pollfd.revents)) == 0) continue;
 
-                            const buf_len = 16 * (@sizeOf(linux.InotifyEvent) + linux.NAME_MAX + 1);
-                            var buf: [buf_len]u8 align(@alignOf(linux.InotifyEvent)) = undefined;
+                if (pollfd_idx == inotify_pollfd_idx) {
+                    if (pollfd.revents.IN) {
+                        const buf_len = 16 * (@sizeOf(linux.InotifyEvent) + linux.NAME_MAX + 1);
+                        var buf: [buf_len]u8 align(@alignOf(linux.InotifyEvent)) = undefined;
 
-                            while (linux.read(this.inotify_fd, &buf)) |bytes_read| {
-                                var i: usize = 0;
-                                while (i < bytes_read.len) {
-                                    const rem = bytes_read[i..];
-                                    assert(rem.len >= @sizeOf(linux.InotifyEvent));
+                        while (linux.read(this.inotify_fd, &buf)) |bytes_read| {
+                            var i: usize = 0;
+                            while (i < bytes_read.len) {
+                                const rem = bytes_read[i..];
+                                assert(rem.len >= @sizeOf(linux.InotifyEvent));
 
-                                    const event: *const linux.InotifyEvent = @ptrCast(@alignCast(rem.ptr));
-                                    i += @sizeOf(linux.InotifyEvent) + event.len;
+                                const event: *const linux.InotifyEvent = @ptrCast(@alignCast(rem.ptr));
+                                i += @sizeOf(linux.InotifyEvent) + event.len;
 
-                                    if (event.mask.Q_OVERFLOW) {
-                                        this.reconcile() catch |e| {
-                                            log.err("reconcile after Q_OVERFLOW failed, error: '{}'", .{e});
-                                            continue;
-                                        };
-                                    }
+                                if (event.mask.Q_OVERFLOW) {
+                                    this.reconcile() catch |e| {
+                                        log.err("reconcile after Q_OVERFLOW failed, error: '{}'", .{e});
+                                        continue;
+                                    };
+                                }
 
-                                    if (event.wd != this.inotify_wd) continue;
-                                    if (event.len == 0) continue;
+                                if (event.wd != this.inotify_wd) continue;
+                                if (event.len == 0) continue;
 
-                                    assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
-                                    if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
-                                        const event_num_str = std.mem.cutPrefix(u8, event.name(), "event") orelse continue;
-                                        const event_id = std.fmt.parseInt(u10, event_num_str, 10) catch continue;
+                                assert(rem.len - @sizeOf(linux.InotifyEvent) >= event.len);
+                                if (rem.len - @sizeOf(linux.InotifyEvent) >= event.len) {
+                                    const event_num_str = std.mem.cutPrefix(u8, event.name(), "event") orelse continue;
+                                    const event_id = std.fmt.parseInt(u10, event_num_str, 10) catch continue;
 
-                                        if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
-                                            log.debug("inotyfy add mask: {}", .{event.mask});
-                                            if (this.eventIdMatchesRegisteredOrWaiting(event_id)) {
-                                                // skip
-                                            } else if (this.getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
-                                                this.io_open_in_flight[in_flight_index].flags.retry_pending = true;
-                                                log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
-                                            } else {
-                                                this.submitOpenFd(event.name(), event_id) catch |e| {
-                                                    const report = switch (e) {
-                                                        error.DevSysPathMissing => !event.mask.ATTRIB,
-                                                        else => true,
-                                                    };
-
-                                                    if (report) {
-                                                        log.err("Failed to submit potential joystick for io_uring open: '/dev/input/{s}', error: '{}'", .{ event.name(), e });
-                                                    }
+                                    if (event.mask.CREATE or event.mask.MOVED_TO or event.mask.ATTRIB) {
+                                        log.debug("inotyfy add mask: {}", .{event.mask});
+                                        if (this.eventIdMatchesRegisteredOrWaiting(event_id)) {
+                                            // skip
+                                        } else if (this.getIoInFlightIndexByEventId(event_id)) |in_flight_index| {
+                                            this.io_open_in_flight[in_flight_index].flags.retry_pending = true;
+                                            log.debug("already in flight, allow retry: '/dev/input/event{}'", .{event_id});
+                                        } else {
+                                            this.submitOpenFd(event.name(), event_id) catch |e| {
+                                                const report = switch (e) {
+                                                    error.DevSysPathMissing => !event.mask.ATTRIB,
+                                                    else => true,
                                                 };
-                                            }
-                                        } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
-                                            if (this.unregister(event_id)) |fd| {
-                                                _ = this.submitCloseFd(fd);
-                                            }
+
+                                                if (report) {
+                                                    log.err("Failed to submit potential joystick for io_uring open: '/dev/input/{s}', error: '{}'", .{ event.name(), e });
+                                                }
+                                            };
+                                        }
+                                    } else if (event.mask.DELETE or event.mask.MOVED_FROM) {
+                                        if (this.unregister(event_id)) |fd| {
+                                            _ = this.submitCloseFd(fd);
                                         }
                                     }
                                 }
-                            } else |e| switch (e) {
-                                error.AGAIN => {},
-                                else => log.err("Failed to read inotify events, error: '{}'", .{e}),
                             }
-                        } else {
-                            var events: [16]linux.InputEvent = undefined;
-                            while (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
-                                const num_events = bytes_read.len / @sizeOf(linux.InputEvent);
-                                for (events[0..num_events]) |*event| {
-                                    const jid = pollfd_idx - first_joystick_pollfd_idx;
-                                    const joystick = &this.joysticks[jid];
-                                    joystick.handleEvent(event);
-                                }
-                            } else |e| switch (e) {
-                                error.AGAIN => {},
-                                else => log.err("Failed to read joystick events, error: '{}'", .{e}),
+                        } else |e| switch (e) {
+                            error.AGAIN => {},
+                            else => log.err("Failed to read inotify events, error: '{}'", .{e}),
+                        }
+                    }
+
+                    if (pollfd.revents.ERR or pollfd.revents.HUP or pollfd.revents.NVAL) {
+                        log.err("inotify poll error: revents: {}", .{pollfd.revents});
+                    }
+                } else {
+                    assert(pollfd_idx >= first_joystick_pollfd_idx);
+                    assert(pollfd_idx < (joystick_count + first_joystick_pollfd_idx));
+
+                    if (pollfd.fd < 0) continue;
+
+                    const jid = pollfd_idx - first_joystick_pollfd_idx;
+                    if (this.joysticks[jid].state == .inactive) continue;
+
+                    if (pollfd.revents.IN) {
+                        var events: [16]linux.InputEvent = undefined;
+                        while (linux.read(pollfd.fd, std.mem.sliceAsBytes(&events))) |bytes_read| {
+                            const num_events = bytes_read.len / @sizeOf(linux.InputEvent);
+                            for (events[0..num_events]) |*event| {
+                                const joystick = &this.joysticks[jid];
+                                joystick.handleEvent(event);
                             }
-                        };
+                        } else |e| switch (e) {
+                            error.AGAIN => {},
+                            else => log.err("Failed to read joystick events, jid: {}, error: '{}'", .{ jid, e }),
+                        }
+                    }
+
+                    if (pollfd.revents.ERR or pollfd.revents.HUP or pollfd.revents.NVAL) {
+                        log.err("joystick poll error: revents: {}", .{pollfd.revents});
                     }
                 }
-            } else |e| switch (e) {
-                error.INTR => {},
-                else => {
-                    log.err("Poll failed, error: '{}", .{e});
-                },
-            }
+            };
 
             _ = this.io_uring.submit() catch |e| {
                 log.err("io_uring submit failed, error: '{}'", .{e});
@@ -1056,7 +1072,7 @@ pub fn System(comptime joystick_count: usize) type {
 
             this.poll_fds[first_joystick_pollfd_idx + slot_index] = .{
                 .fd = @intCast(js.fd),
-                .events = linux.POLL.IN,
+                .events = .{ .IN = true },
                 .revents = undefined,
             };
         }

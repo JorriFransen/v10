@@ -234,12 +234,21 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
     var result: isize = 0;
 
     var timeout = first_timeout;
-    var pollfd: linux.pollfd = .{ .fd = display.fd, .events = linux.POLL.IN, .revents = undefined };
-    // TODO: Handle error
-    while (linux.poll(@ptrCast(&pollfd), timeout) catch unreachable > 0) {
-        if (timeout != 0) timeout = 0;
+    var pollfd: linux.pollfd = .{ .fd = display.fd, .events = .{ .IN = true }, .revents = undefined };
+    while (true) {
+        const poll_rc = linux.poll(@ptrCast(&pollfd), timeout) catch |e| switch (e) {
+            error.INTR => continue,
+            else => {
+                log.err("wayland poll failed: error: '{}'", .{e});
+                result = -1;
+                break;
+            },
+        };
+        if (poll_rc <= 0) break;
 
-        if (pollfd.revents & linux.POLL.IN != 0) {
+        timeout = 0;
+
+        if (pollfd.revents.IN) {
             const receive_buf_available = display.receive_payload_buf[display.receive_payload_used..];
 
             var control_buf: [linux.CMSG_SPACE(message_max_fd_count * @sizeOf(linux.fd_t))]u8 align(@alignOf(linux.cmsghdr)) = undefined;
@@ -317,10 +326,14 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
             } else |e| {
                 log.warn("recvmsg error: {}", .{e});
                 result = -1;
+                break;
             }
-        } else {
-            log.warn("readAndDispatch poll error", .{});
+        }
+
+        if (pollfd.revents.ERR or pollfd.revents.HUP or pollfd.revents.NVAL or pollfd.revents.RDHUP) {
+            log.warn("readAndDispatch poll error: revents: {}", .{pollfd.revents});
             result = -1;
+            break;
         }
     }
 
