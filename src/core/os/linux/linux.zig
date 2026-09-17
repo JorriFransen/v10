@@ -720,9 +720,14 @@ pub const FcntlError = error{
 };
 
 pub fn fcntl(fd: fd_t, op: c_int, arg: usize) FcntlError!c_int {
-    const rc = syscall3(.fcntl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(op)), arg);
+    const rc = syscall3(
+        .fcntl,
+        safeExtendToUsize(fd),
+        safeExtendToUsize(op),
+        arg,
+    );
     try handleErrno(FcntlError, rc);
-    return @as(c_int, @intCast(rc));
+    return safeTrunc(c_int, rc);
 }
 
 // =============================================================================
@@ -2322,9 +2327,14 @@ pub const IoctlError = error{
 };
 
 pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IoctlError!usize {
-    const rc = syscall3(.ioctl, @as(u32, @bitCast(fd)), @as(u32, @bitCast(request)), arg);
+    const rc = syscall3(
+        .ioctl,
+        safeExtendToUsize(fd),
+        zeroExtendToUsize(request),
+        arg,
+    );
     try handleErrno(IoctlError, rc);
-    return @intCast(rc);
+    return safeTrunc(usize, rc);
 }
 
 // =============================================================================
@@ -2399,10 +2409,10 @@ pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP
         .mmap,
         @intFromPtr(addr),
         length,
-        @as(u32, @bitCast(prot)),
-        @as(u32, @bitCast(flags)),
-        @as(u32, @bitCast(fd)),
-        @bitCast(offset),
+        zeroExtendToUsize(prot),
+        zeroExtendToUsize(flags),
+        zeroExtendToUsize(fd),
+        signExtendToUsize(offset),
     );
     try handleErrno(MmapError, rc);
     return @as([*]align(page_size) u8, @ptrFromInt(@as(usize, @bitCast(rc))))[0..length];
@@ -2417,7 +2427,12 @@ pub const MprotectError = error{
 };
 
 pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) MprotectError!void {
-    const rc = syscall3(.mprotect, @intFromPtr(slice.ptr), slice.len, @as(u32, @bitCast(prot)));
+    const rc = syscall3(
+        .mprotect,
+        @intFromPtr(slice.ptr),
+        slice.len,
+        zeroExtendToUsize(prot),
+    );
     try handleErrno(MprotectError, rc);
     assert(rc == 0);
 }
@@ -2473,9 +2488,14 @@ pub const PollError = error{
 };
 
 pub fn poll(fds: []pollfd, timeout: c_int) PollError!c_int {
-    const rc = syscall3(.poll, @intFromPtr(fds.ptr), fds.len, @as(u32, @bitCast(timeout)));
+    const rc = syscall3(
+        .poll,
+        @intFromPtr(fds.ptr),
+        fds.len,
+        zeroExtendToUsize(timeout),
+    );
     try handleErrno(PollError, rc);
-    return @intCast(rc);
+    return safeTrunc(c_int, rc);
 }
 
 // =============================================================================
@@ -2761,9 +2781,14 @@ pub const SocketError = error{
 };
 
 pub fn socket(domain: c_int, @"type": c_uint, protocol: c_uint) SocketError!fd_t {
-    const rc = syscall3(.socket, @as(u32, @bitCast(domain)), @"type", protocol);
+    const rc = syscall3(
+        .socket,
+        safeExtendToUsize(domain),
+        @"type",
+        protocol,
+    );
     try handleErrno(SocketError, rc);
-    return @intCast(rc);
+    return safeTrunc(fd_t, rc);
 }
 
 pub const ConnectError = error{
@@ -2800,7 +2825,12 @@ pub const ConnectError = error{
 };
 
 pub fn connect(sock_fd: fd_t, addr: *const sockaddr, addrlen: socklen_t) ConnectError!void {
-    const rc = syscall3(.connect, @as(u32, @bitCast(sock_fd)), @intFromPtr(addr), addrlen);
+    const rc = syscall3(
+        .connect,
+        safeExtendToUsize(sock_fd),
+        @intFromPtr(addr),
+        addrlen,
+    );
     try handleErrno(ConnectError, rc);
     assert(rc == 0);
 }
@@ -2837,9 +2867,14 @@ pub const SendmsgError = error{
 };
 
 pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) SendmsgError!usize {
-    const rc = syscall3(.sendmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    const rc = syscall3(
+        .sendmsg,
+        safeExtendToUsize(sock_fd),
+        @intFromPtr(header),
+        flags,
+    );
     try handleErrno(SendmsgError, rc);
-    return @intCast(rc);
+    return safeTrunc(usize, rc);
 }
 
 pub const RecvmsgError = error{
@@ -2865,9 +2900,14 @@ pub const RecvmsgError = error{
 };
 
 pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) RecvmsgError!usize {
-    const rc = syscall3(.recvmsg, @as(u32, @bitCast(sock_fd)), @intFromPtr(header), flags);
+    const rc = syscall3(
+        .recvmsg,
+        safeExtendToUsize(sock_fd),
+        @intFromPtr(header),
+        flags,
+    );
     try handleErrno(RecvmsgError, rc);
-    return @intCast(rc);
+    return safeTrunc(usize, rc);
 }
 
 pub inline fn CMSG_NXTHDR(msg: *msghdr, cmsg: *cmsghdr) ?*cmsghdr {
@@ -3084,9 +3124,14 @@ pub const ReadError = error{
 };
 
 pub fn read(fd: fd_t, buf: []u8) ReadError![]u8 {
-    const rc = syscall3(.read, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
+    const rc = syscall3(
+        .read,
+        safeExtendToUsize(fd),
+        @intFromPtr(buf.ptr),
+        buf.len,
+    );
     try handleErrno(ReadError, rc);
-    return buf[0..@intCast(rc)];
+    return buf[0..safeTrunc(usize, rc)];
 }
 
 pub const WriteError = error{
@@ -3119,9 +3164,14 @@ pub const WriteError = error{
 };
 
 pub fn write(fd: fd_t, buf: []const u8) WriteError!usize {
-    const rc = syscall3(.write, @as(u32, @bitCast(fd)), @intFromPtr(buf.ptr), buf.len);
+    const rc = syscall3(
+        .write,
+        safeExtendToUsize(fd),
+        @intFromPtr(buf.ptr),
+        buf.len,
+    );
     try handleErrno(WriteError, rc);
-    return @intCast(rc);
+    return safeTrunc(usize, rc);
 }
 
 pub const CloseError = error{
@@ -3139,7 +3189,7 @@ pub const CloseError = error{
 };
 
 pub fn close(fd: fd_t) void {
-    const rc = syscall1(.close, @as(u32, @bitCast(fd)));
+    const rc = syscall1(.close, safeExtendToUsize(fd));
 
     if (handleErrno(CloseError, rc)) {
         assert(rc == 0);
@@ -3176,7 +3226,7 @@ pub fn lseek(fd: fd_t, offset: off_t, whence: SEEK) LseekError!off_t {
         zeroExtendToUsize(whence),
     );
     try handleErrno(LseekError, rc);
-    return @intCast(rc);
+    return safeTrunc(off_t, rc);
 }
 
 pub const PipeError = error{
@@ -3214,7 +3264,11 @@ pub const FtruncateError = error{
 };
 
 pub fn ftruncate(fd: fd_t, length: usize) FtruncateError!void {
-    const rc = syscall2(.ftruncate, @as(u32, @bitCast(fd)), length);
+    const rc = syscall2(
+        .ftruncate,
+        safeExtendToUsize(fd),
+        length,
+    );
     try handleErrno(FtruncateError, rc);
     assert(rc == 0);
 }
@@ -3257,9 +3311,14 @@ pub const Getdents64Error = error{
 pub fn getdents64(dir_fd: dirfd_t, buf: []u8) Getdents64Error!usize {
     assert(buf.len >= @sizeOf(Dirent64) + Dirent64.max_name_len);
 
-    const rc = syscall3(.getdents64, zeroExtendToUsize(dir_fd), @intFromPtr(buf.ptr), buf.len);
+    const rc = syscall3(
+        .getdents64,
+        safeExtendToUsize(dir_fd),
+        @intFromPtr(buf.ptr),
+        buf.len,
+    );
     try handleErrno(Getdents64Error, rc);
-    return @intCast(rc);
+    return safeTrunc(usize, rc);
 }
 
 pub const ReadlinkatError = error{
@@ -3287,7 +3346,7 @@ pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) ReadlinkatErro
         buf.len,
     );
     try handleErrno(ReadlinkatError, rc);
-    return @intCast(rc);
+    return safeTrunc(usize, rc);
 }
 
 pub const Pipe2Error = error{
@@ -3302,7 +3361,7 @@ pub const Pipe2Error = error{
 };
 
 pub fn pipe2(fds: *[2]fd_t, flags: O) Pipe2Error!void {
-    const rc = syscall2(.pipe2, @intFromPtr(fds), @as(u32, @bitCast(flags)));
+    const rc = syscall2(.pipe2, @intFromPtr(fds), zeroExtendToUsize(flags));
     try handleErrno(Pipe2Error, rc);
     assert(rc == 0);
 }
