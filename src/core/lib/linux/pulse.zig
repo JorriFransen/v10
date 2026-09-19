@@ -245,282 +245,240 @@ pub const StreamNotifyCb = *const fn (p: ?*Stream, userdata: ?*anyopaque) callco
 pub const ContextNotifyCb = *const fn (c: ?*Context, userdata: ?*anyopaque) callconv(.c) void;
 
 pub var threaded_mainloop_new: *const @TypeOf(threaded_mainloop_new_stub) = undefined;
-fn threaded_mainloop_new_stub() callconv(.c) ?*ThreadedMainLoop {
+pub fn threaded_mainloop_new_stub() callconv(.c) ?*ThreadedMainLoop {
     return null;
 }
 
 pub var threaded_mainloop_free: *const @TypeOf(threaded_mainloop_free_stub) = undefined;
-fn threaded_mainloop_free_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
+pub fn threaded_mainloop_free_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
     _ = .{m};
 }
 
 pub var threaded_mainloop_start: *const @TypeOf(threaded_mainloop_start_stub) = undefined;
-fn threaded_mainloop_start_stub(m: ?*ThreadedMainLoop) callconv(.c) c_int {
+pub fn threaded_mainloop_start_stub(m: ?*ThreadedMainLoop) callconv(.c) c_int {
     _ = .{m};
     return -1;
 }
 
 pub var threaded_mainloop_get_api: *const @TypeOf(threaded_mainloop_get_api_stub) = undefined;
-fn threaded_mainloop_get_api_stub(m: ?*ThreadedMainLoop) callconv(.c) ?*MainLoopApi {
+pub fn threaded_mainloop_get_api_stub(m: ?*ThreadedMainLoop) callconv(.c) ?*MainLoopApi {
     _ = .{m};
     return null;
 }
 
 pub var threaded_mainloop_lock: *const @TypeOf(threaded_mainloop_lock_stub) = undefined;
-fn threaded_mainloop_lock_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
+pub fn threaded_mainloop_lock_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
     _ = .{m};
 }
 
 pub var threaded_mainloop_unlock: *const @TypeOf(threaded_mainloop_unlock_stub) = undefined;
-fn threaded_mainloop_unlock_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
+pub fn threaded_mainloop_unlock_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
     _ = .{m};
 }
 
 pub var threaded_mainloop_wait: *const @TypeOf(threaded_mainloop_wait_stub) = undefined;
-fn threaded_mainloop_wait_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
+pub fn threaded_mainloop_wait_stub(m: ?*ThreadedMainLoop) callconv(.c) void {
     _ = .{m};
 }
 
 pub var threaded_mainloop_signal: *const @TypeOf(threaded_mainloop_signal_stub) = undefined;
-fn threaded_mainloop_signal_stub(m: ?*ThreadedMainLoop, wait_for_accept: c_int) callconv(.c) void {
+pub fn threaded_mainloop_signal_stub(m: ?*ThreadedMainLoop, wait_for_accept: c_int) callconv(.c) void {
     _ = .{ m, wait_for_accept };
 }
 
 pub var mainloop_new: *const @TypeOf(mainloop_new_stub) = undefined;
-fn mainloop_new_stub() callconv(.c) ?*MainLoop {
+pub fn mainloop_new_stub() callconv(.c) ?*MainLoop {
     return null;
 }
 
 pub var mainloop_free: *const @TypeOf(mainloop_free_stub) = undefined;
-fn mainloop_free_stub(m: ?*MainLoop) callconv(.c) void {
+pub fn mainloop_free_stub(m: ?*MainLoop) callconv(.c) void {
     _ = .{m};
 }
 
 pub var mainloop_get_api: *const @TypeOf(mainloop_get_api_stub) = undefined;
-fn mainloop_get_api_stub(mainloop: ?*MainLoop) callconv(.c) ?*MainLoopApi {
+pub fn mainloop_get_api_stub(mainloop: ?*MainLoop) callconv(.c) ?*MainLoopApi {
     _ = .{mainloop};
     return null;
 }
 
 pub var mainloop_prepare: *const @TypeOf(mainloop_prepare_stub) = undefined;
-fn mainloop_prepare_stub(m: ?*MainLoop, timeout: c_int) callconv(.c) c_int {
+pub fn mainloop_prepare_stub(m: ?*MainLoop, timeout: c_int) callconv(.c) c_int {
     _ = .{ m, timeout };
     return -1;
 }
 
 pub var mainloop_poll: *const @TypeOf(mainloop_poll_stub) = undefined;
-fn mainloop_poll_stub(m: ?*MainLoop) callconv(.c) c_int {
+pub fn mainloop_poll_stub(m: ?*MainLoop) callconv(.c) c_int {
     _ = .{m};
     return -1;
 }
 
 pub var mainloop_dispatch: *const @TypeOf(mainloop_dispatch_stub) = undefined;
-fn mainloop_dispatch_stub(m: ?*MainLoop) callconv(.c) c_int {
+pub fn mainloop_dispatch_stub(m: ?*MainLoop) callconv(.c) c_int {
     _ = .{m};
     return -1;
 }
 
 pub var mainloop_iterate: *const @TypeOf(mainloop_iterate_stub) = undefined;
-fn mainloop_iterate_stub(m: ?*MainLoop, block: c_int, retval: ?*c_int) callconv(.c) c_int {
+pub fn mainloop_iterate_stub(m: ?*MainLoop, block: c_int, retval: ?*c_int) callconv(.c) c_int {
     _ = .{ m, block, retval };
     return -1;
 }
 
 pub var context_new: *const @TypeOf(context_new_stub) = undefined;
-fn context_new_stub(mainloop: ?*MainLoopApi, name: [*:0]const u8) callconv(.c) ?*Context {
+pub fn context_new_stub(mainloop: ?*MainLoopApi, name: [*:0]const u8) callconv(.c) ?*Context {
     _ = .{ mainloop, name };
     return null;
 }
 
 pub var context_unref: *const @TypeOf(context_unref_stub) = undefined;
-fn context_unref_stub(ctx: ?*Context) callconv(.c) void {
+pub fn context_unref_stub(ctx: ?*Context) callconv(.c) void {
     _ = .{ctx};
 }
 
 pub var context_connect: *const @TypeOf(context_connect_stub) = undefined;
-fn context_connect_stub(c: ?*Context, server: ?[*:0]const u8, flags: ContextFlags, api: ?*const SpawnApi) callconv(.c) c_int {
+pub fn context_connect_stub(c: ?*Context, server: ?[*:0]const u8, flags: ContextFlags, api: ?*const SpawnApi) callconv(.c) c_int {
     _ = .{ c, server, flags, api };
     return -1;
 }
 
 pub var context_disconnect: *const @TypeOf(context_disconnect_stub) = undefined;
-fn context_disconnect_stub(c: ?*Context) callconv(.c) void {
+pub fn context_disconnect_stub(c: ?*Context) callconv(.c) void {
     _ = .{c};
 }
 
 pub var context_get_state: *const @TypeOf(context_get_state_stub) = undefined;
-fn context_get_state_stub(context: ?*Context) callconv(.c) ContextState {
+pub fn context_get_state_stub(context: ?*Context) callconv(.c) ContextState {
     _ = .{context};
     return .failed;
 }
 
 pub var context_set_state_callback: *const @TypeOf(context_set_state_callback_stub) = undefined;
-fn context_set_state_callback_stub(c: ?*Context, cb: ?ContextNotifyCb, userdata: ?*anyopaque) callconv(.c) void {
+pub fn context_set_state_callback_stub(c: ?*Context, cb: ?ContextNotifyCb, userdata: ?*anyopaque) callconv(.c) void {
     _ = .{ c, cb, userdata };
 }
 
 pub var stream_new: *const @TypeOf(stream_new_stub) = undefined;
-fn stream_new_stub(c: ?*Context, name: ?[*:0]const u8, ss: *const SampleSpec, map: ?*ChannelMap) callconv(.c) ?*Stream {
+pub fn stream_new_stub(c: ?*Context, name: ?[*:0]const u8, ss: *const SampleSpec, map: ?*ChannelMap) callconv(.c) ?*Stream {
     _ = .{ c, name, ss, map };
     return null;
 }
 
 pub var stream_unref: *const @TypeOf(stream_unref_stub) = undefined;
-fn stream_unref_stub(s: ?*Stream) callconv(.c) void {
+pub fn stream_unref_stub(s: ?*Stream) callconv(.c) void {
     _ = .{s};
 }
 
 pub var stream_connect_playback: *const @TypeOf(stream_connect_playback_stub) = undefined;
-fn stream_connect_playback_stub(s: ?*Stream, dev: ?[*:0]const u8, attr: ?*const BufferAttr, flags: StreamFlags, volume: ?*const CVolume, sync_stream: ?*Stream) callconv(.c) c_int {
+pub fn stream_connect_playback_stub(s: ?*Stream, dev: ?[*:0]const u8, attr: ?*const BufferAttr, flags: StreamFlags, volume: ?*const CVolume, sync_stream: ?*Stream) callconv(.c) c_int {
     _ = .{ s, dev, attr, flags, volume, sync_stream };
     return -1;
 }
 
 pub var stream_get_state: *const @TypeOf(stream_get_state_stub) = undefined;
-fn stream_get_state_stub(p: ?*const Stream) callconv(.c) StreamState {
+pub fn stream_get_state_stub(p: ?*const Stream) callconv(.c) StreamState {
     _ = .{p};
     return .failed;
 }
 
 pub var stream_writable_size: *const @TypeOf(stream_writable_size_stub) = undefined;
-fn stream_writable_size_stub(p: ?*const Stream) callconv(.c) usize {
+pub fn stream_writable_size_stub(p: ?*const Stream) callconv(.c) usize {
     _ = .{p};
     return math.maxInt(usize);
 }
 
 pub var stream_get_latency: *const @TypeOf(stream_get_latency_stub) = undefined;
-fn stream_get_latency_stub(p: ?*const Stream, usec: *USec, neg: ?*c_int) callconv(.c) c_int {
+pub fn stream_get_latency_stub(p: ?*const Stream, usec: *USec, neg: ?*c_int) callconv(.c) c_int {
     _ = .{ p, usec, neg };
     return ErrorCode.nodata.int();
 }
 
 pub var stream_get_underflow_index: *const @TypeOf(stream_get_underflow_index_stub) = undefined;
-fn stream_get_underflow_index_stub(p: ?*const Stream) callconv(.c) i64 {
+pub fn stream_get_underflow_index_stub(p: ?*const Stream) callconv(.c) i64 {
     _ = .{p};
     return -1;
 }
 
 pub var stream_begin_write: *const @TypeOf(stream_begin_write_stub) = undefined;
-fn stream_begin_write_stub(p: ?*const Stream, data: *?*anyopaque, nbytes: *usize) callconv(.c) c_int {
+pub fn stream_begin_write_stub(p: ?*const Stream, data: *?*anyopaque, nbytes: *usize) callconv(.c) c_int {
     _ = .{ p, data, nbytes };
     data.* = null;
     return -1;
 }
 
 pub var stream_write: *const @TypeOf(stream_write_stub) = undefined;
-fn stream_write_stub(p: ?*const Stream, data: *const anyopaque, n_bytes: usize, free_cb: ?FreeCb, offset: i64, seek: SeekMode) callconv(.c) usize {
+pub fn stream_write_stub(p: ?*const Stream, data: *const anyopaque, n_bytes: usize, free_cb: ?FreeCb, offset: i64, seek: SeekMode) callconv(.c) usize {
     _ = .{ p, data, n_bytes, free_cb, offset, seek };
     return math.maxInt(usize);
 }
 
 pub var stream_cork: *const @TypeOf(stream_cork_stub) = undefined;
-fn stream_cork_stub(p: ?*const Stream, b: c_int, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+pub fn stream_cork_stub(p: ?*const Stream, b: c_int, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, b, cb, userdata };
     return null;
 }
 
 pub var stream_update_timing_info: *const @TypeOf(stream_update_timing_info_stub) = undefined;
-fn stream_update_timing_info_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+pub fn stream_update_timing_info_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, cb, userdata };
     return null;
 }
 
 pub var stream_set_write_callback: *const @TypeOf(stream_set_write_callback_stub) = undefined;
-fn stream_set_write_callback_stub(p: ?*const Stream, cb: StreamRequestCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+pub fn stream_set_write_callback_stub(p: ?*const Stream, cb: StreamRequestCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, cb, userdata };
     return null;
 }
 
 pub var stream_set_underflow_callback: *const @TypeOf(stream_set_underflow_callback_stub) = undefined;
-fn stream_set_underflow_callback_stub(p: ?*const Stream, cb: StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+pub fn stream_set_underflow_callback_stub(p: ?*const Stream, cb: StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, cb, userdata };
     return null;
 }
 
 pub var stream_set_state_callback: *const @TypeOf(stream_set_state_callback_stub) = undefined;
-fn stream_set_state_callback_stub(p: ?*const Stream, cb: ?StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) void {
+pub fn stream_set_state_callback_stub(p: ?*const Stream, cb: ?StreamNotifyCb, userdata: ?*anyopaque) callconv(.c) void {
     _ = .{ p, cb, userdata };
 }
 
 pub var stream_get_buffer_attr: *const @TypeOf(stream_get_buffer_attr_stub) = undefined;
-fn stream_get_buffer_attr_stub(p: ?*const Stream) callconv(.c) ?*BufferAttr {
+pub fn stream_get_buffer_attr_stub(p: ?*const Stream) callconv(.c) ?*BufferAttr {
     _ = .{p};
     return null;
 }
 
 pub var stream_set_buffer_attr: *const @TypeOf(stream_set_buffer_attr_stub) = undefined;
-fn stream_set_buffer_attr_stub(p: ?*Stream, attr: *const BufferAttr, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+pub fn stream_set_buffer_attr_stub(p: ?*Stream, attr: *const BufferAttr, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, attr, cb, userdata };
     return null;
 }
 
 pub var stream_trigger: *const @TypeOf(stream_trigger_stub) = undefined;
-fn stream_trigger_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+pub fn stream_trigger_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, cb, userdata };
     return null;
 }
 
 pub var stream_flush: *const @TypeOf(stream_flush_stub) = undefined;
-fn stream_flush_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
+pub fn stream_flush_stub(p: ?*const Stream, cb: ?StreamSuccessCb, userdata: ?*anyopaque) callconv(.c) ?*Operation {
     _ = .{ p, cb, userdata };
     return null;
 }
 
 pub var operation_unref: *const @TypeOf(operation_unref_stub) = undefined;
-fn operation_unref_stub(o: *Operation) callconv(.c) void {
+pub fn operation_unref_stub(o: *Operation) callconv(.c) void {
     _ = o;
 }
 
 pub var operation_get_state: *const @TypeOf(operation_get_state_stub) = undefined;
-fn operation_get_state_stub(o: *const Operation) callconv(.c) OperationState {
+pub fn operation_get_state_stub(o: *const Operation) callconv(.c) OperationState {
     _ = o;
     return .cancelled;
 }
 //
 pub var usec_to_bytes: *const @TypeOf(usec_to_bytes_stub) = undefined;
-fn usec_to_bytes_stub(t: USec, spec: *const SampleSpec) callconv(.c) usize {
+pub fn usec_to_bytes_stub(t: USec, spec: *const SampleSpec) callconv(.c) usize {
     _ = .{ t, spec };
     return 0;
-}
-
-pub fn load() void {
-    const lib_name = "libpulse.so.0";
-    var load_stubs = false;
-
-    var lib_or_err = std.DynLib.open(lib_name);
-    if (lib_or_err) |*lib| {
-        inline for (@typeInfo(@This()).@"struct".decls) |decl| {
-            const decl_type = @TypeOf(@field(@This(), decl.name));
-            const decl_info = @typeInfo(decl_type);
-
-            if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
-                if (lib.lookup(decl_type, "pa_" ++ decl.name)) |sym| {
-                    @field(@This(), decl.name) = sym;
-                } else {
-                    load_stubs = true;
-                    if (builtin.mode == .Debug) {
-                        @panic("Unable to load function: '" ++ decl.name ++ "'");
-                    }
-                    break;
-                }
-            }
-        }
-    } else |_| {
-        log.err("Failed to open: '{s}'", .{lib_name});
-        load_stubs = true;
-    }
-
-    if (load_stubs) {
-        inline for (@typeInfo(@This()).@"struct".decls) |decl| {
-            const decl_type = @TypeOf(@field(@This(), decl.name));
-            const decl_info = @typeInfo(decl_type);
-
-            if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
-                @field(@This(), decl.name) = @field(@This(), decl.name ++ "_stub");
-            }
-        }
-        log.warn("Loaded stubs '{s}'", .{lib_name});
-    } else {
-        log.info("Loaded '{s}'", .{lib_name});
-    }
 }

@@ -16,6 +16,8 @@ const mem = core.mem;
 const win32 = core.os.win32;
 const xinput = core.lib.xinput;
 
+const lib_loader = @import("lib_loader.zig");
+
 const common = @import("v10_common");
 
 const GameCode = common.GameCode;
@@ -160,8 +162,8 @@ fn fillAudioBuffer(audio_output: *AudioOutput, byte_to_lock: u32, bytes_to_write
     };
 }
 
-fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32) ?*dsound.IDirectSoundBuffer {
-    dsound.load();
+fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32, dsound_lib_opt: *?core.DynLib) ?*dsound.IDirectSoundBuffer {
+    dsound_lib_opt.* = lib_loader.load(dsound, &.{"dsound.dll"}, .{ .name_for_debugging = "dsound" });
 
     var ds: *dsound.IDirectSound = undefined;
     var sound_buffer_opt: ?*dsound.IDirectSoundBuffer = null;
@@ -522,8 +524,11 @@ pub fn windowsEntry(
             const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
             const frames_per_video_frame: u32 = @intFromFloat(@as(f32, @floatFromInt(audio_fps)) / game_update_hz);
 
+            var dsound_lib_opt: ?core.DynLib = null;
+            defer if (dsound_lib_opt) |_| dsound_lib_opt.?.close();
+
             var audio_output: AudioOutput = .{
-                .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size),
+                .dsound_buffer = initDSound(window, audio_fps, audio_buffer_byte_size, &dsound_lib_opt),
                 .frames_per_second = audio_fps,
                 .frames_per_video_frame = frames_per_video_frame,
                 .bytes_per_video_frame = frames_per_video_frame * @sizeOf(AudioOutput.Frame),
@@ -601,7 +606,12 @@ pub fn windowsEntry(
             }
 
             if (dib_allocated and audio_frames != null and perm_opt != null and trans_opt != null) {
-                xinput.load();
+                var xinput_lib_opt = lib_loader.load(xinput, &.{
+                    "xinput9_1_0.dll",
+                    "xinput1_4.dll",
+                    "xinput1_3.dll",
+                }, .{ .name_for_debugging = "xinput" });
+                defer if (xinput_lib_opt) |_| xinput_lib_opt.?.close();
 
                 var input: [2]Input = @splat(.{});
                 var new_input = &input[0];

@@ -242,16 +242,7 @@ pub const WaveFormatEx = extern struct {
     size: win32.WORD = 0,
 };
 
-// typedef struct WAVEFORMATEXTENSIBLE {
-//     WAVEFORMATEX Format;
-//     WORD wValidBitsPerSample;
-//     WORD wSamplesPerBlock;
-//     WORD wReserved;
-//     DWORD dwChannelMask;
-//     DWORD SubFormat;
-// } WAVEFORMATEXTENSIBLE;
-
-fn DirectSoundCreateStub(guid: ?*win32.GUID, ds: **IDirectSound, unk_outer: ?*anyopaque) callconv(.winapi) win32.HRESULT {
+pub fn DirectSoundCreateStub(guid: ?*win32.GUID, ds: **IDirectSound, unk_outer: ?*anyopaque) callconv(.winapi) win32.HRESULT {
     _ = guid;
     _ = ds;
     _ = unk_outer;
@@ -259,39 +250,3 @@ fn DirectSoundCreateStub(guid: ?*win32.GUID, ds: **IDirectSound, unk_outer: ?*an
 }
 const FN_DirectSoundCreate = @TypeOf(DirectSoundCreateStub);
 pub var DirectSoundCreate: *const FN_DirectSoundCreate = undefined;
-
-pub fn load() void {
-    var lib = DynLib.open("dsound.dll") catch {
-        log.err("DSound not found, loading stubs", .{});
-        loadStubs();
-        return;
-    };
-
-    log.info("Loaded dsound.dll", .{});
-
-    const struct_info = @typeInfo(@This()).@"struct";
-    inline for (struct_info.decls) |decl| {
-        const decl_type = @TypeOf(@field(@This(), decl.name));
-        const decl_info = @typeInfo(decl_type);
-        if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
-            @field(@This(), decl.name) = lib.lookup(decl_type, decl.name) orelse {
-                log.err("Error loading dsound, loading stubs", .{});
-                if (@import("builtin").mode == .Debug) @panic("Error loading dsound!");
-                loadStubs();
-                break;
-            };
-        }
-    }
-}
-
-fn loadStubs() void {
-    const struct_info = @typeInfo(@This()).@"struct";
-    inline for (struct_info.decls) |decl| {
-        const decl_type = @TypeOf(@field(@This(), decl.name));
-        const decl_info = @typeInfo(decl_type);
-
-        if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
-            @field(@This(), decl.name) = @field(@This(), decl.name ++ "Stub");
-        }
-    }
-}

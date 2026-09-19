@@ -68,6 +68,10 @@ pub inline fn matchEnumType(comptime T: type) bool {
     return matchType(T, &.{.@"enum"});
 }
 
+pub inline fn matchStructType(comptime T: type) bool {
+    return matchType(T, &.{.@"struct"});
+}
+
 pub inline fn expectTypeIds(x: anytype, comptime type_ids: []const std.lang.TypeId) void {
     if (!matchTypeIds(x, type_ids))
         @compileError(std.fmt.comptimePrint("Expected one of: '{any}', got: '{}'", .{ type_ids, std.meta.activeTag(@typeInfo(@TypeOf(x))) }));
@@ -122,5 +126,11 @@ pub inline fn expectUnsigned(x: anytype) void {
 pub inline fn expectEnumType(comptime T: type) void {
     if (!matchEnumType(T)) {
         @compileError("Expected enum type");
+    }
+}
+
+pub inline fn expectStructType(comptime T: type) void {
+    if (!matchStructType(T)) {
+        @compileError("Expected struct type");
     }
 }

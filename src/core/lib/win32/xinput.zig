@@ -64,58 +64,7 @@ pub const GAMEPAD_B = 0x2000;
 pub const GAMEPAD_X = 0x4000;
 pub const GAMEPAD_Y = 0x8000;
 
-pub fn load() void {
-    const versions = [_][]const u8{
-        "xinput9_1_0.dll",
-        "xinput1_4.dll",
-        "xinput1_3.dll",
-    };
-
-    var lib: ?DynLib = null;
-    for (versions) |version| {
-        lib = DynLib.open(version) catch continue;
-        log.info("Loaded {s}", .{version});
-        break;
-    }
-    var loaded = true;
-
-    if (lib) |*l| {
-        const struct_info = @typeInfo(XInput).@"struct";
-        inline for (struct_info.decls) |decl| {
-            const decl_type = @TypeOf(@field(XInput, decl.name));
-            const decl_info = @typeInfo(decl_type);
-
-            if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
-                @field(XInput, decl.name) = l.lookup(decl_type, decl.name) orelse {
-                    l.close();
-                    loaded = false;
-                    break;
-                };
-            }
-        }
-    } else {
-        loaded = false;
-    }
-
-    if (!loaded) {
-        log.err("Xinput loading failed, loading stubs", .{});
-        loadStubs();
-    }
-}
-
-fn loadStubs() void {
-    const struct_info = @typeInfo(XInput).@"struct";
-    inline for (struct_info.decls) |decl| {
-        const decl_type = @TypeOf(@field(XInput, decl.name));
-        const decl_info = @typeInfo(decl_type);
-
-        if (decl_info == .pointer and @typeInfo(decl_info.pointer.child) == .@"fn") {
-            @field(XInput, decl.name) = @field(XInput, decl.name ++ "Stub");
-        }
-    }
-}
-
-fn XInputGetStateStub(user_index: win32.DWORD, state: *STATE) callconv(.winapi) win32.DWORD {
+pub fn XInputGetStateStub(user_index: win32.DWORD, state: *STATE) callconv(.winapi) win32.DWORD {
     _ = user_index;
     _ = state;
     return win32.ERROR_DEVICE_NOT_CONNECTED;
@@ -123,7 +72,7 @@ fn XInputGetStateStub(user_index: win32.DWORD, state: *STATE) callconv(.winapi) 
 const FN_XInputGetState = @TypeOf(XInputGetStateStub);
 pub var XInputGetState: *const FN_XInputGetState = undefined;
 
-fn XInputSetStateStub(user_index: win32.DWORD, vibration: *const VIBRATION) callconv(.winapi) win32.DWORD {
+pub fn XInputSetStateStub(user_index: win32.DWORD, vibration: *const VIBRATION) callconv(.winapi) win32.DWORD {
     _ = user_index;
     _ = vibration;
     return win32.ERROR_DEVICE_NOT_CONNECTED;

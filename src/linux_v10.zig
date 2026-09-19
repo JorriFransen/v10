@@ -13,6 +13,8 @@ const mem = core.mem;
 const pa = core.lib.pulse;
 const posix = core.os.posix;
 
+const lib_loader = @import("lib_loader.zig");
+
 const options = @import("options");
 const linux_options = @import("linux_options");
 
@@ -413,6 +415,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             .bytes_per_video_frame = frames_per_video_frame * @sizeOf(AudioOutput.Frame),
 
             .pulse = .{
+                .lib = null,
                 .max_latency_usec = audio_buffer_byte_size / @sizeOf(AudioOutput.Frame) * std.time.us_per_s / audio_fps,
                 .impl = switch (linux_options.linux_audio_impl) {
                     .pulseEmulateDSound => .{
@@ -433,6 +436,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     const pulse = &audio_output.pulse.impl;
 
     try pulse.init(audio_output.frames_per_second, "v10");
+    defer if (audio_output.pulse.lib) |_| audio_output.pulse.lib.?.close();
 
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
@@ -1622,6 +1626,7 @@ const PulseContext = struct {
     max_latency_usec: u64,
 
     impl: Implementation,
+    lib: ?core.DynLib,
 
     pub const PulseEmulateDSound = struct {
         safety_frame_bytes: u32,
@@ -1755,7 +1760,11 @@ const PulseContext = struct {
     };
 
     pub fn init(this: *@This(), sample_rate: u32, application_name: [:0]const u8) error{PulseInitFailed}!void {
-        pa.load();
+        this.lib = lib_loader.load(core.lib.pulse, &.{"libpulse.so.0"}, .{
+            .name_for_debugging = "libpulse",
+            .search_prefix_opt = "pa_",
+            .stub_suffix_opt = "_stub",
+        });
 
         const sample_spec = pa.SampleSpec{
             .format = .s16le,
