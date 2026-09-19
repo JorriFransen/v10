@@ -415,7 +415,6 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             .bytes_per_video_frame = frames_per_video_frame * @sizeOf(AudioOutput.Frame),
 
             .pulse = .{
-                .lib = null,
                 .max_latency_usec = audio_buffer_byte_size / @sizeOf(AudioOutput.Frame) * std.time.us_per_s / audio_fps,
                 .impl = switch (linux_options.linux_audio_impl) {
                     .pulseEmulateDSound => .{
@@ -435,13 +434,15 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     };
     const pulse = &audio_output.pulse.impl;
 
-    try pulse.init(audio_output.frames_per_second, "v10");
+    if (pulse.init(audio_output.frames_per_second, "v10")) {
+        pulse.start();
+    } else |e| {
+        log.err("Pulse init failed, error: '{}'", .{e});
+    }
     defer if (audio_output.pulse.lib) |_| audio_output.pulse.lib.?.close();
 
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
-
-    pulse.start();
 
     var last_counter = getWallClock(io);
     var flip_wall_clock = getWallClock(io);
@@ -599,7 +600,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             if (game_code.updateAndRender) |updateAndRender|
                 updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer);
 
-            if (linux_options.linux_audio_impl == .pulseEmulateDSound) {
+            if (audio_output.pulse.lib != null and linux_options.linux_audio_impl == .pulseEmulateDSound) {
                 const audio_wall_clock = getWallClock(io);
                 const from_begin_to_audio_seconds = getSecondsElapsed(flip_wall_clock, audio_wall_clock);
 
@@ -706,7 +707,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
 
                     _ = .{audio_latency_seconds};
                 }
-            } else {
+            } else if (audio_output.pulse.lib != null) {
                 assert(linux_options.linux_audio_impl == .pulsePull);
 
                 if (options.internal_build) {
@@ -1626,7 +1627,7 @@ const PulseContext = struct {
     max_latency_usec: u64,
 
     impl: Implementation,
-    lib: ?core.DynLib,
+    lib: ?core.DynLib = null,
 
     pub const PulseEmulateDSound = struct {
         safety_frame_bytes: u32,

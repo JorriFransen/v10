@@ -811,7 +811,10 @@ pub fn windowsEntry(
 
                         var play_cursor: win32.DWORD = 0;
                         var write_cursor: win32.DWORD = 0;
-                        if (audio_output.dsound_buffer.?.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK) {
+
+                        if (audio_output.dsound_buffer != null and
+                            audio_output.dsound_buffer.?.GetCurrentPosition(&play_cursor, &write_cursor) == dsound.OK)
+                        {
                             if (!audio_valid) {
                                 audio_output.running_frame_index = write_cursor / @sizeOf(AudioOutput.Frame);
                                 audio_valid = true;
@@ -929,7 +932,7 @@ pub fn windowsEntry(
 
                         flip_wall_clock = getWallClock();
 
-                        if (options.internal_build) {
+                        if (options.internal_build and audio_output.dsound_buffer != null) {
                             var debug_play_cursor: win32.DWORD = 0;
                             var debug_write_cursor: win32.DWORD = 0;
                             if (audio_output.dsound_buffer.?.GetCurrentPosition(&debug_play_cursor, &debug_write_cursor) == dsound.OK) {
