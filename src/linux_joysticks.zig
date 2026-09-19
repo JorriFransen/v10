@@ -138,13 +138,18 @@ pub const Joystick = struct {
         },
     };
 
-    fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) !void {
+    pub const InitError = error{ DevSysPathMissing, ReadlinkFailed };
+
+    fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) InitError!void {
         assert(event_id >= 0);
 
         var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
         const dev_sys_path_rel_len = linux.readlinkat(sys_class_input_dir_fd, event_name, &dev_sys_path_rel_buf) catch |e| switch (e) {
             error.NOENT => return error.DevSysPathMissing,
-            else => return e,
+            else => {
+                log.err("Readlink failed: '/sys/class/input/{s}', error: '{}'", .{ event_name, e });
+                return error.ReadlinkFailed;
+            },
         };
         const dev_sys_path_rel_link = dev_sys_path_rel_buf[0..dev_sys_path_rel_len];
 
@@ -164,7 +169,10 @@ pub const Joystick = struct {
                     log.err("Joystick driver link does not exist: '/sys/class/input/{s}'", .{driver_link_rel});
                     break :blk "";
                 },
-                else => return e,
+                else => {
+                    log.err("Readlink failed: '/sys/class/input/{s}', error: '{}'", .{ event_name, e });
+                    return error.ReadlinkFailed;
+                },
             };
 
             const driver_path = driver_path_buf[0..driver_path_len];
@@ -369,10 +377,12 @@ pub const Joystick = struct {
             }
         }
 
-        log.debug("Joystick activated: '/dev/input/event{}'", .{this.event_id});
+        log.info("Joystick activated: '/dev/input/event{}'", .{this.event_id});
     }
 
-    pub fn setRumble(this: *Joystick, strong: f32, weak: f32) !void {
+    pub const SetRumbleError = error{ EventWriteFailed, IoctlFailed };
+
+    pub fn setRumble(this: *Joystick, strong: f32, weak: f32) SetRumbleError!void {
         if (this.capabilities.rumble) {
             assert(this.state == .active);
             assert(this.fd >= 0);
@@ -386,10 +396,19 @@ pub const Joystick = struct {
 
                 if (this.rumble_event_id != -1 and strong_u16 == 0 and weak_u16 == 0) {
                     const stop_event = InputEvent{ .type = .FF, .code = @intCast(this.rumble_event_id), .value = 0 };
-                    const write_len = try linux.write(this.fd, @ptrCast(&stop_event));
-                    if (write_len != @sizeOf(InputEvent)) return error.EventWriteFailed;
+                    const write_len = linux.write(this.fd, @ptrCast(&stop_event)) catch |e| {
+                        log.err("Rumble stop event write failed, error: '{}'", .{e});
+                        return error.EventWriteFailed;
+                    };
+                    if (write_len != @sizeOf(InputEvent)) {
+                        log.err("Rumble stop event write invalid write length, expected: {}, got: {}", .{ @sizeOf(InputEvent), write_len });
+                        return error.EventWriteFailed;
+                    }
 
-                    try linux.ioctl_EVIOCRMFF(this.fd, @intCast(this.rumble_event_id));
+                    linux.ioctl_EVIOCRMFF(this.fd, @intCast(this.rumble_event_id)) catch |e| {
+                        log.err("Rumble ioctl EVIOCRMFF failed, error: '{}'", .{e});
+                        return error.IoctlFailed;
+                    };
 
                     this.rumble_event_id = -1;
                 } else {
@@ -400,13 +419,24 @@ pub const Joystick = struct {
                         .replay = .{ .length = 0, .delay = 0 },
                     };
 
-                    try linux.ioctl_EVIOCSFF(this.fd, &rumble_event);
+                    linux.ioctl_EVIOCSFF(this.fd, &rumble_event) catch |e| {
+                        log.err("Rumble ioctl EVIOCSFF failed, error: '{}'", .{e});
+                        return error.IoctlFailed;
+                    };
+
                     if (this.rumble_event_id != rumble_event.id) {
                         this.rumble_event_id = rumble_event.id;
 
                         const play_event = InputEvent{ .type = .FF, .code = @intCast(rumble_event.id), .value = 1 };
-                        const write_len = try linux.write(this.fd, @ptrCast(&play_event));
-                        if (write_len != @sizeOf(InputEvent)) return error.EventWriteFailed;
+                        const write_len = linux.write(this.fd, @ptrCast(&play_event)) catch |e| {
+                            log.err("Rumble start event write failed, error: '{}'", .{e});
+                            return error.EventWriteFailed;
+                        };
+
+                        if (write_len != @sizeOf(InputEvent)) {
+                            log.err("Rumble start event write invalid write length, expected: {}, got: {}", .{ @sizeOf(InputEvent), write_len });
+                            return error.EventWriteFailed;
+                        }
                     }
                 }
             }
@@ -480,7 +510,9 @@ pub fn System(comptime joystick_count: usize) type {
             .event_name_len = 0,
         }),
 
-        pub fn init() !Context {
+        pub const InitError = error{ OpenFailed, IoUringInitFailed, InotifyInitFailed, InotifyWatchFailed };
+
+        pub fn init() InitError!Context {
             var result: Context = .{
                 .dev_input_dir_fd = -1,
                 .sys_class_input_dir_fd = -1,
@@ -489,13 +521,22 @@ pub fn System(comptime joystick_count: usize) type {
                 .io_uring = undefined,
             };
 
-            result.dev_input_dir_fd = try linux.open("/dev/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+            result.dev_input_dir_fd = linux.open("/dev/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0) catch |e| {
+                log.err("Failed to open '/dev/input', error: '{}'", .{e});
+                return error.OpenFailed;
+            };
             errdefer linux.close(result.dev_input_dir_fd);
 
-            result.sys_class_input_dir_fd = try linux.open("/sys/class/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+            result.sys_class_input_dir_fd = linux.open("/sys/class/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0) catch |e| {
+                log.err("Failed to open '/sys/class/input', error: '{}'", .{e});
+                return error.OpenFailed;
+            };
             errdefer linux.close(result.sys_class_input_dir_fd);
 
-            result.io_uring = try std.os.linux.IoUring.init(io_uring_entry_count, 0);
+            result.io_uring = std.os.linux.IoUring.init(io_uring_entry_count, 0) catch |e| {
+                log.err("IO Uring init failed, error: '{}'", .{e});
+                return error.IoUringInitFailed;
+            };
             errdefer result.io_uring.deinit();
 
             result.reconcile() catch |e| {
@@ -507,7 +548,7 @@ pub fn System(comptime joystick_count: usize) type {
             };
             result.inotify_fd = linux.inotify_init1(.{ .CLOEXEC = true, .NONBLOCK = true }) catch |e| {
                 log.err("Failed to open inotify fd, error: '{}'", .{e});
-                return e;
+                return error.InotifyInitFailed;
             };
             errdefer linux.close(result.inotify_fd);
 
@@ -517,7 +558,7 @@ pub fn System(comptime joystick_count: usize) type {
                 .{ .CREATE = true, .ATTRIB = true, .MOVED_FROM = true, .MOVED_TO = true, .DELETE = true },
             ) catch |e| {
                 log.err("Failed to add inotify watch '/dev/input', error: '{}'", .{e});
-                return e;
+                return error.InotifyWatchFailed;
             };
             errdefer linux.inotify_rm_watch(result.inotify_fd, result.inotify_wd) catch |e| {
                 log.err("Failed to remove inotify watch '/dev/input', error: '{}'", .{e});
@@ -1042,7 +1083,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn register(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) !bool {
+        fn register(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) Joystick.InitError!bool {
             assert(event_id >= 0);
 
             var result = false;
@@ -1058,7 +1099,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn registerInSlot(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) !void {
+        fn registerInSlot(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) Joystick.InitError!void {
             assert(slot_index < this.joysticks.len);
 
             const js = &this.joysticks[slot_index];

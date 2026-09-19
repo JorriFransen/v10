@@ -45,7 +45,7 @@ pub const std_options: std.Options = blk: {
         o.log_scope_levels ++
         [_]std.log.ScopeLevel{
             .{ .scope = .linux_v10, .level = .debug },
-            .{ .scope = .linux_joystick, .level = .debug },
+            .{ .scope = .linux_joystick, .level = .info },
             .{ .scope = .pulse, .level = .info },
         };
 
