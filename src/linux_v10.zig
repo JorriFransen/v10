@@ -737,7 +737,12 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
 
                     if (sleep_ms > 1) {
                         const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
-                        try std.Io.sleep(io, std.Io.Duration.fromNanoseconds(s), .real);
+
+                        const ts: linux.timespec = .{ .sec = 0, .nsec = @intCast(s) };
+                        linux.clock_nanosleep(.MONOTONIC, .{}, &ts, null) catch |e| switch (e) {
+                            error.INTR => {},
+                            else => return e,
+                        };
                     } else {
                         std.atomic.spinLoopHint();
                     }

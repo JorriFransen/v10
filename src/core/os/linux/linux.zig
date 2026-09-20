@@ -3123,6 +3123,33 @@ pub inline fn clock_gettime(clockid: CLOCK, tp: *timespec) ClockGettimeError!voi
     assert(rc == 0);
 }
 
+pub const TIMER = packed struct(c_int) {
+    ABSTIME: bool = false,
+    __reserved__: @Int(.unsigned, @bitSizeOf(c_int) - 1) = 0,
+};
+
+pub const ClockNanosleepError = error{
+    FAULT,
+    INTR,
+    INVAL,
+    NOTSUP,
+    OVERFLOW,
+
+    UnexpectedErrno,
+};
+
+pub inline fn clock_nanosleep(clockid: CLOCK, flags: TIMER, time_spec: *const timespec, remaining: ?*timespec) ClockNanosleepError!void {
+    const rc = syscall4(
+        .clock_nanosleep,
+        zeroExtendToUsize(clockid),
+        zeroExtendToUsize(flags),
+        @intFromPtr(time_spec),
+        @intFromPtr(remaining),
+    );
+    try handleErrno(ClockNanosleepError, rc);
+    assert(rc == 0);
+}
+
 // =============================================================================
 // uio.h
 // =============================================================================
