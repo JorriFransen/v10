@@ -449,8 +449,6 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
 
-    const io = thread_context.io;
-
     const ground_buffer_width = 256;
     const ground_buffer_height = 256;
 
@@ -508,7 +506,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         const asset_prefix = "../../hh_assets/";
         // const asset_prefix = "";
 
-        const asset_load_start_ts = PerfTs.now(io);
+        const asset_load_start_ts = PerfTs.now();
 
         game_state.grass[0] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass00.bmp");
         game_state.grass[1] = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test2/grass01.bmp");
@@ -548,10 +546,10 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
         game_state.hero_bitmaps[3].torso = DEBUG.loadBMP(&game_memory.debug, thread_context, asset_prefix ++ "test/test_hero_front_torso.bmp");
         game_state.hero_bitmaps[3].alignment = v2(72, 182);
 
-        const asset_load_duration = asset_load_start_ts.untilNow(io);
+        const asset_load_duration = asset_load_start_ts.untilNow();
         log.info("Asset loading took: {f}", .{asset_load_duration});
 
-        const world_build_start_ts = PerfTs.now(io);
+        const world_build_start_ts = PerfTs.now();
 
         var series = Random.Series.seed(1234);
 
@@ -677,7 +675,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             _ = addFamiliar(game_state, cam_tile_x + fox, cam_tile_y + foy, cam_tile_z);
         }
 
-        const world_build_duration = world_build_start_ts.untilNow(io);
+        const world_build_duration = world_build_start_ts.untilNow();
         log.info("World building took: {f}", .{world_build_duration});
 
         game_memory.initialized = true;
@@ -841,9 +839,9 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
                     }
 
                     if (furthest_buffer_opt) |furthest_buffer| {
-                        const start_ts = PerfTs.now(io);
+                        const start_ts = PerfTs.now();
                         fillGroundChunk(game_state, tran_state, furthest_buffer, chunk_center_p);
-                        const duration = start_ts.untilNow(io);
+                        const duration = start_ts.untilNow();
                         groundchunk_fill_duration.add(duration);
                     }
 

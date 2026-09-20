@@ -1,18 +1,20 @@
 const std = @import("std");
 
-pub const Timestamp = struct {
-    wall: std.Io.Timestamp,
-    cpu: std.Io.Timestamp,
+const time = @import("time.zig");
 
-    pub inline fn now(io: std.Io) Timestamp {
+pub const Timestamp = struct {
+    wall: time.TimeStamp,
+    cpu: time.TimeStamp,
+
+    pub inline fn now() Timestamp {
         return .{
-            .wall = std.Io.Timestamp.now(io, .awake),
-            .cpu = std.Io.Timestamp.now(io, .cpu_thread),
+            .wall = .now(.monotonic),
+            .cpu = .now(.cpu_thread),
         };
     }
 
-    pub inline fn untilNow(start: *const Timestamp, io: std.Io) Duration {
-        const n = now(io);
+    pub inline fn untilNow(start: *const Timestamp) Duration {
+        const n = now();
         return .{
             .wall = start.wall.durationTo(n.wall),
             .cpu = start.cpu.durationTo(n.cpu),
@@ -21,17 +23,17 @@ pub const Timestamp = struct {
 };
 
 pub const Duration = struct {
-    wall: std.Io.Duration = .zero,
-    cpu: std.Io.Duration = .zero,
+    wall: time.TimeStamp = .zero,
+    cpu: time.TimeStamp = .zero,
 
     pub inline fn add(this: *Duration, other: Duration) void {
-        this.wall.nanoseconds += other.wall.nanoseconds;
-        this.cpu.nanoseconds += other.cpu.nanoseconds;
+        this.wall._ns += other.wall._ns;
+        this.cpu._ns += other.cpu._ns;
     }
 
     pub inline fn eql(this: *const Duration, other: Duration) bool {
-        return this.wall.nanoseconds == other.wall.nanoseconds and
-            this.cpu.nanoseconds == other.cpu.nanoseconds;
+        return this.wall._ns == other.wall._ns and
+            this.cpu._ns == other.cpu._ns;
     }
 
     pub fn format(this: *const Duration, writer: *std.Io.Writer) error{WriteFailed}!void {
@@ -50,10 +52,10 @@ pub const Duration = struct {
 };
 
 pub const VoidTimestamp = struct {
-    pub inline fn now(_: std.Io) VoidTimestamp {
+    pub inline fn now() VoidTimestamp {
         return .{};
     }
-    pub inline fn untilNow(_: *const VoidTimestamp, _: std.Io) VoidDuration {
+    pub inline fn untilNow(_: *const VoidTimestamp) VoidDuration {
         return .{};
     }
 };

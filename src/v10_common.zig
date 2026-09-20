@@ -237,22 +237,21 @@ pub const GameCode = struct {
     }
 };
 
-pub fn getLastWriteTime(absolute_file_name: [:0]const u8) i128 {
-    var result: i128 = 0;
+pub fn getLastWriteTime(absolute_file_name: [:0]const u8) i96 {
+    var result: i96 = 0;
 
     switch (builtin.os.tag) {
         .windows => {
             var data: win32.FILE_ATTRIBUTE_DATA = undefined;
             if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data).toBool()) {
-                const lwt = win32.LARGE_INTEGER{ .u = .{ .low_part = data.last_write_time.low_date_time, .high_part = @bitCast(data.last_write_time.high_date_time) } };
-                result = @intCast(lwt.quad_part);
+                result = @intCast(data.last_write_time.ticks);
             }
         },
 
         else => {
             var stat: linux.Stat = undefined;
             if (linux.stat(absolute_file_name, &stat)) {
-                result = stat.st_mtim.nsec + (@as(i128, stat.st_mtim.sec) * std.time.ns_per_s);
+                result = @as(i96, stat.st_mtim.nsec) + (@as(i96, stat.st_mtim.sec) * std.time.ns_per_s);
             } else |_| {}
         },
     }

@@ -1,7 +1,58 @@
 const std = @import("std");
 
-const math = @import("../../math.zig");
+const assert = @import("../../assert.zig").assert;
+const time = @import("../../time.zig");
 
+pub fn getTime(clock: time.Clock) time.TimeStamp {
+    switch (clock) {
+        .monotonic => {
+            const expected_qpf = 10_000_000;
+            var qpf: LARGE_INTEGER = .{ .quad_part = expected_qpf };
+            _ = RtlQueryPerformanceFrequency(&qpf);
+
+            var qpc: LARGE_INTEGER = .{ .quad_part = 0 };
+            return if (RtlQueryPerformanceCounter(&qpc).toBool())
+                if (qpf.quad_part == 10_000_000)
+                    .{ ._ns = @as(i96, qpc.quad_part) * 100 }
+                else
+                    .{ ._ns = @intCast((@as(u128, qpc.quad_part) * std.time.ns_per_s) / qpf.quad_part) }
+            else
+                .zero;
+        },
+
+        .real => {
+            // 100ns ticks
+            const ticks = RtlGetSystemTimePrecise();
+            return .{ ._ns = (@as(i96, ticks) * 100) + (std.time.epoch.windows * std.time.ns_per_s) };
+        },
+
+        .cpu_thread => {
+            var info: NT_KERNEL_USER_TIMES = undefined;
+            var return_len: c_ulong = undefined;
+            if (NtQueryInformationThread(NT_CURRENT_THREAD, .ThreadTimes, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
+                assert(return_len == @sizeOf(NT_KERNEL_USER_TIMES));
+                // 100ns ticks
+                return .{ ._ns = (@as(i96, info.kernel_time.quad_part) + @as(i96, info.user_time.quad_part)) * 100 };
+            } else {
+                return .zero;
+            }
+        },
+
+        .cpu_process => {
+            var info: NT_KERNEL_USER_TIMES = undefined;
+            var return_len: c_ulong = undefined;
+            if (NtQueryInformationProcess(NT_CURRENT_PROCESS, .ProcessTimes, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
+                assert(return_len == @sizeOf(NT_KERNEL_USER_TIMES));
+                // 100ns ticks
+                return .{ ._ns = (@as(i96, info.kernel_time.quad_part) + @as(i96, info.user_time.quad_part)) * 100 };
+            } else {
+                return .zero;
+            }
+        },
+    }
+}
+
+const math = @import("../../math.zig");
 const zig_win32 = std.os.windows;
 
 fn cLiteral(comptime T: type, value: comptime_int) T {
@@ -44,12 +95,19 @@ pub const INT = zig_win32.INT;
 pub const UINT = zig_win32.UINT;
 pub const LONG = zig_win32.LONG;
 pub const ULONG = zig_win32.ULONG;
+pub const ULONGLONG = zig_win32.ULONGLONG;
 pub const ULONG_PTR = zig_win32.ULONG_PTR;
 pub const PVOID = zig_win32.PVOID;
 pub const SIZE_T = zig_win32.SIZE_T;
 pub const LPVOID = zig_win32.LPVOID;
 pub const LPCVOID = zig_win32.LPCVOID;
 pub const FARPROC = *anyopaque;
+pub const NTSTATUS = zig_win32.NTSTATUS;
+
+pub const NT_LOGICAL = BOOL;
+comptime {
+    assert(@sizeOf(NT_LOGICAL) == @sizeOf(ULONG));
+}
 
 pub const TRUE: BOOL = .TRUE;
 pub const FALSE: BOOL = .FALSE;
@@ -57,6 +115,8 @@ pub const MAX_PATH = zig_win32.MAX_PATH;
 pub const PATH_MAX_WIDE = zig_win32.PATH_MAX_WIDE;
 
 pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
+pub const NT_CURRENT_PROCESS: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+pub const NT_CURRENT_THREAD: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
 
 pub const ERROR_SUCCESS = 0x0;
 pub const ERROR_DEVICE_NOT_CONNECTED = 0x48f;
@@ -995,9 +1055,14 @@ pub const OVERLAPPED = extern struct {
     event: HANDLE,
 };
 
-pub const FILETIME = extern struct {
-    low_date_time: DWORD = 0,
-    high_date_time: DWORD = 0,
+pub const FILETIME = extern union {
+    u: extern struct {
+        low: DWORD = 0,
+        high: DWORD = 0,
+    },
+
+    // 100ns ticks
+    ticks: u64 align(@alignOf(DWORD)),
 };
 
 pub const WIN32_FIND_DATA = extern struct {
@@ -1069,6 +1134,379 @@ pub const PROCESS_DPI_AWARENESS = enum(c_int) {
     PER_MONITOR_DPI_AWARE = 2,
 };
 
+pub const NT_THREADINFOCLASS = enum(c_int) {
+    /// q: THREAD_BASIC_INFORMATION
+    ThreadBasicInformation,
+    /// q: KERNEL_USER_TIMES // since VISTA
+    ThreadTimes,
+    /// s: KPRIORITY (requires SeIncreaseBasePriorityPrivilege)
+    ThreadPriority,
+    /// s: KPRIORITY
+    ThreadBasePriority,
+    /// s: KAFFINITY
+    ThreadAffinityMask,
+    /// s: HANDLE
+    ThreadImpersonationToken,
+    /// q: DESCRIPTOR_TABLE_ENTRY (or WOW64_DESCRIPTOR_TABLE_ENTRY)
+    ThreadDescriptorTableEntry,
+    /// s: BOOLEAN
+    ThreadEnableAlignmentFaultFixup,
+    /// q: Obsolete
+    ThreadEventPair,
+    /// q: PVOID
+    ThreadQuerySetWin32StartAddress,
+    /// s: ULONG // TlsIndex // 10
+    ThreadZeroTlsCell,
+    /// q: LARGE_INTEGER
+    ThreadPerformanceCount,
+    /// q: ULONG
+    ThreadAmILastThread,
+    /// s: ULONG
+    ThreadIdealProcessor,
+    /// qs: ULONG
+    ThreadPriorityBoost,
+    /// s: ULONG_PTR
+    ThreadSetTlsArrayAddress,
+    /// q: ULONG
+    ThreadIsIoPending,
+    /// qs: BOOLEAN
+    ThreadHideFromDebugger,
+    /// qs: ULONG
+    ThreadBreakOnTermination,
+    /// s: void // NtCurrentThread // NPX/FPU
+    ThreadSwitchLegacyState,
+    /// q: ULONG // 20
+    ThreadIsTerminated,
+    /// q: THREAD_LAST_SYSCALL_INFORMATION
+    ThreadLastSystemCall,
+    /// qs: IO_PRIORITY_HINT (s: requires SeIncreaseBasePriorityPrivilege)
+    ThreadIoPriority,
+    /// q: THREAD_CYCLE_TIME_INFORMATION (requires THREAD_QUERY_LIMITED_INFORMATION)
+    ThreadCycleTime,
+    /// qs: PAGE_PRIORITY_INFORMATION
+    ThreadPagePriority,
+    /// q: LONG
+    ThreadActualBasePriority,
+    /// q: THREAD_TEB_INFORMATION (requires THREAD_GET_CONTEXT + THREAD_SET_CONTEXT)
+    ThreadTebInformation,
+    /// q: Obsolete
+    ThreadCSwitchMon,
+    /// q: Obsolete
+    ThreadCSwitchPmu,
+    /// qs: WOW64_CONTEXT, ARM_NT_CONTEXT since 20H1
+    ThreadWow64Context,
+    /// qs: GROUP_AFFINITY // 30
+    ThreadGroupInformation,
+    /// q: THREAD_UMS_INFORMATION // Obsolete
+    ThreadUmsInformation,
+    /// qs: THREAD_PROFILING_INFORMATION
+    ThreadCounterProfiling,
+    /// qs: PROCESSOR_NUMBER; s: previous PROCESSOR_NUMBER on return
+    ThreadIdealProcessorEx,
+    /// s: HANDLE // since WIN8
+    ThreadCpuAccountingInformation,
+    /// q: ULONG // since WINBLUE
+    ThreadSuspendCount,
+    /// qs: KHETERO_CPU_POLICY // since THRESHOLD
+    ThreadHeterogeneousCpuPolicy,
+    /// q: GUID
+    ThreadContainerId,
+    /// qs: THREAD_NAME_INFORMATION (requires THREAD_SET_LIMITED_INFORMATION)
+    ThreadNameInformation,
+    /// qs: ULONG[]
+    ThreadSelectedCpuSets,
+    /// q: SYSTEM_THREAD_INFORMATION // 40
+    ThreadSystemThreadInformation,
+    /// q: GROUP_AFFINITY // since THRESHOLD2
+    ThreadActualGroupAffinity,
+    /// qs: ULONG // NtCurrentThread
+    ThreadDynamicCodePolicyInfo,
+    /// qs: ULONG; s: 0 disables, otherwise enables // (requires SeDebugPrivilege and PsProtectedSignerAntimalware)
+    ThreadExplicitCaseSensitivity,
+    /// q: RTL_WORK_ON_BEHALF_TICKET_EX; s: ALPC_WORK_ON_BEHALF_TICKET // NtCurrentThread
+    ThreadWorkOnBehalfTicket,
+    /// q: SUBSYSTEM_INFORMATION_TYPE // since REDSTONE2
+    ThreadSubsystemInformation,
+    /// s: ULONG
+    ThreadDbgkWerReportActive,
+    /// s: HANDLE (job object) // NtCurrentThread
+    ThreadAttachContainer,
+    /// s: MANAGE_WRITES_TO_EXECUTABLE_MEMORY // since REDSTONE3
+    ThreadManageWritesToExecutableMemory,
+    /// qs: POWER_THROTTLING_THREAD_STATE // since REDSTONE3 (set), WIN11 22H2 (query)
+    ThreadPowerThrottlingState,
+    /// qs: THREAD_WORKLOAD_CLASS // since REDSTONE5 // 50
+    ThreadWorkloadClass,
+    /// s: Obsolete // since WIN11
+    ThreadCreateStateChange,
+    /// s: Obsolete
+    ThreadApplyStateChange,
+    /// qs: ULONG // NtCurrentThread // since 22H1
+    ThreadStrongerBadHandleChecks,
+    /// q: IO_PRIORITY_HINT
+    ThreadEffectiveIoPriority,
+    /// q: ULONG
+    ThreadEffectivePagePriority,
+    /// s: THREAD_LOCK_OWNERSHIP // since 24H2
+    ThreadUpdateLockOwnership,
+    /// qs: THREAD_SCHEDULER_SHARED_DATA_SLOT_INFORMATION
+    ThreadSchedulerSharedDataSlot,
+    /// q: THREAD_TEB_INFORMATION (requires THREAD_GET_CONTEXT + THREAD_QUERY_INFORMATION)
+    ThreadTebInformationAtomic,
+    /// q: THREAD_INDEX_INFORMATION
+    ThreadIndexInformation,
+
+    MaxThreadInfoClass,
+};
+
+pub const NT_PROCESS_INFO_CLASS = enum(c_int) {
+    /// q: PROCESS_BASIC_INFORMATION, PROCESS_EXTENDED_BASIC_INFORMATION
+    ProcessBasicInformation,
+    /// qs: QUOTA_LIMITS, QUOTA_LIMITS_EX
+    ProcessQuotaLimits,
+    /// q: IO_COUNTERS
+    ProcessIoCounters,
+    /// q: VM_COUNTERS, VM_COUNTERS_EX, VM_COUNTERS_EX2
+    ProcessVmCounters,
+    /// q: KERNEL_USER_TIMES // since VISTA
+    ProcessTimes,
+    /// s: KPRIORITY
+    ProcessBasePriority,
+    /// s: PROCESS_RAISE_PRIORITY
+    ProcessRaisePriority,
+    /// q: HANDLE
+    ProcessDebugPort,
+    /// s: PROCESS_EXCEPTION_PORT (requires SeTcbPrivilege)
+    ProcessExceptionPort,
+    /// s: PROCESS_ACCESS_TOKEN
+    ProcessAccessToken,
+    /// qs: PROCESS_LDT_INFORMATION // 10
+    ProcessLdtInformation,
+    /// s: PROCESS_LDT_SIZE
+    ProcessLdtSize,
+    /// qs: PROCESS_DEFAULT_HARD_ERROR_MODE
+    ProcessDefaultHardErrorMode,
+    /// s: PROCESS_IO_PORT_HANDLER_INFORMATION // (kernel-mode only)
+    ProcessIoPortHandlers,
+    /// q: POOLED_USAGE_AND_LIMITS
+    ProcessPooledUsageAndLimits,
+    /// qs: PROCESS_WS_WATCH_INFORMATION[]; s: void
+    ProcessWorkingSetWatch,
+    /// s: PROCESS_USER_MODE_IOPL (requires SeTcbPrivilege)
+    ProcessUserModeIOPL,
+    /// s: BOOLEAN
+    ProcessEnableAlignmentFaultFixup,
+    /// qs: PROCESS_PRIORITY_CLASS
+    ProcessPriorityClass,
+    /// qs: ULONG (requires SeTcbPrivilege) (VdmAllowed)
+    ProcessWx86Information,
+    /// q: ULONG, PROCESS_HANDLE_INFORMATION // 20
+    ProcessHandleCount,
+    /// qs: KAFFINITY, qs: GROUP_AFFINITY
+    ProcessAffinityMask,
+    /// qs: PROCESS_PRIORITY_BOOST
+    ProcessPriorityBoost,
+    /// qs: PROCESS_DEVICEMAP_INFORMATION, PROCESS_DEVICEMAP_INFORMATION_EX
+    ProcessDeviceMap,
+    /// qs: PROCESS_SESSION_INFORMATION
+    ProcessSessionInformation,
+    /// s: PROCESS_FOREGROUND_BACKGROUND
+    ProcessForegroundInformation,
+    /// q: ULONG_PTR
+    ProcessWow64Information,
+    /// q: UNICODE_STRING
+    ProcessImageFileName,
+    /// q: PROCESS_LUID_DEVICE_MAPS_ENABLED
+    ProcessLUIDDeviceMapsEnabled,
+    /// qs: ULONG
+    ProcessBreakOnTermination,
+    /// q: HANDLE // 30
+    ProcessDebugObjectHandle,
+    /// qs: PROCESS_DEBUG_FLAGS
+    ProcessDebugFlags,
+    /// qs: PROCESS_HANDLE_TRACING_QUERY; s: PROCESS_HANDLE_TRACING_ENABLE[_EX] or void to disable
+    ProcessHandleTracing,
+    /// qs: IO_PRIORITY_HINT (s: requires SeIncreaseBasePriorityPrivilege)
+    ProcessIoPriority,
+    /// qs: PROCESS_EXECUTE_FLAGS
+    ProcessExecuteFlags,
+    /// s: PROCESS_TLS_INFORMATION // ProcessResourceManagement
+    ProcessTlsInformation,
+    /// q: ULONG
+    ProcessCookie,
+    /// q: SECTION_IMAGE_INFORMATION
+    ProcessImageInformation,
+    /// q: PROCESS_CYCLE_TIME_INFORMATION // since VISTA
+    ProcessCycleTime,
+    /// qs: PAGE_PRIORITY_INFORMATION
+    ProcessPagePriority,
+    /// s: PVOID or PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION // 40
+    ProcessInstrumentationCallback,
+    /// s: PROCESS_STACK_ALLOCATION_INFORMATION, PROCESS_STACK_ALLOCATION_INFORMATION_EX
+    ProcessThreadStackAllocation,
+    /// qs: PROCESS_WS_WATCH_INFORMATION_EX[]; s: void
+    ProcessWorkingSetWatchEx,
+    /// q: UNICODE_STRING
+    ProcessImageFileNameWin32,
+    /// q: HANDLE (input)
+    ProcessImageFileMapping,
+    /// qs: PROCESS_AFFINITY_UPDATE_MODE
+    ProcessAffinityUpdateMode,
+    /// qs: PROCESS_MEMORY_ALLOCATION_MODE
+    ProcessMemoryAllocationMode,
+    /// q: PROCESS_GROUP_INFORMATION
+    ProcessGroupInformation,
+    /// s: ULONG
+    ProcessTokenVirtualizationEnabled,
+    /// qs: PROCESS_CONSOLE_HOST_PROCESS_INFORMATION
+    ProcessConsoleHostProcess,
+    /// q: PROCESS_WINDOW_INFORMATION // 50
+    ProcessWindowInformation,
+    /// q: PROCESS_HANDLE_SNAPSHOT_INFORMATION // since WIN8
+    ProcessHandleInformation,
+    /// s: PROCESS_MITIGATION_POLICY_INFORMATION
+    ProcessMitigationPolicy,
+    /// s: PROCESS_DYNAMIC_FUNCTION_TABLE_INFORMATION
+    ProcessDynamicFunctionTableInformation,
+    /// qs: PROCESS_HANDLE_CHECKING_MODE; s: 0 disables, otherwise enables
+    ProcessHandleCheckingMode,
+    /// q: PROCESS_KEEPALIVE_COUNT_INFORMATION
+    ProcessKeepAliveCount,
+    /// s: PROCESS_REVOKE_FILE_HANDLES_INFORMATION
+    ProcessRevokeFileHandles,
+    /// s: PROCESS_WORKING_SET_CONTROL
+    ProcessWorkingSetControl,
+    /// q: ULONG[] // since WINBLUE
+    ProcessHandleTable,
+    /// qs: ULONG // KPROCESS->CheckStackExtents (CFG)
+    ProcessCheckStackExtentsMode,
+    /// q: UNICODE_STRING // 60
+    ProcessCommandLineInformation,
+    /// q: PS_PROTECTION
+    ProcessProtectionInformation,
+    /// s: PROCESS_MEMORY_EXHAUSTION_INFO // since THRESHOLD
+    ProcessMemoryExhaustion,
+    /// s: PROCESS_FAULT_INFORMATION
+    ProcessFaultInformation,
+    /// q: PROCESS_TELEMETRY_ID_INFORMATION
+    ProcessTelemetryIdInformation,
+    /// qs: PROCESS_COMMIT_RELEASE_INFORMATION
+    ProcessCommitReleaseInformation,
+    /// qs: SYSTEM_CPU_SET_INFORMATION[5] // ProcessReserved1Information
+    ProcessDefaultCpuSetsInformation,
+    /// qs: SYSTEM_CPU_SET_INFORMATION[5] // ProcessReserved2Information
+    ProcessAllowedCpuSetsInformation,
+    /// s: void // EPROCESS->SubsystemProcess
+    ProcessSubsystemProcess,
+    /// q: PROCESS_JOB_MEMORY_INFO
+    ProcessJobMemoryInformation,
+    /// qs: BOOLEAN; s: void // ETW // since THRESHOLD2 // 70
+    ProcessInPrivate,
+    /// qs: PROCESS_RAISE_UM_EXCEPTION_ON_INVALID_HANDLE_CLOSE; s: 0 disables, otherwise enables
+    ProcessRaiseUMExceptionOnInvalidHandleClose,
+    /// qs: PROCESS_IUM_CHALLENGE_RESPONSE
+    ProcessIumChallengeResponse,
+    /// q: PROCESS_CHILD_PROCESS_INFORMATION
+    ProcessChildProcessInformation,
+    /// qs: BOOLEAN; s: BOOLEAN (requires SeTcbPrivilege)
+    ProcessHighGraphicsPriorityInformation,
+    /// q: SUBSYSTEM_INFORMATION_TYPE // since REDSTONE2
+    ProcessSubsystemInformation,
+    /// q: PROCESS_ENERGY_VALUES, PROCESS_EXTENDED_ENERGY_VALUES, PROCESS_EXTENDED_ENERGY_VALUES_V1
+    ProcessEnergyValues,
+    /// qs: POWER_THROTTLING_PROCESS_STATE
+    ProcessPowerThrottlingState,
+    /// qs: Obsolete // PROCESS_ACTIVITY_THROTTLE_POLICY // ProcessReserved3Information
+    ProcessActivityThrottlePolicy,
+    /// q: WIN32K_SYSCALL_FILTER
+    ProcessWin32kSyscallFilterInformation,
+    /// s: BOOLEAN // 80
+    ProcessDisableSystemAllowedCpuSets,
+    /// q: PROCESS_WAKE_INFORMATION // (kernel-mode only)
+    ProcessWakeInformation,
+    /// qs: PROCESS_ENERGY_TRACKING_STATE
+    ProcessEnergyTrackingState,
+    /// s: MANAGE_WRITES_TO_EXECUTABLE_MEMORY // since REDSTONE3
+    ProcessManageWritesToExecutableMemory,
+    /// q: ULONG
+    ProcessCaptureTrustletLiveDump,
+    /// qs: TELEMETRY_COVERAGE_HEADER; s: TELEMETRY_COVERAGE_POINT
+    ProcessTelemetryCoverage,
+    /// qs: Obsolete
+    ProcessEnclaveInformation,
+    /// qs: PROCESS_READWRITEVM_LOGGING_INFORMATION
+    ProcessEnableReadWriteVmLogging,
+    /// q: PROCESS_UPTIME_INFORMATION
+    ProcessUptimeInformation,
+    /// q: HANDLE
+    ProcessImageSection,
+    /// s: PROCESS_DEBUG_AUTH_INFORMATION // CiTool.exe -- device-id // PplDebugAuthorization // since RS4 // 90
+    ProcessDebugAuthInformation,
+    /// s: PROCESS_SYSTEM_RESOURCE_MANAGEMENT
+    ProcessSystemResourceManagement,
+    /// q: ULONGLONG
+    ProcessSequenceNumber,
+    /// qs: Obsolete // since RS5
+    ProcessLoaderDetour,
+    /// q: PROCESS_SECURITY_DOMAIN_INFORMATION
+    ProcessSecurityDomainInformation,
+    /// s: PROCESS_COMBINE_SECURITY_DOMAINS_INFORMATION
+    ProcessCombineSecurityDomainsInformation,
+    /// q: PROCESS_LOGGING_INFORMATION
+    ProcessEnableLogging,
+    /// qs: PROCESS_LEAP_SECOND_INFORMATION
+    ProcessLeapSecondInformation,
+    /// s: PROCESS_FIBER_SHADOW_STACK_ALLOCATION_INFORMATION // since 19H1
+    ProcessFiberShadowStackAllocation,
+    /// s: PROCESS_FREE_FIBER_SHADOW_STACK_ALLOCATION_INFORMATION
+    ProcessFreeFiberShadowStackAllocation,
+    /// s: PROCESS_SYSCALL_PROVIDER_INFORMATION // since 20H1 // 100
+    ProcessAltSystemCallInformation,
+    /// s: PROCESS_DYNAMIC_EH_CONTINUATION_TARGETS_INFORMATION
+    ProcessDynamicEHContinuationTargets,
+    /// s: PROCESS_DYNAMIC_ENFORCED_ADDRESS_RANGE_INFORMATION // since 20H2
+    ProcessDynamicEnforcedCetCompatibleRanges,
+    /// qs: Obsolete // since WIN11
+    ProcessCreateStateChange,
+    /// qs: Obsolete
+    ProcessApplyStateChange,
+    /// s: ULONG64 // EnableProcessOptionalXStateFeatures
+    ProcessEnableOptionalXStateFeatures,
+    /// qs: OVERRIDE_PREFETCH_PARAMETER // App Launch Prefetch (ALPF) // since 22H1
+    ProcessAltPrefetchParam,
+    /// s: HANDLE[]
+    ProcessAssignCpuPartitions,
+    /// s: PROCESS_PRIORITY_CLASS_EX
+    ProcessPriorityClassEx,
+    /// q: PROCESS_MEMBERSHIP_INFORMATION
+    ProcessMembershipInformation,
+    /// q: IO_PRIORITY_HINT // 110
+    ProcessEffectiveIoPriority,
+    /// q: ULONG
+    ProcessEffectivePagePriority,
+    /// s: PROCESS_SCHEDULER_SHARED_DATA_SLOT_INFORMATION // since 24H2
+    ProcessSchedulerSharedData,
+    /// qs: no input buffer, length 0 on set, current process only
+    ProcessSlistRollbackInformation,
+    /// q: PROCESS_NETWORK_COUNTERS
+    ProcessNetworkIoCounters,
+    /// q: PROCESS_TEB_VALUE_INFORMATION // NtCurrentProcess
+    ProcessFindFirstThreadByTebValue,
+    /// qs: Obsolete // since 25H2
+    ProcessEnclaveAddressSpaceRestriction,
+    /// qs: Obsolete // PROCESS_AVAILABLE_CPUS_INFORMATION
+    ProcessAvailableCpus,
+
+    MaxProcessInfoClass,
+};
+
+pub const NT_KERNEL_USER_TIMES = extern struct {
+    create_time: LARGE_INTEGER,
+    exit_time: LARGE_INTEGER,
+    kernel_time: LARGE_INTEGER,
+    user_time: LARGE_INTEGER,
+};
+
 pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
     return .{ .red = r, .green = g, .blue = b };
 }
@@ -1116,8 +1554,6 @@ pub inline fn HIWORD(l: anytype) WORD {
 
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
-pub extern "kernel32" fn QueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) BOOL;
-pub extern "kernel32" fn QueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) ?[*]u8;
 pub extern "kernel32" fn VirtualFree(address: [*]const u8, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CreateFileMappingA(file: HANDLE, file_mapping_attributes: ?*SECURITY_ATTRIBUTES, protect: DWORD, maximum_size_high: DWORD, maximum_size_low: DWORD, name: ?LPCSTR) callconv(.winapi) HANDLE;
@@ -1200,3 +1636,9 @@ pub extern "gdi32" fn GetDC(window: ?HWND) callconv(.winapi) HDC;
 pub extern "gdi32" fn ReleaseDC(window: ?HWND, hdc: HDC) callconv(.winapi) c_int;
 
 pub extern "shcore" fn SetProcessDpiAwareness(value: PROCESS_DPI_AWARENESS) callconv(.winapi) HRESULT;
+
+pub extern "ntdll" fn RtlQueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) NT_LOGICAL;
+pub extern "ntdll" fn RtlQueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) NT_LOGICAL;
+pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) ULONGLONG;
+pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: NT_THREADINFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: NT_PROCESS_INFO_CLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;

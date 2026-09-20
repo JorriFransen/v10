@@ -4,6 +4,7 @@ const log = std.log.scoped(.linux_joystick);
 const options = @import("options");
 
 const core = @import("core");
+const TimeStamp = core.time.TimeStamp;
 const assert = core.assert;
 const fs = core.fs;
 const linux = core.os.linux;
@@ -40,7 +41,7 @@ pub const Joystick = struct {
     map: Map,
     axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
 
-    open_timestamp: std.Io.Timestamp,
+    open_timestamp: TimeStamp,
     sync_report_count: u8,
 
     const State = enum(u2) {
@@ -140,7 +141,7 @@ pub const Joystick = struct {
 
     pub const InitError = error{ DevSysPathMissing, ReadlinkFailed };
 
-    fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: std.Io.Timestamp) InitError!void {
+    fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: TimeStamp) InitError!void {
         assert(event_id >= 0);
 
         var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
@@ -263,9 +264,9 @@ pub const Joystick = struct {
         };
     }
 
-    fn updateState(this: *Joystick, io: std.Io) void {
+    fn updateState(this: *Joystick) void {
         if (this.state == .wait_settle) {
-            if (this.open_timestamp.nanoseconds + (wait_settle_ms_max * std.time.ns_per_ms) < linux_v10.getWallClock(io).nanoseconds) {
+            if (this.open_timestamp.ns() + (wait_settle_ms_max * std.time.ns_per_ms) < TimeStamp.now(.monotonic).ns()) {
                 this.activate();
                 assert(this.state == .active);
             }
@@ -588,7 +589,7 @@ pub fn System(comptime joystick_count: usize) type {
             this.inotify_fd = -1;
         }
 
-        pub fn update(this: *Context, io: std.Io) void {
+        pub fn update(this: *Context) void {
             var cqes: [io_uring_entry_count]std.os.linux.io_uring_cqe = undefined;
             while (true) {
                 const n = this.io_uring.copy_cqes(&cqes, 0) catch break;
@@ -609,7 +610,7 @@ pub fn System(comptime joystick_count: usize) type {
                         if (err == .SUCCESS) {
                             log.debug("uring finished opening: '/dev/input/{s}'", .{event_name});
 
-                            const open_ts = linux_v10.getWallClock(io);
+                            const open_ts = TimeStamp.now(.monotonic);
                             const fd: linux.fd_t = cqe.res;
 
                             if (in_flight.flags.close_on_complete or
@@ -770,7 +771,7 @@ pub fn System(comptime joystick_count: usize) type {
             };
 
             for (&this.joysticks) |*js| {
-                js.updateState(io);
+                js.updateState();
             }
         }
 
@@ -1083,7 +1084,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn register(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp) Joystick.InitError!bool {
+        fn register(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: TimeStamp) Joystick.InitError!bool {
             assert(event_id >= 0);
 
             var result = false;
@@ -1099,7 +1100,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn registerInSlot(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: std.Io.Timestamp, slot_index: usize) Joystick.InitError!void {
+        fn registerInSlot(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: TimeStamp, slot_index: usize) Joystick.InitError!void {
             assert(slot_index < this.joysticks.len);
 
             const js = &this.joysticks[slot_index];
@@ -1238,7 +1239,7 @@ pub fn System(comptime joystick_count: usize) type {
 
 const WaitQueueEntry = struct {
     fd: linux.fd_t,
-    fd_open_ts: std.Io.Timestamp,
+    fd_open_ts: TimeStamp,
     event_id: u10,
     input_id: u31,
 };

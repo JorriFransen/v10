@@ -14,6 +14,7 @@ pub const mem = @import("mem/mem.zig");
 pub const meta = @import("meta.zig");
 pub const os = @import("os/os.zig");
 pub const perf = @import("perf.zig");
+pub const time = @import("time.zig");
 pub const xml = @import("xml.zig");
 
 pub const default_log_level: std.log.Level = std.log.default_level;
@@ -47,8 +48,8 @@ pub fn defaultLogFileTerminal(
         .debug => .magenta,
     };
 
-    const ts = std.Io.Timestamp.now(std.Options.debug_io, .real);
-    const tp = TimeParts.fromMsTimestamp(@bitCast(ts.toMilliseconds()));
+    const tts = time.TimeStamp.now(.real);
+    const tp = TimeParts.fromMsTimestamp(@intCast(tts.ms()));
 
     try t.writer.print("{f} ", .{std.fmt.alt(tp, .writeTime)});
 

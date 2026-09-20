@@ -4,6 +4,7 @@ const log = std.log.scoped(.linux_v10);
 const builtin = @import("builtin");
 
 const core = @import("core");
+const TimeStamp = core.time.TimeStamp;
 const arch = core.arch;
 const assert = core.assert;
 const fs = core.fs;
@@ -120,8 +121,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         return 1;
     };
 
-    const prng_seed = std.Io.Timestamp.now(io, .real).toNanoseconds();
-    var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed));
+    const prng_seed = TimeStamp.now(.real);
+    var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed.ns()));
     prng = prng_impl.random();
 
     var shared_state: common.SharedState = .{};
@@ -444,8 +445,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     wld.new_input = &wld.game_input[0];
     wld.old_input = &wld.game_input[1];
 
-    var last_counter = getWallClock(io);
-    var flip_wall_clock = getWallClock(io);
+    var last_counter = getWallClock();
+    var flip_wall_clock = getWallClock();
 
     var last_cycle_count = arch.rdtsc();
 
@@ -482,11 +483,11 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             }
         }
 
-        if (joystick_context_opt) |jc| jc.update(thread_context.io);
-
         if (wlc.displayDispatch(display) == -1) {
             running = false;
         }
+
+        if (joystick_context_opt) |jc| jc.update();
 
         if (wld.pending_resize) |r| {
             if (wld.pending_configure_serial) |serial| {
@@ -601,7 +602,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                 updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer);
 
             if (audio_output.pulse.lib != null and linux_options.linux_audio_impl == .pulseEmulateDSound) {
-                const audio_wall_clock = getWallClock(io);
+                const audio_wall_clock = getWallClock();
                 const from_begin_to_audio_seconds = getSecondsElapsed(flip_wall_clock, audio_wall_clock);
 
                 const cursor = pulse.getCurrentPosition(audio_output.frames_per_second);
@@ -726,7 +727,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                 }
             }
 
-            const work_counter = getWallClock(io);
+            const work_counter = getWallClock();
             const work_seconds_elapsed = getSecondsElapsed(last_counter, work_counter);
 
             var seconds_elapsed_for_frame = work_seconds_elapsed;
@@ -741,19 +742,19 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                         std.atomic.spinLoopHint();
                     }
 
-                    seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock(io));
+                    seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                 }
             } else {
                 log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
             }
 
-            const end_counter = getWallClock(io);
+            const end_counter = getWallClock();
             const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
 
             const wayland_blit = displayBufferInWindow(global_back_buffer);
 
-            flip_wall_clock = getWallClock(io);
+            flip_wall_clock = getWallClock();
 
             const tmp = wld.new_input;
             wld.new_input = wld.old_input;
@@ -955,12 +956,14 @@ fn processKeyEvent(new_state: *ButtonState, is_down: bool) void {
     new_state.half_transition_count += 1;
 }
 
-pub inline fn getWallClock(io: std.Io) std.Io.Timestamp {
-    return std.Io.Timestamp.now(io, .awake);
+pub inline fn getWallClock() TimeStamp {
+    return TimeStamp.now(.monotonic);
 }
 
-inline fn getSecondsElapsed(start: std.Io.Timestamp, end: std.Io.Timestamp) f32 {
-    return @as(f32, @floatFromInt(start.durationTo(end).toNanoseconds())) / std.time.ns_per_s;
+inline fn getSecondsElapsed(start: TimeStamp, end: TimeStamp) f32 {
+    const d_ns_f: f32 = @floatFromInt(start.durationTo(end).ns());
+    const d_s_f: f32 = d_ns_f / std.time.ns_per_s;
+    return d_s_f;
 }
 
 const ShmError = error{

@@ -8,6 +8,7 @@ const assert = @import("../../core.zig").assert;
 const math = @import("../../math.zig");
 const mem = @import("../../mem/mem.zig");
 const meta = @import("../../meta.zig");
+const time = @import("../../time.zig");
 
 pub const abi = @import("abi/abi.zig").abi;
 
@@ -188,6 +189,24 @@ pub const DirIterator = struct {
         return null;
     }
 };
+
+pub inline fn getTime(clock: time.Clock) time.TimeStamp {
+    const linux_clock: CLOCK = switch (clock) {
+        .real => .REALTIME,
+        .monotonic => .MONOTONIC,
+        .cpu_thread => .THREAD_CPUTIME_ID,
+        .cpu_process => .PROCESS_CPUTIME_ID,
+    };
+
+    var spec: timespec = undefined;
+    const nsec: i96 = if (clock_gettime(linux_clock, &spec))
+        @as(i96, @intCast(spec.sec)) * (std.time.ns_per_s) +
+            @as(i96, @intCast(spec.nsec))
+    else |_|
+        0;
+
+    return .{ ._ns = nsec };
+}
 
 // =============================================================================
 // dirent.h
@@ -3083,6 +3102,26 @@ pub const CLOCK = enum(c_int) {
     pub const CLOCKS_MASK: c_int = (@intFromEnum(CLOCK.REALTIME) | @intFromEnum(CLOCK.MONOTONIC));
     pub const CLOCKS_MONO: c_int = @intFromEnum(CLOCK.MONOTONIC);
 };
+
+pub const ClockGettimeError = error{
+    FAULT,
+    INVAL,
+    NODEV,
+    NOTSUP,
+    OVERFLOW,
+
+    UnexpectedErrno,
+};
+
+pub inline fn clock_gettime(clockid: CLOCK, tp: *timespec) ClockGettimeError!void {
+    const rc = syscall2(
+        .clock_gettime,
+        zeroExtendToUsize(clockid),
+        @intFromPtr(tp),
+    );
+    try handleErrno(ClockGettimeError, rc);
+    assert(rc == 0);
+}
 
 // =============================================================================
 // uio.h

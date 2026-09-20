@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const options = @import("options");
 
 const core = @import("core");
+const TimeStamp = core.time.TimeStamp;
 const arch = core.arch;
 const assert = core.assert;
 const dsound = core.lib.dsound;
@@ -51,19 +52,17 @@ var stdout: *std.Io.Writer = undefined;
 var global_running = false;
 var global_pause = false;
 var global_back_buffer: Win32OffscreenBuffer = undefined;
-var global_perf_count_frequency: u64 = undefined;
 var global_DEBUG_show_cursor = options.internal_build;
 var global_window_position: win32.WINDOWPLACEMENT = .{};
 
-inline fn getWallClock() win32.LARGE_INTEGER {
-    var result: win32.LARGE_INTEGER = .{ .quad_part = 0 };
-    _ = win32.QueryPerformanceCounter(&result);
-    return result;
+inline fn getWallClock() TimeStamp {
+    return TimeStamp.now(.monotonic);
 }
 
-inline fn getSecondsElapsed(start: win32.LARGE_INTEGER, end: win32.LARGE_INTEGER) f32 {
-    const diff: f32 = @floatFromInt(end.quad_part - start.quad_part);
-    return diff / @as(f32, @floatFromInt(global_perf_count_frequency));
+inline fn getSecondsElapsed(start: TimeStamp, end: TimeStamp) f32 {
+    const d_ns_f: f32 = @floatFromInt(start.durationTo(end).ns());
+    const d_s_f: f32 = d_ns_f / std.time.ns_per_s;
+    return d_s_f;
 }
 
 pub const Win32OffscreenBuffer = struct {
@@ -438,10 +437,6 @@ pub fn windowsEntry(
     log.info("source dll: '{s}'", .{source_dll_name});
     log.info("temp dll: '{s}'", .{temp_dll_name});
     log.info("gamecode load lock: '{s}'", .{gamecode_lock_file_name});
-
-    var qpf_result: win32.LARGE_INTEGER = undefined;
-    _ = win32.QueryPerformanceFrequency(&qpf_result);
-    global_perf_count_frequency = qpf_result.quad_part;
 
     const desired_scheduler_ms = 1;
     const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.TIMERR_NOERROR;
