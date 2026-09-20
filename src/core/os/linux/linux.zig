@@ -2517,6 +2517,18 @@ pub fn poll(fds: []pollfd, timeout: c_int) PollError!c_int {
     return safeTrunc(c_int, rc);
 }
 
+pub fn ppoll(fds: []pollfd, timeout: ?*const timespec, sigmask: ?*sigset_t) PollError!c_int {
+    const rc = syscall4(
+        .ppoll,
+        @intFromPtr(fds.ptr),
+        fds.len,
+        @intFromPtr(timeout),
+        @intFromPtr(sigmask),
+    );
+    try handleErrno(PollError, rc);
+    return safeTrunc(c_int, rc);
+}
+
 // =============================================================================
 // posix_acl.h
 // =============================================================================
@@ -2559,6 +2571,12 @@ pub const PosixAclXattrEntry = extern struct {
     e_perm: ACL.Permission,
     e_id: u32,
 };
+
+// =============================================================================
+// signal.h
+// =============================================================================
+
+pub const sigset_t = abi.sigset_t;
 
 // =============================================================================
 // socket.h

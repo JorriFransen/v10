@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const core = @import("core");
 const assert = core.assert;
 const linux = core.os.linux;
+const meta = core.meta;
 
 const options = @import("options");
 
@@ -207,7 +208,7 @@ pub fn displayRoundtrip(display: *Display) usize {
     displayFlush(display);
 
     while (!done) {
-        const dc = displayDispatchTimeout(display, -1);
+        const dc = displayDispatchTimeout(display, .infinite);
         if (dc < 0) break;
         dispatched_count += @intCast(dc);
     }
@@ -223,20 +224,44 @@ fn displayRoundtripSyncDoneHandler(data: ?*anyopaque, _: ?*wl_core.Callback, _: 
 }
 
 pub fn displayDispatch(display: *Display) isize {
-    return displayDispatchTimeout(display, 0);
+    return displayDispatchTimeout(display, .zero);
 }
 
-pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
+pub const Timeout = enum(i64) {
+    infinite = -1,
+    zero = 0,
+    _,
+
+    pub inline fn timeout(ns: anytype) Timeout {
+        meta.expectUnsigned(ns);
+        const _ns: u63 = @intCast(ns);
+        return @enumFromInt(_ns);
+    }
+};
+
+pub fn displayDispatchTimeout(display: *Display, first_timeout_ns: Timeout) isize {
     assert(display == &glob_display);
 
-    verbose("display_dispatch(id = {}, timeout = {}) ...", .{ display.object.id, first_timeout });
+    verbose("display_dispatch(id = {}, timeout = {} ({})) ...", .{
+        display.object.id,
+        std.enums.tagName(Timeout, first_timeout_ns) orelse "",
+        @intFromEnum(first_timeout_ns),
+    });
 
     var result: isize = 0;
 
-    var timeout = first_timeout;
+    var cur_timeout = first_timeout_ns;
+
     var pollfd: linux.pollfd = .{ .fd = display.fd, .events = .{ .IN = true }, .revents = undefined };
     while (true) {
-        const poll_rc = linux.poll(@ptrCast(&pollfd), timeout) catch |e| switch (e) {
+        const tsp: ?*const linux.timespec = if (cur_timeout == .infinite)
+            null
+        else blk: {
+            const ns: i64 = @intFromEnum(cur_timeout);
+            break :blk &.{ .sec = @divTrunc(ns, std.time.ns_per_s), .nsec = @rem(ns, std.time.ns_per_s) };
+        };
+
+        const poll_rc = linux.ppoll(@ptrCast(&pollfd), tsp, null) catch |e| switch (e) {
             error.INTR => continue,
             else => {
                 log.err("wayland poll failed: error: '{}'", .{e});
@@ -246,7 +271,7 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout: c_int) isize {
         };
         if (poll_rc <= 0) break;
 
-        timeout = 0;
+        cur_timeout = .timeout(0);
 
         if (pollfd.revents.IN) {
             const receive_buf_available = display.receive_payload_buf[display.receive_payload_used..];

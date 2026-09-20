@@ -732,17 +732,16 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
 
             var seconds_elapsed_for_frame = work_seconds_elapsed;
             if (seconds_elapsed_for_frame <= target_seconds_per_frame) {
-                while (seconds_elapsed_for_frame < target_seconds_per_frame) {
+                sleep_loop: while (seconds_elapsed_for_frame < target_seconds_per_frame) {
                     const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
 
                     if (sleep_ms > 1) {
                         const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
 
-                        const ts: linux.timespec = .{ .sec = 0, .nsec = @intCast(s) };
-                        linux.clock_nanosleep(.MONOTONIC, .{}, &ts, null) catch |e| switch (e) {
-                            error.INTR => {},
-                            else => return e,
-                        };
+                        if (wlc.displayDispatchTimeout(wld.display, .timeout(s)) == -1) {
+                            running = false;
+                            break :sleep_loop;
+                        }
                     } else {
                         std.atomic.spinLoopHint();
                     }
@@ -751,6 +750,9 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                 }
             } else {
                 log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
+                if (wlc.displayDispatch(wld.display) == -1) {
+                    running = false;
+                }
             }
 
             const end_counter = getWallClock();
@@ -1967,8 +1969,6 @@ const PulseContext = struct {
 
 /// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
 fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
-    _ = wlc.displayDispatch(wld.display);
-
     if (!wld.should_draw) {
         log.warn("Failed to display buffer, should_draw=false", .{});
         return false;
