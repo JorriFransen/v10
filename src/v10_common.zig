@@ -104,8 +104,25 @@ pub const DebugMouseInput = struct {
     z: i32 = 0,
 };
 
+pub const DebugModKeys = struct {
+    left_shift: ButtonState,
+    right_shift: ButtonState,
+    shift: ButtonState,
+
+    left_ctrl: ButtonState,
+    right_ctrl: ButtonState,
+    ctrl: ButtonState,
+
+    left_alt: ButtonState,
+    right_alt: ButtonState,
+    alt: ButtonState,
+
+    numlock: ButtonState,
+};
+
 pub const Input = struct {
     debug_mouse: DebugMouseInput = undefined,
+    debug_mod_keys: DebugModKeys = undefined,
 
     executable_reloaded: bool = false,
     dt: f32 = 0,

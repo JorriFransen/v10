@@ -221,12 +221,24 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32, dso
 
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
-fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller: *ControllerInput) void {
+fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller: *ControllerInput, input: *Input) void {
     var msg = win32.MSG{};
 
     const buttons = &keyboard_controller.buttons.named;
 
+    const Flags = packed struct(u32) {
+        repeat_count: u16,
+        scancode: u8,
+        extended: bool,
+        reserved: u4,
+        context_code: bool,
+        previous_state: bool,
+        transition_state: bool,
+    };
+
     while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != .FALSE) {
+        const flags: Flags = @bitCast(@as(u32, @truncate(@as(usize, @bitCast(msg.lParam)))));
+
         switch (msg.message) {
             win32.WM_QUIT => {
                 global_running = false;
@@ -238,8 +250,8 @@ fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller
             win32.WM_KEYUP,
             => {
                 const vk_code = msg.wParam;
-                const was_down = (msg.lParam & (1 << 30)) != 0;
-                const is_down = (msg.lParam & (1 << 31)) == 0;
+                const was_down = flags.previous_state;
+                const is_down = !flags.transition_state;
 
                 if (is_down != was_down) {
                     if (vk_code == win32.VK_Q) {
@@ -268,28 +280,62 @@ fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller
                         processKeyboardMessage(&buttons.start, is_down);
                     }
 
-                    if (options.internal_build and is_down) {
-                        if (vk_code == win32.VK_P) {
-                            global_pause = !global_pause;
-                        } else if (vk_code == win32.VK_L) {
-                            if (shared_state.input_recording_index == 0 and shared_state.input_playing_index == 0) {
-                                beginRecordingInput(shared_state, 1);
-                            } else if (shared_state.input_recording_index == 1) {
-                                endRecordingInput(shared_state);
-                                beginInputPlayback(shared_state, 1);
-                            } else {
-                                endInputPlayback(shared_state);
-                                // TODO: Reset input, keys may be stuck in down state
-                            }
+                    if (options.internal_build) {
+                        if (vk_code == win32.VK_CONTROL) {
+                            if (flags.extended)
+                                processKeyboardMessage(&input.debug_mod_keys.right_ctrl, is_down)
+                            else
+                                processKeyboardMessage(&input.debug_mod_keys.left_ctrl, is_down);
+                        } else if (vk_code == win32.VK_MENU) {
+                            if (flags.extended)
+                                processKeyboardMessage(&input.debug_mod_keys.right_alt, is_down)
+                            else
+                                processKeyboardMessage(&input.debug_mod_keys.left_alt, is_down);
+                        } else if (vk_code == win32.VK_NUMLOCK) {
+                            processKeyboardMessage(&input.debug_mod_keys.numlock, is_down);
+                        } else if (win32.MapVirtualKeyA(flags.scancode, .VSC_TO_VK_EX) == win32.VK_LSHIFT) {
+                            processKeyboardMessage(&input.debug_mod_keys.left_shift, is_down);
+                        } else if (win32.MapVirtualKeyA(flags.scancode, .VSC_TO_VK_EX) == win32.VK_RSHIFT) {
+                            processKeyboardMessage(&input.debug_mod_keys.right_shift, is_down);
                         }
 
-                        const alt_key_was_down = (msg.lParam & (1 << 29)) != 0;
-                        if ((vk_code == win32.VK_F4) and alt_key_was_down) {
-                            global_running = false;
-                        } else if ((vk_code == win32.VK_RETURN and alt_key_was_down) or
-                            vk_code == win32.VK_F11)
-                        {
-                            toggleFullscreen(msg.hwnd.?);
+                        const shift_down = input.debug_mod_keys.left_shift.ended_down or input.debug_mod_keys.right_shift.ended_down;
+                        if (shift_down != input.debug_mod_keys.shift.ended_down) {
+                            processKeyboardMessage(&input.debug_mod_keys.shift, shift_down);
+                        }
+
+                        const ctrl_down = input.debug_mod_keys.left_ctrl.ended_down or input.debug_mod_keys.right_ctrl.ended_down;
+                        if (ctrl_down != input.debug_mod_keys.ctrl.ended_down) {
+                            processKeyboardMessage(&input.debug_mod_keys.ctrl, ctrl_down);
+                        }
+
+                        const alt_down = input.debug_mod_keys.left_alt.ended_down or input.debug_mod_keys.right_alt.ended_down;
+                        if (alt_down != input.debug_mod_keys.alt.ended_down) {
+                            processKeyboardMessage(&input.debug_mod_keys.alt, alt_down);
+                        }
+
+                        if (is_down) {
+                            if (vk_code == win32.VK_P) {
+                                global_pause = !global_pause;
+                            } else if (vk_code == win32.VK_L) {
+                                if (shared_state.input_recording_index == 0 and shared_state.input_playing_index == 0) {
+                                    beginRecordingInput(shared_state, 1);
+                                } else if (shared_state.input_recording_index == 1) {
+                                    endRecordingInput(shared_state);
+                                    beginInputPlayback(shared_state, 1);
+                                } else {
+                                    endInputPlayback(shared_state);
+                                    // TODO: Reset input, keys may be stuck in down state
+                                }
+                            }
+
+                            if ((vk_code == win32.VK_F4) and alt_down) {
+                                global_running = false;
+                            } else if ((vk_code == win32.VK_RETURN and alt_down) or
+                                vk_code == win32.VK_F11)
+                            {
+                                toggleFullscreen(msg.hwnd.?);
+                            }
                         }
                     }
                 }
@@ -505,7 +551,7 @@ pub fn windowsEntry(
             }
             _ = win32.ReleaseDC(window, dc);
 
-            if (options.internal_build and monitor_refresh_hz > 60) {
+            if (monitor_refresh_hz > 60) {
                 log.warn("Capping update hz to 60 (/ 2)", .{});
                 monitor_refresh_hz = 60;
             }
@@ -649,16 +695,23 @@ pub fn windowsEntry(
                     }
                     keyboard_controller.is_connected = true;
 
-                    processPendingMessages(&shared_state, keyboard_controller);
-
-                    if (options.debug) {
+                    if (options.internal_build) {
                         const mouse = &new_input.debug_mouse;
                         const old_mouse = &old_input.debug_mouse;
                         mouse.* = std.mem.zeroes(common.DebugMouseInput);
                         for (&mouse.buttons.array, old_mouse.buttons.array) |*new_button, old_button| {
                             new_button.ended_down = old_button.ended_down;
                         }
+
+                        const mods = &new_input.debug_mod_keys;
+                        const old_mods = &old_input.debug_mod_keys;
+                        mods.* = std.mem.zeroes(common.DebugModKeys);
+                        inline for (std.meta.fields(common.DebugModKeys)) |field| {
+                            @field(mods, field.name).ended_down = @field(old_mods, field.name).ended_down;
+                        }
                     }
+
+                    processPendingMessages(&shared_state, keyboard_controller, new_input);
 
                     if (!global_pause) {
                         if (options.debug) {

@@ -19,11 +19,7 @@ const lib_loader = @import("lib_loader.zig");
 const options = @import("options");
 const linux_options = @import("linux_options");
 
-const wayland = @import("wayland");
-const wlc = wayland.client;
-const wl = wayland.wayland;
-const xdg_shell = wayland.xdg_shell;
-const xdg_decoration = wayland.xdg_decoration_unstable_v1;
+const Window = @import("linux_wayland.zig");
 
 const joysticks = @import("linux_joysticks.zig");
 const Joystick = joysticks.Joystick;
@@ -55,17 +51,6 @@ pub const std_options: std.Options = blk: {
 
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
 
-var prng: std.Random = undefined;
-
-const back_buffer_width: i32 = 960;
-const back_buffer_height: i32 = 540;
-const bytes_per_pixel = 4;
-
-var global_back_buffer: LinuxOffscreenBuffer = .{};
-var running: bool = false;
-var pause: bool = false;
-var wld: WlData = .{};
-
 const use_debug_allocator = switch (builtin.mode) {
     .Debug => true,
     .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
@@ -77,6 +62,13 @@ var stderr_buf: [2048]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
 var stdout_buf: [2048]u8 = undefined;
 var stdout: *std.Io.Writer = undefined;
+
+var global_running = false;
+var global_pause = false;
+const global_back_buffer_width: i32 = 960;
+const global_back_buffer_height: i32 = 540;
+
+pub const bytes_per_pixel = 4;
 
 pub fn main(init: std.process.Init.Minimal) !u8 {
     const gpa = if (use_debug_allocator)
@@ -121,10 +113,6 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         return 1;
     };
 
-    const prng_seed = TimeStamp.now(.real);
-    var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed.ns()));
-    prng = prng_impl.random();
-
     var shared_state: common.SharedState = .{};
 
     const cwd_len = try std.process.currentPath(io, &shared_state.cwd_buf);
@@ -139,22 +127,14 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
     log.info("game_lib_name: {s}", .{game_lib_name});
 
-    const display = wlc.displayConnect(null, &init.environ) orelse {
-        log.err("wl_display_connect failed", .{});
-        return error.UnexpectedWayland;
+    var back_buffer: LinuxOffscreenBuffer = .{
+        .memory = undefined,
+        .width = global_back_buffer_width,
+        .height = global_back_buffer_height,
+        .pitch = global_back_buffer_width * bytes_per_pixel,
     };
-    defer wlc.displayDisconnect(display);
-    log.info("Wayland display connected", .{});
 
-    const wl_registry = display.getRegistry();
-
-    running = true;
-
-    global_back_buffer.width = back_buffer_width;
-    global_back_buffer.height = back_buffer_height;
-    global_back_buffer.pitch = global_back_buffer.width * bytes_per_pixel;
-
-    const back_buffer_memory_size: usize = @intCast(global_back_buffer.width * global_back_buffer.height * bytes_per_pixel);
+    const back_buffer_memory_size: usize = @intCast(back_buffer.width * back_buffer.height * bytes_per_pixel);
     if (linux.mmap(
         null,
         back_buffer_memory_size,
@@ -163,7 +143,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         -1,
         0,
     )) |mapped| {
-        global_back_buffer.memory = mapped.ptr;
+        back_buffer.memory = mapped.ptr;
         linux.mprotect(mapped, .{ .READ = true, .WRITE = true }) catch |e| {
             log.err("mprotect call failed during back buffer resize", .{});
             return e;
@@ -173,134 +153,26 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         return error.MmapFailed;
     }
 
-    wld = .{
-        .display = display,
-        .shared_state = &shared_state,
-    };
+    var _new_input: Input = .{};
+    var _old_input: Input = .{};
+    var input: InputState = .{ .new = &_new_input, .old = &_old_input };
 
-    var wli = WlInitData{ .wld = &wld };
-    wl_registry.addListener(&wl_registry_listener, &wli);
-    if (wlc.displayRoundtrip(display) == -1) {
-        log.err("wl_display_roundtrip failed", .{});
-        return error.UnexpectedWayland;
-    }
-    defer wl_registry.destroy();
+    var window: Window = undefined;
+    try Window.init(
+        &window,
+        &init.environ,
+        &shared_state,
+        // The backbuffer is currently being drawn with a 10 pixel gutter
+        global_back_buffer_width + 20,
+        global_back_buffer_height + 20,
+        global_back_buffer_width,
+        global_back_buffer_height,
+        "v10",
+        &input,
+    );
+    defer window.deinit();
 
-    if (wli.wl_shm) |shm| wld.shm = shm else {
-        log.err("wl_shm not available", .{});
-        return error.UnexpectedWayland;
-    }
-    if (wli.wl_compositor) |compositor| wld.compositor = compositor else {
-        log.err("wl_compositor not available", .{});
-        return error.UnexpectedWayland;
-    }
-    if (wli.wl_seat) |seat| wld.seat = seat else {
-        log.err("wl_seat not available", .{});
-        return error.UnexpectedWayland;
-    }
-    if (wli.xdg_wm_base) |wm_base| wld.wm_base = wm_base else {
-        log.err("xdg_wm_base not available", .{});
-        return error.UnexpectedWayland;
-    }
-    if (wli.wl_data_device_manager) |ddm| wld.data_device_manager = ddm else {
-        log.err("wl_data_device_manager not available", .{});
-        return error.UnexpectedWayland;
-    }
-    defer wld.data_device_manager.destroy();
-
-    wld.data_device = wld.data_device_manager.getDataDevice(wld.seat);
-    defer wld.data_device.release();
-    wld.data_device.addListener(&wl_data_device_listener, null);
-
-    _ = wlc.displayRoundtrip(wld.display); // Wait for max_width/height to be set
-
-    log.debug("Wayland seat capabilities: {}", .{wli.seat_capabilities});
-    log.debug("Max size: {},{}", .{ wld.max_width, wld.max_height });
-
-    // The backbuffer is currently being drawn with a 10 pixel gutter
-    wld.window_width = back_buffer_width + 20;
-    wld.window_height = back_buffer_height + 20;
-
-    log.debug("initial window size: {},{}", .{ wld.window_width, wld.window_height });
-
-    try alloc_shm();
-
-    if (wli.seat_capabilities.keyboard == false) {
-        log.debug("keyboard not available", .{});
-        return error.UnexpectedWayland;
-    }
-    if (wli.seat_capabilities.pointer == false) {
-        log.debug("mouse not available", .{});
-        return error.UnexpectedWayland;
-    }
-
-    if (wli.xrgb8888 == false) {
-        log.err("xrgb8888 format not avaliable", .{});
-        return error.UnexpectedWayland;
-    }
-
-    wld.surface = wld.compositor.createSurface();
-    wld.surface.addListener(&wl_surface_listener, null);
-
-    const app_id = "v10";
-    const title = "v10";
-
-    wld.toplevel = blk: {
-        const xdg_surface = wld.wm_base.getXdgSurface(wld.surface);
-        xdg_surface.addListener(&xdg_surface_listener, &wld);
-
-        const xdg_toplevel = xdg_surface.getToplevel();
-        xdg_toplevel.addListener(&xdg_toplevel_listener, &wld);
-
-        xdg_toplevel.setAppId(app_id);
-        xdg_toplevel.setTitle(title);
-        wld.surface.commit();
-
-        if (wli.xdg_decoration_manager) |manager| {
-            const toplevel_decoration = manager.getToplevelDecoration(xdg_toplevel);
-            toplevel_decoration.setMode(.serverSide);
-
-            var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
-            toplevel_decoration.addListener(&xdg_decoration_listener, &xdg_decoration_mode);
-
-            _ = wlc.displayRoundtrip(wld.display);
-            xdg_surface.ackConfigure(wld.pending_configure_serial.?);
-            wld.pending_configure_serial = null;
-
-            if (xdg_decoration_mode == .serverSide) {
-                if (wld.pending_resize) |r| {
-                    try resize(r.width, r.height);
-                }
-
-                break :blk .{
-                    .xdg_decoration = .{
-                        .xdg_surface = xdg_surface,
-                        .xdg_toplevel = xdg_toplevel,
-                        .xdg_toplevel_decoration = toplevel_decoration,
-                    },
-                };
-            } else {
-                toplevel_decoration.destroy();
-            }
-        }
-
-        log.debug("xdg_decoration not supported, falling back to no decorations", .{});
-
-        _ = wlc.displayRoundtrip(wld.display);
-        wld.pending_configure_serial = null;
-
-        break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
-    };
-
-    const buffer = aquireFreeBuffer().?;
-    displayWaylandBufferInWindow(buffer);
-
-    var monitor_hz: f32 = 60;
-
-    for (wld.outputs, 0..) |output_opt, i| if (output_opt) |output| {
-        log.debug("outputs[{}]: {}", .{ i, output });
-        if (output.active) monitor_hz = @min(monitor_hz, @as(f32, @floatFromInt(output.refresh_mhz)) / 1000);
-    };
+    const monitor_hz: f32 = @min(60, window.minOutputHz());
 
     log.info("monitor hz: {}", .{monitor_hz});
 
@@ -308,12 +180,6 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     // const game_update_hz: f32 = 20;
     log.info("game update hz: {}", .{game_update_hz});
     const target_seconds_per_frame: f32 = 1.0 / game_update_hz;
-
-    wld.keyboard = wld.seat.getKeyboard();
-    wld.keyboard.addListener(&wl_keyboard_listener, &wld);
-
-    wld.pointer = wld.seat.getPointer();
-    wld.pointer.addListener(&wl_mouse_listener, &wld);
 
     const base_address: ?[*]align(std.heap.page_size_min) u8, const fixed = if (options.internal_build)
         .{ @ptrFromInt(mem.TiB * 2), true }
@@ -350,7 +216,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         game_memory.transient = all_memory[permanent_storage_size..];
         assert(game_memory.transient.len == transient_storage_size);
 
-        wld.shared_state.game_memory_block = all_memory;
+        shared_state.game_memory_block = all_memory;
     } else |_| {
         log.err("mmap call for game memory failed", .{});
         return error.MMapFailed;
@@ -442,29 +308,28 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     }
     defer if (audio_output.pulse.lib) |_| audio_output.pulse.lib.?.close();
 
-    wld.new_input = &wld.game_input[0];
-    wld.old_input = &wld.game_input[1];
-
     var last_counter = getWallClock();
     var flip_wall_clock = getWallClock();
 
     var last_cycle_count = arch.rdtsc();
 
-    log.info("starting main loop", .{});
-    while (running) {
-        wld.new_input.dt = target_seconds_per_frame;
+    global_running = true;
 
-        wld.new_input.executable_reloaded = false;
+    log.info("starting main loop", .{});
+    while (global_running and !window.closed) {
+        input.new.dt = target_seconds_per_frame;
+
+        input.new.executable_reloaded = false;
         const new_lib_write_time = common.getLastWriteTime(game_lib_name);
 
         if (new_lib_write_time > game_code.last_write_time) {
             game_code.unload();
             game_code = GameCode.load(game_lib_name);
-            wld.new_input.executable_reloaded = true;
+            input.new.executable_reloaded = true;
         }
 
-        const keyboard_controller = &wld.new_input.controllers[0];
-        const old_keyboard_controller = &wld.old_input.controllers[0];
+        const keyboard_controller = &input.new.controllers[0];
+        const old_keyboard_controller = &input.old.controllers[0];
         keyboard_controller.* = std.mem.zeroes(ControllerInput);
         for (&keyboard_controller.buttons.array, old_keyboard_controller.buttons.array) |*new_button, old_button| {
             new_button.ended_down = old_button.ended_down;
@@ -472,8 +337,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         keyboard_controller.is_connected = true;
 
         if (options.internal_build) {
-            const mouse = &wld.new_input.debug_mouse;
-            const old_mouse = &wld.old_input.debug_mouse;
+            const mouse = &input.new.debug_mouse;
+            const old_mouse = &input.old.debug_mouse;
             mouse.* = std.mem.zeroes(common.DebugMouseInput);
             mouse.x = old_mouse.x;
             mouse.y = old_mouse.y;
@@ -481,29 +346,30 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             for (&mouse.buttons.array, old_mouse.buttons.array) |*new_button, old_button| {
                 new_button.ended_down = old_button.ended_down;
             }
+
+            const mods = &input.new.debug_mod_keys;
+            const old_mods = &input.old.debug_mod_keys;
+            mods.* = std.mem.zeroes(common.DebugModKeys);
+            inline for (std.meta.fields(common.DebugModKeys)) |field| {
+                @field(mods, field.name).ended_down = @field(old_mods, field.name).ended_down;
+            }
         }
 
-        if (wlc.displayDispatch(display) == -1) {
-            running = false;
+        if (!window.poll()) {
+            global_running = false;
         }
+        window.handlePendingResize();
 
         if (joystick_context_opt) |jc| jc.update();
 
-        if (wld.pending_resize) |r| {
-            if (wld.pending_configure_serial) |serial| {
-                wld.toplevel.ack_configure(serial);
-            }
-            try resize(r.width, r.height);
-        }
-
-        if (!pause) {
+        if (!global_pause) {
             if (joystick_context_opt) |joystick_context| {
                 var max_controller_count: usize = joystick_context.joysticks.len;
-                if (max_controller_count > (wld.new_input.controllers.len - 1)) max_controller_count = (wld.new_input.controllers.len - 1);
+                if (max_controller_count > (input.new.controllers.len - 1)) max_controller_count = (input.new.controllers.len - 1);
 
                 for (joystick_context.joysticks[0..max_controller_count], 1..) |*js, i| {
-                    const old_controller = &wld.old_input.controllers[i];
-                    var new_controller = &wld.new_input.controllers[i];
+                    const old_controller = &input.old.controllers[i];
+                    var new_controller = &input.new.controllers[i];
 
                     const old_buttons = &old_controller.buttons.named;
                     const new_buttons = &new_controller.buttons.named;
@@ -584,22 +450,22 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
 
             assert(OffscreenBuffer.bytes_per_pixel == bytes_per_pixel);
             var game_offscreen_buffer = OffscreenBuffer{
-                .memory = global_back_buffer.memory,
-                .width = back_buffer_width,
-                .height = back_buffer_height,
-                .pitch = global_back_buffer.pitch,
+                .memory = back_buffer.memory,
+                .width = back_buffer.width,
+                .height = back_buffer.height,
+                .pitch = back_buffer.pitch,
             };
 
-            if (wld.shared_state.input_recording_index > 0) {
-                recordInput(wld.shared_state, wld.new_input);
+            if (shared_state.input_recording_index > 0) {
+                recordInput(&shared_state, input.new);
             }
 
-            if (wld.shared_state.input_playing_index > 0) {
-                playbackInput(wld.shared_state, wld.new_input);
+            if (shared_state.input_playing_index > 0) {
+                playbackInput(&shared_state, input.new);
             }
 
             if (game_code.updateAndRender) |updateAndRender|
-                updateAndRender(&thread_context, &game_memory, wld.new_input, &game_offscreen_buffer);
+                updateAndRender(&thread_context, &game_memory, input.new, &game_offscreen_buffer);
 
             if (audio_output.pulse.lib != null and linux_options.linux_audio_impl == .pulseEmulateDSound) {
                 const audio_wall_clock = getWallClock();
@@ -738,8 +604,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                     if (sleep_ms > 1) {
                         const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
 
-                        if (wlc.displayDispatchTimeout(wld.display, .timeout(s)) == -1) {
-                            running = false;
+                        if (!window.pollTimeout(s)) {
+                            global_running = false;
                             break :sleep_loop;
                         }
                     } else {
@@ -750,8 +616,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                 }
             } else {
                 log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
-                if (wlc.displayDispatch(wld.display) == -1) {
-                    running = false;
+                if (!window.poll()) {
+                    global_running = false;
                 }
             }
 
@@ -759,13 +625,13 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
 
-            const wayland_blit = displayBufferInWindow(global_back_buffer);
+            const wayland_blit = window.blitBuffer(&back_buffer);
 
             flip_wall_clock = getWallClock();
 
-            const tmp = wld.new_input;
-            wld.new_input = wld.old_input;
-            wld.old_input = tmp;
+            const tmp = input.new;
+            input.new = input.old;
+            input.old = tmp;
 
             const end_cycle_count = arch.rdtsc();
             const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
@@ -781,184 +647,156 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             //     wayland_blit,
             // });
             _ = .{ ms_per_frame, fps, mcpf, wayland_blit, work_seconds_elapsed };
-
-            // var title_buf: [32]u8 = undefined;
-            // const t = try std.fmt.bufPrintSentinel(&title_buf, "{}", .{ms_per_frame}, 0);
-            // wld.toplevel.setTitle(t);
         }
     }
 
     return 0;
 }
 
-const LinuxOffscreenBuffer = struct {
-    memory: [*]u8 = undefined,
-    width: i32 = 0,
-    height: i32 = 0,
-    pitch: i32 = 0,
-};
-
-const WlInitData = struct {
-    wld: *WlData,
-    wl_shm: ?*wl.Shm = null,
-    wl_compositor: ?*wl.Compositor = null,
-    wl_seat: ?*wl.Seat = null,
-    xdg_wm_base: ?*xdg_shell.WmBase = null,
-    xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
-    wl_output: ?*wl.Output = null,
-
-    xrgb8888: bool = false,
-    seat_capabilities: wl.Seat.Capability = .{},
-
-    wl_data_device_manager: ?*wl.DataDeviceManager = null,
-};
-
-// TODO: Use xkb!
-const KeyMods = packed struct(u32) {
-    shift: bool = false,
-    __reveved1: u1 = 0,
-    control: bool = false,
-    alt: bool = false,
-    num: bool = false,
-    __reserved2: u27 = 0,
-};
-
-const WlData = struct {
-    should_draw: bool = false,
-
-    outputs: [8]?WlOutput = std.mem.zeroes([8]?WlOutput),
-
-    pool: ?*wl.ShmPool = null,
-    buffers: [3]WlBuffer = undefined,
-
-    display: *wl.Display = undefined,
-    shm: *wl.Shm = undefined,
-    compositor: *wl.Compositor = undefined,
-    seat: *wl.Seat = undefined,
-    surface: *wl.Surface = undefined,
-    wm_base: *xdg_shell.WmBase = undefined,
-    keyboard: *wl.Keyboard = undefined,
-    pointer: *wl.Pointer = undefined,
-
-    data_device_manager: *wl.DataDeviceManager = undefined,
-    data_device: *wl.DataDevice = undefined,
-
-    pending_data_offer: ?*wl.DataOffer = null,
-    active_selection_offer: ?*wl.DataOffer = null,
-    active_dnd_offer: ?*wl.DataOffer = null,
-    active_dnd_source_actions: wl.DataDeviceManager.DndAction = .{},
-    active_dnd_action: wl.DataDeviceManager.DndAction = .{},
-
-    pending_offer_mime_weight: u8 = 0,
-    pending_offer_mime: ?[]const u8 = null,
-    selection_mime: ?[]const u8 = null,
-    dnd_mime: ?[]const u8 = null,
-
-    pending_offer_mime_buffer: [256]u8 = @splat(0),
-    selection_mime_buffer: [256]u8 = @splat(0),
-    dnd_mime_buffer: [256]u8 = @splat(0),
-
-    toplevel: WlToplevel = undefined,
-
-    /// Window width
-    window_width: i32 = 0,
-    /// Window height
-    window_height: i32 = 0,
-
-    /// Max width of (non fullscreen) surface
-    bound_width: i32 = 0,
-    /// Max height of (non fullscreen) surface
-    bound_height: i32 = 0,
-    /// Max width of all outputs
-    max_width: i32 = 0,
-    /// Max height of all outputs
-    max_height: i32 = 0,
-
-    shm_data: []align(std.heap.page_size_min) u8 = &.{},
-
-    fullscreen: bool = false,
-    double_scale: bool = false,
-
-    pending_configure_serial: ?u32 = null,
-    pending_resize: ?WlPendingResize = null,
-
-    key_mods_pressed: KeyMods = .{},
-    key_mods_latched: KeyMods = .{},
-    key_mods_locked: KeyMods = .{},
-    game_input: [2]common.Input = @splat(.{}),
-    new_input: *Input = undefined,
-    old_input: *Input = undefined,
-
-    shared_state: *common.SharedState = undefined,
-};
-
-const WlOutput = struct {
-    handle: *wl.Output,
-    refresh_mhz: i32 = 0,
-    active: bool = false,
-};
-
-const WlBuffer = struct {
-    handle: ?*wl.Buffer,
-    offset: i32,
-    free: bool,
+pub const LinuxOffscreenBuffer = struct {
+    memory: [*]u8,
     width: i32,
     height: i32,
     pitch: i32,
 };
 
-const WlToplevel = union(enum) {
-    no_decoration: struct {
-        xdg_surface: *xdg_shell.Surface,
-        xdg_toplevel: *xdg_shell.Toplevel,
-    },
-
-    xdg_decoration: struct {
-        xdg_surface: *xdg_shell.Surface,
-        xdg_toplevel: *xdg_shell.Toplevel,
-        xdg_toplevel_decoration: *xdg_decoration.ToplevelDecorationV1,
-    },
-
-    pub fn setTitle(this: *WlToplevel, title: [:0]const u8) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.setTitle(title),
-            .xdg_decoration => |t| t.xdg_toplevel.setTitle(title),
-        }
-    }
-
-    pub fn set_fullscreen(this: *WlToplevel, output: ?*wl.Output) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.setFullscreen(output),
-            .xdg_decoration => |t| t.xdg_toplevel.setFullscreen(output),
-        }
-    }
-
-    pub fn unset_fullscreen(this: *WlToplevel) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
-            .xdg_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
-        }
-    }
-
-    pub fn ack_configure(this: *WlToplevel, serial: u32) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_surface.ackConfigure(serial),
-            .xdg_decoration => |t| t.xdg_surface.ackConfigure(serial),
-        }
-    }
+pub const InputState = struct {
+    new: *Input,
+    old: *Input,
 };
 
-const WlPendingResize = struct {
-    width: i32,
-    height: i32,
-};
+pub fn handleMouseEnter(window: *Window, input: *Input, x: i32, y: i32) void {
+    input.debug_mouse.x = x;
+    input.debug_mouse.y = y;
 
-fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const ButtonState, btn: Joystick.Button, new_state: *ButtonState) void {
+    // Hide cursor, if custom cursors are required use libwayland-cursor or cursor-shape protocol
+    if (options.internal_build) {
+        //
+    } else {
+        window.hideCursor();
+    }
+}
+
+pub fn handleMouseMotion(window: *Window, input: *Input, x: i32, y: i32) void {
+    _ = window;
+    input.debug_mouse.x = x;
+    input.debug_mouse.y = y;
+}
+
+pub fn handleMouseButton(window: *Window, button: linux.KEY, was_down: bool, is_down: bool) void {
+    const mouse = &window.input.new.debug_mouse;
+    const buttons = &mouse.buttons.array;
+
+    if (is_down != was_down) {
+        const key_index_opt: ?usize = switch (button) {
+            .BTN_LEFT => 0,
+            .BTN_RIGHT => 1,
+            .BTN_MIDDLE => 2,
+            .BTN_SIDE => 3,
+            .BTN_EXTRA => 4,
+            else => null,
+        };
+
+        if (key_index_opt) |key_index| {
+            processKeyEvent(&buttons[key_index], is_down);
+        }
+    }
+}
+
+pub fn handleKey(window: *Window, input: *Input, key: linux.KEY, was_down: bool, is_down: bool) void {
+    const keyboard_controller = &input.controllers[0];
+    const buttons = &keyboard_controller.buttons.named;
+
+    if (is_down != was_down) {
+        if (key == .Q) {
+            processKeyEvent(&buttons.left_shoulder, is_down);
+        } else if (key == .E) {
+            processKeyEvent(&buttons.right_shoulder, is_down);
+        } else if (key == .W) {
+            processKeyEvent(&buttons.move_up, is_down);
+        } else if (key == .S) {
+            processKeyEvent(&buttons.move_down, is_down);
+        } else if (key == .A) {
+            processKeyEvent(&buttons.move_left, is_down);
+        } else if (key == .D) {
+            processKeyEvent(&buttons.move_right, is_down);
+        } else if (key == .UP) {
+            processKeyEvent(&buttons.action_up, is_down);
+        } else if (key == .DOWN) {
+            processKeyEvent(&buttons.action_down, is_down);
+        } else if (key == .LEFT) {
+            processKeyEvent(&buttons.action_left, is_down);
+        } else if (key == .RIGHT) {
+            processKeyEvent(&buttons.action_right, is_down);
+        } else if (key == .ESC) {
+            processKeyEvent(&buttons.back, is_down);
+        } else if (key == .SPACE) {
+            processKeyEvent(&buttons.start, is_down);
+        }
+
+        if (options.internal_build) {
+            if (key == .LEFTSHIFT) {
+                processKeyEvent(&input.debug_mod_keys.left_shift, is_down);
+            } else if (key == .RIGHTSHIFT) {
+                processKeyEvent(&input.debug_mod_keys.right_shift, is_down);
+            } else if (key == .LEFTCTRL) {
+                processKeyEvent(&input.debug_mod_keys.left_ctrl, is_down);
+            } else if (key == .RIGHTCTRL) {
+                processKeyEvent(&input.debug_mod_keys.right_ctrl, is_down);
+            } else if (key == .LEFTALT) {
+                processKeyEvent(&input.debug_mod_keys.left_alt, is_down);
+            } else if (key == .RIGHTALT) {
+                processKeyEvent(&input.debug_mod_keys.right_alt, is_down);
+            } else if (key == .NUMLOCK) {
+                processKeyEvent(&input.debug_mod_keys.numlock, is_down);
+            }
+
+            const shift_down = input.debug_mod_keys.left_shift.ended_down or input.debug_mod_keys.right_shift.ended_down;
+            if (shift_down != input.debug_mod_keys.shift.ended_down) {
+                processKeyEvent(&input.debug_mod_keys.shift, shift_down);
+            }
+
+            const ctrl_down = input.debug_mod_keys.left_ctrl.ended_down or input.debug_mod_keys.right_ctrl.ended_down;
+            if (ctrl_down != input.debug_mod_keys.ctrl.ended_down) {
+                processKeyEvent(&input.debug_mod_keys.ctrl, ctrl_down);
+            }
+
+            const alt_down = input.debug_mod_keys.left_alt.ended_down or input.debug_mod_keys.right_alt.ended_down;
+            if (alt_down != input.debug_mod_keys.alt.ended_down) {
+                processKeyEvent(&input.debug_mod_keys.alt, alt_down);
+            }
+
+            if (is_down) {
+                if (key == .P) {
+                    global_pause = !global_pause;
+                } else if (key == .L) {
+                    if (window.shared_state.input_recording_index == 0 and
+                        window.shared_state.input_playing_index == 0)
+                    {
+                        beginRecordingInput(window.shared_state, 1);
+                    } else if (window.shared_state.input_recording_index == 1) {
+                        endRecordingInput(window.shared_state);
+                        beginInputPlayback(window.shared_state, 1);
+                    } else {
+                        endInputPlayback(window.shared_state);
+                        // TODO: Reset input, keys may be stuck in down state
+                    }
+                } else if ((key == .ENTER and input.debug_mod_keys.alt.ended_down) or
+                    key == .F11)
+                {
+                    toggleFullscreen(window);
+                }
+            }
+        }
+    }
+}
+
+inline fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const ButtonState, btn: Joystick.Button, new_state: *ButtonState) void {
     new_state.ended_down = buttons.isSet(@intFromEnum(btn));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 0 else 1;
 }
 
-fn processKeyEvent(new_state: *ButtonState, is_down: bool) void {
+inline fn processKeyEvent(new_state: *ButtonState, is_down: bool) void {
     new_state.ended_down = is_down;
     new_state.half_transition_count += 1;
 }
@@ -971,152 +809,6 @@ inline fn getSecondsElapsed(start: TimeStamp, end: TimeStamp) f32 {
     const d_ns_f: f32 = @floatFromInt(start.durationTo(end).ns());
     const d_s_f: f32 = d_ns_f / std.time.ns_per_s;
     return d_s_f;
-}
-
-const ShmError = error{
-    ShmOpenFailed,
-    ShmCloseFailed,
-    ShmUnlinkFailed,
-    FtruncateFailed,
-    MmapFailed,
-    WlShmCreatePoolFailed,
-    WlPoolCreateBufferFailed,
-};
-
-fn alloc_shm() ShmError!void {
-    const S = linux.S;
-
-    assert(wld.shm_data.len == 0);
-
-    var name_buf: [18]u8 = undefined;
-    name_buf[0] = '/';
-    name_buf[name_buf.len - 1] = 0;
-
-    for (name_buf[1 .. name_buf.len - 1]) |*char| {
-        switch (prng.intRangeLessThan(u8, 0, 3)) {
-            0 => char.* = prng.intRangeAtMost(u8, '0', '9'),
-            1 => char.* = prng.intRangeAtMost(u8, 'a', 'z'),
-            2 => char.* = prng.intRangeAtMost(u8, 'A', 'Z'),
-            else => unreachable,
-        }
-    }
-    const name = name_buf[0 .. name_buf.len - 1 :0];
-    log.debug("shm name: {s}", .{name});
-
-    // TODO: Use mem_fd!
-    const open_flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
-    const mode: linux.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
-    const fd = posix.shm_open(name, open_flags, mode) catch |e| {
-        log.err("shm_open failed, error: {}", .{e});
-        return error.ShmOpenFailed;
-    };
-    defer linux.close(fd);
-
-    posix.shm_unlink(name) catch |e| {
-        log.err("shm_unlink failed, error: {}", .{e});
-        return error.ShmUnlinkFailed;
-    };
-
-    const pixel_count: usize = @intCast(wld.max_width * wld.max_height);
-    const buffer_size: usize = pixel_count * bytes_per_pixel;
-    log.debug("shm per buffer size: {}", .{buffer_size});
-    const shm_size = buffer_size * wld.buffers.len;
-    log.debug("Allocating shm: {}", .{shm_size});
-
-    linux.ftruncate(fd, @intCast(shm_size)) catch {
-        log.err("ftruncate failed", .{});
-        return error.FtruncateFailed;
-    };
-
-    const prot = linux.PROT{ .READ = true, .WRITE = true };
-    const map = linux.MAP{ .TYPE = .SHARED };
-
-    assert(shm_size > 0);
-    if (linux.mmap(null, shm_size, prot, map, fd, 0)) |mapped| {
-        wld.shm_data = mapped;
-
-        assert(wld.pool == null);
-
-        const pool = wld.shm.createPool(fd, @intCast(wld.shm_data.len));
-        wld.pool = pool;
-
-        var width = wld.window_width;
-        var height = wld.window_height;
-        if (width == -1 and height == -1) {
-            width = back_buffer_width;
-            height = back_buffer_height;
-        }
-        const pitch = width * bytes_per_pixel;
-
-        var offset: i32 = 0;
-        for (&wld.buffers) |*buffer| {
-            const handle = pool.createBuffer(offset, width, height, pitch, .xrgb8888);
-
-            buffer.* = .{
-                .handle = handle,
-                .offset = offset,
-                .free = true,
-                .width = width,
-                .height = height,
-                .pitch = pitch,
-            };
-            handle.addListener(&wl_buffer_listener, buffer);
-
-            offset += @intCast(buffer_size);
-        }
-    } else |_| {
-        log.err("mmap call failed during shm buffer resize", .{});
-        return error.MmapFailed;
-    }
-}
-
-fn resize(width: i32, height: i32) !void {
-    if (width != wld.window_width or height != wld.window_height) {
-        log.info("resize: {},{} (double_scale:{})", .{ width, height, wld.double_scale });
-    }
-
-    if (width != 0) {
-        wld.window_width = width;
-    }
-    if (height != 0) {
-        wld.window_height = height;
-    }
-
-    wld.double_scale = width >= global_back_buffer.width * 2 and height >= global_back_buffer.height * 2;
-    wld.should_draw = true;
-    wld.pending_resize = null;
-}
-
-fn aquireFreeBuffer() ?*WlBuffer {
-    const pool = wld.pool.?;
-
-    for (&wld.buffers) |*buffer| {
-        if (buffer.free) {
-            if (buffer.handle == null or buffer.width != wld.window_width or buffer.height != wld.window_height) {
-                if (buffer.handle) |h| h.destroy();
-
-                const pitch = wld.window_width * bytes_per_pixel;
-
-                const new_buf = pool.createBuffer(buffer.offset, wld.window_width, wld.window_height, pitch, .xrgb8888);
-
-                buffer.* = .{
-                    .handle = new_buf,
-                    .offset = buffer.offset,
-                    .width = wld.window_width,
-                    .height = wld.window_height,
-                    .pitch = pitch,
-                    .free = false,
-                };
-
-                new_buf.addListener(&wl_buffer_listener, buffer);
-            }
-
-            buffer.free = false;
-            return buffer;
-        }
-    }
-
-    return null;
 }
 
 pub const DEBUG = struct {
@@ -1187,431 +879,16 @@ pub const DEBUG = struct {
             };
         }
     }
-
-    // TODO: Streaming, cancel-able version
-    // - If this needs to support pasting (like ctrl-v), this result needs to be
-    //    kept around, and associated with the data offer.
-    pub fn readClipboard() void {
-        if (wld.active_selection_offer) |offer| {
-            assert(wld.selection_mime != null);
-
-            var fds: [2]linux.fd_t = undefined;
-            // TODO: Add NONBLOCK when making this streaming
-            linux.pipe2(&fds, .{ .CLOEXEC = true }) catch @panic("Pipe creation failed!");
-
-            const read_fd = fds[0];
-            const write_fd = fds[1];
-            defer linux.close(read_fd);
-
-            offer.receive(wld.selection_mime.?, write_fd);
-            linux.close(write_fd);
-
-            var buf: [256]u8 = undefined;
-            if (linux.read(read_fd, &buf)) |clip_str| {
-                if (clip_str.len == 0) log.debug("Clipboard empty...", .{});
-                // assert(clip_str.len < buf.len); // Buffer too small ()
-                // const truncated = if (clip_str.len >= buf.len) " (truncated)" else "";
-                // log.debug("Clipboard{s}: \"{s}\"{s}", .{ truncated, clip_str, truncated });
-            } else |e| {
-                log.err("Clipboard read error: {}", .{e});
-                @panic("Clipboard read error");
-            }
-        }
-    }
-
-    pub fn readDnd() void {
-        if (wld.active_dnd_offer) |offer| {
-            assert(wld.dnd_mime != null);
-
-            var fds: [2]linux.fd_t = undefined;
-            linux.pipe2(&fds, .{ .CLOEXEC = true }) catch @panic("Pipe creation failed!");
-
-            const read_fd = fds[0];
-            const write_fd = fds[1];
-            defer linux.close(read_fd);
-
-            offer.receive(wld.dnd_mime.?, write_fd);
-            linux.close(write_fd);
-            defer offer.finish();
-
-            var buf: [4096]u8 = undefined;
-            if (linux.read(read_fd, &buf)) |clip_str| {
-                if (clip_str.len == 0) log.debug("DND empty...", .{});
-                assert(clip_str.len < buf.len - 1);
-                log.debug("DND: \"{s}\"", .{clip_str});
-            } else |e| {
-                log.err("DND read error: {}", .{e});
-                @panic("DND read error");
-            }
-        }
-    }
 };
 
-fn handleWlRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, interface_name: []const u8, version: u32) void {
-    const wli: *WlInitData = @ptrCast(@alignCast(data));
-
-    const Mapping = struct {
-        []const u8,
-        type,
-        ?*const anyopaque,
-    };
-
-    const mappings = [_]Mapping{
-        .{ "wl_shm", wl.Shm, &wl_shm_listener },
-        .{ "wl_seat", wl.Seat, &wl_seat_listener },
-        .{ "wl_compositor", wl.Compositor, null },
-        .{ "xdg_wm_base", xdg_shell.WmBase, &xdg_wm_base_listener },
-        .{ "xdg_decoration_manager", xdg_decoration.DecorationManagerV1, null },
-
-        .{ "wl_data_device_manager", wl.DataDeviceManager, null },
-    };
-
-    var found = false;
-    inline for (mappings) |map| {
-        const target_field_name: []const u8 = map[0];
-        const Interface: type = map[1];
-
-        if (std.mem.eql(u8, interface_name, Interface.interface.name)) {
-            const proxy = registry.bindTyped(Interface, name, version);
-            @field(wli, target_field_name) = proxy;
-            found = true;
-
-            if (map[2]) |listener| {
-                proxy.addListener(@ptrCast(@alignCast(listener)), wli);
-            }
-            break;
-        }
-    }
-
-    if (!found) {
-        if (std.mem.eql(u8, "wl_output", interface_name)) {
-            var free_slot_found = false;
-            for (&wld.outputs) |*output| {
-                if (output.* == null) {
-                    const wl_output = registry.bindTyped(wl.Output, name, version);
-                    output.* = .{
-                        .handle = wl_output,
-                    };
-                    free_slot_found = true;
-
-                    wl_output.addListener(&wl_output_listener, output);
-                    break;
-                }
-            }
-
-            if (!free_slot_found) {
-                log.warn("Monitor capacity reached (8)! Ignoring monitor.", .{});
-            }
-        }
-    }
-}
-
-fn handleWlRemoveGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32) void {
-    _ = data;
-    _ = registry;
-
-    // TODO: Handle monitor hotplug?
-    log.debug("Remove global: {}", .{name});
-}
-
-fn handleWlSurfaceEnter(data: ?*anyopaque, surface: *wl.Surface, current_output: *wl.Output) void {
-    _ = data;
-    _ = surface;
-
-    var found = false;
-    for (&wld.outputs) |*output_opt| {
-        if (output_opt.*) |*existing_output| {
-            if (existing_output.handle == current_output) {
-                existing_output.active = true;
-                found = true;
-                break;
-            }
-        }
-    }
-
-    if (!found) {
-        log.warn("Failed to find matching output: {*}", .{current_output});
-    }
-}
-
-fn handleWlSurfaceLeave(data: ?*anyopaque, surface: *wl.Surface, current_output: *wl.Output) void {
-    _ = data;
-    _ = surface;
-
-    log.debug("Surface leave: {}", .{current_output});
-
-    var found = false;
-    for (&wld.outputs) |*output_opt| {
-        if (output_opt.*) |*existing_output| {
-            if (existing_output.handle == current_output) {
-                existing_output.active = false;
-                found = true;
-                break;
-            }
-        }
-    }
-
-    if (!found) {
-        log.warn("Failed to find matching output: {*}", .{current_output});
-    }
-}
-
-fn handleWlShmFormat(data: ?*anyopaque, shm: *wl.Shm, format: wl.Shm.Format) void {
-    _ = shm;
-
-    const wli: *WlInitData = @ptrCast(@alignCast(data));
-    if (format == .xrgb8888) wli.xrgb8888 = true;
-}
-
-fn handleXdgPing(data: ?*anyopaque, wm_base: *xdg_shell.WmBase, serial: u32) void {
-    _ = data;
-    wm_base.pong(serial);
-}
-
-fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: *xdg_shell.Surface, serial: u32) void {
-    _ = data;
-    _ = surface;
-
-    wld.pending_configure_serial = serial;
-}
-
-fn handleXdgToplevelConfigure(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, width: i32, height: i32, states_: []const u32) void {
-    _ = data;
-    _ = toplevel;
-
-    log.debug("xdg toplevel configure: {},{}", .{ width, height });
-
-    const E = xdg_shell.Toplevel.State;
-    const states: []const E = @ptrCast(states_);
-    _ = states;
-
-    wld.pending_resize = .{ .width = width, .height = height };
-}
-
-fn handleXdgToplevelConfigureBounds(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, width: i32, height: i32) void {
-    _ = data;
-    _ = toplevel;
-
-    wld.bound_width = width;
-    wld.bound_height = height;
-    log.debug("xdg toplevel configure bounds {},{}", .{ width, height });
-}
-
-fn handleXdgToplevelWmCapabilities(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, capabilities: []const u32) void {
-    _ = data;
-    _ = toplevel;
-
-    const E = xdg_shell.Toplevel.WmCapabilities;
-    const caps: []const E = @ptrCast(capabilities);
-    _ = caps;
-}
-
-fn handleXdgToplevelClose(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel) void {
-    _ = data;
-    _ = toplevel;
-
-    running = false;
-}
-
-fn handleWlCallbackFrameDone(data: ?*anyopaque, _: *wl.Callback, _: u32) void {
-    _ = data;
-    wld.should_draw = true;
-}
-
-fn handleWlBufferRelease(data: ?*anyopaque, wl_buffer: *wl.Buffer) void {
-    _ = wl_buffer;
-    const buffer: *WlBuffer = @ptrCast(@alignCast(data));
-
-    if (buffer.width != wld.window_width or buffer.height != wld.window_height) {
-        buffer.handle.?.destroy();
-        buffer.handle = null;
-    }
-
-    buffer.free = true;
-}
-
-fn handleWlSeatCapabilities(data: ?*anyopaque, seat: *wl.Seat, capabilities: wl.Seat.Capability) void {
-    _ = seat;
-
-    const wli: *WlInitData = @ptrCast(@alignCast(data));
-    wli.seat_capabilities = capabilities;
-}
-
-fn handleWlKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32, rawkey: u32, state: wl.Keyboard.KeyState) void {
-    _ = data;
-    _ = keyboard;
-    _ = time;
-    _ = serial;
-
-    // TODO: Do this via the keymap with xkb!
-    const key: linux.KEY = @enumFromInt(rawkey);
-    const was_down = state != .pressed;
-    const is_down = state == .pressed or state == .repeated;
-
-    const keyboard_controller = &wld.new_input.controllers[0];
-    const buttons = &keyboard_controller.buttons.named;
-
-    if (is_down != was_down) {
-        if (key == .Q) {
-            processKeyEvent(&buttons.left_shoulder, is_down);
-        } else if (key == .E) {
-            processKeyEvent(&buttons.right_shoulder, is_down);
-        } else if (key == .W) {
-            processKeyEvent(&buttons.move_up, is_down);
-        } else if (key == .S) {
-            processKeyEvent(&buttons.move_down, is_down);
-        } else if (key == .A) {
-            processKeyEvent(&buttons.move_left, is_down);
-        } else if (key == .D) {
-            processKeyEvent(&buttons.move_right, is_down);
-        } else if (key == .UP) {
-            processKeyEvent(&buttons.action_up, is_down);
-        } else if (key == .DOWN) {
-            processKeyEvent(&buttons.action_down, is_down);
-        } else if (key == .LEFT) {
-            processKeyEvent(&buttons.action_left, is_down);
-        } else if (key == .RIGHT) {
-            processKeyEvent(&buttons.action_right, is_down);
-        } else if (key == .ESC) {
-            processKeyEvent(&buttons.back, is_down);
-        } else if (key == .SPACE) {
-            processKeyEvent(&buttons.start, is_down);
-        }
-
-        if (options.internal_build and is_down) {
-            if (key == .P) {
-                pause = !pause;
-            } else if (key == .L) {
-                if (wld.shared_state.input_recording_index == 0 and
-                    wld.shared_state.input_playing_index == 0)
-                {
-                    beginRecordingInput(wld.shared_state, 1);
-                } else if (wld.shared_state.input_recording_index == 1) {
-                    endRecordingInput(wld.shared_state);
-                    beginInputPlayback(wld.shared_state, 1);
-                } else {
-                    endInputPlayback(wld.shared_state);
-                    // TODO: Reset input, keys may be stuck in down state
-                }
-            } else if ((key == .ENTER and wld.key_mods_pressed.alt) or
-                key == .F11)
-            {
-                toggleFullscreen();
-            }
-        }
-    }
-}
-
-fn handleWlKeyModifiers(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32) void {
-    _ = .{ data, keyboard, serial, mods_depressed, mods_latched, mods_locked, group };
-
-    wld.key_mods_pressed = @bitCast(mods_depressed);
-    wld.key_mods_latched = @bitCast(mods_latched);
-    wld.key_mods_locked = @bitCast(mods_locked);
-}
-
-fn toggleFullscreen() void {
-    if (wld.fullscreen) {
-        wld.toplevel.unset_fullscreen();
-        wld.fullscreen = false;
+fn toggleFullscreen(window: *Window) void {
+    if (window.fullscreen) {
+        window.toplevel.unset_fullscreen();
+        window.fullscreen = false;
     } else {
         // TODO: Preferred fullscreen monitor
-        wld.toplevel.set_fullscreen(null);
-        wld.fullscreen = true;
-    }
-}
-
-fn handleWlPointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, surface: *wl.Surface, surface_x: wl.Fixed, surface_y: wl.Fixed) void {
-    _ = data;
-    _ = pointer;
-    _ = surface;
-
-    wld.new_input.debug_mouse.x = surface_x.toInt();
-    wld.new_input.debug_mouse.y = surface_y.toInt();
-
-    // Hide cursor, if custom cursors are required use libwayland-cursor or cursor-shape protocol
-    if (options.internal_build) {
-        //
-    } else {
-        wld.pointer.setCursor(serial, null, 0, 0);
-    }
-}
-
-fn handleWlMouseMotion(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, surface_x: wl.Fixed, surface_y: wl.Fixed) void {
-    _ = .{ data, pointer, time };
-
-    wld.new_input.debug_mouse.x = surface_x.toInt();
-    wld.new_input.debug_mouse.y = surface_y.toInt();
-}
-
-fn handleWlMouseButton(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, time: u32, raw_button: u32, state: wl.Pointer.ButtonState) void {
-    _ = .{ data, pointer, serial, time };
-
-    const button: linux.KEY = @enumFromInt(raw_button);
-    const was_down = state == .released;
-    const is_down = state == .pressed;
-
-    const mouse = &wld.new_input.debug_mouse;
-    const buttons = &mouse.buttons.array;
-
-    if (is_down != was_down) {
-        const key_index_opt: ?usize = switch (button) {
-            .BTN_LEFT => 0,
-            .BTN_RIGHT => 1,
-            .BTN_MIDDLE => 2,
-            .BTN_SIDE => 3,
-            .BTN_EXTRA => 4,
-            else => null,
-        };
-
-        if (key_index_opt) |key_index| {
-            processKeyEvent(&buttons[key_index], is_down);
-        }
-    }
-}
-
-fn handleWlMouseAxis(data: ?*anyopaque, pointer: *wl.Pointer, time: u32, axis: wl.Pointer.Axis, value: wl.Fixed) void {
-    _ = .{ data, pointer, time, axis, value };
-    // log.debug("mouse axis: {}:{}", .{ axis, value.toDouble() });
-}
-
-fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: *xdg_decoration.ToplevelDecorationV1, mode: xdg_decoration.ToplevelDecorationV1.Mode) void {
-    _ = toplevel_decoration;
-    log.info("xdg_decoration configure: {}", .{mode});
-
-    const mode_ptr: *?xdg_decoration.ToplevelDecorationV1.Mode = @ptrCast(@alignCast(data));
-    mode_ptr.* = mode;
-}
-
-fn handleWlOutputGeometry(data: ?*anyopaque, output: *wl.Output, x: i32, y: i32, physical_width: i32, physical_height: i32, subpixel: wl.Output.Subpixel, make: []const u8, model: []const u8, transform: wl.Output.Transform) void {
-    _ = data;
-    _ = output;
-    _ = x;
-    _ = y;
-    _ = physical_width;
-    _ = physical_height;
-    _ = subpixel;
-    _ = make;
-    _ = model;
-    _ = transform;
-}
-
-fn handleWlOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) void {
-    _ = flags;
-
-    const output_data: *WlOutput = @ptrCast(@alignCast(data));
-    assert(output_data.handle == output);
-    output_data.refresh_mhz = refresh;
-
-    // log.debug("handleWlOutputMode: {},{},{},{}", .{ flags, width, height, refresh });
-
-    const new_pixel_count = width * height;
-    const max_pixel_count = wld.max_width * wld.max_height;
-    if (new_pixel_count > max_pixel_count) {
-        wld.max_width = width;
-        wld.max_height = height;
-
-        // TODO: Create new shm pool, delete old when all buffers are released
+        window.toplevel.set_fullscreen(null);
+        window.fullscreen = true;
     }
 }
 
@@ -1967,109 +1244,6 @@ const PulseContext = struct {
     }
 };
 
-/// Return value indicates if a wl_buffer was available, and thus if the offscreenbuffer was actually displayed
-fn displayBufferInWindow(buffer: LinuxOffscreenBuffer) bool {
-    if (!wld.should_draw) {
-        log.warn("Failed to display buffer, should_draw=false", .{});
-        return false;
-    }
-
-    if (aquireFreeBuffer()) |wl_buffer| {
-        const wl_buffer_ptr: [*]u8 = wld.shm_data.ptr + @as(usize, @intCast(wl_buffer.offset));
-        const wl_buffer_mem: []u8 = wl_buffer_ptr[0..@intCast(wl_buffer.pitch * wl_buffer.height)];
-
-        // TODO: Clear gutters in release?
-        if (options.internal_build) {
-            @memset(@as([]u32, @ptrCast(@alignCast(wl_buffer_mem))), 0);
-        }
-
-        if (wld.double_scale) {
-            const dest_line_length: usize = @intCast(@min(buffer.width * 2, wl_buffer.width) * bytes_per_pixel);
-            const source_line_length: usize = @intCast(@min(buffer.width, @divTrunc(wl_buffer.width, 2)) * bytes_per_pixel);
-
-            const source_row_count: usize = @intCast(@min(buffer.height, @divTrunc(wl_buffer.height, 2)));
-
-            for (0..source_row_count) |src_y| {
-                const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
-                const source_line: []u32 = @ptrCast(@alignCast(buffer.memory[source_offset .. source_offset + source_line_length]));
-
-                const dst_y = src_y * 2;
-                const dest_offset1 = dst_y * @as(usize, @intCast(wl_buffer.pitch));
-                const dest_line1: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset1 .. dest_offset1 + dest_line_length]));
-                const dest_offset2 = dest_offset1 + @as(usize, @intCast(wl_buffer.pitch));
-                const dest_line2: []u32 = @ptrCast(@alignCast(wl_buffer_mem[dest_offset2 .. dest_offset2 + dest_line_length]));
-
-                for (0..source_line.len) |src_x| {
-                    const dst_x = src_x * 2;
-
-                    dest_line1[dst_x] = source_line[src_x];
-                    dest_line1[dst_x + 1] = source_line[src_x];
-                }
-
-                @memcpy(dest_line2, dest_line1);
-            }
-        } else {
-
-            // TODO: Offset mouse position by this
-            const x_offset = 10;
-            const y_offset = 10;
-
-            const line_length: usize = @intCast(@min(buffer.width, wl_buffer.width - x_offset) * bytes_per_pixel);
-            const row_count: usize = @intCast(@min(buffer.height, wl_buffer.height - y_offset));
-
-            // NOTE: This could be a single memcopy if:
-            //  - We reallocate the offscreen_buffer in the same way as the wayland buffers (same size).
-            //  - UpdateAndRender is passed an offscreen buffer where width and height are static (logical back buffer size).
-            //  - UpdateAndRender is passed an offscreen buffer where the pitch matches the size of a line in the actual buffers.
-            //  - We enforce the logical back buffer size as the minimum window size (orelse the game will write out of bounds).
-            //
-            //  I might actually prefer that, but for now this matches hh on win32.
-            const y_off: usize = @intCast(y_offset);
-            const x_off: usize = @intCast(x_offset);
-            for (y_off..y_off + row_count, 0..row_count) |dst_y, src_y| {
-                const dest_offset = (dst_y * @as(usize, @intCast(wl_buffer.pitch))) + (x_off * bytes_per_pixel);
-                const dest_line = wl_buffer_mem[dest_offset .. dest_offset + line_length];
-
-                const source_offset = src_y * @as(usize, @intCast(buffer.pitch));
-                const source_line = buffer.memory[source_offset .. source_offset + line_length];
-
-                @memcpy(dest_line, source_line);
-            }
-        }
-
-        displayWaylandBufferInWindow(wl_buffer);
-        return true;
-    } else {
-        // _ = wlc.displayRoundtrip(wld.display);
-        log.warn("Failed to aquire wayland buffer!", .{});
-        // unreachable; // might want to loop util a buffer is aquired
-        // continue;
-        return false;
-    }
-}
-
-fn displayWaylandBufferInWindow(buffer: *WlBuffer) void {
-    wld.surface.attach(buffer.handle, 0, 0);
-
-    if (options.internal_build) {
-        wld.surface.damage(0, 0, buffer.width, buffer.height);
-    } else {
-        const width, const height = if (wld.double_scale)
-            .{ global_back_buffer.width * 2, global_back_buffer.height * 2 }
-        else
-            .{ global_back_buffer.width, global_back_buffer.height };
-
-        wld.surface.damage(0, 0, @min(buffer.width, width), @min(buffer.height, height));
-    }
-
-    const callback = wld.surface.frame();
-    wld.should_draw = false;
-    callback.addListener(&wl_frame_callback_listener, &wld);
-
-    wld.surface.commit();
-    _ = wlc.displayFlush(wld.display);
-}
-
 pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_index: usize) void {
     const replay_buffer = shared_state.getReplayBuffer(input_recording_index);
 
@@ -2134,245 +1308,3 @@ pub fn playbackInput(shared_state: *common.SharedState, new_input: *Input) void 
         }
     } else |_| @panic("Input playback read failed");
 }
-
-pub fn handleWlDataOffer(data: ?*anyopaque, data_device: *wl.DataDevice, offer: *wl.DataOffer) void {
-    _ = data;
-    _ = data_device;
-
-    assert(wld.pending_data_offer == null);
-    wld.pending_data_offer = offer;
-
-    offer.addListener(&wl_data_offer_listener, null);
-    assert(wld.pending_offer_mime == null);
-    assert(wld.pending_offer_mime_weight == 0);
-}
-
-pub fn handleWlDataDeviceEnter(data: ?*anyopaque, data_device: *wl.DataDevice, serial: u32, surface: *wl.Surface, x: wl.Fixed, y: wl.Fixed, offer_opt: ?*wl.DataOffer) void {
-    _ = data;
-    _ = data_device;
-    _ = surface;
-    _ = x;
-    _ = y;
-
-    if (offer_opt) |offer| {
-        assert(wld.pending_data_offer != null);
-        if (offer.object.id == wld.pending_data_offer.?.object.id) {
-            assert(wld.active_dnd_offer == null);
-
-            wld.active_dnd_offer = offer;
-            wld.pending_data_offer = null;
-
-            assert(wld.pending_offer_mime != null);
-            assert(wld.dnd_mime == null);
-            wld.dnd_mime = std.fmt.bufPrintSentinel(&wld.dnd_mime_buffer, "{s}", .{wld.pending_offer_mime.?}, 0) catch unreachable;
-            log.debug("dnd mime: {s}", .{wld.dnd_mime.?});
-            wld.pending_offer_mime = null;
-            wld.pending_offer_mime_weight = 0;
-
-            offer.accept(serial, wld.dnd_mime);
-            offer.setActions(wld.active_dnd_source_actions, .{ .copy = true });
-        }
-    }
-}
-
-pub fn handleWlDataDeviceLeave(data: ?*anyopaque, data_device: *wl.DataDevice) void {
-    _ = data;
-    _ = data_device;
-
-    if (wld.active_dnd_offer) |dnd_offer| {
-        dnd_offer.destroy();
-        wld.active_dnd_offer = null;
-        wld.dnd_mime = null;
-    }
-}
-
-pub fn handleWlDataDeviceDrop(data: ?*anyopaque, data_device: *wl.DataDevice) void {
-    _ = data;
-    _ = data_device;
-
-    if (wld.active_dnd_offer) |_| {
-        DEBUG.readDnd();
-    }
-}
-
-pub fn handleWlDataDeviceSelection(data: ?*anyopaque, data_device: *wl.DataDevice, offer_opt: ?*wl.DataOffer) void {
-    _ = data;
-    _ = data_device;
-
-    if (wld.active_selection_offer) |old| old.destroy();
-
-    if (offer_opt) |offer| {
-        assert(wld.pending_data_offer != null);
-        assert(wld.pending_offer_mime != null);
-
-        if (offer.object.id == wld.pending_data_offer.?.object.id) {
-            wld.active_selection_offer = wld.pending_data_offer;
-            wld.pending_data_offer = null;
-
-            log.debug("selection mime: {s}", .{wld.pending_offer_mime.?});
-
-            wld.selection_mime = std.fmt.bufPrintSentinel(&wld.selection_mime_buffer, "{s}", .{wld.pending_offer_mime.?}, 0) catch unreachable;
-            wld.pending_offer_mime = null;
-            wld.pending_offer_mime_weight = 0;
-
-            DEBUG.readClipboard();
-        }
-    } else {
-        wld.active_selection_offer = null;
-    }
-}
-
-pub fn handleWlDataOfferOffer(data: ?*anyopaque, data_offer: *wl.DataOffer, mime_type: []const u8) void {
-    _ = data;
-
-    assert(wld.pending_data_offer != null);
-    assert(data_offer.object.id == wld.pending_data_offer.?.object.id);
-
-    const mimes = [_][]const u8{
-        "STRING",
-        "TEXT",
-        "UTF8_STRING",
-        "text/plain",
-        "text/plain;charset=utf-8",
-
-        "text/uri-list",
-
-        "image/gif",
-        "image/png",
-        "image/jpeg",
-        "image/jpg",
-    };
-
-    var new_weight: u8 = 0;
-    var match = false;
-
-    inline for (mimes, 1..) |mime, weight| {
-        if (std.mem.eql(u8, mime_type, mime)) {
-            new_weight = weight;
-            match = true;
-            break;
-        }
-    }
-
-    if ((match and new_weight > wld.pending_offer_mime_weight) or (!match and wld.pending_offer_mime == null)) {
-        wld.pending_offer_mime = std.fmt.bufPrintSentinel(&wld.pending_offer_mime_buffer, "{s}", .{mime_type}, 0) catch unreachable;
-        wld.pending_offer_mime_weight = new_weight;
-    }
-}
-
-pub fn handleWlDataOfferSourceActions(data: ?*anyopaque, data_offer: *wl.DataOffer, source_actions: wl.DataDeviceManager.DndAction) void {
-    _ = data;
-
-    if (wld.active_dnd_offer) |offer| {
-        if (data_offer.object.id == offer.object.id) {
-            wld.active_dnd_source_actions = source_actions;
-        }
-    }
-}
-
-pub fn handleWlDataOfferAction(data: ?*anyopaque, data_offer: *wl.DataOffer, dnd_action: wl.DataDeviceManager.DndAction) void {
-    _ = data;
-
-    if (wld.active_dnd_offer) |offer| {
-        if (data_offer.object.id == offer.object.id) {
-            wld.active_dnd_action = dnd_action;
-        }
-    }
-}
-
-fn nop() void {}
-
-const wl_registry_listener = wl.Registry.Listener{
-    .global = handleWlRegisterGlobal,
-    .globalRemove = handleWlRemoveGlobal,
-};
-
-const wl_shm_listener = wl.Shm.Listener{
-    .format = handleWlShmFormat,
-};
-
-const wl_surface_listener = wl.Surface.Listener{
-    .enter = handleWlSurfaceEnter,
-    .leave = handleWlSurfaceLeave,
-    .preferredBufferScale = @ptrCast(&nop),
-    .preferredBufferTransform = @ptrCast(&nop),
-};
-
-const xdg_wm_base_listener = xdg_shell.WmBase.Listener{
-    .ping = handleXdgPing,
-};
-
-const xdg_surface_listener = xdg_shell.Surface.Listener{
-    .configure = handleXdgSurfaceConfigure,
-};
-
-const xdg_toplevel_listener = xdg_shell.Toplevel.Listener{
-    .configure = handleXdgToplevelConfigure,
-    .configureBounds = handleXdgToplevelConfigureBounds,
-    .wmCapabilities = handleXdgToplevelWmCapabilities,
-    .close = handleXdgToplevelClose,
-};
-
-const wl_frame_callback_listener = wl.Callback.Listener{
-    .done = handleWlCallbackFrameDone,
-};
-
-const wl_buffer_listener = wl.Buffer.Listener{
-    .release = handleWlBufferRelease,
-};
-
-const wl_seat_listener = wl.Seat.Listener{
-    .capabilities = handleWlSeatCapabilities,
-    .name = @ptrCast(&nop),
-};
-
-const wl_data_device_listener = wl.DataDevice.Listener{
-    .dataOffer = handleWlDataOffer,
-    .enter = handleWlDataDeviceEnter,
-    .leave = handleWlDataDeviceLeave,
-    .motion = @ptrCast(&nop),
-    .drop = handleWlDataDeviceDrop,
-    .selection = handleWlDataDeviceSelection,
-};
-
-const wl_data_offer_listener = wl.DataOffer.Listener{
-    .offer = handleWlDataOfferOffer,
-    .sourceActions = handleWlDataOfferSourceActions,
-    .action = handleWlDataOfferAction,
-};
-
-const wl_keyboard_listener = wl.Keyboard.Listener{
-    .key = handleWlKey,
-    .enter = @ptrCast(&nop),
-    .leave = @ptrCast(&nop),
-    .modifiers = handleWlKeyModifiers,
-    .repeatInfo = @ptrCast(&nop),
-    .keymap = @ptrCast(&nop),
-};
-
-const wl_mouse_listener = wl.Pointer.Listener{
-    .enter = handleWlPointerEnter,
-    .leave = @ptrCast(&nop),
-    .motion = handleWlMouseMotion,
-    .button = handleWlMouseButton,
-    .axis = handleWlMouseAxis,
-    .frame = @ptrCast(&nop), // TODO: Use this to handle incoming data correctly in relation to frame boundaries
-    .axisDiscrete = @ptrCast(&nop),
-    .axisSource = @ptrCast(&nop),
-    .axisStop = @ptrCast(&nop),
-    .axisValue120 = @ptrCast(&nop),
-    .axisRelativeDirection = @ptrCast(&nop),
-};
-
-const xdg_decoration_listener = xdg_decoration.ToplevelDecorationV1.Listener{
-    .configure = handleXdgDecorationConfigure,
-};
-
-const wl_output_listener = wl.Output.Listener{
-    .geometry = handleWlOutputGeometry,
-    .mode = handleWlOutputMode,
-    .done = @ptrCast(&nop),
-    .scale = @ptrCast(&nop),
-    .name = @ptrCast(&nop),
-    .description = @ptrCast(&nop),
-};

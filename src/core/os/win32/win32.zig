@@ -1500,6 +1500,38 @@ pub const NT_PROCESS_INFO_CLASS = enum(c_int) {
     MaxProcessInfoClass,
 };
 
+pub const MAPVK = enum(UINT) {
+    /// The uCode parameter is a virtual-key code and is translated into a scan
+    /// code. If it is a virtual-key code that does not distinguish between
+    /// left- and right-hand keys, the left-hand scan code is returned.
+    /// If there is no translation, the function returns 0.
+    VK_TO_VSC = 0,
+    /// The uCode parameter is a scan code and is translated into a virtual-key
+    /// code that does not distinguish between left- and right-hand keys.
+    /// If there is no translation, the function returns 0.
+    /// Windows Vista and later: the high byte of the uCode value can contain
+    /// either 0xe0 or 0xe1 to specify the extended scan code.
+    VSC_TO_VK = 1,
+    /// The uCode parameter is a virtual-key code and is translated into an
+    /// unshifted character value in the low order word of the return value.
+    /// Dead keys (diacritics) are indicated by setting the top bit of the
+    /// return value. If there is no translation, the function returns 0. See Remarks.
+    VK_TO_CHAR = 2,
+    /// The uCode parameter is a scan code and is translated into a virtual-key
+    /// code that distinguishes between left- and right-hand keys. If there is
+    /// no translation, the function returns 0.
+    ///Windows Vista and later: the high byte of the uCode value can contain
+    ///either 0xe0 or 0xe1 to specify the extended scan code.
+    VSC_TO_VK_EX = 3,
+    /// Windows Vista and later: The uCode parameter is a virtual-key code and
+    /// is translated into a scan code. If it is a virtual-key code that does
+    /// not distinguish between left- and right-hand keys, the left-hand scan
+    /// code is returned. If the scan code is an extended scan code, the high
+    /// byte of the returned value will contain either 0xe0 or 0xe1 to specify
+    /// the extended scan code. If there is no translation, the function returns 0.
+    VK_TO_VSC_EX = 4,
+};
+
 pub const NT_KERNEL_USER_TIMES = extern struct {
     create_time: LARGE_INTEGER,
     exit_time: LARGE_INTEGER,
@@ -1624,6 +1656,8 @@ pub extern "user32" fn SetWindowPlacement(hwnd: HWND, placement: *const WINDOWPL
 pub extern "user32" fn SetWindowPos(hwnd: HWND, insert_after: ?HWND, x: c_int, y: c_int, cx: c_int, cy: c_int, flags: UINT) callconv(.winapi) BOOL;
 pub extern "user32" fn MonitorFromWindow(hwnd: HWND, flags: DWORD) callconv(.winapi) HMONITOR;
 pub extern "user32" fn GetMonitorInfoA(monitor: HMONITOR, info: *MONITORINFO) callconv(.winapi) BOOL;
+
+pub extern "user32" fn MapVirtualKeyA(code: UINT, map_type: MAPVK) callconv(.winapi) UINT;
 
 pub extern "gdi32" fn GetDeviceCaps(hdc: HDC, index: c_int) callconv(.winapi) c_int;
 pub extern "gdi32" fn PatBlt(hdc: ?HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: DWORD) callconv(.winapi) BOOL;
