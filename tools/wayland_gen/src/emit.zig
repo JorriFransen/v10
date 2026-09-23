@@ -129,7 +129,7 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
             const trampoline_name_raw = try std.mem.concat(tmp.a, u8, &.{ "trampoline_", sig });
 
             try writer.appendf("\ninline fn {f}(object: *Object, opcode: u16) u32 {{\n", .{std.zig.fmtId(trampoline_name_raw)});
-            try writer.appendi(1, "const HandlerType = *const fn (?*anyopaque, *Object");
+            try writer.appendi(1, "const HandlerType = ?*const fn (?*anyopaque, *Object");
 
             var regular_arg_count: usize = 0;
             var fd_arg_count: usize = 0;
@@ -235,10 +235,10 @@ pub fn emitTrampolines(context: *const generator.Context, dir: std.Io.Dir, sub_p
                 \\    const next = node.next;
                 \\    const listener: *const RegisteredListener = @fieldParentPtr("node", node);
                 \\    assert(opcode < listener.implementation.len);
-                \\    const handler: HandlerType = @ptrCast(listener.implementation[opcode]);
+                \\    const handler_opt: HandlerType = @ptrCast(listener.implementation[opcode]);
                 \\
                 \\    listener_count += 1;
-                \\    handler(listener.user_data, @ptrCast(object)
+                \\    if (handler_opt) |h| h(listener.user_data, @ptrCast(object)
             );
 
             for (types, 1..) |t, n| {
@@ -619,8 +619,12 @@ const Writer = struct {
         try this.appendi(1, "};\n\n");
 
         try this.appendif(1,
-            \\pub inline fn addListener(this: *{s}, listener: *const Listener, data: ?*anyopaque) *const RegisteredListener {{
-            \\    return client.proxyAddListener(@ptrCast(this), @ptrCast(listener), data);
+            \\pub inline fn addListener(this: *{0s}, listener: *const Listener, data: ?*anyopaque) *const RegisteredListener {{
+            \\    return client.proxyAddListener(&this.object, @ptrCast(listener), data);
+            \\}}
+            \\
+            \\pub inline fn removeListener(this: *{0s}, listener: *const RegisteredListener) void {{
+            \\    return client.proxyRemoveListener(&this.object, listener);
             \\}}
             \\
         , .{interface.zig_name});

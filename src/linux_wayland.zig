@@ -261,7 +261,7 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
     errdefer this.xdg_toplevel.destroy();
     const toplevel_init_listener = this.xdg_toplevel.addListener(&xdg_toplevel_init_listener, this);
     defer {
-        wlc.proxyRemoveListener(&this.xdg_toplevel.object, toplevel_init_listener);
+        this.xdg_toplevel.removeListener(toplevel_init_listener);
         _ = this.xdg_toplevel.addListener(&xdg_toplevel_listener, this);
     }
 
@@ -284,7 +284,7 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
         }
         this.pending_configure_serial = null;
 
-        wlc.proxyRemoveListener(&dec.object, dec_mode_listener);
+        dec.removeListener(dec_mode_listener);
 
         if (xdg_decoration_mode == .serverSide) {
             this.xdg_toplevel_decoration = dec;
@@ -611,8 +611,6 @@ fn swapBuffers(this: *Context, buffer: *Buffer) void {
     _ = wlc.displayFlush(this.display);
 }
 
-fn nop() void {}
-
 const registry_listener = wl.Registry.Listener{
     .global = handleRegisterGlobal,
     .globalRemove = handleRemoveGlobal,
@@ -702,8 +700,8 @@ fn handleShmFormat(data: ?*anyopaque, shm: *wl.Shm, format: wl.Shm.Format) void 
 const surface_listener = wl.Surface.Listener{
     .enter = handleSurfaceEnter,
     .leave = handleSurfaceLeave,
-    .preferredBufferScale = @ptrCast(&nop),
-    .preferredBufferTransform = @ptrCast(&nop),
+    .preferredBufferScale = null,
+    .preferredBufferTransform = null,
 };
 
 fn handleSurfaceEnter(data: ?*anyopaque, surface: *wl.Surface, current_output: *wl.Output) void {
@@ -853,7 +851,7 @@ fn handleBufferRelease(data: ?*anyopaque, wl_buffer: *wl.Buffer) void {
 
 const seat_listener = wl.Seat.Listener{
     .capabilities = handleSeatCapabilities,
-    .name = @ptrCast(&nop),
+    .name = null,
 };
 
 fn handleSeatCapabilities(data: ?*anyopaque, seat: *wl.Seat, capabilities: wl.Seat.Capability) void {
@@ -865,11 +863,11 @@ fn handleSeatCapabilities(data: ?*anyopaque, seat: *wl.Seat, capabilities: wl.Se
 
 const keyboard_listener = wl.Keyboard.Listener{
     .key = handleKey,
-    .enter = @ptrCast(&nop),
-    .leave = @ptrCast(&nop),
-    .modifiers = @ptrCast(&nop),
-    .repeatInfo = @ptrCast(&nop),
-    .keymap = @ptrCast(&nop),
+    .enter = null,
+    .leave = null,
+    .modifiers = null,
+    .repeatInfo = null,
+    .keymap = null,
 };
 
 fn handleKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32, raw_key: u32, state: wl.Keyboard.KeyState) void {
@@ -888,16 +886,16 @@ fn handleKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32, 
 
 const mouse_listener = wl.Pointer.Listener{
     .enter = handlePointerEnter,
-    .leave = @ptrCast(&nop),
+    .leave = null,
     .motion = handleMouseMotion,
     .button = handleMouseButton,
     .axis = handleMouseAxis,
-    .frame = @ptrCast(&nop), // TODO: Use this to handle incoming data correctly in relation to frame boundaries
-    .axisDiscrete = @ptrCast(&nop),
-    .axisSource = @ptrCast(&nop),
-    .axisStop = @ptrCast(&nop),
-    .axisValue120 = @ptrCast(&nop),
-    .axisRelativeDirection = @ptrCast(&nop),
+    .frame = null, // TODO: Use this to handle incoming data correctly in relation to frame boundaries
+    .axisDiscrete = null,
+    .axisSource = null,
+    .axisStop = null,
+    .axisValue120 = null,
+    .axisRelativeDirection = null,
 };
 
 fn handlePointerEnter(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, surface: *wl.Surface, surface_x: wl.Fixed, surface_y: wl.Fixed) void {
@@ -952,12 +950,12 @@ fn handleXdgDecorationConfigure(data: ?*anyopaque, toplevel_decoration: *xdg_dec
 }
 
 const output_listener = wl.Output.Listener{
-    .geometry = @ptrCast(&nop),
+    .geometry = null,
     .mode = handleOutputMode,
-    .done = @ptrCast(&nop),
-    .scale = @ptrCast(&nop),
-    .name = @ptrCast(&nop),
-    .description = @ptrCast(&nop),
+    .done = null,
+    .scale = null,
+    .name = null,
+    .description = null,
 };
 
 fn handleOutputMode(data: ?*anyopaque, output: *wl.Output, flags: wl.Output.Mode, width: i32, height: i32, refresh: i32) void {
