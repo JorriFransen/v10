@@ -883,11 +883,11 @@ pub const DEBUG = struct {
 
 fn toggleFullscreen(window: *Window) void {
     if (window.fullscreen) {
-        window.toplevel.unset_fullscreen();
+        window.xdg_toplevel.unsetFullscreen();
         window.fullscreen = false;
     } else {
         // TODO: Preferred fullscreen monitor
-        window.toplevel.set_fullscreen(null);
+        window.xdg_toplevel.setFullscreen(null);
         window.fullscreen = true;
     }
 }

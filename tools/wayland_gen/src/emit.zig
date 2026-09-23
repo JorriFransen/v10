@@ -619,8 +619,8 @@ const Writer = struct {
         try this.appendi(1, "};\n\n");
 
         try this.appendif(1,
-            \\pub inline fn addListener(this: *{s}, listener: *const Listener, data: ?*anyopaque) void {{
-            \\    client.proxyAddListener(@ptrCast(this), @ptrCast(listener), data);
+            \\pub inline fn addListener(this: *{s}, listener: *const Listener, data: ?*anyopaque) *const RegisteredListener {{
+            \\    return client.proxyAddListener(@ptrCast(this), @ptrCast(listener), data);
             \\}}
             \\
         , .{interface.zig_name});

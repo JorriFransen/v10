@@ -48,6 +48,9 @@ keyboard: *wl.Keyboard = undefined,
 last_pointer_enter_serial: u32 = undefined,
 pointer: *wl.Pointer = undefined,
 
+xdg_surface: *xdg_shell.Surface = undefined,
+xdg_toplevel: *xdg_shell.Toplevel = undefined,
+xdg_toplevel_decoration: ?*xdg_decoration.ToplevelDecorationV1 = null,
 xdg_decoration_manager: ?*xdg_decoration.DecorationManagerV1 = null,
 
 pending_data_offer: ?*wl.DataOffer = null,
@@ -64,8 +67,6 @@ dnd_mime: ?[]const u8 = null,
 pending_offer_mime_buffer: [256]u8 = @splat(0),
 selection_mime_buffer: [256]u8 = @splat(0),
 dnd_mime_buffer: [256]u8 = @splat(0),
-
-toplevel: Toplevel = undefined,
 
 /// Window width
 window_width: i32 = 0,
@@ -162,7 +163,7 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
     this.registry = this.display.getRegistry();
     errdefer this.registry.destroy();
 
-    this.registry.addListener(&registry_listener, this);
+    _ = this.registry.addListener(&registry_listener, this);
     if (wlc.displayRoundtrip(this.display) == -1) {
         log.err("wl_display_roundtrip failed", .{});
         return error.UnexpectedWayland;
@@ -189,7 +190,7 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
     }
 
     for (&this.outputs) |*output| if (output.flags.connected) {
-        output.handle.addListener(&output_listener, output);
+        _ = output.handle.addListener(&output_listener, output);
     };
 
     _ = wlc.displayRoundtrip(this.display); // Wait for max_width/height to be set
@@ -201,6 +202,24 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
     this.window_height = window_height;
 
     log.debug("initial window size: {},{}", .{ this.window_width, this.window_height });
+
+    if (this.seat_capabilities.keyboard == false) {
+        log.debug("keyboard not available", .{});
+        return error.UnexpectedWayland;
+    }
+    if (this.seat_capabilities.pointer == false) {
+        log.debug("mouse not available", .{});
+        return error.UnexpectedWayland;
+    }
+
+    if (this.has_xrgb8888_format == false) {
+        log.err("xrgb8888 format not avaliable", .{});
+        return error.UnexpectedWayland;
+    }
+
+    this.surface = this.wl_compositor.createSurface();
+    errdefer this.surface.destroy();
+    _ = this.surface.addListener(&surface_listener, this);
 
     try allocShm(this);
     errdefer freeShm(this);
@@ -225,7 +244,7 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
             .height = buffer_height,
             .pitch = pitch,
         };
-        handle.addListener(&buffer_listener, buffer);
+        _ = handle.addListener(&buffer_listener, buffer);
 
         shm_offset += @intCast(this.max_buffer_size);
     }
@@ -234,94 +253,76 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
         buffer.handle.destroy();
     };
 
-    if (this.seat_capabilities.keyboard == false) {
-        log.debug("keyboard not available", .{});
-        return error.UnexpectedWayland;
-    }
-    if (this.seat_capabilities.pointer == false) {
-        log.debug("mouse not available", .{});
-        return error.UnexpectedWayland;
-    }
+    this.xdg_surface = this.xdg_wm_base.getXdgSurface(this.surface);
+    errdefer this.xdg_surface.destroy();
+    _ = this.xdg_surface.addListener(&xdg_surface_listener, this);
 
-    if (this.has_xrgb8888_format == false) {
-        log.err("xrgb8888 format not avaliable", .{});
-        return error.UnexpectedWayland;
+    this.xdg_toplevel = this.xdg_surface.getToplevel();
+    errdefer this.xdg_toplevel.destroy();
+    const toplevel_init_listener = this.xdg_toplevel.addListener(&xdg_toplevel_init_listener, this);
+    defer {
+        wlc.proxyRemoveListener(&this.xdg_toplevel.object, toplevel_init_listener);
+        _ = this.xdg_toplevel.addListener(&xdg_toplevel_listener, this);
     }
 
-    this.surface = this.wl_compositor.createSurface();
-    errdefer this.surface.destroy();
-    this.surface.addListener(&surface_listener, this);
+    this.xdg_toplevel.setAppId(title);
+    this.xdg_toplevel.setTitle(title);
+    this.surface.commit();
+    _ = wlc.displayRoundtrip(this.display);
+    this.handlePendingResize();
 
-    this.toplevel = blk: {
-        const xdg_surface = this.xdg_wm_base.getXdgSurface(this.surface);
-        xdg_surface.addListener(&xdg_surface_listener, this);
+    if (this.xdg_decoration_manager) |dec_manager| {
+        const dec = dec_manager.getToplevelDecoration(this.xdg_toplevel);
+        dec.setMode(.serverSide);
 
-        const xdg_toplevel = xdg_surface.getToplevel();
-        xdg_toplevel.addListener(&xdg_toplevel_listener, this);
-
-        xdg_toplevel.setAppId(title);
-        xdg_toplevel.setTitle(title);
-        this.surface.commit();
-
-        if (this.xdg_decoration_manager) |manager| {
-            const toplevel_decoration = manager.getToplevelDecoration(xdg_toplevel);
-            toplevel_decoration.setMode(.serverSide);
-
-            var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
-            toplevel_decoration.addListener(&xdg_decoration_listener, &xdg_decoration_mode);
-
-            _ = wlc.displayRoundtrip(this.display);
-            xdg_surface.ackConfigure(this.pending_configure_serial.?);
-            this.pending_configure_serial = null;
-
-            if (xdg_decoration_mode == .serverSide) {
-                if (this.pending_resize) |r| {
-                    try resize(this, r.width, r.height);
-                }
-
-                break :blk .{
-                    .xdg_decoration = .{
-                        .xdg_surface = xdg_surface,
-                        .xdg_toplevel = xdg_toplevel,
-                        .xdg_toplevel_decoration = toplevel_decoration,
-                    },
-                };
-            } else {
-                toplevel_decoration.destroy();
-            }
-        }
-
-        log.debug("xdg_decoration not supported, falling back to no decorations", .{});
+        var xdg_decoration_mode: ?xdg_decoration.ToplevelDecorationV1.Mode = null;
+        const dec_mode_listener = dec.addListener(&xdg_decoration_listener, &xdg_decoration_mode);
 
         _ = wlc.displayRoundtrip(this.display);
         if (this.pending_configure_serial) |serial| {
-            xdg_surface.ackConfigure(serial);
+            this.xdg_surface.ackConfigure(serial);
         }
         this.pending_configure_serial = null;
 
-        break :blk .{ .no_decoration = .{ .xdg_surface = xdg_surface, .xdg_toplevel = xdg_toplevel } };
-    };
-    errdefer this.toplevel.deinit();
+        wlc.proxyRemoveListener(&dec.object, dec_mode_listener);
+
+        if (xdg_decoration_mode == .serverSide) {
+            this.xdg_toplevel_decoration = dec;
+        } else if (xdg_decoration_mode != .serverSide) {
+            dec.destroy();
+        }
+    } else {
+        log.debug("xdg_decoration not supported, falling back to no decorations", .{});
+    }
+
+    _ = wlc.displayRoundtrip(this.display);
+    if (this.pending_configure_serial) |serial| {
+        this.xdg_surface.ackConfigure(serial);
+    }
+    this.pending_configure_serial = null;
+    this.handlePendingResize();
 
     this.keyboard = this.wl_seat.getKeyboard();
     errdefer this.keyboard.release();
-    this.keyboard.addListener(&keyboard_listener, this);
+    _ = this.keyboard.addListener(&keyboard_listener, this);
 
     this.pointer = this.wl_seat.getPointer();
     errdefer this.pointer.release();
-    this.pointer.addListener(&mouse_listener, this);
+    _ = this.pointer.addListener(&mouse_listener, this);
 
-    // Present the first frame to make the window visible
-    this.buffers[0].free = false;
-    const buffer = &this.buffers[0];
-    swapBuffers(this, buffer);
+    const wl_buffer = this.acquireFreeBuffer().?;
+    swapBuffers(this, wl_buffer);
 }
 
 pub fn deinit(this: *Context) void {
     this.pointer.release();
     this.keyboard.release();
 
-    this.toplevel.deinit();
+    if (this.xdg_toplevel_decoration) |dec| {
+        dec.destroy();
+    }
+    this.xdg_toplevel.destroy();
+    this.xdg_surface.destroy();
 
     this.surface.destroy();
 
@@ -365,7 +366,7 @@ pub fn pollTimeout(this: *Context, ns: u64) bool {
 pub fn handlePendingResize(this: *Context) void {
     if (this.pending_resize) |r| {
         if (this.pending_configure_serial) |serial| {
-            this.toplevel.ack_configure(serial);
+            this.xdg_surface.ackConfigure(serial);
             this.pending_configure_serial = null;
         }
         try this.resize(r.width, r.height);
@@ -461,61 +462,6 @@ pub fn blitBuffer(this: *Context, buffer: *const linux_v10.LinuxOffscreenBuffer)
         return false;
     }
 }
-
-const Toplevel = union(enum) {
-    no_decoration: struct {
-        xdg_surface: *xdg_shell.Surface,
-        xdg_toplevel: *xdg_shell.Toplevel,
-    },
-
-    xdg_decoration: struct {
-        xdg_surface: *xdg_shell.Surface,
-        xdg_toplevel: *xdg_shell.Toplevel,
-        xdg_toplevel_decoration: *xdg_decoration.ToplevelDecorationV1,
-    },
-
-    pub fn setTitle(this: *Toplevel, title: [:0]const u8) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.setTitle(title),
-            .xdg_decoration => |t| t.xdg_toplevel.setTitle(title),
-        }
-    }
-
-    pub fn set_fullscreen(this: *Toplevel, output: ?*wl.Output) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.setFullscreen(output),
-            .xdg_decoration => |t| t.xdg_toplevel.setFullscreen(output),
-        }
-    }
-
-    pub fn unset_fullscreen(this: *Toplevel) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
-            .xdg_decoration => |t| t.xdg_toplevel.unsetFullscreen(),
-        }
-    }
-
-    pub fn ack_configure(this: *Toplevel, serial: u32) void {
-        switch (this.*) {
-            .no_decoration => |t| t.xdg_surface.ackConfigure(serial),
-            .xdg_decoration => |t| t.xdg_surface.ackConfigure(serial),
-        }
-    }
-
-    fn deinit(this: *Toplevel) void {
-        switch (this.*) {
-            .no_decoration => |t| {
-                t.xdg_surface.destroy();
-                t.xdg_toplevel.destroy();
-            },
-            .xdg_decoration => |t| {
-                t.xdg_toplevel_decoration.destroy();
-                t.xdg_surface.destroy();
-                t.xdg_toplevel.destroy();
-            },
-        }
-    }
-};
 
 const ShmError = error{
     ShmOpenFailed,
@@ -629,7 +575,7 @@ fn acquireFreeBuffer(this: *Context) ?*Buffer {
                     .free = false,
                 };
 
-                new_buf.addListener(&buffer_listener, buffer);
+                _ = new_buf.addListener(&buffer_listener, buffer);
             }
 
             buffer.free = false;
@@ -659,7 +605,7 @@ fn swapBuffers(this: *Context, buffer: *Buffer) void {
 
     const callback = this.surface.frame();
     this.should_draw = false;
-    callback.addListener(&frame_callback_listener, this);
+    _ = callback.addListener(&frame_callback_listener, this);
 
     this.surface.commit();
     _ = wlc.displayFlush(this.display);
@@ -704,7 +650,7 @@ fn handleRegisterGlobal(data: ?*anyopaque, registry: *wl.Registry, name: u32, in
             found = true;
 
             if (map[2]) |listener| {
-                proxy.addListener(@ptrCast(@alignCast(listener)), ctx);
+                _ = proxy.addListener(@ptrCast(@alignCast(listener)), ctx);
             }
             break;
         }
@@ -816,6 +762,28 @@ fn handleXdgSurfaceConfigure(data: ?*anyopaque, surface: *xdg_shell.Surface, ser
     const ctx: *Context = @ptrCast(@alignCast(data));
 
     ctx.pending_configure_serial = serial;
+}
+
+const xdg_toplevel_init_listener = xdg_shell.Toplevel.Listener{
+    .configure = handleXdgToplevelConfigureInit,
+    .configureBounds = handleXdgToplevelConfigureBounds,
+    .wmCapabilities = handleXdgToplevelWmCapabilities,
+    .close = handleXdgToplevelClose,
+};
+
+fn handleXdgToplevelConfigureInit(data: ?*anyopaque, toplevel: *xdg_shell.Toplevel, width: i32, height: i32, states_: []const u32) void {
+    _ = toplevel;
+    const ctx: *Context = @ptrCast(@alignCast(data));
+
+    log.debug("xdg toplevel init configure: {},{}", .{ width, height });
+
+    const E = xdg_shell.Toplevel.State;
+    const states: []const E = @ptrCast(states_);
+    _ = states;
+
+    if (width != 0 or height != 0) {
+        ctx.pending_resize = .{ .width = width, .height = height };
+    }
 }
 
 const xdg_toplevel_listener = xdg_shell.Toplevel.Listener{

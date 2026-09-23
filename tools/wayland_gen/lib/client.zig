@@ -178,7 +178,7 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
 
             glob_connected = true;
 
-            glob_display.addListener(&glob_display_listener, null);
+            _ = glob_display.addListener(&glob_display_listener, null);
         } else |e| {
             log.err("display_connect fcntl failed, error: {}", .{e});
         }
@@ -204,7 +204,7 @@ pub fn displayRoundtrip(display: *Display) usize {
     const display_roundtrip_done_listener = wl_core.Callback.Listener{
         .done = &displayRoundtripSyncDoneHandler,
     };
-    sync_callback.addListener(&display_roundtrip_done_listener, &done);
+    _ = sync_callback.addListener(&display_roundtrip_done_listener, &done);
     displayFlush(display);
 
     while (!done) {
@@ -727,7 +727,7 @@ pub fn marshalArg(buf: []u32, offset: *usize, arg: u32) void {
     offset.* += 1;
 }
 
-pub fn proxyAddListener(object: *Object, implementation: []const *const fn () void, user_data: ?*anyopaque) void {
+pub fn proxyAddListener(object: *Object, implementation: []const *const fn () void, user_data: ?*anyopaque) *const RegisteredListener {
     assert(glob_display.free_listeners.first != null);
 
     const listener: *RegisteredListener = @fieldParentPtr("node", glob_display.free_listeners.popFirst().?);
@@ -737,6 +737,33 @@ pub fn proxyAddListener(object: *Object, implementation: []const *const fn () vo
     };
 
     object.listeners.prepend(&listener.node);
+
+    return listener;
+}
+
+pub fn proxyRemoveListener(object: *Object, listener: *const RegisteredListener) void {
+    var found = false;
+    var prev_opt: ?*std.SinglyLinkedList.Node = null;
+    var cur_opt = object.listeners.first;
+
+    while (cur_opt) |cur| {
+        if (cur == &listener.node) {
+            found = true;
+
+            if (prev_opt) |prev| {
+                prev.next = cur.next;
+            } else {
+                object.listeners.first = cur.next;
+            }
+
+            break;
+        }
+
+        prev_opt = cur;
+        cur_opt = cur.next;
+    }
+
+    assert(found);
 }
 
 fn handleDisplayError(user_data: ?*anyopaque, display: ?*Display, object_id: ?*Object, code: u32, message: []const u8) void {
