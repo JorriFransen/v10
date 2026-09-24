@@ -140,7 +140,7 @@ pub const DirIteratorError = DirIteratorInitError || DirIteratorNextError;
 pub const DirIterator = os.DirIterator;
 
 pub const PathIterator = struct {
-    path: [:0]const u8,
+    path: []const u8,
     current_start: usize,
     current_end: usize,
     root_end: usize,
@@ -152,7 +152,7 @@ pub const PathIterator = struct {
         name: []const u8,
     };
 
-    pub fn init(path: [:0]const u8) PathIterator {
+    pub fn init(path: []const u8) PathIterator {
         if (path.len == 0) {
             return .{ .path = path, .current_start = 0, .current_end = 0, .root_end = 0 };
         }
@@ -220,7 +220,7 @@ pub const PathIterator = struct {
     }
 
     pub fn last(this: *PathIterator) ?Elem {
-        if (this.path.len == 0 or (this.path.len == 1 and isSep(this.path[0]))) return null;
+        if (this.path.len == 0 or this.path.len == this.root_end) return null;
 
         if (isSep(this.path[this.path.len - 1])) {
             var end: usize = this.path.len - 1;
@@ -252,7 +252,21 @@ pub const PathIterator = struct {
     }
 };
 
-pub const dirnameN = os.dirnameN;
+pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
+    if (n == 0) return path;
+
+    var n_rem = n;
+    var it = PathIterator.init(path);
+
+    _ = it.last() orelse return null;
+    n_rem -= 1;
+
+    while (n_rem > 0) : (n_rem -= 1) {
+        _ = it.prev() orelse return null;
+    }
+
+    return if (it.prev()) |p| p.path else it.root();
+}
 
 /// Copy 'path' into a (inlined) stack buffer, return null terminated slice.
 pub inline fn stackPathZ(path: []const u8) [:0]const u8 {
@@ -440,4 +454,75 @@ test "PathIterator linux" {
         try t.expect(null == it.last());
         try t.expect(null == it.next());
     }
+}
+
+test dirnameN {
+    try testDirnameN("/a/b/c", "/a/b", 1);
+    try testDirnameN("/a/b/c///", "/a/b", 1);
+    try testDirnameN("a/b", "a", 1);
+    try testDirnameN("a/b/c", "a/b", 1);
+    try testDirnameN("a/b/c///", "a/b", 1);
+    try testDirnameN("/a", "/", 1);
+    try testDirnameN("/", null, 1);
+    try testDirnameN("//", null, 1);
+    try testDirnameN("///", null, 1);
+    try testDirnameN("////", null, 1);
+    try testDirnameN("", null, 1);
+    try testDirnameN("a", null, 1);
+    try testDirnameN("a/", null, 1);
+    try testDirnameN("a//", null, 1);
+
+    try testDirnameN("/a/b/c", "/a", 2);
+    try testDirnameN("/a/b/c///", "/a", 2);
+    try testDirnameN("a/b/c", "a", 2);
+    try testDirnameN("a/b", null, 2);
+    try testDirnameN("a/b/c///", "a", 2);
+    try testDirnameN("/a", null, 2);
+    try testDirnameN("/", null, 2);
+    try testDirnameN("//", null, 2);
+    try testDirnameN("///", null, 2);
+    try testDirnameN("////", null, 2);
+    try testDirnameN("", null, 2);
+    try testDirnameN("a", null, 2);
+    try testDirnameN("a/", null, 2);
+    try testDirnameN("a//", null, 2);
+
+    try testDirnameN("a/b/c", null, 3);
+    try testDirnameN("a/b/c///", null, 3);
+    try testDirnameN("a/b", null, 3);
+
+    try testDirnameN("a//b", "a", 1);
+    try testDirnameN("a///b", "a", 1);
+    try testDirnameN("a//b//c", "a//b", 1);
+    try testDirnameN("a//b//c", "a", 2);
+    try testDirnameN("a//b//c", null, 3);
+
+    try testDirnameN("/a//b", "/a", 1);
+    try testDirnameN("/a///b", "/a", 1);
+    try testDirnameN("/a//b//c", "/a//b", 1);
+    try testDirnameN("/a//b//c", "/a", 2);
+    try testDirnameN("/a//b//c", "/", 3);
+    try testDirnameN("/a//b//c", null, 4);
+
+    try testDirnameN("///a/b", "///a", 1);
+    try testDirnameN("///a/b", "/", 2);
+    try testDirnameN("///a/b", null, 3);
+
+    try testDirnameN("a//b///c////d", "a//b///c", 1);
+    try testDirnameN("a//b///c////d", "a//b", 2);
+    try testDirnameN("a//b///c////d", "a", 3);
+    try testDirnameN("a//b///c////d", null, 4);
+}
+
+fn testDirnameN(input: []const u8, expected_output_opt: ?[]const u8, n: usize) !void {
+    var std_result_opt: ?[]const u8 = input;
+    for (0..n) |_| {
+        std_result_opt = if (std_result_opt) |std_result| std.fs.path.dirnamePosix(std_result) else null;
+    }
+
+    const output_opt = dirnameN(input, n);
+
+    try std.testing.expectEqualDeep(expected_output_opt, std_result_opt);
+    try std.testing.expectEqualDeep(expected_output_opt, output_opt);
+    try std.testing.expectEqualDeep(std_result_opt, output_opt);
 }
