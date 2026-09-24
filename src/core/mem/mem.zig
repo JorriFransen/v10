@@ -152,12 +152,3 @@ fn SliceToSentinelRet(comptime Slice: type, comptime sentinel: std.meta.Elem(Sli
         else => @compileError("Invalid type given to sliceToSentinel: " ++ @typeName(Slice)),
     }
 }
-
-/// Copy 'path' into a (inlined) stack buffer, return null terminated slice.
-pub inline fn stackPathZ(path: []const u8) [:0]const u8 {
-    var buf: [fs.max_path_bytes]u8 = undefined;
-    assert(path.len + 1 <= buf.len);
-    @memcpy(buf[0..path.len], path);
-    buf[path.len] = 0;
-    return buf[0..path.len :0];
-}

@@ -8,7 +8,6 @@ const TimeStamp = core.time.TimeStamp;
 const assert = core.assert;
 const linux = core.os.linux;
 const math = core.math;
-const posix = core.os.posix;
 
 const common = @import("v10_common");
 const Input = common.Input;
@@ -500,13 +499,13 @@ fn allocShm(this: *Context) ShmError!void {
     // TODO: Use mem_fd!
     const open_flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
     const mode: linux.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
-    this.shm_fd = posix.shm_open(name, open_flags, mode) catch |e| {
+    this.shm_fd = linux.shm_open(name, open_flags, mode) catch |e| {
         log.err("shm_open failed, error: {}", .{e});
         return error.ShmOpenFailed;
     };
     errdefer linux.close(this.shm_fd);
 
-    posix.shm_unlink(name) catch |e| {
+    linux.shm_unlink(name) catch |e| {
         log.err("shm_unlink failed, error: {}", .{e});
         return error.ShmUnlinkFailed;
     };

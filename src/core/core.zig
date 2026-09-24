@@ -69,7 +69,8 @@ pub fn defaultLogFileTerminal(
 test {
     const t = std.testing;
 
-    t.refAllDecls(os);
     t.refAllDecls(cli_arg_parser);
+    t.refAllDecls(fs);
     t.refAllDecls(mem);
+    t.refAllDecls(os);
 }

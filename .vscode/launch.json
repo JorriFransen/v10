@@ -19,6 +19,15 @@
             "request": "launch",
             "program": "${workspaceRoot}/zig-out/test/core_tests",
             "args": [],
+        },
+        {
+            "name": "Asset compiler",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceRoot}/zig-out/bin/asset_compiler",
+            "args": ["-v", "-i", "raw_art", "-o", "data"],
+            "cwd": "${workspaceRoot}"
         }
+
     ]
 }
