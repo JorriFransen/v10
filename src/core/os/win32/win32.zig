@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const fs = @import("fs.zig");
+
 const assert = @import("../../assert.zig").assert;
 const time = @import("../../time.zig");
 
@@ -50,6 +52,14 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
             }
         },
     }
+}
+
+pub inline fn peb() *zig_win32.PEB {
+    comptime assert(@offsetOf(zig_win32.TEB, "ProcessEnvironmentBlock") == 0x60);
+    return asm (
+        \\ movq %%gs:0x60, %[ptr]
+        : [ptr] "=r" (-> *zig_win32.PEB),
+    );
 }
 
 const math = @import("../../math.zig");
