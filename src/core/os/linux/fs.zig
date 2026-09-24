@@ -33,7 +33,7 @@ pub fn close(handle: Handle) void {
     linux.close(handle);
 }
 
-pub fn cwd() fs.Dir {
+pub inline fn cwd() fs.Dir {
     return .{ .handle = linux.AT.FDCWD };
 }
 
@@ -126,41 +126,23 @@ pub const DirIterator = struct {
     dents: []u8,
     buffer: [16 * (@sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len)]u8 align(@alignOf(linux.Dirent64)),
 
-    pub const Options = struct {
-        reset_fd_pos: bool = true,
-    };
-
-    pub const Entry = struct {
-        name: [:0]const u8,
-        type: Type,
-
-        pub const Type = enum {
-            unknown,
-            pipe,
-            char,
-            dir,
-            block,
-            file,
-            link,
-            socket,
-            whiteout,
-        };
-    };
+    pub const Options = fs.DirIteratorOptions;
+    pub const Entry = fs.DirIteratorEntry;
 
     pub const Error = fs.DirIteratorError;
     pub const InitError = fs.DirIteratorInitError;
     pub const NextError = fs.DirIteratorNextError;
 
-    pub fn init(dir_fd: linux.dirfd_t, options: Options) InitError!DirIterator {
-        if (options.reset_fd_pos) {
-            _ = linux.lseek(dir_fd, 0, .SET) catch |e| switch (e) {
+    pub fn init(dir: fs.Dir, options: Options) InitError!DirIterator {
+        if (options.reset_handle_pos) {
+            _ = linux.lseek(dir.handle, 0, .SET) catch |e| switch (e) {
                 error.BADF => return error.InvalidHandle,
                 else => return error.SeekFailed,
             };
         }
 
         return .{
-            .fd = dir_fd,
+            .fd = dir.handle,
             .dents = &.{},
             .buffer = undefined,
         };
