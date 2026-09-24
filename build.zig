@@ -104,21 +104,6 @@ pub fn build(b: *Build) !void {
         engine.run.step.dependOn(&tests.run.step);
         engine.install.step.dependOn(&tests.run.step);
     }
-
-    const clip_example_module = b.createModule(.{
-        .root_source_file = b.path("src/core/cli_arg_parse.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const clip_example_exe = b.addExecutable(.{
-        .name = "clip_example",
-        .root_module = clip_example_module,
-    });
-
-    const clip_run = b.addRunArtifact(clip_example_exe);
-    if (b.args) |a| clip_run.addArgs(a);
-    const clip_example = b.step("clip_example", "");
-    clip_example.dependOn(&clip_run.step);
 }
 
 const Modules = struct {
@@ -355,6 +340,7 @@ const Tools = struct {
     pub const AssetCompiler = struct {
         exe: *Step.Compile,
         module: *Module,
+        install: *Step,
 
         fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?AssetCompiler {
             const aseprite_names: []const []const u8 = if (tools_target.result.os.tag == .windows)
@@ -390,11 +376,12 @@ const Tools = struct {
                 .use_llvm = use_llvm,
             });
 
-            // b.installArtifact(asset_compiler_exe);
+            const install = b.addInstallArtifact(asset_compiler_exe, .{});
 
             return .{
                 .exe = asset_compiler_exe,
                 .module = root_module,
+                .install = &install.step,
             };
         }
     };
@@ -414,6 +401,7 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
 
     const asset_compiler_run = b.addRunArtifact(asset_compiler.exe);
     asset_step.dependOn(&asset_compiler_run.step);
+    asset_step.dependOn(asset_compiler.install);
 
     if (debug_asset_compiler)
         asset_compiler_run.addArg("--debug")

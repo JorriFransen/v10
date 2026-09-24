@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const core = @import("core");
 const Timestamp = core.time.TimeStamp;
 const assert = core.assert;
+const fs = core.fs;
 const mem = core.mem;
 
 const compile_options = @import("options");
@@ -41,11 +42,11 @@ pub const Context = struct {
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 
-    scan_dir: std.Io.Dir = undefined,
-    output_dir: std.Io.Dir = undefined,
+    scan_dir: fs.Dir = undefined,
+    output_dir: fs.Dir = undefined,
 
-    scan_dir_path: []const u8 = undefined,
-    output_dir_path: []const u8 = undefined,
+    scan_dir_path: [:0]const u8 = undefined,
+    output_dir_path: [:0]const u8 = undefined,
 
     options: OptionParser.Options,
 
@@ -140,35 +141,50 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
         return error.MissingOutputDir;
     }
 
-    const cwd = try std.process.currentPathAlloc(ctx.io, allocator);
+    ctx.debug("input_scan_dir: '{s}'", .{ctx.options.input_scan_dir});
+    ctx.debug("output_dir: '{s}'", .{ctx.options.output_dir});
+
+    const cwd: [:0]const u8 = try std.process.currentPathAlloc(ctx.io, allocator);
+
+    var tmp = mem.getScratch(allocator);
+    defer tmp.release();
 
     ctx.scan_dir = dir: {
         if (pathIsAbsolute(ctx.options.input_scan_dir)) {
-            ctx.scan_dir_path = try allocator.dupe(u8, ctx.options.input_scan_dir);
+            ctx.scan_dir_path = try allocator.dupeSentinel(u8, ctx.options.input_scan_dir, 0);
         } else {
-            ctx.scan_dir_path = try pathResolve(allocator, &.{ cwd, ctx.options.input_scan_dir });
+            const sdp = try pathResolve(tmp.a, &.{ cwd, ctx.options.input_scan_dir });
+            ctx.scan_dir_path = try allocator.dupeSentinel(u8, sdp, 0);
         }
 
-        break :dir std.Io.Dir.cwd().openDir(ctx.io, ctx.scan_dir_path, .{ .iterate = true }) catch |e| {
+        ctx.debug("resolved scan_dir: '{s}'", .{ctx.scan_dir_path});
+
+        break :dir fs.cwd().openDir(ctx.scan_dir_path, .{ .iterate = true, .follow_symlinks = false }) catch |e| {
             ctx.err("Unable to open input dir '{s}', error: '{s}'", .{ ctx.scan_dir_path, @errorName(e) });
             return error.InvalidInputScanDir;
         };
     };
-    defer ctx.scan_dir.close(ctx.io);
+    defer ctx.scan_dir.close();
 
     ctx.output_dir = dir: {
         if (pathIsAbsolute(ctx.options.output_dir)) {
-            ctx.output_dir_path = try allocator.dupe(u8, ctx.options.output_dir);
+            ctx.output_dir_path = try allocator.dupeSentinel(u8, ctx.options.output_dir, 0);
         } else {
-            ctx.output_dir_path = try pathResolve(allocator, &.{ cwd, ctx.options.output_dir });
+            const odp = try pathResolve(tmp.a, &.{ cwd, ctx.options.output_dir });
+            ctx.output_dir_path = try allocator.dupeSentinel(u8, odp, 0);
         }
 
-        break :dir std.Io.Dir.cwd().openDir(ctx.io, ctx.output_dir_path, .{ .iterate = true }) catch |e| switch (e) {
-            error.FileNotFound => blk: {
+        break :dir fs.cwd().openDir(ctx.output_dir_path, .{ .iterate = true, .follow_symlinks = false }) catch |e| switch (e) {
+            error.FileNotFound => {
                 ctx.verbose("Creating output dir: '{s}'", .{ctx.output_dir_path});
 
-                break :blk std.Io.Dir.cwd().createDirPathOpen(ctx.io, ctx.output_dir_path, .{}) catch |de| {
-                    ctx.err("Unable to creat output dir '{s}', error: '{s}'", .{ ctx.output_dir_path, @errorName(de) });
+                fs.cwd().createDirParents(ctx.output_dir_path, .{}) catch |de| {
+                    ctx.err("Unable to create output dir '{s}', error: '{s}'", .{ ctx.output_dir_path, @errorName(de) });
+                    return de;
+                };
+
+                break :dir fs.cwd().openDir(ctx.output_dir_path, .{ .iterate = true, .follow_symlinks = false }) catch |de| {
+                    ctx.err("Unable to open output dir '{s}', error: '{s}'", .{ ctx.output_dir_path, @errorName(de) });
                     return de;
                 };
             },
@@ -179,10 +195,12 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
             },
         };
     };
-    defer ctx.output_dir.close(ctx.io);
+    defer ctx.output_dir.close();
 
-    ctx.debug("input_scan_dir: '{s}'", .{ctx.scan_dir_path});
-    ctx.debug("output_dir: '{s}'", .{ctx.output_dir_path});
+    tmp.release(); // null terminated dir paths.
+
+    ctx.debug("absolute input_scan_dir: '{s}'", .{ctx.scan_dir_path});
+    ctx.debug("absolute output_dir: '{s}'", .{ctx.output_dir_path});
 
     const ts_start = PerfTs.now();
     var ts_file: TimestampFile, const ts_file_exists = if (try readTimestampFile(ctx, arena)) |tsf| .{ tsf, true } else blk: {
@@ -272,7 +290,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     if (errors) return error.SomeInputsFailed;
 }
 
-const CompileError = AsepriteError || mem.Arena.Error || error{ OutputNameTooLong, OutputMissing };
+const CompileError = AsepriteError || mem.Arena.Error || fs.Error || error{ OutputNameTooLong, OutputMissing };
 
 fn compile(ctx: *Context, allocator: Allocator, input_files: []const InputFile, indices: []const usize) CompileError![]?CompileResult {
     const cpu_count = std.Thread.getCpuCount() catch 1;
@@ -407,7 +425,7 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
     defer stack.deinit(ctx.gpa);
 
     try stack.append(ctx.gpa, .{
-        .it = ctx.output_dir.iterate(),
+        .it = ctx.output_dir.stdDir().iterate(),
         .path = "", // To skip close at the end
     });
 
@@ -472,19 +490,19 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
 
     const tags = try asepriteTags(ctx, tmp.arena, &result_arena, input_file.abs_path, perf_timers);
 
-    var output_file_paths: [][]const u8 = &.{};
+    var output_file_paths: [][:0]const u8 = &.{};
 
     if (!tags.skip) {
         const rel_dir_path = dirname(input_file.path) orelse "";
 
-        var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        var name_buf: [fs.max_name_bytes]u8 = undefined;
 
         output_file_paths = if (tags.split_layers) blk: {
             const layers = try asepriteLayers(ctx, tmp.arena, &result_arena, input_file, perf_timers);
 
             const output_filename_prefix = stem(input_file.path);
 
-            const result = try arena.alloc([]const u8, layers.len);
+            const result = try arena.alloc([:0]const u8, layers.len);
 
             for (layers, result) |l, *output_file_name| {
                 const name = std.fmt.bufPrint(&name_buf, "{s}_{s}.bmp", .{ output_filename_prefix, l }) catch |e| switch (e) {
@@ -493,7 +511,7 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
                         return error.OutputNameTooLong;
                     },
                 };
-                output_file_name.* = try std.fs.path.join(arena, &.{ rel_dir_path, name });
+                output_file_name.* = try std.fs.path.joinZ(arena, &.{ rel_dir_path, name });
             }
 
             _ = try asepriteExportSplitLayerBMP(ctx, tmp.arena, &result_arena, input_file, rel_dir_path, perf_timers);
@@ -507,11 +525,11 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
                     return error.OutputNameTooLong;
                 },
             };
-            const rel_out_path = try std.fs.path.join(arena, &.{ rel_dir_path, out_file_name });
+            const rel_out_path = try std.fs.path.joinZ(arena, &.{ rel_dir_path, out_file_name });
 
             _ = try asepriteExportBMP(ctx, tmp.arena, &result_arena, input_file, rel_out_path, perf_timers);
 
-            break :blk try arena.dupe([]const u8, &.{rel_out_path});
+            break :blk try arena.dupe([:0]const u8, &.{rel_out_path});
         };
     } else {
         ctx.verbose("Skipping: '{s}' (skip tag found)", .{input_file.abs_path});
@@ -521,16 +539,10 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
     {
         defer perf_timers.output_verification.add(verify_start.untilNow());
         for (output_file_paths) |output_file_path| {
-            _ = ctx.output_dir.statFile(ctx.io, output_file_path, .{}) catch |e| switch (e) {
-                error.FileNotFound => {
-                    ctx.err("Output file missing after compilation, input: '{s}', output: '{s}'", .{ input_file.path, output_file_path });
-                    return error.OutputMissing;
-                },
-
-                else => {
-                    ctx.err("Ouput file verification (stat) failed, output: '{s}', error: '{s}'", .{ output_file_path, @errorName(e) });
-                },
-            };
+            if (!try ctx.output_dir.exists(output_file_path)) {
+                ctx.err("Output file missing after compilation, input: '{s}', output: '{s}'", .{ input_file.path, output_file_path });
+                return error.OutputMissing;
+            }
         }
     }
 
@@ -561,7 +573,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
 
     const rel_path = timestamp_file_sub_path;
 
-    const timestamp: Timestamp = if (ctx.output_dir.statFile(ctx.io, rel_path, .{})) |stat|
+    const timestamp: Timestamp = if (ctx.output_dir.stdDir().statFile(ctx.io, rel_path, .{})) |stat|
         .fromNs(stat.mtime.toNanoseconds())
     else |_| {
         return null;
@@ -572,7 +584,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     var inputs: std.StringHashMapUnmanaged(TimestampFile.Input) = .empty;
     errdefer inputs.deinit(ctx.gpa);
 
-    const ts_file = ctx.output_dir.openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
+    const ts_file = ctx.output_dir.stdDir().openFile(ctx.io, rel_path, .{ .mode = .read_only }) catch |e| {
         const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
         ctx.err("Unable to open timestamp file for reading: '{s}', error: '{s}'", .{ full_path, @errorName(e) });
         return error.ReadTimestampFile;
@@ -580,7 +592,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     defer ts_file.close(ctx.io);
 
     // Should be big enough to fit an entire line
-    var read_buf: [std.Io.Dir.max_path_bytes + 16]u8 = undefined;
+    var read_buf: [fs.max_path_bytes + 16]u8 = undefined;
     var reader = ts_file.reader(ctx.io, &read_buf);
 
     var current_input: ?[]const u8 = null;
@@ -658,7 +670,7 @@ pub fn writeTimestampFile(ctx: *Context, input_ts_file: TimestampFile, input_fil
 
     assert(results.len == input_files.len or results.len == 0);
 
-    if (ctx.output_dir.createFile(ctx.io, rel_path, .{ .truncate = true })) |timestamp_file| {
+    if (ctx.output_dir.stdDir().createFile(ctx.io, rel_path, .{ .truncate = true })) |timestamp_file| {
         defer timestamp_file.close(ctx.io);
 
         var write_buf: [4096]u8 = undefined;
@@ -770,14 +782,15 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena) ![]InputFile {
 
     var input_files: std.ArrayList(InputFile) = .empty;
 
-    var walker = try ctx.scan_dir.walk(tmp.a);
+    var walker = try ctx.scan_dir.stdDir().walk(tmp.a);
+
     while (try walker.next(ctx.io)) |entry| {
         if (entry.kind == .file) {
             if (std.mem.eql(u8, ".aseprite", extension(entry.basename))) {
                 const tmp_input_path = try tmp.a.dupe(u8, entry.path);
                 const abs_path = try std.fs.path.join(allocator, &.{ ctx.scan_dir_path, tmp_input_path });
                 const path = abs_path[abs_path.len - tmp_input_path.len ..];
-                const stat = try ctx.scan_dir.statFile(ctx.io, entry.path, .{});
+                const stat = try ctx.scan_dir.stdDir().statFile(ctx.io, entry.path, .{});
 
                 try input_files.append(tmp.a, .{
                     .path = path,
@@ -858,7 +871,7 @@ const OutputFileStatus = enum(u2) {
 };
 
 fn outputFileStatus(ctx: *const Context, dir_rel_path: []const u8, input_timestamp: Timestamp) !OutputFileStatus {
-    const result: OutputFileStatus = if (ctx.output_dir.statFile(ctx.io, dir_rel_path, .{})) |stat|
+    const result: OutputFileStatus = if (ctx.output_dir.stdDir().statFile(ctx.io, dir_rel_path, .{})) |stat|
         if (stat.mtime.toNanoseconds() <= input_timestamp.ns())
             .outOfDate
         else
@@ -1067,7 +1080,7 @@ fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, in
     assert(pathIsAbsolute(abs_output_path));
 
     if (dirname(rel_output_path)) |output_sub_dir_path| {
-        ctx.output_dir.createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
+        ctx.output_dir.stdDir().createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
     }
 
     _ = try aseprite(ctx, tmp.arena, arena, .args(&.{ "-b", input_file.abs_path, "--save-as", abs_output_path }), perf_timers);
@@ -1093,7 +1106,7 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
     assert(pathIsAbsolute(abs_output_dir_path));
 
     const out_dir_param_fmt = "out_dir={s}";
-    var out_dir_param_buf: [std.Io.Dir.max_path_bytes + out_dir_param_fmt.len]u8 = undefined;
+    var out_dir_param_buf: [fs.max_path_bytes + out_dir_param_fmt.len]u8 = undefined;
     const out_dir_param = std.fmt.bufPrint(&out_dir_param_buf, "out_dir={s}", .{abs_output_dir_path}) catch unreachable;
     const script_path = stackPathJoin(&.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" }) catch {
         ctx.err("Script path too long: '{f}'", .{std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path })});
@@ -1101,7 +1114,7 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
     };
 
     if (dirname(rel_output_dir_path)) |output_sub_dir_path| {
-        ctx.output_dir.createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
+        ctx.output_dir.stdDir().createDirPath(ctx.io, output_sub_dir_path) catch return error.CreateOutputDirFailed;
     }
 
     _ = try aseprite(ctx, tmp.arena, arena, .args(&.{
@@ -1115,7 +1128,7 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
 }
 
 inline fn stackPathJoin(paths: []const []const u8) error{PathTooLong}![]const u8 {
-    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
 
     return std.fmt.bufPrint(&path_buf, "{f}", .{std.fs.path.fmtJoin(paths)}) catch |e| switch (e) {
         error.NoSpaceLeft => return error.PathTooLong,

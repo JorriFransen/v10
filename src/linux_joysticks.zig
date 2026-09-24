@@ -189,11 +189,11 @@ pub const Joystick = struct {
             else
                 .{ .default, default_map };
 
-        const usb_iface_sys_path_rel_link = if (linux.dirnameN(dev_sys_path_rel_link, 3)) |p| mem.stackPathZ(p) else "";
+        const usb_iface_sys_path_rel_link = if (fs.dirnameN(dev_sys_path_rel_link, 3)) |p| fs.stackPathZ(p) else "";
 
         log.debug("usb_iface_sys_path_rel_link: '{s}'", .{usb_iface_sys_path_rel_link});
 
-        if (linux.openat(sys_class_input_dir_fd, usb_iface_sys_path_rel_link, .{ .ACCMODE = .RDONLY }, 0)) |usb_iface| {
+        if (linux.openat(sys_class_input_dir_fd, usb_iface_sys_path_rel_link, .{ .DIRECTORY = true, .CLOEXEC = true }, 0)) |usb_iface| {
             defer linux.close(usb_iface);
 
             if (std.mem.eql(u8, driver_name, "xpad") and
@@ -522,13 +522,13 @@ pub fn System(comptime joystick_count: usize) type {
                 .io_uring = undefined,
             };
 
-            result.dev_input_dir_fd = linux.open("/dev/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0) catch |e| {
+            result.dev_input_dir_fd = linux.open("/dev/input", .{ .DIRECTORY = true, .CLOEXEC = true }, 0) catch |e| {
                 log.err("Failed to open '/dev/input', error: '{}'", .{e});
                 return error.OpenFailed;
             };
             errdefer linux.close(result.dev_input_dir_fd);
 
-            result.sys_class_input_dir_fd = linux.open("/sys/class/input", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0) catch |e| {
+            result.sys_class_input_dir_fd = linux.open("/sys/class/input", .{ .DIRECTORY = true, .CLOEXEC = true }, 0) catch |e| {
                 log.err("Failed to open '/sys/class/input', error: '{}'", .{e});
                 return error.OpenFailed;
             };
@@ -836,7 +836,7 @@ pub fn System(comptime joystick_count: usize) type {
             }
         }
 
-        fn reconcile(this: *Context) linux.DirIterator.Error!void {
+        fn reconcile(this: *Context) fs.DirIterator.Error!void {
             const PresentDevice = struct {
                 input_id: u31,
                 event_id: u10,
@@ -849,7 +849,7 @@ pub fn System(comptime joystick_count: usize) type {
             var present: [io_uring_entry_count]PresentDevice = undefined;
             var present_len: usize = 0;
 
-            var it = try linux.DirIterator.init(this.dev_input_dir_fd, .{});
+            var it = try fs.DirIterator.init(this.dev_input_dir_fd, .{});
 
             while (try it.next()) |entry| {
                 if (entry.type != .char) continue;
@@ -1296,7 +1296,7 @@ fn eventFdIsJoystick(fd: fd_t) bool {
 fn sysAttrEql(dir_fd: fd_t, attr: [:0]const u8, expect: []const u8) bool {
     var result = false;
 
-    if (linux.openat(dir_fd, attr, .{ .ACCMODE = .RDONLY }, 0)) |attr_fd| {
+    if (linux.openat(dir_fd, attr, .{ .CLOEXEC = true }, 0)) |attr_fd| {
         defer linux.close(attr_fd);
 
         var attr_buf: [16]u8 = @splat(0);

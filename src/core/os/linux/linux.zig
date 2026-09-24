@@ -5,12 +5,14 @@ const builtin = @import("builtin");
 
 const arch = @import("arch/arch.zig").arch;
 const assert = @import("../../core.zig").assert;
+const core_fs = @import("../../fs.zig");
 const math = @import("../../math.zig");
 const mem = @import("../../mem/mem.zig");
 const meta = @import("../../meta.zig");
 const time = @import("../../time.zig");
 
 pub const abi = @import("abi/abi.zig").abi;
+pub const fs = @import("fs.zig");
 
 pub const syscall0 = arch.syscall0;
 pub const syscall1 = arch.syscall1;
@@ -21,6 +23,24 @@ pub const syscall5 = arch.syscall5;
 pub const syscall6 = arch.syscall6;
 
 pub const page_size = std.heap.page_size_min;
+
+pub inline fn getTime(clock: time.Clock) time.TimeStamp {
+    const linux_clock: CLOCK = switch (clock) {
+        .real => .REALTIME,
+        .monotonic => .MONOTONIC,
+        .cpu_thread => .THREAD_CPUTIME_ID,
+        .cpu_process => .PROCESS_CPUTIME_ID,
+    };
+
+    var spec: timespec = undefined;
+    const nsec: i96 = if (clock_gettime(linux_clock, &spec))
+        @as(i96, @intCast(spec.sec)) * (std.time.ns_per_s) +
+            @as(i96, @intCast(spec.nsec))
+    else |_|
+        0;
+
+    return .{ ._ns = nsec };
+}
 
 inline fn handleErrno(comptime E: type, rc: isize) E!void {
     if (rc < 0) {
@@ -59,153 +79,6 @@ test "handleErrno" {
 
     try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.ADDRINUSE))));
     try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.SRCH))));
-}
-
-const sep = std.fs.path.sep_posix;
-const sep_str = std.fs.path.sep_str_posix;
-pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
-    if (n == 0) return path;
-
-    const result = std.mem.trimEnd(u8, path, sep_str);
-
-    var result_len: usize = result.len;
-    var i: usize = result.len;
-    var remaining_cuts = n;
-
-    while (i > 0 and remaining_cuts > 0) {
-        while (i > 0 and result[i - 1] != sep) {
-            i -= 1;
-        }
-
-        if (i == 0) break;
-
-        while (i > 0 and result[i - 1] == sep) {
-            i -= 1;
-        }
-
-        result_len = if (i == 0) 1 else i;
-        remaining_cuts -= 1;
-    }
-
-    return if (remaining_cuts == 0) result[0..result_len] else null;
-}
-
-pub const DirIterator = struct {
-    fd: dirfd_t,
-
-    dents: []u8,
-    buffer: [16 * (@sizeOf(Dirent64) + Dirent64.max_name_len)]u8 align(@alignOf(Dirent64)),
-
-    pub const Options = struct {
-        reset_fd_pos: bool = true,
-    };
-
-    pub const Entry = struct {
-        name: [:0]const u8,
-        type: Type,
-
-        pub const Type = enum {
-            unknown,
-            pipe,
-            char,
-            dir,
-            block,
-            file,
-            link,
-            socket,
-            whiteout,
-        };
-    };
-
-    pub const Error = InitError || NextError;
-
-    pub const InitError = error{ SeekFailed, InvalidFd };
-
-    pub fn init(dir_fd: dirfd_t, options: Options) InitError!DirIterator {
-        if (options.reset_fd_pos) {
-            _ = lseek(dir_fd, 0, .SET) catch |e| switch (e) {
-                error.BADF => return error.InvalidFd,
-                else => return error.SeekFailed,
-            };
-        }
-
-        return .{
-            .fd = dir_fd,
-            .dents = &.{},
-            .buffer = undefined,
-        };
-    }
-
-    pub const NextError = error{ InvalidFd, MalformedDirEntry, UnexpectedErrno };
-
-    pub fn next(this: *DirIterator) NextError!?Entry {
-        if (this.dents.len == 0) {
-            const new_len = getdents64(this.fd, &this.buffer) catch |e| switch (e) {
-                error.BADF,
-                error.NOENT,
-                error.NOTDIR,
-                error.IO,
-                => return error.InvalidFd,
-
-                error.FAULT,
-                error.INVAL,
-                => unreachable,
-
-                error.UnexpectedErrno => return @errorCast(e),
-            };
-
-            this.dents = this.buffer[0..new_len];
-        }
-
-        if (this.dents.len >= @sizeOf(Dirent64)) {
-            const dent: *Dirent64 = @ptrCast(@alignCast(this.dents.ptr));
-
-            if (dent.d_reclen == 0) return error.MalformedDirEntry;
-
-            this.dents = this.dents[dent.d_reclen..];
-
-            const name_len = dent.d_reclen - @offsetOf(Dirent64, "d_name");
-            const name_slice = @as([*]const u8, @ptrCast(&dent.d_name))[0..name_len];
-            const name = mem.sliceToSentinel(name_slice, 0);
-
-            return .{
-                .name = name,
-                .type = switch (dent.d_type) {
-                    .UNKNOWN => .unknown,
-                    .FIFO => .pipe,
-                    .CHR => .char,
-                    .DIR => .dir,
-                    .BLK => .block,
-                    .REG => .file,
-                    .LNK => .link,
-                    .SOCK => .socket,
-                    .WHT => .whiteout,
-                },
-            };
-        } else if (this.dents.len != 0) {
-            return error.MalformedDirEntry;
-        }
-
-        return null;
-    }
-};
-
-pub inline fn getTime(clock: time.Clock) time.TimeStamp {
-    const linux_clock: CLOCK = switch (clock) {
-        .real => .REALTIME,
-        .monotonic => .MONOTONIC,
-        .cpu_thread => .THREAD_CPUTIME_ID,
-        .cpu_process => .PROCESS_CPUTIME_ID,
-    };
-
-    var spec: timespec = undefined;
-    const nsec: i96 = if (clock_gettime(linux_clock, &spec))
-        @as(i96, @intCast(spec.sec)) * (std.time.ns_per_s) +
-            @as(i96, @intCast(spec.nsec))
-    else |_|
-        0;
-
-    return .{ ._ns = nsec };
 }
 
 // =============================================================================
@@ -671,6 +544,7 @@ pub const OpenError = error{
 
     UnexpectedErrno,
 };
+
 pub fn open(path: [:0]const u8, flags: O, mode: mode_t) OpenError!fd_t {
     const result = openat(AT.FDCWD, path, flags, mode) catch |e| switch (e) {
         error.BADF => unreachable,
@@ -2394,6 +2268,38 @@ pub const XATTR_LIST_MAX = 65536;
 pub const RTSIG_MAX = 32;
 
 // =============================================================================
+// mman.h
+// =============================================================================
+
+inline fn getShmPath(name: [:0]const u8) error{NoSpaceLeft}![:0]const u8 {
+    var name_buf: [PATH_MAX]u8 = undefined;
+    const path_fmt = std.fs.path.fmtJoin(&.{ "/dev/shm/", name });
+    return try std.fmt.bufPrintSentinel(&name_buf, "{f}", .{path_fmt}, 0);
+}
+
+pub const ShmopenError = OpenatError || error{
+    NoSpaceLeft,
+    UnexpectedErrno,
+};
+
+pub fn shm_open(name: [:0]const u8, oflag: O, mode: mode_t) ShmopenError!c_int {
+    const path = try getShmPath(name);
+
+    const fd = try openat(AT.FDCWD, path, oflag, mode);
+    return fd;
+}
+
+pub const ShmunlinkError = UnlinkError || error{
+    NoSpaceLeft,
+    UnexpectedErrno,
+};
+
+pub fn shm_unlink(name: [:0]const u8) ShmunlinkError!void {
+    const path = try getShmPath(name);
+    try unlink(path);
+}
+
+// =============================================================================
 // mman-common.h
 // =============================================================================
 
@@ -3066,6 +2972,38 @@ pub fn stat(pathname: [:0]const u8, statbuf: *Stat) StatError!void {
     assert(rc == 0);
 }
 
+pub const MkdiratError = error{
+    ACCES,
+    BADF,
+    DQUOT,
+    EXIST,
+    FAULT,
+    INVAL,
+    LOOP,
+    MLINK,
+    NAMETOOLONG,
+    NOENT,
+    NOMEM,
+    NOSPC,
+    NOTDIR,
+    OVERFLOW,
+    PERM,
+    ROFS,
+
+    UnexpectedErrno,
+};
+
+pub fn mkdirat(dir_fd: dirfd_t, path: [:0]const u8, mode: mode_t) MkdiratError!void {
+    const rc = syscall3(
+        .mkdirat,
+        zeroExtendToUsize(dir_fd),
+        @intFromPtr(path.ptr),
+        mode,
+    );
+    try handleErrno(MkdiratError, rc);
+    assert(rc == 0);
+}
+
 // =============================================================================
 // time.h
 // =============================================================================
@@ -3444,6 +3382,46 @@ pub const Pipe2Error = error{
     UnexpectedErrno,
 };
 
+pub const FaccessatError = error{
+    ACCES,
+    BADF,
+    FAULT,
+    INVAL,
+    IO,
+    LOOP,
+    NAMETOOLONG,
+    NOMEM,
+    PERM,
+    ROFS,
+    TXTBSY,
+
+    UnexpectedErrno,
+};
+
+pub const AccessMode = packed struct(c_int) {
+    X_OK: bool = false,
+    W_OK: bool = false,
+    R_OK: bool = false,
+    __unused__: @Int(.signed, @bitSizeOf(c_int) - 3) = 0,
+
+    pub const F_OK: AccessMode = .{ .R_OK = false, .W_OK = false, .X_OK = false };
+};
+
+pub fn faccessat(dir_fd: dirfd_t, path: [:0]const u8, mode: AccessMode) FaccessatError!bool {
+    const rc = syscall3(
+        .faccessat,
+        zeroExtendToUsize(dir_fd),
+        @intFromPtr(path.ptr),
+        zeroExtendToUsize(mode),
+    );
+    handleErrno(FaccessatError || error{ NOENT, NOTDIR }, rc) catch |e| switch (e) {
+        error.NOENT, error.NOTDIR => return false,
+        else => return @errorCast(e),
+    };
+    assert(rc == 0);
+    return true;
+}
+
 pub fn pipe2(fds: *[2]fd_t, flags: O) Pipe2Error!void {
     const rc = syscall2(.pipe2, @intFromPtr(fds), zeroExtendToUsize(flags));
     try handleErrno(Pipe2Error, rc);
@@ -3563,79 +3541,4 @@ inline fn safeTrunc(comptime T: type, x: anytype) T {
         meta.expectIntType(XT);
     }
     return @intCast(x);
-}
-
-// =============================================================================
-// tests
-// =============================================================================
-
-test dirnameN {
-    try testDirnameN("/a/b/c", "/a/b", 1);
-    try testDirnameN("/a/b/c///", "/a/b", 1);
-    try testDirnameN("a/b", "a", 1);
-    try testDirnameN("a/b/c", "a/b", 1);
-    try testDirnameN("a/b/c///", "a/b", 1);
-    try testDirnameN("/a", "/", 1);
-    try testDirnameN("/", null, 1);
-    try testDirnameN("//", null, 1);
-    try testDirnameN("///", null, 1);
-    try testDirnameN("////", null, 1);
-    try testDirnameN("", null, 1);
-    try testDirnameN("a", null, 1);
-    try testDirnameN("a/", null, 1);
-    try testDirnameN("a//", null, 1);
-
-    try testDirnameN("/a/b/c", "/a", 2);
-    try testDirnameN("/a/b/c///", "/a", 2);
-    try testDirnameN("a/b/c", "a", 2);
-    try testDirnameN("a/b", null, 2);
-    try testDirnameN("a/b/c///", "a", 2);
-    try testDirnameN("/a", null, 2);
-    try testDirnameN("/", null, 2);
-    try testDirnameN("//", null, 2);
-    try testDirnameN("///", null, 2);
-    try testDirnameN("////", null, 2);
-    try testDirnameN("", null, 2);
-    try testDirnameN("a", null, 2);
-    try testDirnameN("a/", null, 2);
-    try testDirnameN("a//", null, 2);
-
-    try testDirnameN("a/b/c", null, 3);
-    try testDirnameN("a/b/c///", null, 3);
-    try testDirnameN("a/b", null, 3);
-
-    try testDirnameN("a//b", "a", 1);
-    try testDirnameN("a///b", "a", 1);
-    try testDirnameN("a//b//c", "a//b", 1);
-    try testDirnameN("a//b//c", "a", 2);
-    try testDirnameN("a//b//c", null, 3);
-
-    try testDirnameN("/a//b", "/a", 1);
-    try testDirnameN("/a///b", "/a", 1);
-    try testDirnameN("/a//b//c", "/a//b", 1);
-    try testDirnameN("/a//b//c", "/a", 2);
-    try testDirnameN("/a//b//c", "/", 3);
-    try testDirnameN("/a//b//c", null, 4);
-
-    try testDirnameN("///a/b", "///a", 1);
-    try testDirnameN("///a/b", "/", 2);
-    try testDirnameN("///a/b", null, 3);
-
-    try testDirnameN("a//b///c////d", "a//b///c", 1);
-    try testDirnameN("a//b///c////d", "a//b", 2);
-    try testDirnameN("a//b///c////d", "a", 3);
-    try testDirnameN("a//b///c////d", null, 4);
-}
-
-fn testDirnameN(input: []const u8, expected_output_opt: ?[]const u8, n: usize) !void {
-    var std_result_opt: ?[]const u8 = input;
-    for (0..n) |_| {
-        std_result_opt = if (std_result_opt) |std_result| std.fs.path.dirnamePosix(std_result) else null;
-    }
-
-    const output_opt = dirnameN(input, n);
-
-    try std.testing.expectEqualDeep(expected_output_opt, std_result_opt);
-    try std.testing.expectEqualDeep(expected_output_opt, output_opt);
-    try std.testing.expectEqualDeep(std_result_opt, output_opt);
 }
