@@ -64,18 +64,18 @@ pub const GAMEPAD_B = 0x2000;
 pub const GAMEPAD_X = 0x4000;
 pub const GAMEPAD_Y = 0x8000;
 
-pub fn XInputGetStateStub(user_index: win32.DWORD, state: *STATE) callconv(.winapi) win32.DWORD {
+pub fn XInputGetStateStub(user_index: win32.DWORD, state: *STATE) callconv(.winapi) win32.ERROR {
     _ = user_index;
     _ = state;
-    return win32.ERROR_DEVICE_NOT_CONNECTED;
+    return .DEVICE_NOT_CONNECTED;
 }
 const FN_XInputGetState = @TypeOf(XInputGetStateStub);
 pub var XInputGetState: *const FN_XInputGetState = undefined;
 
-pub fn XInputSetStateStub(user_index: win32.DWORD, vibration: *const VIBRATION) callconv(.winapi) win32.DWORD {
+pub fn XInputSetStateStub(user_index: win32.DWORD, vibration: *const VIBRATION) callconv(.winapi) win32.ERROR {
     _ = user_index;
     _ = vibration;
-    return win32.ERROR_DEVICE_NOT_CONNECTED;
+    return .DEVICE_NOT_CONNECTED;
 }
 const FN_XInputSetState = @TypeOf(XInputSetStateStub);
 pub var XInputSetState: *const FN_XInputSetState = undefined;

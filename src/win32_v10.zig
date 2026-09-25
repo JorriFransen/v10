@@ -751,7 +751,7 @@ pub fn windowsEntry(
                             var new_controller = &new_input.controllers[x_controller_index];
 
                             var controller_state: xinput.STATE = undefined;
-                            if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == win32.ERROR_SUCCESS) {
+                            if (xinput.XInputGetState(@intCast(controller_index), &controller_state) == .SUCCESS) {
                                 // Controller present
                                 const pad = &controller_state.gamepad;
 

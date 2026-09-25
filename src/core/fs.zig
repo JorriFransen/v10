@@ -54,11 +54,13 @@ pub const cwd = os.cwd;
 
 pub const ExistsAtError = error{
     AccessDenied,
+    BadPath,
     IO,
     NameTooLong,
     OutOfMemory,
     PermissionDenied,
     TooManySymLinks,
+
     Unexpected,
 };
 pub const existsAt = os.existsAt;
@@ -185,45 +187,7 @@ pub const PathIterator = struct {
                 return .{ .path = path, .current_start = start, .current_end = start, .root_end = start };
             }
         } else if (builtin.os.tag == .windows) {
-            const root_end: usize = blk: {
-                if (isSep(path[0])) {
-                    if (path.len < 2 or !isSep(path[1])) {
-                        // \x
-                        break :blk 1;
-                    } else if (path.len > 2 and (path[2] == '.' or path[2] == '?')) {
-                        // \\. or \\?
-                        if (path.len == 3) {
-                            // exactly \\. or \\?
-                            break :blk 3;
-                        } else if (isSep(path[3])) {
-                            // \\.\x or \\?\x
-                            break :blk 4;
-                        }
-                    }
-
-                    // unc absolute
-                    // \\x
-                    const server_end = std.mem.findAnyPos(u8, path, 2, "/\\") orelse break :blk 2;
-                    var it = std.mem.tokenizeAny(u8, path[server_end + 1 ..], "/\\");
-
-                    // There might be multiple separators between server and share
-                    const share = it.next() orelse break :blk server_end;
-
-                    const server = path[2..server_end];
-                    var len = 2 + (share.ptr - server.ptr) + share.len;
-                    if (path.len > len and isSep(path[len])) len += 1;
-                    break :blk len;
-                } else if (path.len < 2 or path[1] != ':') {
-                    // x
-                    break :blk 0;
-                } else if (path.len > 2 and isSep(path[2])) {
-                    // x:\
-                    break :blk 3;
-                } else {
-                    // x:
-                    break :blk 2;
-                }
-            };
+            const root_end = os.parsePathRoot(path);
 
             return .{ .path = path, .current_start = root_end, .current_end = root_end, .root_end = root_end };
         } else {
