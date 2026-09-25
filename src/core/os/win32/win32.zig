@@ -5,6 +5,8 @@ pub const fs = @import("fs.zig");
 const assert = @import("../../assert.zig").assert;
 const time = @import("../../time.zig");
 
+pub const ERROR = @import("error.zig").ERROR;
+
 pub fn getTime(clock: time.Clock) time.TimeStamp {
     switch (clock) {
         .monotonic => {
@@ -77,12 +79,14 @@ pub const HDC = zig_win32.HDC;
 pub const HBITMAP = HANDLE;
 pub const HGDIOBJ = HANDLE;
 pub const MMRESULT = zig_win32.UINT;
-pub const PWSTR = zig_win32.PWSTR;
 pub const LPBYTE = *BYTE;
 pub const LPSTR = zig_win32.LPSTR;
 pub const LPCSTR = zig_win32.LPCSTR;
 pub const LPWSTR = zig_win32.LPWSTR;
 pub const LPCWSTR = zig_win32.LPCWSTR;
+pub const LPCCH = [*:0]const CHAR;
+pub const PCWSTR = zig_win32.PCWSTR;
+pub const PWSTR = zig_win32.PWSTR;
 pub const LPMSG = *MSG;
 pub const HICON = zig_win32.HICON;
 pub const HCURSOR = zig_win32.HCURSOR;
@@ -113,6 +117,7 @@ pub const LPVOID = zig_win32.LPVOID;
 pub const LPCVOID = zig_win32.LPCVOID;
 pub const FARPROC = *anyopaque;
 pub const NTSTATUS = zig_win32.NTSTATUS;
+pub const NT_SECURITY_DESCRIPTOR_CONTROL = WORD;
 
 pub const NT_LOGICAL = BOOL;
 comptime {
@@ -127,9 +132,6 @@ pub const PATH_MAX_WIDE = zig_win32.PATH_MAX_WIDE;
 pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
 pub const NT_CURRENT_PROCESS: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
 pub const NT_CURRENT_THREAD: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
-
-pub const ERROR_SUCCESS = 0x0;
-pub const ERROR_DEVICE_NOT_CONNECTED = 0x48f;
 
 pub const ATTACH_PARENT_PROCESS: DWORD = math.maxInt(DWORD);
 
@@ -1144,6 +1146,63 @@ pub const PROCESS_DPI_AWARENESS = enum(c_int) {
     PER_MONITOR_DPI_AWARE = 2,
 };
 
+pub const MAPVK = enum(UINT) {
+    /// The uCode parameter is a virtual-key code and is translated into a scan
+    /// code. If it is a virtual-key code that does not distinguish between
+    /// left- and right-hand keys, the left-hand scan code is returned.
+    /// If there is no translation, the function returns 0.
+    VK_TO_VSC = 0,
+    /// The uCode parameter is a scan code and is translated into a virtual-key
+    /// code that does not distinguish between left- and right-hand keys.
+    /// If there is no translation, the function returns 0.
+    /// Windows Vista and later: the high byte of the uCode value can contain
+    /// either 0xe0 or 0xe1 to specify the extended scan code.
+    VSC_TO_VK = 1,
+    /// The uCode parameter is a virtual-key code and is translated into an
+    /// unshifted character value in the low order word of the return value.
+    /// Dead keys (diacritics) are indicated by setting the top bit of the
+    /// return value. If there is no translation, the function returns 0. See Remarks.
+    VK_TO_CHAR = 2,
+    /// The uCode parameter is a scan code and is translated into a virtual-key
+    /// code that distinguishes between left- and right-hand keys. If there is
+    /// no translation, the function returns 0.
+    ///Windows Vista and later: the high byte of the uCode value can contain
+    ///either 0xe0 or 0xe1 to specify the extended scan code.
+    VSC_TO_VK_EX = 3,
+    /// Windows Vista and later: The uCode parameter is a virtual-key code and
+    /// is translated into a scan code. If it is a virtual-key code that does
+    /// not distinguish between left- and right-hand keys, the left-hand scan
+    /// code is returned. If the scan code is an extended scan code, the high
+    /// byte of the returned value will contain either 0xe0 or 0xe1 to specify
+    /// the extended scan code. If there is no translation, the function returns 0.
+    VK_TO_VSC_EX = 4,
+};
+
+pub const CodePage = enum(c_int) {
+    /// The current system ANSI code page.
+    ACP = 0,
+    /// The current system OEM code page.
+    OEMCP = 1,
+    /// The current system Macintosh code page.
+    MACCP = 2,
+    /// The current thread's ANSI code page.
+    THREAD_ACP = 3,
+    /// Symbol translations.
+    SYMBOL = 42,
+    /// UTF-7 translation (deprecated; avoid for secure apps).
+    UTF7 = 65000,
+    /// UTF-8 translation.
+    UTF8 = 65001,
+};
+
+pub const MultiByteFlags = packed struct(DWORD) {
+    PRECOMPOSED: bool = false,
+    COMPOSITE: bool = false,
+    USEGLYPHCHARS: bool = false,
+    ERR_INVALID_CHARS: bool = false,
+    __unused__: u28 = 0,
+};
+
 pub const NT_THREADINFOCLASS = enum(c_int) {
     /// q: THREAD_BASIC_INFORMATION
     ThreadBasicInformation,
@@ -1510,36 +1569,82 @@ pub const NT_PROCESS_INFO_CLASS = enum(c_int) {
     MaxProcessInfoClass,
 };
 
-pub const MAPVK = enum(UINT) {
-    /// The uCode parameter is a virtual-key code and is translated into a scan
-    /// code. If it is a virtual-key code that does not distinguish between
-    /// left- and right-hand keys, the left-hand scan code is returned.
-    /// If there is no translation, the function returns 0.
-    VK_TO_VSC = 0,
-    /// The uCode parameter is a scan code and is translated into a virtual-key
-    /// code that does not distinguish between left- and right-hand keys.
-    /// If there is no translation, the function returns 0.
-    /// Windows Vista and later: the high byte of the uCode value can contain
-    /// either 0xe0 or 0xe1 to specify the extended scan code.
-    VSC_TO_VK = 1,
-    /// The uCode parameter is a virtual-key code and is translated into an
-    /// unshifted character value in the low order word of the return value.
-    /// Dead keys (diacritics) are indicated by setting the top bit of the
-    /// return value. If there is no translation, the function returns 0. See Remarks.
-    VK_TO_CHAR = 2,
-    /// The uCode parameter is a scan code and is translated into a virtual-key
-    /// code that distinguishes between left- and right-hand keys. If there is
-    /// no translation, the function returns 0.
-    ///Windows Vista and later: the high byte of the uCode value can contain
-    ///either 0xe0 or 0xe1 to specify the extended scan code.
-    VSC_TO_VK_EX = 3,
-    /// Windows Vista and later: The uCode parameter is a virtual-key code and
-    /// is translated into a scan code. If it is a virtual-key code that does
-    /// not distinguish between left- and right-hand keys, the left-hand scan
-    /// code is returned. If the scan code is an extended scan code, the high
-    /// byte of the returned value will contain either 0xe0 or 0xe1 to specify
-    /// the extended scan code. If there is no translation, the function returns 0.
-    VK_TO_VSC_EX = 4,
+pub const NT_UNICODE_STRING = extern struct {
+    length: USHORT,
+    maximum_length: USHORT,
+    buffer: PWSTR,
+};
+
+pub const NT_OBJECT_ATTRIBUTES = extern struct {
+    length: ULONG = @sizeOf(@This()),
+    root_directory: ?HANDLE,
+    object_name: *const NT_UNICODE_STRING,
+    attributes: NT_OBJECT_ATTRIBUTE_FLAGS,
+    security_descriptor: ?*anyopaque,
+    security_quality_of_service: ?*anyopaque,
+
+    pub fn init(this: *@This(), name: *const NT_UNICODE_STRING, attributes: NT_OBJECT_ATTRIBUTE_FLAGS, root_handle: ?HANDLE, s: ?*NT_SECURITY_DESCRIPTOR) void {
+        this.* = .{
+            .root_directory = root_handle,
+            .object_name = name,
+            .attributes = attributes,
+            .security_descriptor = s,
+            .security_quality_of_service = null,
+        };
+    }
+};
+
+pub const NT_OBJECT_ATTRIBUTE_FLAGS = packed struct(ULONG) {
+    __reserved0__: u1 = 0,
+    INHERIT: bool = false,
+    __reserved1__: u2 = 0,
+    PERMANENT: bool = false,
+    EXCLUSIVE: bool = false,
+    CASE_INSENSITIVE: bool = false,
+    OPENIF: bool = false,
+    OPENLINK: bool = false,
+    KERNEL_HANDLE: bool = false,
+    FORCE_ACCESS_CHECK: bool = false,
+    IGNORE_IMPERSONATED_DEVICEMAP: bool = false,
+    DONT_REPARSE: bool = false,
+    __reserved2__: u19 = 0,
+};
+
+pub const NT_SECURITY_DESCRIPTOR = extern struct {
+    revision: BYTE,
+    sbz1: BYTE,
+    control: NT_SECURITY_DESCRIPTOR_CONTROL,
+    owner: *NT_SID,
+    group: *NT_SID,
+    s_acl: *NT_ACL,
+    d_acl: *NT_ACL,
+};
+
+pub const NT_ACL = extern struct {
+    acl_revision: BYTE,
+    sbz1: BYTE,
+    acl_size: WORD,
+    ace_count: WORD,
+    sbz2: WORD,
+};
+
+pub const NT_SID = extern struct {
+    revision: BYTE,
+    sub_authority_count: BYTE,
+    identifier_authority: NT_SID_IDENTIFIER_AUTHORITY,
+    sub_authority: BYTE,
+};
+
+pub const NT_SID_IDENTIFIER_AUTHORITY = extern struct {
+    value: [6]BYTE,
+};
+
+pub const NT_FILE_BASIC_INFORMATION = extern struct {
+    creation_time: LARGE_INTEGER,
+    last_access_time: LARGE_INTEGER,
+    last_write_time: LARGE_INTEGER,
+    change_time: LARGE_INTEGER,
+    file_attributes: ULONG,
 };
 
 pub const NT_KERNEL_USER_TIMES = extern struct {
@@ -1547,6 +1652,17 @@ pub const NT_KERNEL_USER_TIMES = extern struct {
     exit_time: LARGE_INTEGER,
     kernel_time: LARGE_INTEGER,
     user_time: LARGE_INTEGER,
+};
+
+pub const RTL_RELATIVE_NAME_U = extern struct {
+    relative_name: NT_UNICODE_STRING,
+    containing_directory: HANDLE,
+    cur_dir_ref: *RTLP_CURDIR_REF,
+};
+
+pub const RTLP_CURDIR_REF = extern struct {
+    reference_count: LONG,
+    directory_handle: HANDLE,
 };
 
 pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
@@ -1616,6 +1732,8 @@ pub extern "kernel32" fn LoadLibraryA(lib_file_name: LPCSTR) callconv(.winapi) ?
 pub extern "kernel32" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) callconv(.winapi) ?FARPROC;
 pub extern "kernel32" fn FreeLibrary(lib_module: HMODULE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetCurrentDirectoryA(buffer_length: DWORD, buffer: LPCSTR) callconv(.winapi) DWORD;
+pub extern "kernel32" fn MultiByteToWideChar(code_page: CodePage, flags: MultiByteFlags, multi_byte_string: LPCCH, multi_byte_string_len: c_int, out_wide_char_string: LPWSTR, out_wide_char_string_len: c_int) callconv(.winapi) c_int;
+pub extern "kernel32" fn GetLastError() callconv(.winapi) ERROR;
 
 pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
 
@@ -1686,3 +1804,6 @@ pub extern "ntdll" fn RtlQueryPerformanceFrequency(freq: *LARGE_INTEGER) callcon
 pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) ULONGLONG;
 pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: NT_THREADINFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: NT_PROCESS_INFO_CLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const NT_OBJECT_ATTRIBUTES, file_info_out: *NT_FILE_BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn RtlDosPathNameToNtPathName_U_WithStatus(dos_file_name: PCWSTR, nt_file_name_out: *NT_UNICODE_STRING, file_part: ?PWSTR, relative_name: ?*RTL_RELATIVE_NAME_U) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn RtlFreeUnicodeString(unicode_string: *NT_UNICODE_STRING) callconv(.winapi) void;
