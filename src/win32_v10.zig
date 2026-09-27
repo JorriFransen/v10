@@ -44,9 +44,9 @@ pub const std_options: std.Options = blk: {
     break :blk o;
 };
 
-var stderr_buf: [2048]u8 = undefined;
+var stderr_buf: [1024]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
-var stdout_buf: [2048]u8 = undefined;
+var stdout_buf: [1024]u8 = undefined;
 var stdout: *std.Io.Writer = undefined;
 
 var global_running = false;
@@ -54,6 +54,10 @@ var global_pause = false;
 var global_back_buffer: Win32OffscreenBuffer = undefined;
 var global_DEBUG_show_cursor = options.internal_build;
 var global_window_position: win32.WINDOWPLACEMENT = .{};
+
+var global_source_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
+var global_temp_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
+var global_gamecode_lock_file_name_buf: [fs.max_path_bytes]u8 = undefined;
 
 inline fn getWallClock() TimeStamp {
     return TimeStamp.now(.monotonic);
@@ -472,13 +476,9 @@ pub fn windowsEntry(
     shared_state.exe_dir_path = std.fs.path.dirname(std.mem.span(exe_name)) orelse unreachable;
     log.info("exe dir: '{s}'", .{shared_state.exe_dir_path});
 
-    var source_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
-    var temp_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
-    var gamecode_lock_file_name_buf: [fs.max_path_bytes]u8 = undefined;
-
-    const source_dll_name = try shared_state.buildExePathFilename(&source_dll_name_buf, "v10_game.dll");
-    const temp_dll_name = try shared_state.buildExePathFilename(&temp_dll_name_buf, "v10_temp.dll");
-    const gamecode_lock_file_name = try shared_state.buildExePathFilename(&gamecode_lock_file_name_buf, "lock.tmp");
+    const source_dll_name = try shared_state.buildExePathFilename(&global_source_dll_name_buf, "v10_game.dll");
+    const temp_dll_name = try shared_state.buildExePathFilename(&global_temp_dll_name_buf, "v10_temp.dll");
+    const gamecode_lock_file_name = try shared_state.buildExePathFilename(&global_gamecode_lock_file_name_buf, "lock.tmp");
 
     log.info("source dll: '{s}'", .{source_dll_name});
     log.info("temp dll: '{s}'", .{temp_dll_name});

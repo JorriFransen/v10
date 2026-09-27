@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const assert = @import("assert.zig").assert;
+const mem = @import("mem/mem.zig");
 
 const os = @import("os/os.zig").current.fs;
 
@@ -9,7 +10,9 @@ pub const Handle = os.Handle;
 
 pub const path_sep = os.path_sep;
 pub const path_sep_str = os.path_sep_str;
+/// Including null
 pub const max_path_bytes = os.max_path_bytes;
+/// Not including null
 pub const max_name_bytes = os.max_name_bytes;
 
 pub const Error = OpenDirAtError || ExistsAtError || DirIteratorError || CreateDirAtError;
@@ -119,11 +122,13 @@ pub fn CreateDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAt
         error.FileNotFound => {},
     }
 
-    var it = PathIterator.init(dir_path);
+    var it = try PathIterator.init(dir_path);
     _ = it.last();
 
+    var path_buf: [max_path_bytes]u8 = undefined;
+
     while (it.prev()) |elem| {
-        if (createDirAt(dir, stackPathZ(elem.path), options)) {
+        if (createDirAt(dir, mem.copySentinel(&path_buf, elem.path, 0), options)) {
             break;
         } else |e| switch (e) {
             else => return e,
@@ -132,7 +137,7 @@ pub fn CreateDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAt
     }
 
     while (it.next()) |elem| {
-        try createDirAt(dir, stackPathZ(elem.path), options);
+        try createDirAt(dir, mem.copySentinel(&path_buf, elem.path, 0), options);
     }
 }
 
@@ -173,10 +178,8 @@ pub const PathIterator = struct {
         name: []const u8,
     };
 
-    pub fn init(path: []const u8) PathIterator {
-        if (path.len == 0) {
-            return .{ .path = path, .current_start = 0, .current_end = 0, .root_end = 0 };
-        }
+    pub fn init(path: []const u8) error{BadPath}!PathIterator {
+        if (path.len == 0) return error.BadPath;
 
         if (builtin.os.tag == .linux) {
             if (!isSep(path[0])) {
@@ -187,7 +190,8 @@ pub const PathIterator = struct {
                 return .{ .path = path, .current_start = start, .current_end = start, .root_end = start };
             }
         } else if (builtin.os.tag == .windows) {
-            const root_end = os.parsePathRoot(path);
+            const parsed_path = try os.parsePath(path);
+            const root_end = parsed_path.root_end;
 
             return .{ .path = path, .current_start = root_end, .current_end = root_end, .root_end = root_end };
         } else {
@@ -281,11 +285,11 @@ pub const PathIterator = struct {
     }
 };
 
-pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
+pub fn dirnameN(path: []const u8, n: usize) error{BadPath}!?[]const u8 {
     if (n == 0) return path;
 
     var n_rem = n;
-    var it = PathIterator.init(path);
+    var it = try PathIterator.init(path);
 
     _ = it.last() orelse return null;
     n_rem -= 1;
@@ -295,15 +299,6 @@ pub fn dirnameN(path: []const u8, n: usize) ?[]const u8 {
     }
 
     return if (it.prev()) |p| p.path else it.root();
-}
-
-/// Copy 'path' into a (inlined) stack buffer, return null terminated slice.
-pub inline fn stackPathZ(path: []const u8) [:0]const u8 {
-    var buf: [max_path_bytes]u8 = undefined;
-    assert(path.len + 1 <= buf.len);
-    @memcpy(buf[0..path.len], path);
-    buf[path.len] = 0;
-    return buf[0..path.len :0];
 }
 
 // =============================================================================
@@ -317,7 +312,7 @@ test "PathIterator linux" {
 
     {
         const path = "a/b/c/";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqual(0, it.root_end);
         try t.expect(null == it.root());
         {
@@ -362,7 +357,7 @@ test "PathIterator linux" {
     }
     {
         const path = "/a/b/c/";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqual(1, it.root_end);
         try t.expectEqualStrings("/", it.root().?);
         {
@@ -407,7 +402,7 @@ test "PathIterator linux" {
     }
     {
         const path = "////a///b///c////";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqual(4, it.root_end);
         try t.expectEqualStrings("/", it.root().?);
         {
@@ -452,7 +447,7 @@ test "PathIterator linux" {
     }
     {
         const path = "/";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqual(1, it.root_end);
         try t.expectEqualStrings("/", it.root().?);
 
@@ -468,19 +463,7 @@ test "PathIterator linux" {
     }
     {
         const path = "";
-        var it = PathIterator.init(path);
-        try t.expectEqual(0, it.root_end);
-        try t.expect(null == it.root());
-
-        try t.expect(null == it.first());
-        try t.expect(null == it.prev());
-        try t.expect(null == it.first());
-        try t.expect(null == it.next());
-
-        try t.expect(null == it.last());
-        try t.expect(null == it.prev());
-        try t.expect(null == it.last());
-        try t.expect(null == it.next());
+        try t.expectError(error.BadPath, PathIterator.init(path));
     }
 }
 
@@ -491,7 +474,7 @@ test "PathIterator windows" {
 
     {
         const path = "a/b\\c/";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqual(0, it.root_end);
         try t.expect(null == it.root());
         try t.expectEqualStrings("a", it.next().?.name);
@@ -499,7 +482,7 @@ test "PathIterator windows" {
         try t.expectEqualStrings("c", it.next().?.name);
         try t.expect(null == it.next());
 
-        var it2 = PathIterator.init(path);
+        var it2 = try PathIterator.init(path);
         try t.expectEqualStrings("c", it2.last().?.name);
         try t.expectEqualStrings("b", it2.prev().?.name);
         try t.expectEqualStrings("a", it2.prev().?.name);
@@ -507,7 +490,7 @@ test "PathIterator windows" {
     }
     {
         const path = "C:\\a\\b\\c\\";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqualStrings("C:\\", it.root().?);
         try t.expectEqualStrings("a", it.first().?.name);
         try t.expectEqualStrings("C:\\a", it.first().?.path);
@@ -515,20 +498,20 @@ test "PathIterator windows" {
         try t.expectEqualStrings("c", it.next().?.name);
         try t.expect(null == it.next());
 
-        var it2 = PathIterator.init(path);
+        var it2 = try PathIterator.init(path);
         try t.expectEqualStrings("c", it2.last().?.name);
         try t.expectEqualStrings("C:\\a\\b\\c", it2.last().?.path);
     }
     {
         const path = "C:a\\b";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqualStrings("C:", it.root().?);
         try t.expectEqualStrings("a", it.next().?.name);
         try t.expectEqualStrings("b", it.next().?.name);
     }
     {
         const path = "\\\\server\\share\\a\\b";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqualStrings("\\\\server\\share\\", it.root().?);
         try t.expectEqualStrings("a", it.first().?.name);
         try t.expectEqualStrings("\\\\server\\share\\a", it.first().?.path);
@@ -536,108 +519,111 @@ test "PathIterator windows" {
     }
     {
         const path = "C:\\";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqualStrings("C:\\", it.root().?);
         try t.expect(null == it.first());
         try t.expect(null == it.last());
     }
     {
         const path = "\\\\server\\share\\";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqualStrings("\\\\server\\share\\", it.root().?);
         try t.expect(null == it.first());
     }
     {
         const path = "\\\\?\\C:\\";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqualStrings("\\\\?\\", it.root().?);
         try t.expectEqualStrings("C:", it.first().?.name);
     }
     {
         const path = "\\\\?\\C:\\a";
-        var it = PathIterator.init(path);
+        var it = try PathIterator.init(path);
         try t.expectEqualStrings("\\\\?\\", it.root().?);
         try t.expectEqualStrings("C:", it.first().?.name);
         try t.expectEqualStrings("a", it.next().?.name);
     }
     {
         const path = "";
-        var it = PathIterator.init(path);
-        try t.expect(null == it.root());
-        try t.expect(null == it.first());
-        try t.expect(null == it.last());
+        try t.expectError(error.BadPath, PathIterator.init(path));
     }
 }
 
-test "dirnameN linux" {
+test "dirnameN linux" { // TODO: Windows version
     if (builtin.os.tag != .linux) return;
 
-    try testDirnameN("/a/b/c", "/a/b", 1);
-    try testDirnameN("/a/b/c///", "/a/b", 1);
-    try testDirnameN("a/b", "a", 1);
-    try testDirnameN("a/b/c", "a/b", 1);
-    try testDirnameN("a/b/c///", "a/b", 1);
-    try testDirnameN("/a", "/", 1);
-    try testDirnameN("/", null, 1);
-    try testDirnameN("//", null, 1);
-    try testDirnameN("///", null, 1);
-    try testDirnameN("////", null, 1);
-    try testDirnameN("", null, 1);
-    try testDirnameN("a", null, 1);
-    try testDirnameN("a/", null, 1);
-    try testDirnameN("a//", null, 1);
+    try testDirnameN("/a/b/c", 1, "/a/b");
+    try testDirnameN("/a/b/c///", 1, "/a/b");
+    try testDirnameN("a/b", 1, "a");
+    try testDirnameN("a/b/c", 1, "a/b");
+    try testDirnameN("a/b/c///", 1, "a/b");
+    try testDirnameN("/a", 1, "/");
+    try testDirnameN("/", 1, null);
+    try testDirnameN("//", 1, null);
+    try testDirnameN("///", 1, null);
+    try testDirnameN("////", 1, null);
+    try testDirnameN("", 1, error.BadPath);
+    try testDirnameN("a", 1, null);
+    try testDirnameN("a/", 1, null);
+    try testDirnameN("a//", 1, null);
 
-    try testDirnameN("/a/b/c", "/a", 2);
-    try testDirnameN("/a/b/c///", "/a", 2);
-    try testDirnameN("a/b/c", "a", 2);
-    try testDirnameN("a/b", null, 2);
-    try testDirnameN("a/b/c///", "a", 2);
-    try testDirnameN("/a", null, 2);
-    try testDirnameN("/", null, 2);
-    try testDirnameN("//", null, 2);
-    try testDirnameN("///", null, 2);
-    try testDirnameN("////", null, 2);
-    try testDirnameN("", null, 2);
-    try testDirnameN("a", null, 2);
-    try testDirnameN("a/", null, 2);
-    try testDirnameN("a//", null, 2);
+    try testDirnameN("/a/b/c", 2, "/a");
+    try testDirnameN("/a/b/c///", 2, "/a");
+    try testDirnameN("a/b/c", 2, "a");
+    try testDirnameN("a/b", 2, null);
+    try testDirnameN("a/b/c///", 2, "a");
+    try testDirnameN("/a", 2, null);
+    try testDirnameN("/", 2, null);
+    try testDirnameN("//", 2, null);
+    try testDirnameN("///", 2, null);
+    try testDirnameN("////", 2, null);
+    try testDirnameN("", 2, error.BadPath);
+    try testDirnameN("a", 2, null);
+    try testDirnameN("a/", 2, null);
+    try testDirnameN("a//", 2, null);
 
-    try testDirnameN("a/b/c", null, 3);
-    try testDirnameN("a/b/c///", null, 3);
-    try testDirnameN("a/b", null, 3);
+    try testDirnameN("a/b/c", 3, null);
+    try testDirnameN("a/b/c///", 3, null);
+    try testDirnameN("a/b", 3, null);
 
-    try testDirnameN("a//b", "a", 1);
-    try testDirnameN("a///b", "a", 1);
-    try testDirnameN("a//b//c", "a//b", 1);
-    try testDirnameN("a//b//c", "a", 2);
-    try testDirnameN("a//b//c", null, 3);
+    try testDirnameN("a//b", 1, "a");
+    try testDirnameN("a///b", 1, "a");
+    try testDirnameN("a//b//c", 1, "a//b");
+    try testDirnameN("a//b//c", 2, "a");
+    try testDirnameN("a//b//c", 3, null);
 
-    try testDirnameN("/a//b", "/a", 1);
-    try testDirnameN("/a///b", "/a", 1);
-    try testDirnameN("/a//b//c", "/a//b", 1);
-    try testDirnameN("/a//b//c", "/a", 2);
-    try testDirnameN("/a//b//c", "/", 3);
-    try testDirnameN("/a//b//c", null, 4);
+    try testDirnameN("/a//b", 1, "/a");
+    try testDirnameN("/a///b", 1, "/a");
+    try testDirnameN("/a//b//c", 1, "/a//b");
+    try testDirnameN("/a//b//c", 2, "/a");
+    try testDirnameN("/a//b//c", 3, "/");
+    try testDirnameN("/a//b//c", 4, null);
 
-    try testDirnameN("///a/b", "///a", 1);
-    try testDirnameN("///a/b", "/", 2);
-    try testDirnameN("///a/b", null, 3);
+    try testDirnameN("///a/b", 1, "///a");
+    try testDirnameN("///a/b", 2, "/");
+    try testDirnameN("///a/b", 3, null);
 
-    try testDirnameN("a//b///c////d", "a//b///c", 1);
-    try testDirnameN("a//b///c////d", "a//b", 2);
-    try testDirnameN("a//b///c////d", "a", 3);
-    try testDirnameN("a//b///c////d", null, 4);
+    try testDirnameN("a//b///c////d", 1, "a//b///c");
+    try testDirnameN("a//b///c////d", 2, "a//b");
+    try testDirnameN("a//b///c////d", 3, "a");
+    try testDirnameN("a//b///c////d", 4, null);
 }
 
-fn testDirnameN(input: []const u8, expected_output_opt: ?[]const u8, n: usize) !void {
-    var std_result_opt: ?[]const u8 = input;
-    for (0..n) |_| {
-        std_result_opt = if (std_result_opt) |std_result| std.fs.path.dirnamePosix(std_result) else null;
+fn testDirnameN(input: []const u8, n: usize, expected: anytype) !void {
+    const output_opt_or_err = dirnameN(input, n);
+
+    if (@typeInfo(@TypeOf(expected)) == .error_set) {
+        try std.testing.expectError(expected, output_opt_or_err);
+    } else {
+        var std_result_opt: ?[]const u8 = input;
+        for (0..n) |_| {
+            std_result_opt = if (std_result_opt) |std_result| std.fs.path.dirnamePosix(std_result) else null;
+        }
+
+        const output_opt = try output_opt_or_err;
+
+        try std.testing.expectEqualDeep(expected, std_result_opt);
+        try std.testing.expectEqualDeep(expected, output_opt);
+        try std.testing.expectEqualDeep(std_result_opt, output_opt);
     }
-
-    const output_opt = dirnameN(input, n);
-
-    try std.testing.expectEqualDeep(expected_output_opt, std_result_opt);
-    try std.testing.expectEqualDeep(expected_output_opt, output_opt);
-    try std.testing.expectEqualDeep(std_result_opt, output_opt);
 }
