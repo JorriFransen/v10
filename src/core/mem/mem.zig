@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 
 const assert = @import("../core.zig").assert;
 const fs = @import("../fs.zig");
+const meta = @import("../meta.zig");
 
 pub const Arena = @import("arena.zig").Arena;
 pub const TempArena = @import("temp_arena.zig");
@@ -151,4 +152,17 @@ fn SliceToSentinelRet(comptime Slice: type, comptime sentinel: std.meta.Elem(Sli
 
         else => @compileError("Invalid type given to sliceToSentinel: " ++ @typeName(Slice)),
     }
+}
+
+pub inline fn copySentinel(dest: anytype, slice: anytype, comptime sentinel: std.meta.Elem(@TypeOf(slice))) [:sentinel]std.meta.Elem(@TypeOf(slice)) {
+    // TODO: meta.expectSlice?
+    comptime assert(std.meta.Elem(@TypeOf(slice)) == std.meta.Elem(@TypeOf(dest)));
+    meta.expectTypeIds(slice, &.{.pointer});
+    comptime assert(@typeInfo(@TypeOf(slice)).pointer.size == .slice);
+
+    assert(dest.len > slice.len);
+
+    @memcpy(dest, slice);
+    dest[slice.len] = sentinel;
+    return dest[0..slice.len :sentinel];
 }
