@@ -128,6 +128,7 @@ pub const TRUE: BOOL = .TRUE;
 pub const FALSE: BOOL = .FALSE;
 pub const MAX_PATH = zig_win32.MAX_PATH;
 pub const PATH_MAX_WIDE = zig_win32.PATH_MAX_WIDE;
+pub const NAME_MAX = zig_win32.NAME_MAX;
 
 pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
 pub const NT_CURRENT_PROCESS: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
@@ -886,9 +887,9 @@ pub const MONITOR_DEFAULTTOPRIMARY = 0x00000001;
 pub const MONITOR_DEFAULTTONEAREST = 0x00000002;
 
 pub const HWND_BOTTOM: ?HWND = @ptrFromInt(1);
-pub const HWND_NOTOPMOST: ?HWND = @ptrFromInt(-2);
+pub const HWND_NOTOPMOST: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
 pub const HWND_TOP: ?HWND = @ptrFromInt(0);
-pub const HWND_TOPMOST: ?HWND = @ptrFromInt(-1);
+pub const HWND_TOPMOST: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
 
 pub const SWP_ASYNCWINDOWPOS = 0x4000;
 pub const SWP_DEFERERASE = 0x2000;
