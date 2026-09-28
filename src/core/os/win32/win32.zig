@@ -907,6 +907,13 @@ pub const SWP_NOSIZE = 0x0001;
 pub const SWP_NOZORDER = 0x0004;
 pub const SWP_SHOWWINDOW = 0x0040;
 
+pub const FILE_NAME_NORMALIZED = 0x0;
+pub const FILE_NAME_OPENED = 0x8;
+pub const VOLUME_NAME_DOS = 0x0;
+pub const VOLUME_NAME_GUID = 0x1;
+pub const VOLUME_NAME_NONE = 0x4;
+pub const VOLUME_NAME_NT = 0x2;
+
 pub const RECT = extern struct {
     left: LONG = 0,
     top: LONG = 0,
