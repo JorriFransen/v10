@@ -189,8 +189,11 @@ pub const Joystick = struct {
             else
                 .{ .default, default_map };
 
-        const usb_iface_sys_path_rel_link =
-            if (fs.dirnameN(dev_sys_path_rel_link, 3) catch unreachable) |p| fs.stackPathZ(p) else "";
+        const usb_iface_sys_path_rel_link = if (fs.dirnameN(dev_sys_path_rel_link, 3) catch unreachable) |p| blk: {
+            // WARNING: Clobber the original dev_sys_path_rel_link string with null, don't use after this!
+            dev_sys_path_rel_link[p.len] = 0;
+            break :blk dev_sys_path_rel_link[0..p.len :0];
+        } else "";
 
         log.debug("usb_iface_sys_path_rel_link: '{s}'", .{usb_iface_sys_path_rel_link});
 

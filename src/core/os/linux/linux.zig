@@ -3368,6 +3368,9 @@ pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) ReadlinkatErro
         buf.len,
     );
     try handleErrno(ReadlinkatError, rc);
+
+    // This case is ambiguous, can be exact fit or buffer too small
+    if (rc == buf.len) return error.NAMETOOLONG;
     return safeTrunc(usize, rc);
 }
 
