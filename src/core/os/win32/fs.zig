@@ -1,8 +1,9 @@
 const std = @import("std");
 
+const assert = @import("../../assert.zig").assert;
 const fs = @import("../../fs.zig");
-const win32 = @import("win32.zig");
 const meta = @import("../../meta.zig");
+const win32 = @import("win32.zig");
 
 pub const Handle = win32.HANDLE;
 
@@ -13,6 +14,8 @@ pub const path_sep_str = "\\";
 pub const max_path_bytes = win32.PATH_MAX_WIDE * 3 + 1;
 /// Not including null
 pub const max_name_bytes = win32.NAME_MAX * 3;
+
+const nt_path_prefix: [4]u16 = .{ '\\', '?', '?', '\\' };
 
 pub const Permissions = enum(u32) {
     default_file,
@@ -35,62 +38,13 @@ pub inline fn cwd() fs.Dir {
 }
 
 pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
-    if (path.len == 0) return error.BadPath;
-    if (path.len > win32.PATH_MAX_WIDE) return error.NameTooLong;
+    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    const nt_path = try toNtPath(dir, path, &nt_path_buf);
 
-    const parsed_path = try parsePath(path);
+    std.log.debug("existAt final name: '{f}', dir_handle: {}", .{ std.unicode.fmtUtf16Le(nt_path.path), nt_path.root_handle != null });
 
-    var wide_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-    var char_count = std.unicode.wtf8ToWtf16Le(&wide_buf, path) catch return error.BadPath;
-
-    if (parsed_path.type != .verbatim) {
-        while (char_count > 1 and isSep(wide_buf[char_count - 1])) {
-            if (wide_buf[char_count - 2] == ':') break;
-            char_count -= 1;
-        }
-
-        for (wide_buf[0..char_count]) |*codepoint| {
-            if (codepoint.* == '/') codepoint.* = '\\';
-        }
-    }
-
-    wide_buf[char_count] = 0;
-
-    const name: win32.NT_UNICODE_STRING = .{
-        .length = @intCast(char_count * @sizeOf(u16)),
-        .maximum_length = @intCast((char_count + 1) * @sizeOf(u16)),
-        .buffer = wide_buf[0..char_count :0],
-    };
-
-    var object_attributes: win32.NT_OBJECT_ATTRIBUTES = undefined;
-    var nt_name: win32.NT_UNICODE_STRING = undefined;
-
-    switch (parsed_path.type) {
-        // In place prefix swap
-        .local_device,
-        .verbatim,
-        // Resolve and prefix
-        .rooted,
-        .drive_relative,
-        // Prefix only
-        .unc,
-        .drive_absolute,
-        => {
-            switch (win32.RtlDosPathNameToNtPathName_U_WithStatus(name.buffer, &nt_name, null, null)) {
-                .SUCCESS => {},
-                .OBJECT_NAME_INVALID => return error.BadPath,
-                .NO_MEMORY => return error.OutOfMemory,
-                .ACCESS_DENIED => return error.AccessDenied,
-                else => return error.Unexpected,
-            }
-            object_attributes.init(&nt_name, .{ .CASE_INSENSITIVE = true }, null, null);
-        },
-
-        .relative => {
-            object_attributes.init(&name, .{ .CASE_INSENSITIVE = true }, dir.handle, null);
-        },
-    }
-    defer if (parsed_path.type != .relative) win32.RtlFreeUnicodeString(&nt_name);
+    const final_nt_unicode_name = win32.NT_UNICODE_STRING.init(nt_path.path);
+    const object_attributes: win32.NT_OBJECT_ATTRIBUTES = .init(&final_nt_unicode_name, .{ .CASE_INSENSITIVE = true }, nt_path.root_handle, null);
 
     var out_info: win32.NT_FILE_BASIC_INFORMATION = undefined;
     switch (win32.NtQueryAttributesFile(&object_attributes, &out_info)) {
@@ -99,7 +53,10 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
         .OBJECT_NAME_INVALID => return error.BadPath,
         .ACCESS_DENIED => return error.AccessDenied,
         .IO_REPARSE_TAG_NOT_HANDLED => return error.TooManySymLinks,
-        else => return error.Unexpected,
+        else => |e| {
+            std.log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{ std.enums.tagName(win32.NTSTATUS, e) orelse "", @intFromEnum(e) });
+            return error.Unexpected;
+        },
     }
 }
 
@@ -165,10 +122,14 @@ pub fn parsePath(path: []const u8) error{BadPath}!ParsedPath {
         else if (path.len > 2 and (path[2] == '.' or path[2] == '?')) // \\. or \\?
             if (path.len == 3) return error.BadPath // exactly \\. or \\?
             else if (isSep(path[3]))
-                if (std.mem.findNone(u8, path[4..], "/\\") == null)
-                    return error.BadPath
-                else
-                    return .{ .type = if (path[2] == '.') .local_device else .verbatim, .root_end = 4 }; // \\.\x or \\?\x
+                if (std.mem.findNone(u8, path[4..], "/\\") == null) {
+                    return error.BadPath;
+                } else {
+                    if (path[0] == path_sep and path[1] == path_sep and path[2] == '?' and path[3] == path_sep) {
+                        return .{ .type = .verbatim, .root_end = 4 }; // \\?\
+                    }
+                    return .{ .type = .local_device, .root_end = 4 }; // \\.\x
+                };
 
         // \\x
         const server_end = std.mem.findAnyPos(u8, path, 2, "/\\") orelse return error.BadPath;
@@ -195,6 +156,114 @@ pub fn parsePath(path: []const u8) error{BadPath}!ParsedPath {
         return .{ .type = .drive_absolute, .root_end = drive_len + 2 }; // x:\
 
     return .{ .type = .drive_relative, .root_end = drive_len + 1 };
+}
+
+const NtPath = struct {
+    path: [:0]u16,
+    root_handle: ?win32.HANDLE,
+};
+
+fn toNtPath(dir: fs.Dir, path: [:0]const u8, buf: [:0]u16) !NtPath {
+    if (path.len > buf.len) return error.NameTooLong;
+    const parsed_path = try parsePath(path);
+
+    var name_len = std.unicode.wtf8ToWtf16Le(buf, path) catch return error.BadPath;
+
+    if (parsed_path.type != .verbatim) {
+        while (name_len > 1 and isSep(buf[name_len - 1])) {
+            if (buf[name_len - 2] == ':') break;
+            name_len -= 1;
+        }
+    }
+
+    buf[name_len] = 0;
+    var name: [:0]u16 = buf[0..name_len :0];
+
+    var nt_name: win32.NT_UNICODE_STRING = undefined;
+    var dir_handle: ?win32.HANDLE = null;
+
+    switch (parsed_path.type) {
+        // In place prefix swap
+        .verbatim => {
+            name[0..nt_path_prefix.len].* = nt_path_prefix;
+        },
+        .local_device,
+        // Resolve and prefix
+        .rooted,
+        .drive_relative,
+        // Prefix only
+        .unc,
+        .drive_absolute,
+        => {
+            switch (win32.RtlDosPathNameToNtPathName_U_WithStatus(name, &nt_name, null, null)) {
+                .SUCCESS => {},
+                .OBJECT_NAME_INVALID => return error.BadPath,
+                .NO_MEMORY => return error.OutOfMemory,
+                .ACCESS_DENIED => return error.AccessDenied,
+                else => return error.Unexpected,
+            }
+            const nt_name_slice = nt_name.slice();
+            if (buf.len < nt_name_slice.len + 1) return error.NameTooLong;
+            @memcpy(buf[0 .. nt_name_slice.len + 1], nt_name_slice.ptr[0 .. nt_name_slice.len + 1]);
+            name = buf[0..nt_name_slice.len :0];
+        },
+
+        .relative => {
+            if (std.os.windows.normalizePath(u16, name)) |normalized_len| {
+                name[normalized_len] = 0;
+                name = name[0..normalized_len :0];
+                dir_handle = dir.handle;
+            } else |e| switch (e) {
+                error.TooManyParentDirs => {
+                    name = try relativeEscapingDirHandleNtPath(dir, path, buf);
+                },
+            }
+        },
+    }
+    defer if (parsed_path.type != .relative) win32.RtlFreeUnicodeString(&nt_name);
+
+    return .{ .path = name, .root_handle = dir_handle };
+}
+
+fn relativeEscapingDirHandleNtPath(dir: fs.Dir, path: [:0]const u8, dest: [:0]u16) ![:0]u16 {
+    var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+
+    const dir_path_len = win32.GetFinalPathNameByHandleW(dir.handle, &buf, buf.len + 1, 0);
+    if (dir_path_len == 0) {
+        const err = win32.GetLastError();
+        return switch (err) {
+            .PATH_NOT_FOUND => error.BadPath,
+            .NOT_ENOUGH_MEMORY => error.OutOfMemory,
+            .ACCESS_DENIED => error.AccessDenied,
+            .INVALID_PARAMETER => unreachable,
+            else => error.Unexpected,
+        };
+    }
+    if (dir_path_len > buf.len + 1) return error.NameTooLong;
+
+    const dir_path = buf[0..dir_path_len];
+    std.log.debug("dir path: '{f}'", .{std.unicode.fmtUtf16Le(dir_path)});
+
+    if (dir_path_len + path.len + 1 > buf.len) return error.NameTooLong;
+
+    buf[dir_path_len] = path_sep;
+
+    const path_len = std.unicode.wtf8ToWtf16Le(buf[dir_path_len + 1 ..], path) catch return error.BadPath;
+    const unresolved_len = dir_path_len + path_len + 1;
+    buf[unresolved_len] = 0;
+    const unresolved_name = buf[0..unresolved_len :0];
+    std.log.debug("unresolved_name: '{f}'", .{std.unicode.fmtUtf16Le(unresolved_name)});
+
+    const dest_len_bytes = dest.len * @sizeOf(u16);
+    const result_len_bytes = win32.RtlGetFullPathName_U(unresolved_name, @intCast(dest_len_bytes), dest.ptr, null);
+    if (result_len_bytes == 0) return error.BadPath;
+    if (result_len_bytes > dest_len_bytes) return error.NameTooLong;
+
+    dest[0..nt_path_prefix.len].* = nt_path_prefix;
+
+    const result_len = result_len_bytes / @sizeOf(u16);
+
+    return dest[0..result_len :0];
 }
 
 test parsePath {
@@ -298,15 +367,15 @@ test parsePath {
     try testParse("\\\\.\\UNC\\server\\share\\", .local_device, "\\\\.\\");
     try testParse("//./foo", .local_device, "//./");
     try testParse("\\\\.\\.", .local_device, "\\\\.\\");
+    try testParse("\\\\?/C:\\foo", .local_device, "\\\\?/");
+    try testParse("//?/foo", .local_device, "//?/");
 
     // verbatim
     try testParse("\\\\?\\C:\\foo", .verbatim, "\\\\?\\");
-    try testParse("\\\\?/C:\\foo", .verbatim, "\\\\?/");
     try testParse("\\\\?\\\\foo", .verbatim, "\\\\?\\");
     try testParse("\\\\?\\UNC\\server\\share", .verbatim, "\\\\?\\");
     try testParse("\\\\?\\Volume{X}\\", .verbatim, "\\\\?\\");
     try testParse("\\\\?\\GLOBALROOT\\", .verbatim, "\\\\?\\");
-    try testParse("//?/foo", .verbatim, "//?/");
     try testParse("\\\\?\\.", .verbatim, "\\\\?\\");
 
     try t.expectError(error.BadPath, parsePath(""));

@@ -1574,6 +1574,18 @@ pub const NT_UNICODE_STRING = extern struct {
     length: USHORT,
     maximum_length: USHORT,
     buffer: PWSTR,
+
+    pub fn init(wide_str: [:0]u16) NT_UNICODE_STRING {
+        return .{
+            .length = @intCast(wide_str.len * @sizeOf(u16)),
+            .maximum_length = @intCast((wide_str.len + 1) * @sizeOf(u16)),
+            .buffer = wide_str.ptr,
+        };
+    }
+
+    pub fn slice(this: *const NT_UNICODE_STRING) [:0]u16 {
+        return this.buffer[0 .. this.length / @sizeOf(u16) :0];
+    }
 };
 
 pub const NT_OBJECT_ATTRIBUTES = extern struct {
@@ -1584,8 +1596,8 @@ pub const NT_OBJECT_ATTRIBUTES = extern struct {
     security_descriptor: ?*anyopaque,
     security_quality_of_service: ?*anyopaque,
 
-    pub fn init(this: *@This(), name: *const NT_UNICODE_STRING, attributes: NT_OBJECT_ATTRIBUTE_FLAGS, root_handle: ?HANDLE, s: ?*NT_SECURITY_DESCRIPTOR) void {
-        this.* = .{
+    pub fn init(name: *const NT_UNICODE_STRING, attributes: NT_OBJECT_ATTRIBUTE_FLAGS, root_handle: ?HANDLE, s: ?*NT_SECURITY_DESCRIPTOR) NT_OBJECT_ATTRIBUTES {
+        return .{
             .root_directory = root_handle,
             .object_name = name,
             .attributes = attributes,
@@ -1735,6 +1747,7 @@ pub extern "kernel32" fn FreeLibrary(lib_module: HMODULE) callconv(.winapi) BOOL
 pub extern "kernel32" fn GetCurrentDirectoryA(buffer_length: DWORD, buffer: LPCSTR) callconv(.winapi) DWORD;
 pub extern "kernel32" fn MultiByteToWideChar(code_page: CodePage, flags: MultiByteFlags, multi_byte_string: LPCCH, multi_byte_string_len: c_int, out_wide_char_string: LPWSTR, out_wide_char_string_len: c_int) callconv(.winapi) c_int;
 pub extern "kernel32" fn GetLastError() callconv(.winapi) ERROR;
+pub extern "kernel32" fn GetFinalPathNameByHandleW(handle: HANDLE, file_path_out: LPWSTR, file_path_len: DWORD, flags: DWORD) callconv(.winapi) DWORD;
 
 pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
 
@@ -1808,3 +1821,4 @@ pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_
 pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const NT_OBJECT_ATTRIBUTES, file_info_out: *NT_FILE_BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn RtlDosPathNameToNtPathName_U_WithStatus(dos_file_name: PCWSTR, nt_file_name_out: *NT_UNICODE_STRING, file_part: ?PWSTR, relative_name: ?*RTL_RELATIVE_NAME_U) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn RtlFreeUnicodeString(unicode_string: *NT_UNICODE_STRING) callconv(.winapi) void;
+pub extern "ntdll" fn RtlGetFullPathName_U(file_name: PCWSTR, buffer_length: ULONG, out_buffer: PWSTR, out_file_part: ?PWSTR) callconv(.winapi) ULONG;
