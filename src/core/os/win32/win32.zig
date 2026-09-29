@@ -1602,16 +1602,6 @@ pub const NT_OBJECT_ATTRIBUTES = extern struct {
     attributes: NT_OBJECT_ATTRIBUTE_FLAGS,
     security_descriptor: ?*anyopaque,
     security_quality_of_service: ?*anyopaque,
-
-    pub fn init(name: *const NT_UNICODE_STRING, attributes: NT_OBJECT_ATTRIBUTE_FLAGS, root_handle: ?HANDLE, s: ?*NT_SECURITY_DESCRIPTOR) NT_OBJECT_ATTRIBUTES {
-        return .{
-            .root_directory = root_handle,
-            .object_name = name,
-            .attributes = attributes,
-            .security_descriptor = s,
-            .security_quality_of_service = null,
-        };
-    }
 };
 
 pub const NT_OBJECT_ATTRIBUTE_FLAGS = packed struct(ULONG) {
