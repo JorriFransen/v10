@@ -6,11 +6,10 @@ pub fn assert(cond: bool) void {
         if (!cond) {
             @trap();
         }
-    } else if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
-        if (!cond) {
-            @branchHint(.cold);
-            std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
-            @breakpoint();
-        }
+    } else if (!cond) {
+        @branchHint(.cold);
+        @disableInstrumentation();
+        std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });
+        @breakpoint();
     }
 }
