@@ -473,8 +473,6 @@ const ShmError = error{
 };
 
 fn allocShm(this: *Context) ShmError!void {
-    const S = linux.S;
-
     assert(this.shm_data.len == 0);
 
     const prng_seed = TimeStamp.now(.real);
@@ -498,8 +496,7 @@ fn allocShm(this: *Context) ShmError!void {
 
     // TODO: Use mem_fd!
     const open_flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true };
-    const mode: linux.mode_t = S.IWUSR | S.IRUSR | S.IWOTH | S.IROTH;
-    this.shm_fd = linux.shm_open(name, open_flags, mode) catch |e| {
+    this.shm_fd = linux.shm_open(name, open_flags, .{ .IRUSR = true, .IWUSR = true }) catch |e| {
         log.err("shm_open failed, error: {}", .{e});
         return error.ShmOpenFailed;
     };

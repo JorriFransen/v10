@@ -545,7 +545,7 @@ pub const OpenError = error{
     UnexpectedErrno,
 };
 
-pub fn open(path: [:0]const u8, flags: O, mode: mode_t) OpenError!fd_t {
+pub fn open(path: [:0]const u8, flags: O, mode: S) OpenError!fd_t {
     const result = openat(AT.FDCWD, path, flags, mode) catch |e| switch (e) {
         error.BADF => unreachable,
         else => return @errorCast(e),
@@ -584,13 +584,13 @@ pub const OpenatError = error{
     UnexpectedErrno,
 };
 
-pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: mode_t) OpenatError!fd_t {
+pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: S) OpenatError!fd_t {
     const rc = syscall4(
         .openat,
         zeroExtendToUsize(dir_fd),
         @intFromPtr(sub_path.ptr),
         zeroExtendToUsize(flags),
-        mode,
+        zeroExtendToUsize(mode),
     );
     try handleErrno(OpenatError, rc);
     return safeTrunc(c_int, rc);
@@ -2282,7 +2282,7 @@ pub const ShmopenError = OpenatError || error{
     UnexpectedErrno,
 };
 
-pub fn shm_open(name: [:0]const u8, oflag: O, mode: mode_t) ShmopenError!c_int {
+pub fn shm_open(name: [:0]const u8, oflag: O, mode: S) ShmopenError!c_int {
     const path = try getShmPath(name);
 
     const fd = try openat(AT.FDCWD, path, oflag, mode);
@@ -2891,60 +2891,41 @@ pub inline fn CMSG_DATA(msg: *cmsghdr) []u8 {
 // stat.h
 // =============================================================================
 
-pub const S = struct {
-    pub const IFMT = 0o170000;
+pub const S = packed struct(mode_t) {
+    IXOTH: bool = false, // 0o001
+    IWOTH: bool = false, // 0o002
+    IROTH: bool = false, // 0o004
+    IXGRP: bool = false, // 0o010
+    IWGRP: bool = false, // 0o020
+    IRGRP: bool = false, // 0o040
+    IXUSR: bool = false, // 0o100
+    IWUSR: bool = false, // 0o200
+    IRUSR: bool = false, // 0o400
+    ISVTX: bool = false, // 0o1000
+    ISGID: bool = false, // 0o2000
+    ISUID: bool = false, // 0o4000
+    TYPE: Type = @enumFromInt(0),
+    _: u16 = 0,
 
-    pub const IFDIR = 0o040000;
-    pub const IFCHR = 0o020000;
-    pub const IFBLK = 0o060000;
-    pub const IFREG = 0o100000;
-    pub const IFIFO = 0o010000;
-    pub const IFLNK = 0o120000;
-    pub const IFSOCK = 0o140000;
+    pub const Type = enum(u4) {
+        FIFO = 1, // 0o010000
+        CHR = 2, // 0o020000
+        DIR = 4, // 0o040000
+        BLK = 6, // 0o060000
+        REG = 8, // 0o100000
+        LNK = 10, // 0o120000
+        SOCK = 12, // 0o140000
+        _,
+    };
 
-    pub const ISUID = 0o4000;
-    pub const ISGID = 0o2000;
-    pub const ISVTX = 0o1000;
-    pub const IRUSR = 0o400;
-    pub const IWUSR = 0o200;
-    pub const IXUSR = 0o100;
-    pub const IRWXU = 0o700;
-    pub const IRGRP = 0o040;
-    pub const IWGRP = 0o020;
-    pub const IXGRP = 0o010;
-    pub const IRWXG = 0o070;
-    pub const IROTH = 0o004;
-    pub const IWOTH = 0o002;
-    pub const IXOTH = 0o001;
-    pub const IRWXO = 0o007;
+    pub const IRWXO: S = .{ .IXOTH = true, .IWOTH = true, .IROTH = true };
+    pub const IRWXG: S = .{ .IXGRP = true, .IWGRP = true, .IRGRP = true };
+    pub const IRWXU: S = .{ .IXUSR = true, .IWUSR = true, .IRUSR = true };
 
-    pub fn ISREG(m: mode_t) bool {
-        return m & IFMT == IFREG;
-    }
+    pub const IRWX_ALL: S = @bitCast(@as(mode_t, @bitCast(IRWXO)) | @as(mode_t, @bitCast(IRWXG)) | @as(mode_t, @bitCast(IRWXU)));
 
-    pub fn ISDIR(m: mode_t) bool {
-        return m & IFMT == IFDIR;
-    }
-
-    pub fn ISCHR(m: mode_t) bool {
-        return m & IFMT == IFCHR;
-    }
-
-    pub fn ISBLK(m: mode_t) bool {
-        return m & IFMT == IFBLK;
-    }
-
-    pub fn ISFIFO(m: mode_t) bool {
-        return m & IFMT == IFIFO;
-    }
-
-    pub fn ISLNK(m: mode_t) bool {
-        return m & IFMT == IFLNK;
-    }
-
-    pub fn ISSOCK(m: mode_t) bool {
-        return m & IFMT == IFSOCK;
-    }
+    pub const default_file: S = .{ .IRUSR = true, .IWUSR = true, .IRGRP = true, .IWGRP = true, .IROTH = true, .IWOTH = true };
+    pub const default_dir: S = IRWX_ALL;
 };
 
 pub const Stat = abi.Stat;
@@ -2993,12 +2974,12 @@ pub const MkdiratError = error{
     UnexpectedErrno,
 };
 
-pub fn mkdirat(dir_fd: dirfd_t, path: [:0]const u8, mode: mode_t) MkdiratError!void {
+pub fn mkdirat(dir_fd: dirfd_t, path: [:0]const u8, mode: S) MkdiratError!void {
     const rc = syscall3(
         .mkdirat,
         zeroExtendToUsize(dir_fd),
         @intFromPtr(path.ptr),
-        mode,
+        zeroExtendToUsize(mode),
     );
     try handleErrno(MkdiratError, rc);
     assert(rc == 0);
