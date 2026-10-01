@@ -16,14 +16,12 @@ pub const max_name_bytes = linux.NAME_MAX;
 const S = linux.S;
 
 pub const Permissions = enum(linux.mode_t) {
-    default_file = S.IRUSR | S.IWUSR | S.IRGRP | S.IWGRP | S.IROTH | S.IWOTH,
-    default_dir = S.IRWXU | S.IRWXG | S.IRWXO,
+    default_file = @bitCast(S.default_file),
+    default_dir = @bitCast(S.default_dir),
     _,
 
-    pub fn readOnly(this: Permissions) Permissions {
-        var result: linux.mode_t = this;
-        result &= ~(S.IWUSR | S.IWGRP | S.IWOTH);
-        return @enumFromInt(result);
+    pub fn toS(this: Permissions) S {
+        return @bitCast(@intFromEnum(this));
     }
 };
 
@@ -65,7 +63,7 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
         .NOFOLLOW = !options.follow_symlinks,
     };
 
-    const result = linux.openat(dir.handle, path, mode, 0) catch |e| switch (e) {
+    const result = linux.openat(dir.handle, path, mode, .{}) catch |e| switch (e) {
         error.BADF => @panic("Invalid dir handle"),
         error.FAULT => @panic("Invalid path pointer"),
         error.NODEV,
@@ -101,7 +99,7 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
 }
 
 pub fn createDirAt(dir: fs.Dir, dir_name: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {
-    linux.mkdirat(dir.handle, dir_name, @intFromEnum(options.permissions)) catch |e| switch (e) {
+    linux.mkdirat(dir.handle, dir_name, options.permissions.toS()) catch |e| switch (e) {
         error.BADF => @panic("Invalid dir handle"),
         error.FAULT => @panic("Invalid path pointer"),
 
