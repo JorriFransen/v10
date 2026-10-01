@@ -228,8 +228,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         for (&shared_state.replay_buffers, 0..) |*replay_buffer, i| {
             const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
 
-            const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
-            if (linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, permissions)) |fd| {
+            const flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true, .CLOEXEC = true };
+            if (linux.open(file_name, flags, .default_file)) |fd| {
                 if (linux.mmap(null, total_size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0)) |buf| {
                     if (linux.ftruncate(fd, total_size)) {
                         replay_buffer.memory = buf;
@@ -814,7 +814,7 @@ pub const DEBUG = struct {
     pub fn readEntireFile(thread_context: *ThreadContext, path: [:0]const u8) common.DEBUG.ReadFileResult {
         var result: []u8 = &.{};
 
-        if (linux.open(path, .{ .CLOEXEC = true }, 0)) |fd| {
+        if (linux.open(path, .{ .CLOEXEC = true }, .{})) |fd| {
             var stat: linux.Stat = undefined;
 
             // TODO: Use statx here! statx needs absolute paths or a dir fd...
@@ -852,9 +852,8 @@ pub const DEBUG = struct {
         _ = thread_context;
         var result = false;
 
-        const permissions = linux.S.IWUSR | linux.S.IRUSR | linux.S.IRGRP | linux.S.IROTH;
-
-        if (linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, permissions)) |fd| {
+        const flags = linux.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true };
+        if (linux.open(path, flags, .default_file)) |fd| {
             if (linux.write(fd, data)) |written| {
                 result = written == data.len;
             } else |e| {
@@ -1252,7 +1251,11 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
-        shared_state.recording_handle = linux.open(file_name, .{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, 0) catch @panic("Input recording file creation failed");
+        const flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true, .CLOEXEC = true };
+        shared_state.recording_handle = linux.open(file_name, flags, .default_file) catch |e| {
+            log.err("Failed to open input recording file for recording: '{s}', error: '{s}'", .{ file_name, @errorName(e) });
+            @panic("Input recording file creation failed");
+        };
 
         @memcpy(replay_buffer.memory, shared_state.game_memory_block);
     } else log.warn("Invalid recording buffer: {}", .{input_recording_index});
@@ -1274,7 +1277,10 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
-        shared_state.playback_handle = linux.open(file_name, .{ .CLOEXEC = true }, 0) catch @panic("Input playback file open failed");
+        shared_state.playback_handle = linux.open(file_name, .{ .CLOEXEC = true }, .{}) catch |e| {
+            log.err("Failed to open input recording file for playback: '{s}', error: '{s}'", .{ file_name, @errorName(e) });
+            @panic("Input playback file open failed");
+        };
 
         @memcpy(shared_state.game_memory_block, replay_buffer.memory);
     } else log.warn("Invalid replay buffer: {}", .{input_playing_index});
