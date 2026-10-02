@@ -585,7 +585,7 @@ pub fn windowsEntry(
             const audio_frames = win32.VirtualAlloc(
                 null,
                 audio_output.buffer_byte_size,
-                win32.MEM_RESERVE | win32.MEM_COMMIT,
+                .{ .RESERVE = true, .COMMIT = true },
                 win32.PAGE_READWRITE,
             );
             audio_output.buffer = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(audio_frames)))[0 .. audio_output.buffer_byte_size / @sizeOf(AudioOutput.Frame)];
@@ -602,7 +602,7 @@ pub fn windowsEntry(
             const perm_opt: ?[*]u8 = win32.VirtualAlloc(
                 base_address,
                 total_size,
-                win32.MEM_RESERVE | win32.MEM_COMMIT,
+                .{ .RESERVE = true, .COMMIT = true },
                 win32.PAGE_READWRITE,
             );
 
@@ -632,7 +632,7 @@ pub fn windowsEntry(
                 for (&shared_state.replay_buffers, 1..) |*replay_buffer, i| {
                     const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
 
-                    replay_buffer.file_handle = win32.CreateFileA(file_name, win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
+                    replay_buffer.file_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true, .GENERIC_WRITE = true }, .{}, null, win32.CREATE_ALWAYS, 0, null);
 
                     const max_size: win32.LARGE_INTEGER = .{ .quad_part = shared_state.game_memory_block.len };
 
@@ -1076,7 +1076,7 @@ pub fn mainWindowCallback(window: win32.HWND, message: c_uint, wparam: win32.WPA
 
 fn resizeDibSection(buffer: *Win32OffscreenBuffer, width: c_int, height: c_int) bool {
     if (buffer.memory_opt) |m| {
-        _ = win32.VirtualFree(m, 0, win32.MEM_RELEASE);
+        _ = win32.VirtualFree(m, 0, .{ .RELEASE = true });
     }
 
     const bytes_per_pixel = 4;
@@ -1097,7 +1097,7 @@ fn resizeDibSection(buffer: *Win32OffscreenBuffer, width: c_int, height: c_int) 
     const memory = win32.VirtualAlloc(
         null,
         bitmap_memory_size,
-        win32.MEM_RESERVE | win32.MEM_COMMIT,
+        .{ .RESERVE = true, .COMMIT = true },
         win32.PAGE_READWRITE,
     );
     buffer.memory_opt = @as([*]u8, @ptrCast(memory));
@@ -1147,7 +1147,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
-        shared_state.recording_handle = win32.CreateFileA(file_name, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
+        shared_state.recording_handle = win32.CreateFileA(file_name, .{ .GENERIC_WRITE = true }, .{}, null, win32.CREATE_ALWAYS, 0, null);
 
         @memcpy(replay_buffer.memory, shared_state.game_memory_block);
     }
@@ -1167,7 +1167,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
-        shared_state.playback_handle = win32.CreateFileA(file_name, win32.GENERIC_READ, 0, null, win32.OPEN_EXISTING, 0, null);
+        shared_state.playback_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true }, .{}, null, win32.OPEN_EXISTING, 0, null);
 
         @memcpy(shared_state.game_memory_block, replay_buffer.memory);
     }
@@ -1218,12 +1218,12 @@ pub const DEBUG = struct {
     pub fn readEntireFile(thread_context: *ThreadContext, path: [:0]const u8) common.DEBUG.ReadFileResult {
         var result: []u8 = &.{};
 
-        const handle = win32.CreateFileA(path, win32.GENERIC_READ, win32.FILE_SHARE_READ, null, win32.OPEN_EXISTING, 0, null);
+        const handle = win32.CreateFileA(path, .{ .GENERIC_READ = true }, .{ .READ = true }, null, win32.OPEN_EXISTING, 0, null);
 
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var file_size: win32.LARGE_INTEGER = undefined;
             if (win32.GetFileSizeEx(handle, &file_size) != .FALSE) {
-                if (win32.VirtualAlloc(null, file_size.quad_part, win32.MEM_RESERVE | win32.MEM_COMMIT, win32.PAGE_READWRITE)) |alloc_res| {
+                if (win32.VirtualAlloc(null, file_size.quad_part, .{ .RESERVE = true, .COMMIT = true }, win32.PAGE_READWRITE)) |alloc_res| {
                     const file_size_32 = safeTruncateU64(file_size.quad_part);
 
                     var bytes_read: win32.DWORD = undefined;
@@ -1252,7 +1252,7 @@ pub const DEBUG = struct {
 
         var result = false;
 
-        const handle = win32.CreateFileA(path, win32.GENERIC_WRITE, 0, null, win32.CREATE_ALWAYS, 0, null);
+        const handle = win32.CreateFileA(path, .{ .GENERIC_WRITE = true }, .{}, null, win32.CREATE_ALWAYS, 0, null);
 
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var written: win32.DWORD = undefined;
@@ -1277,7 +1277,7 @@ pub const DEBUG = struct {
         _ = thread_context;
 
         if (memory.len > 0) {
-            _ = win32.VirtualFree(memory.ptr, 0, win32.MEM_DECOMMIT);
+            _ = win32.VirtualFree(memory.ptr, 0, .{ .DECOMMIT = true });
         }
     }
 

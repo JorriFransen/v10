@@ -108,14 +108,14 @@ pub const Arena = struct {
                 const reserved_ptr = win32.VirtualAlloc(
                     null,
                     options.reserved_capacity,
-                    win32.MEM_RESERVE,
+                    .{ .RESERVE = true },
                     win32.PAGE_NOACCESS,
                 ) orelse return error.Unexpected;
 
                 const commit_ptr = win32.VirtualAlloc(
                     reserved_ptr,
                     options.initial_commit,
-                    win32.MEM_COMMIT,
+                    .{ .COMMIT = true },
                     win32.PAGE_READWRITE,
                 ) orelse return error.CommitFailed;
 
@@ -141,7 +141,7 @@ pub const Arena = struct {
                     error.NOMEM => error.OutOfMemory,
                     else => error.Unexpected,
                 },
-                .windows => _ = win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, win32.MEM_RELEASE),
+                .windows => _ = win32.VirtualFree(@ptrCast(@constCast(this.data.ptr)), 0, .{ .RELEASE = true }),
             }
         }
 
@@ -193,7 +193,7 @@ pub const Arena = struct {
                 _ = win32.VirtualAlloc(
                     new_slice.ptr,
                     new_slice.len,
-                    win32.MEM_COMMIT,
+                    .{ .COMMIT = true },
                     win32.PAGE_READWRITE,
                 ) orelse return error.Unexpected;
             },
