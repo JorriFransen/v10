@@ -16,16 +16,15 @@ pub const max_path_bytes = win32.PATH_MAX_WIDE * 3 + 1;
 pub const max_name_bytes = win32.NAME_MAX * 3;
 
 const nt_path_prefix: [4]u16 = .{ '\\', '?', '?', '\\' };
+const local_device_prefix: [4]u16 = .{ '\\', '\\', '.', '\\' };
+const unc_dos_prefix: [8]u16 = .{ '\\', '\\', '?', '\\', 'U', 'N', 'C', '\\' };
+const unc_nt_prefix: [8]u16 = .{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 
-pub const Permissions = enum(u32) {
-    default_file,
-    default_dir,
+pub const Permissions = enum(@typeInfo(win32.FILE.ATTRIBUTE).@"struct".backing_integer.?) {
+    default_file = 0,
     _,
 
-    pub fn readOnly(this: Permissions) Permissions {
-        _ = this;
-        unreachable;
-    }
+    pub const default_dir: Permissions = .default_file;
 };
 
 pub inline fn isSep(char: anytype) bool {
@@ -43,7 +42,7 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
     const nt_path = try toNtPath(dir, path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
 
-    var out_info: win32.NT_FILE_BASIC_INFORMATION = undefined;
+    var out_info: win32.FILE.BASIC_INFORMATION = undefined;
     switch (win32.NtQueryAttributesFile(&object_attributes, &out_info)) {
         .SUCCESS => return true,
         .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return false,
@@ -159,7 +158,7 @@ const NtPath = struct {
     unicode_string: win32.NT_UNICODE_STRING,
     root_handle: ?win32.HANDLE,
 
-    inline fn ntObjectAttributes(this: *const NtPath) win32.NT_OBJECT_ATTRIBUTES {
+    inline fn ntObjectAttributes(this: *const NtPath) win32.OBJECT.ATTRIBUTES {
         return .{
             .root_directory = this.root_handle,
             .object_name = &this.unicode_string,
@@ -170,96 +169,195 @@ const NtPath = struct {
     }
 };
 
-fn toNtPath(dir: fs.Dir, path: [:0]const u8, buf: [:0]u16) !NtPath {
-    if (path.len > buf.len) return error.NameTooLong;
+fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: [:0]u16) !NtPath {
+    const parsed_path = try parsePath(unstripped_path);
 
-    const parsed_path = try parsePath(path);
-    const name_len = try wtf8ToWtf16LeCheckedLen(buf, path);
-
-    var name: [:0]u16 = if (parsed_path.type != .verbatim) blk: {
-        var new_len = name_len;
-        while (new_len > 1 and isSep(buf[new_len - 1])) {
-            if (buf[new_len - 2] == ':') break;
-            new_len -= 1;
+    var path: []const u8 = unstripped_path;
+    if (parsed_path.type != .verbatim) {
+        while (path.len > 1 and isSep(unstripped_path[path.len - 1])) {
+            if (unstripped_path[path.len - 2] == ':') break;
+            path.len -= 1;
         }
+    }
 
-        buf[new_len] = 0;
-        break :blk buf[0..new_len :0];
-    } else blk: {
-        buf[name_len] = 0;
-        break :blk buf[0..name_len :0];
-    };
-
-    // var name: [:0]u16 = if (parsed_path.type != .verbatim) blk: {
-    //     var name_len: usize = unstripped_name.len;
-    //
-    //     while (name_len > 1 and isSep(buf[name_len - 1])) {
-    //         if (buf[name_len - 2] == ':') break;
-    //         name_len -= 1;
-    //     }
-    //
-    //     buf[name_len] = 0;
-    //     break :blk buf[0..name_len :0];
-    // } else blk: {
-    //     buf[unstripped_name.len] = 0;
-    //     break :blk buf[0..unstripped_name.len :0];
-    // };
-
-    var nt_name: win32.NT_UNICODE_STRING = undefined;
-    var dir_handle: ?win32.HANDLE = null;
-
-    switch (parsed_path.type) {
-        // In place prefix swap
+    const result: ResolveResult = values: switch (parsed_path.type) {
         .verbatim => {
-            name[0..nt_path_prefix.len].* = nt_path_prefix;
+            const name_len = try wtf8ToWtf16LeCheckedLen(buf, path);
+            buf[name_len] = 0;
+            buf[0..nt_path_prefix.len].* = nt_path_prefix;
+            break :values .{ .name = buf[0..name_len :0], .handle = null };
         },
-        .local_device,
-        // Resolve and prefix
-        .rooted,
-        .drive_relative,
-        // Prefix only
-        .unc,
-        .drive_absolute,
-        => {
-            switch (win32.RtlDosPathNameToNtPathName_U_WithStatus(name, &nt_name, null, null)) {
-                .SUCCESS => {},
-                .OBJECT_NAME_INVALID => return error.BadPath,
-                .NO_MEMORY => return error.OutOfMemory,
-                .ACCESS_DENIED => return error.AccessDenied,
-                else => return error.Unexpected,
-            }
-            const nt_name_slice = nt_name.slice();
-            if (buf.len < nt_name_slice.len + 1) return error.NameTooLong;
-            @memcpy(buf[0 .. nt_name_slice.len + 1], nt_name_slice.ptr[0 .. nt_name_slice.len + 1]);
-            name = buf[0..nt_name_slice.len :0];
+
+        .local_device, .rooted, .drive_relative, .drive_absolute, .unc => {
+            const name_len = try resolveNonVerbatimNonRelativeNtPath(path, parsed_path.type, buf);
+            break :values .{ .name = buf[0..name_len :0], .handle = null };
         },
 
         .relative => {
-            if (std.os.windows.normalizePath(u16, name)) |normalized_len| {
-                name[normalized_len] = 0;
-                name = name[0..normalized_len :0];
-                dir_handle = dir.handle;
-            } else |e| switch (e) {
-                error.TooManyParentDirs => {
-                    name = try relativeEscapingDirHandleNtPath(dir, path, buf);
-                },
-            }
+            break :values try resolveRelativeNtPath(dir, path, buf);
         },
-    }
-    defer if (parsed_path.type != .relative and parsed_path.type != .verbatim) win32.RtlFreeUnicodeString(&nt_name);
+    };
 
     return .{
         .unicode_string = .{
-            .buffer = name.ptr,
-            .length = @intCast(name.len * @sizeOf(u16)),
+            .buffer = result.name.ptr,
+            .length = @intCast(result.name.len * @sizeOf(u16)),
             // Do not include null to avoid overflow when len == PATH_MAX_WIDE
-            .maximum_length = @intCast((name.len) * @sizeOf(u16)),
+            .maximum_length = @intCast(result.name.len * @sizeOf(u16)),
         },
-        .root_handle = dir_handle,
+        .root_handle = result.handle,
     };
 }
 
-fn relativeEscapingDirHandleNtPath(dir: fs.Dir, path: [:0]const u8, dest: [:0]u16) ![:0]u16 {
+const ResolveResult = struct {
+    name: [:0]u16,
+    handle: ?win32.HANDLE,
+};
+
+fn resolveRelativeNtPath(dir: fs.Dir, path: []const u8, dest: [:0]u16) !ResolveResult {
+    var name_len = try wtf8ToWtf16LeCheckedLen(dest, path);
+    dest[name_len] = 0;
+
+    const dos_dev_info = win32.RtlIsDosDeviceName_U(dest[0..name_len :0]);
+
+    if (dos_dev_info == 0) return resolveRelativeNtPathInner(dir, path, name_len, dest);
+
+    const dos_dev_len: u16 = @intCast((dos_dev_info & 0xFFFF) / @sizeOf(u16));
+    const dos_dev_offset: u16 = @intCast(((dos_dev_info & 0xFFFF0000) >> 16) / @sizeOf(u16));
+
+    var dev_buffer: [16]u16 = undefined;
+    if (dev_buffer.len < dos_dev_len) return error.BadPath;
+    @memcpy(dev_buffer[0..dos_dev_len], dest[dos_dev_offset..][0..dos_dev_len]);
+
+    if (dos_dev_offset != 0) {
+        const narrow_dir_prefix = if (std.mem.findLastAny(u8, path, "/\\")) |i|
+            path[0 .. i + 1]
+        else
+            unreachable; // RtlIsDosDeviceName_U only returns a non-zero offset after crossing a separator.
+
+        const dir_r = try resolveRelativeNtPathInner(dir, narrow_dir_prefix, dos_dev_offset, dest);
+
+        if (!try ntPathIsDirOrVolumeRoot(dir_r.handle, dir_r.name)) return error.BadPath;
+    }
+
+    @memcpy(dest[nt_path_prefix.len..][0..dos_dev_len], dev_buffer[0..dos_dev_len]);
+    dest[0..nt_path_prefix.len].* = nt_path_prefix;
+    name_len = nt_path_prefix.len + dos_dev_len;
+    dest[name_len] = 0;
+
+    return .{ .name = dest[0..name_len :0], .handle = null };
+}
+
+fn resolveRelativeNtPathInner(dir: fs.Dir, narrow_path: []const u8, wide_len: usize, dest: [:0]u16) !ResolveResult {
+    if (std.os.windows.normalizePath(u16, dest[0..wide_len])) |normalized_len| {
+        dest[normalized_len] = 0;
+        return .{ .name = dest[0..normalized_len :0], .handle = dir.handle };
+    } else |e| switch (e) {
+        error.TooManyParentDirs => {
+            const name_len = try resolveRelativeEscapingDirHandleNtPath(dir, narrow_path, dest);
+            return .{ .name = dest[0..name_len :0], .handle = null };
+        },
+    }
+
+    unreachable;
+}
+
+fn resolveNonVerbatimNonRelativeNtPath(path: []const u8, path_type: ParsedPath.Type, dest: [:0]u16) !usize {
+    const r = try resolveAndPrefixNonVerbatimNonRelative(path, path_type, dest);
+    if (!r.device_synthesized) return r.len;
+
+    const prefix = if (std.mem.findLastAny(u8, path, "/\\")) |last_sep_idx|
+        path[0 .. last_sep_idx + 1]
+    else if (std.mem.findScalar(u8, path, ':')) |last_colon_idx|
+        path[0 .. last_colon_idx + 1]
+    else
+        return error.BadPath;
+
+    const parsed_prefix = try parsePath(prefix);
+    const prefix_r = try resolveAndPrefixNonVerbatimNonRelative(prefix, parsed_prefix.type, dest);
+
+    if (!try ntPathIsDirOrVolumeRoot(null, dest[0..prefix_r.len :0])) return error.BadPath;
+
+    // Previous value was overwritten by resolving the prefix.
+    _ = try resolveAndPrefixNonVerbatimNonRelative(path, path_type, dest);
+    return r.len;
+}
+
+fn ntPathIsDirOrVolumeRoot(dir: ?win32.HANDLE, path: [:0]u16) error{AccessDenied}!bool {
+    const prefix_unicode = win32.NT_UNICODE_STRING.init(path);
+    const object_attributes = win32.OBJECT.ATTRIBUTES{
+        .root_directory = dir,
+        .object_name = &prefix_unicode,
+        .attributes = .{ .CASE_INSENSITIVE = true },
+        .security_descriptor = null,
+        .security_quality_of_service = null,
+    };
+
+    var info: win32.FILE.BASIC_INFORMATION = undefined;
+    const query_res = win32.NtQueryAttributesFile(&object_attributes, &info);
+
+    switch (query_res) {
+        .SUCCESS => return info.file_attributes.DIRECTORY,
+
+        // Can't determine if dir at this point.
+        .ACCESS_DENIED => return error.AccessDenied,
+        else => return false,
+    }
+}
+
+const ResolveAndPrefixResult = struct {
+    len: usize,
+    device_synthesized: bool,
+};
+
+fn resolveAndPrefixNonVerbatimNonRelative(path: []const u8, path_type: ParsedPath.Type, dest: [:0]u16) !ResolveAndPrefixResult {
+    const resolve_offset: usize = switch (path_type) {
+        .verbatim, .relative => unreachable,
+        .local_device => 0,
+        .rooted, .drive_relative, .drive_absolute => 4,
+        .unc => 6,
+    };
+
+    var wide_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    const name_len = try wtf8ToWtf16LeCheckedLen(&wide_buf, path);
+    wide_buf[name_len] = 0;
+
+    const cap: u32 = @intCast((1 + dest.len - resolve_offset) * @sizeOf(u16));
+    const result_len_bytes = win32.RtlGetFullPathName_U(&wide_buf, cap, dest[resolve_offset..], null);
+    if (result_len_bytes == 0) return error.BadPath;
+    if (result_len_bytes >= cap) return error.NameTooLong;
+
+    const result_len = result_len_bytes / @sizeOf(u16);
+
+    var device_synthesized = false;
+
+    var total_len = resolve_offset + result_len;
+    if (resolve_offset > 0 and
+        result_len >= 4 and
+        dest[resolve_offset] == '\\' and dest[resolve_offset + 1] == '\\')
+    {
+        if (dest[resolve_offset + 2] == '.' and dest[resolve_offset + 3] == '\\') {
+            device_synthesized = true;
+            @memmove(dest[0..result_len], dest[resolve_offset..][0..result_len]);
+            total_len -= 4;
+            dest[total_len] = 0;
+        } else {
+            if (resolve_offset != 6) {
+                const shifted_len = total_len + 2;
+                if (shifted_len > dest.len) return error.NameTooLong;
+                @memmove(dest[8..][0 .. result_len - 2], dest[resolve_offset + 2 ..][0 .. result_len - 2]);
+                total_len = shifted_len;
+            }
+            dest[nt_path_prefix.len..][0..4].* = .{ 'U', 'N', 'C', '\\' };
+            dest[total_len] = 0;
+        }
+    }
+
+    dest[0..nt_path_prefix.len].* = nt_path_prefix;
+    return .{ .len = total_len, .device_synthesized = device_synthesized };
+}
+
+fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [:0]u16) !usize {
     var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
 
     var dir_path_len = win32.GetFinalPathNameByHandleW(dir.handle, &buf, buf.len + 1, win32.FILE_NAME_NORMALIZED | win32.VOLUME_NAME_DOS);
@@ -297,24 +395,39 @@ fn relativeEscapingDirHandleNtPath(dir: fs.Dir, path: [:0]const u8, dest: [:0]u1
     }
 
     if (dir_path_len + path.len + 1 > buf.len) return error.NameTooLong;
-
     buf[dir_path_len] = path_sep;
 
     const path_len = try wtf8ToWtf16LeCheckedLen(buf[dir_path_len + 1 ..], path);
     const unresolved_len = dir_path_len + path_len + 1;
     buf[unresolved_len] = 0;
-    const unresolved_name = buf[0..unresolved_len :0];
+    var unresolved_name = buf[0..unresolved_len :0];
 
-    const dest_len_bytes = (dest.len + 1) * @sizeOf(u16);
-    const result_len_bytes = win32.RtlGetFullPathName_U(unresolved_name, @intCast(dest_len_bytes), dest.ptr, null);
+    const strip_count: usize = if (std.mem.startsWith(u16, unresolved_name, &unc_dos_prefix)) 8 else 4;
+    unresolved_name = unresolved_name[strip_count.. :0];
+    const resolve_offset: usize = if (strip_count == 8) 6 else 4;
+
+    const dest_len_bytes = (dest.len + 1 - resolve_offset) * @sizeOf(u16);
+    const result_len_bytes = win32.RtlGetFullPathName_U(unresolved_name, @intCast(dest_len_bytes), dest[resolve_offset..].ptr, null);
     if (result_len_bytes == 0) return error.BadPath;
     if (result_len_bytes >= dest_len_bytes) return error.NameTooLong;
 
-    dest[0..nt_path_prefix.len].* = nt_path_prefix;
+    const resolved_len: usize = (result_len_bytes / @sizeOf(u16));
+    var result_len = resolve_offset + resolved_len;
 
-    const result_len = result_len_bytes / @sizeOf(u16);
+    if (resolve_offset == 4 and std.mem.startsWith(u16, dest[resolve_offset..], &local_device_prefix)) {
+        const tail_len = resolved_len - local_device_prefix.len;
+        @memmove(dest[resolve_offset..][0..tail_len], dest[resolve_offset + local_device_prefix.len ..][0..tail_len]);
+        result_len = resolve_offset + tail_len;
+        dest[result_len] = 0;
+    }
 
-    return dest[0..result_len :0];
+    if (resolve_offset == 6) {
+        dest[0..unc_nt_prefix.len].* = unc_nt_prefix;
+    } else {
+        dest[0..nt_path_prefix.len].* = nt_path_prefix;
+    }
+
+    return result_len;
 }
 
 inline fn wtf8ToWtf16LeCheckedLen(dest: []u16, src: []const u8) error{ NameTooLong, BadPath }!usize {
@@ -333,12 +446,20 @@ test toNtPath {
     const test_nt_path_prefix: [4]u16 = .{ '\\', '?', '?', '\\' };
 
     const F = struct {
-        pub fn testToNtPathAgainstRtl(path: [:0]const u8) !void {
-            var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-            const result = try toNtPath(cwd(), path, &buf);
+        pub fn testToNtPathAgainstRtl(unstripped_path: [:0]const u8, expected_path_type: ParsedPath.Type) !void {
+            const parsed = try parsePath(unstripped_path);
+            try t.expectEqual(expected_path_type, parsed.type);
 
-            const parsed = try parsePath(path);
-            try t.expect(parsed.type != .relative);
+            var path: []const u8 = unstripped_path;
+            if (parsed.type != .verbatim) {
+                while (path.len > 1 and isSep(path[path.len - 1])) {
+                    if (path[path.len - 2] == ':') break;
+                    path.len -= 1;
+                }
+            }
+
+            var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            const result = try toNtPath(cwd(), unstripped_path, &buf);
 
             var result_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
             const result_len = try std.unicode.wtf8ToWtf16Le(&result_buf, path);
@@ -350,13 +471,7 @@ test toNtPath {
             try t.expectEqual(win32.NTSTATUS.SUCCESS, rc);
             defer win32.RtlFreeUnicodeString(&rtl_unicode_result);
 
-            var expected_result = rtl_unicode_result.slice();
-            if (parsed.type != .verbatim) {
-                while (expected_result.len > 1 and isSep(expected_result[expected_result.len - 1])) {
-                    if (expected_result[expected_result.len - 2] == ':') break;
-                    expected_result.len -= 1;
-                }
-            }
+            const expected_result = rtl_unicode_result.slice();
 
             if (!std.mem.eql(u16, expected_result, result.unicode_string.slice())) {
                 std.debug.print("expected: '{f}', got: '{f}'\n", .{ std.unicode.fmtUtf16Le(expected_result), std.unicode.fmtUtf16Le(result.unicode_string.slice()) });
@@ -364,6 +479,34 @@ test toNtPath {
             }
 
             try t.expect(result.root_handle == null);
+        }
+
+        pub fn testToNtPathAgainstRtlError(unstripped_path: [:0]const u8, expected_path_type: ParsedPath.Type, expected_error: anyerror) !void {
+            const parsed = try parsePath(unstripped_path);
+            try t.expectEqual(expected_path_type, parsed.type);
+
+            var path: []const u8 = unstripped_path;
+            if (parsed.type != .verbatim) {
+                while (path.len > 1 and isSep(path[path.len - 1])) {
+                    if (path[path.len - 2] == ':') break;
+                    path.len -= 1;
+                }
+            }
+
+            var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            try t.expectError(expected_error, toNtPath(cwd(), unstripped_path, &buf));
+
+            var result_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            const result_len = try std.unicode.wtf8ToWtf16Le(&result_buf, path);
+            result_buf[result_len] = 0;
+
+            var rtl_unicode_result: win32.NT_UNICODE_STRING = undefined;
+            const rc = win32.RtlDosPathNameToNtPathName_U_WithStatus(result_buf[0..result_len :0], &rtl_unicode_result, null, null);
+            if (rc == .SUCCESS) std.debug.print("RtlDosPathNameToNtPathName: '{f}' -> '{f}'", .{
+                std.unicode.fmtUtf16Le(result_buf[0..result_len]),
+                std.unicode.fmtUtf16Le(rtl_unicode_result.slice()),
+            });
+            try t.expectEqual(win32.NTSTATUS.OBJECT_NAME_INVALID, rc);
         }
 
         pub fn testToNtPathRelativeNoEscape(path: [:0]const u8, expected_narrow_result: []const u8) !void {
@@ -444,98 +587,99 @@ test toNtPath {
     };
 
     const testToNtPathAgainstRtl = F.testToNtPathAgainstRtl;
+    const testToNtPathAgainstRtlError = F.testToNtPathAgainstRtlError;
     const testToNtPathRelativeNoEscape = F.testToNtPathRelativeNoEscape;
     const testToNtPathRelativeEscaping = F.testToNtPathRelativeEscaping;
     const testToNtPathLength = F.testToNtPathLength;
 
     // verbatim
-    try testToNtPathAgainstRtl("\\\\?\\C:\\foo");
-    try testToNtPathAgainstRtl("\\\\?\\C:\\foo\\");
-    try testToNtPathAgainstRtl("\\\\?\\C:\\foo\\..\\bar");
-    try testToNtPathAgainstRtl("\\\\?\\C:\\foo.");
-    try testToNtPathAgainstRtl("\\\\?\\C:\\foo ");
-    try testToNtPathAgainstRtl("\\\\?\\C:\\");
-    try testToNtPathAgainstRtl("\\\\?\\UNC\\server\\share\\foo");
-    try testToNtPathAgainstRtl("\\\\?\\UNC\\");
-    try testToNtPathAgainstRtl("\\\\?\\C:/foo");
-    try testToNtPathAgainstRtl("\\\\?\\Volume{GUID}\\");
-    try testToNtPathAgainstRtl("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\");
-    try testToNtPathAgainstRtl("\\\\?\\C:");
-    try testToNtPathAgainstRtl("\\\\?\\C:\\abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    try testToNtPathAgainstRtl("\\\\?\\C:\\foo", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:\\foo\\", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:\\foo\\..\\bar", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:\\foo.", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:\\foo ", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:\\", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\UNC\\server\\share\\foo", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\UNC\\", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:/foo", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\Volume{GUID}\\", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:", .verbatim);
+    try testToNtPathAgainstRtl("\\\\?\\C:\\abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", .verbatim);
 
     // drive_absolute
-    try testToNtPathAgainstRtl("C:\\foo");
-    try testToNtPathAgainstRtl("C:/foo");
-    try testToNtPathAgainstRtl("C:\\foo\\");
-    try testToNtPathAgainstRtl("C:\\");
-    try testToNtPathAgainstRtl("C:\\\\foo");
-    try testToNtPathAgainstRtl("C:\\foo\\..\\bar");
-    try testToNtPathAgainstRtl("C:\\foo\\.");
-    try testToNtPathAgainstRtl("C:\\foo ");
-    try testToNtPathAgainstRtl("C:\\foo. ");
-    try testToNtPathAgainstRtl("C:\\foo .");
-    try testToNtPathAgainstRtl("C:\\.");
-    try testToNtPathAgainstRtl("C:\\foo\\.");
-    try testToNtPathAgainstRtl("C:\\..\\foo");
-    try testToNtPathAgainstRtl("C:\\..\\..\\foo");
-    try testToNtPathAgainstRtl("C:\\foo:bar");
-    try testToNtPathAgainstRtl("C:\\foo:");
-    try testToNtPathAgainstRtl("C:\\foo::$DATA");
-    try testToNtPathAgainstRtl("C:\\CON");
-    try testToNtPathAgainstRtl("C:\\CON ");
-    try testToNtPathAgainstRtl("C:\\foo*.txt");
-    try testToNtPathAgainstRtl("c:\\foo");
-    try testToNtPathAgainstRtl("C:\\Foo\\BAR");
-    try testToNtPathAgainstRtl("é:\\foo");
-    try testToNtPathAgainstRtl("1:\\foo");
-    try testToNtPathAgainstRtl("?:\\foo");
-    try testToNtPathAgainstRtl("::\\foo");
-    try testToNtPathAgainstRtl("\\Device\\HarddiskVolume1\\foo");
-    try testToNtPathAgainstRtl("C:\\dir\\😀\\file");
+    try testToNtPathAgainstRtl("C:\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("C:/foo", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo\\", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo\\..\\bar", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo\\.", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo ", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo. ", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo .", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\.", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo\\.", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\..\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\..\\..\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo:bar", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo:", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo::$DATA", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\CON", .drive_absolute);
+    try testToNtPathAgainstRtl("c:\\CON ", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\foo*.txt", .drive_absolute);
+    try testToNtPathAgainstRtl("c:\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\Foo\\BAR", .drive_absolute);
+    try testToNtPathAgainstRtl("é:\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("1:\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("?:\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("::\\foo", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\dir\\😀\\file", .drive_absolute);
 
     // local_device
-    try testToNtPathAgainstRtl("\\\\.\\C:\\foo");
-    try testToNtPathAgainstRtl("\\\\.\\C:");
-    try testToNtPathAgainstRtl("\\\\.\\Volume{GUID}\\");
-    try testToNtPathAgainstRtl("\\\\.\\UNC\\server\\share\\foo");
-    try testToNtPathAgainstRtl("\\\\.\\PIPE\\name");
-    try testToNtPathAgainstRtl("\\\\.\\GLOBALROOT\\Device\\HarddiskVolume1\\");
-    try testToNtPathAgainstRtl("\\\\.\\COM1");
-    try testToNtPathAgainstRtl("\\\\.\\C:\\foo\\..\\bar");
-    try testToNtPathAgainstRtl("\\\\.\\unix\\path");
-    try testToNtPathAgainstRtl("//?/C:\\foo");
-    try testToNtPathAgainstRtl("//?/foo");
+    try testToNtPathAgainstRtl("\\\\.\\C:\\foo", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\C:", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\Volume{GUID}\\", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\UNC\\server\\share\\foo", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\PIPE\\name", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\GLOBALROOT\\Device\\HarddiskVolume1\\", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\COM1", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\C:\\foo\\..\\bar", .local_device);
+    try testToNtPathAgainstRtl("\\\\.\\unix\\path", .local_device);
+    try testToNtPathAgainstRtl("//?/C:\\foo", .local_device);
+    try testToNtPathAgainstRtl("//?/foo", .local_device);
 
     // unc
-    try testToNtPathAgainstRtl("\\\\server\\share\\foo");
-    try testToNtPathAgainstRtl("\\\\server\\share");
-    try testToNtPathAgainstRtl("\\\\server\\share\\");
-    try testToNtPathAgainstRtl("\\\\a\\b");
-    try testToNtPathAgainstRtl("//server/share/foo");
-    try testToNtPathAgainstRtl("\\\\server\\share\\foo\\..\\bar");
-    try testToNtPathAgainstRtl("\\\\127.0.0.1\\c$\\foo");
-    try testToNtPathAgainstRtl("\\\\127.0.0.1\\c$\\");
-    try testToNtPathAgainstRtl("\\\\??\\C:\\foo");
-    try testToNtPathAgainstRtl("\\\\server\\\\share");
-    try testToNtPathAgainstRtl("\\\\fe80::1\\share");
-    try testToNtPathAgainstRtl("\\\\srv\\é\\share");
+    try testToNtPathAgainstRtl("\\\\server\\share\\foo", .unc);
+    try testToNtPathAgainstRtl("\\\\server\\share", .unc);
+    try testToNtPathAgainstRtl("\\\\server\\share\\", .unc);
+    try testToNtPathAgainstRtl("\\\\a\\b", .unc);
+    try testToNtPathAgainstRtl("//server/share/foo", .unc);
+    try testToNtPathAgainstRtl("\\\\server\\share\\foo\\..\\bar", .unc);
+    try testToNtPathAgainstRtl("\\\\127.0.0.1\\c$\\foo", .unc);
+    try testToNtPathAgainstRtl("\\\\127.0.0.1\\c$\\", .unc);
+    try testToNtPathAgainstRtl("\\\\??\\C:\\foo", .unc);
+    try testToNtPathAgainstRtl("\\\\server\\\\share", .unc);
+    try testToNtPathAgainstRtl("\\\\fe80::1\\share", .unc);
+    try testToNtPathAgainstRtl("\\\\srv\\é\\share", .unc);
 
     // rooted
-    try testToNtPathAgainstRtl("\\foo");
-    try testToNtPathAgainstRtl("/foo");
-    try testToNtPathAgainstRtl("\\foo\\");
-    try testToNtPathAgainstRtl("\\");
-    try testToNtPathAgainstRtl("\\C:\\");
-    try testToNtPathAgainstRtl("\\foo\\..\\bar");
-    try testToNtPathAgainstRtl("\\..");
+    try testToNtPathAgainstRtl("\\foo", .rooted);
+    try testToNtPathAgainstRtl("/foo", .rooted);
+    try testToNtPathAgainstRtl("\\foo\\", .rooted);
+    try testToNtPathAgainstRtl("\\", .rooted);
+    try testToNtPathAgainstRtl("\\C:\\", .rooted);
+    try testToNtPathAgainstRtl("\\foo\\..\\bar", .rooted);
+    try testToNtPathAgainstRtl("\\..", .rooted);
+    try testToNtPathAgainstRtl("\\Device\\HarddiskVolume1\\foo", .rooted);
 
     // drive_relative
-    try testToNtPathAgainstRtl("C:foo");
-    try testToNtPathAgainstRtl("C:");
-    try testToNtPathAgainstRtl("C:a\\b");
-    try testToNtPathAgainstRtl("C::\\foo");
-    try testToNtPathAgainstRtl("c:foo");
-    try testToNtPathAgainstRtl("é:foo");
+    try testToNtPathAgainstRtl("C:foo", .drive_relative);
+    try testToNtPathAgainstRtl("C:", .drive_relative);
+    try testToNtPathAgainstRtl("C:a\\b", .drive_relative);
+    try testToNtPathAgainstRtl("C::\\foo", .drive_relative);
+    try testToNtPathAgainstRtl("c:foo", .drive_relative);
+    try testToNtPathAgainstRtl("é:foo", .drive_relative);
 
     // relative (not escaping root handle)
     try testToNtPathRelativeNoEscape("foo", "foo");
@@ -562,6 +706,39 @@ test toNtPath {
     try testToNtPathRelativeEscaping("..\\..\\a\\b", 2, "\\a\\b");
     try testToNtPathRelativeEscaping("a\\..\\..\\..\\b", 2, "\\b");
 
+    try testToNtPathAgainstRtl("C:CON", .drive_relative);
+    try testToNtPathAgainstRtl("C:\\COM1", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\AUX", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\NUL", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\LPT1", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\PRN", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\CONIN$", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\CONOUT$", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\COM1.abc", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\COM1:abc", .drive_absolute);
+    try testToNtPathAgainstRtl("C:\\COM1    .abc", .drive_absolute);
+    try testToNtPathAgainstRtl("\\CON", .rooted);
+    try testToNtPathAgainstRtl("\\\\?\\C:\\COM1", .verbatim);
+    try testToNtPathAgainstRtl("\\\\server\\share\\COM1", .unc);
+
+    try testToNtPathAgainstRtlError("foo\\CON", .relative, error.BadPath); // Assumes .\\foo is not a dir
+    try testToNtPathAgainstRtl("src\\CON", .relative); // Assumes .\\src is a dir
+    try testToNtPathAgainstRtl("C:\\Windows\\CON", .drive_absolute);
+    try testToNtPathAgainstRtlError("C:\\notvalid\\COM1", .drive_absolute, error.BadPath); // Assumes C:\\notvalid is not a dir
+    try testToNtPathAgainstRtl("CON", .relative);
+    try testToNtPathAgainstRtl("..\\..\\CON", .relative);
+    try testToNtPathAgainstRtl("\\.CON", .rooted);
+    try testToNtPathAgainstRtl("\\\\.\\CON", .local_device);
+    try testToNtPathAgainstRtl("\\.\\CON", .rooted);
+    try testToNtPathAgainstRtlError("..\\notvalid\\CON", .relative, error.BadPath); // Assumes ..\\notvalid is not a dir
+    try testToNtPathAgainstRtlError("..\\..\\notvalid\\CON", .relative, error.BadPath); // Assumes ..\\..\\notvalid is not a dir
+    try testToNtPathAgainstRtlError("C:\\NUL\\CON", .drive_absolute, error.BadPath); // Assumes C:\\NULL is not a dir
+
+    try testToNtPathAgainstRtl("C:\\CON\\", .drive_absolute);
+    try testToNtPathAgainstRtl("CON\\", .relative);
+    try testToNtPathAgainstRtl("src\\CON\\", .relative); // Assumes .\\src is a dir
+    try testToNtPathAgainstRtlError("foo\\CON\\", .relative, error.BadPath); // Assumes .\\foo is not a dir
+
     // capacity
     var verbatim_exact_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
     @memcpy(verbatim_exact_buf[0..7], "\\\\?\\C:\\");
@@ -575,20 +752,17 @@ test toNtPath {
     verbatim_long_buf[win32.PATH_MAX_WIDE + 1] = 0;
     try testToNtPathLength(verbatim_long_buf[0 .. win32.PATH_MAX_WIDE + 1 :0], error.NameTooLong);
 
-    // C:\ is 3 units, filler is PATH_MAX_WIDE - 3. Same input length as the verbatim
-    // success case, but a non-verbatim DOS path cannot exceed MAX_PATH, so RTL refuses
-    // it with OBJECT_NAME_INVALID before any size check runs.
     var absolute_exact_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
     @memcpy(absolute_exact_buf[0..3], "C:\\");
     @memset(absolute_exact_buf[3..win32.PATH_MAX_WIDE], 'a');
     absolute_exact_buf[win32.PATH_MAX_WIDE] = 0;
-    try testToNtPathLength(absolute_exact_buf[0..win32.PATH_MAX_WIDE :0], error.BadPath);
+    try testToNtPathLength(absolute_exact_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
 
     var rooted_long_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
     rooted_long_buf[0] = '\\';
     @memset(rooted_long_buf[1..win32.PATH_MAX_WIDE], 'a');
     rooted_long_buf[win32.PATH_MAX_WIDE] = 0;
-    try testToNtPathLength(rooted_long_buf[0..win32.PATH_MAX_WIDE :0], error.BadPath);
+    try testToNtPathLength(rooted_long_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
 }
 
 test parsePath {
