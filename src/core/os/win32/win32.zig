@@ -33,7 +33,7 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
         .cpu_thread => {
             var info: NT_KERNEL_USER_TIMES = undefined;
             var return_len: c_ulong = undefined;
-            if (NtQueryInformationThread(NT_CURRENT_THREAD, .ThreadTimes, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
+            if (NtQueryInformationThread(NT_CURRENT_THREAD, .Times, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
                 assert(return_len == @sizeOf(NT_KERNEL_USER_TIMES));
                 // 100ns ticks
                 return .{ ._ns = (@as(i96, info.kernel_time.quad_part) + @as(i96, info.user_time.quad_part)) * 100 };
@@ -45,7 +45,7 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
         .cpu_process => {
             var info: NT_KERNEL_USER_TIMES = undefined;
             var return_len: c_ulong = undefined;
-            if (NtQueryInformationProcess(NT_CURRENT_PROCESS, .ProcessTimes, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
+            if (NtQueryInformationProcess(NT_CURRENT_PROCESS, .Times, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
                 assert(return_len == @sizeOf(NT_KERNEL_USER_TIMES));
                 // 100ns ticks
                 return .{ ._ns = (@as(i96, info.kernel_time.quad_part) + @as(i96, info.user_time.quad_part)) * 100 };
@@ -135,19 +135,6 @@ pub const NT_CURRENT_PROCESS: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize
 pub const NT_CURRENT_THREAD: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
 
 pub const ATTACH_PARENT_PROCESS: DWORD = math.maxInt(DWORD);
-
-pub const MEM_COALESCE_PLACEHOLDERS: DWORD = 0x00000001;
-pub const MEM_PRESERVE_PLACEHOLDER: DWORD = 0x00000002;
-pub const MEM_COMMIT: DWORD = 0x00001000;
-pub const MEM_RESERVE: DWORD = 0x00002000;
-pub const MEM_DECOMMIT: DWORD = 0x00004000;
-pub const MEM_RELEASE: DWORD = 0x00008000;
-pub const MEM_RESET: DWORD = 0x00080000;
-pub const MEM_RESET_UNDO: DWORD = 0x1000000;
-pub const MEM_LARGE_PAGES: DWORD = 0x20000000;
-pub const MEM_PHYSICAL: DWORD = 0x00400000;
-pub const MEM_TOP_DOWN: DWORD = 0x00100000;
-pub const MEM_WRITE_WATCH: DWORD = 0x00200000;
 
 pub const PAGE_EXECUTE: DWORD = 0x10;
 pub const PAGE_EXECUTE_READ: DWORD = 0x20;
@@ -736,40 +723,11 @@ pub const COLORONCOLOR = STRETCH_DELETESCANS;
 pub const HALFTONE = STRETCH_HALFTONE;
 pub const WHITEONBLACK = STRETCH_ORSCANS;
 
-pub const GENERIC_ALL = 0x10000000;
-pub const GENERIC_EXECUTE = 0x20000000;
-pub const GENERIC_WRITE = 0x40000000;
-pub const GENERIC_READ = 0x80000000;
-
-pub const FILE_SHARE_DELETE = 0x00000004;
-pub const FILE_SHARE_READ = 0x00000001;
-pub const FILE_SHARE_WRITE = 0x00000002;
-
 pub const CREATE_ALWAYS = 2;
 pub const CREATE_NEW = 1;
 pub const OPEN_ALWAYS = 4;
 pub const OPEN_EXISTING = 3;
 pub const TRUNCATE_EXISTING = 5;
-
-pub const FILE_ATTRIBUTE_ARCHIVE = 32; // (0x20)
-pub const FILE_ATTRIBUTE_ENCRYPTED = 16384; // (0x4000)
-pub const FILE_ATTRIBUTE_HIDDEN = 2; // (0x2)
-pub const FILE_ATTRIBUTE_NORMAL = 128; // (0x80)
-pub const FILE_ATTRIBUTE_OFFLINE = 4096; // (0x1000)
-pub const FILE_ATTRIBUTE_READONLY = 1; // (0x1)
-pub const FILE_ATTRIBUTE_SYSTEM = 4; //; (0x4)
-pub const FILE_ATTRIBUTE_TEMPORARY = 256; // (0x100)
-pub const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
-pub const FILE_FLAG_DELETE_ON_CLOSE = 0x04000000;
-pub const FILE_FLAG_NO_BUFFERING = 0x20000000;
-pub const FILE_FLAG_OPEN_NO_RECALL = 0x00100000;
-pub const FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
-pub const FILE_FLAG_OVERLAPPED = 0x40000000;
-pub const FILE_FLAG_POSIX_SEMANTICS = 0x01000000;
-pub const FILE_FLAG_RANDOM_ACCESS = 0x10000000;
-pub const FILE_FLAG_SESSION_AWARE = 0x00800000;
-pub const FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000;
-pub const FILE_FLAG_WRITE_THROUGH = 0x80000000;
 
 pub const FILE_MAP_WRITE = 0x0002;
 pub const FILE_MAP_READ = 0x0004;
@@ -913,6 +871,535 @@ pub const VOLUME_NAME_DOS = 0x0;
 pub const VOLUME_NAME_GUID = 0x1;
 pub const VOLUME_NAME_NONE = 0x4;
 pub const VOLUME_NAME_NT = 0x2;
+
+pub const FILE = struct {
+    pub const BASIC_INFORMATION = extern struct {
+        creation_time: LARGE_INTEGER,
+        last_access_time: LARGE_INTEGER,
+        last_write_time: LARGE_INTEGER,
+        change_time: LARGE_INTEGER,
+        file_attributes: ATTRIBUTE,
+    };
+
+    pub const ATTRIBUTE = packed struct(ULONG) {
+        READONLY: bool = false,
+        HIDDEN: bool = false,
+        SYSTEM: bool = false,
+        __reserved0__: u1 = 0,
+        DIRECTORY: bool = false,
+        ARCHIVE: bool = false,
+        DEVICE: bool = false,
+        NORMAL: bool = false,
+        TEMPORARY: bool = false,
+        SPARSE_FILE: bool = false,
+        REPARSE_POINT: bool = false,
+        COMPRESSED: bool = false,
+        OFFLINE: bool = false,
+        NOT_CONTENT_INDEXED: bool = false,
+        ENCRYPTED: bool = false,
+        INTEGRITY_STREAM: bool = false,
+        VIRTUAL: bool = false,
+        NO_SCRUB_DATA: bool = false,
+        EA: bool = false,
+        PINNED: bool = false,
+        UNPINNED: bool = false,
+        OPEN_REPARSE_POINT: bool = false,
+        RECALL_ON_DATA_ACCESS: bool = false,
+        SESSION_AWARE: bool = false,
+        POSIX_SEMANTICS: bool = false,
+        BACKUP_SEMANTICS: bool = false,
+        DELETE_ON_CLOSE: bool = false,
+        SEQUENTIAL_SCAN: bool = false,
+        RANDOM_ACCESS: u1 = 0,
+        NO_BUFFERING: bool = false,
+        OVERLAPPED: bool = false,
+        WRITE_THROUGH: bool = false,
+
+        pub const RECALL_ON_OPEN_MASK = 0x40000;
+        pub const RECALL_ON_OPEN = ATTRIBUTE{ .EA = true };
+        pub const NO_RECALL = ATTRIBUTE{ .UNPINNED = true };
+    };
+
+    pub const SHARE = packed struct(DWORD) {
+        READ: bool = false,
+        WRITE: bool = false,
+        DELETE: bool = false,
+        __reserved__: @Int(.unsigned, @bitSizeOf(DWORD) - 3) = 0,
+    };
+
+    pub const MODE = packed struct(ULONG) {
+        DIRECTORY_FILE: bool = false,
+        WRITE_THROUGH: bool = false,
+        SEQUENTIAL_ONLY: bool = false,
+        NO_INTERMEDIATE_BUFFERING: bool = false,
+        SYNCHRONOUS_IO_ALERT: bool = false,
+        SYNCHRONOUS_IO_NONALERT: bool = false,
+        NON_DIRECTORY_FILE: bool = false,
+        CREATE_TREE_CONNECTION: bool = false,
+        COMPLETE_IF_OPLOCKED: bool = false,
+        NO_EA_KNOWLEDGE: bool = false,
+        OPEN_REMOTE_INSTANCE: bool = false,
+        RANDOM_ACCESS: bool = false,
+        DELETE_ON_CLOSE: bool = false,
+        OPEN_BY_FILE_ID: bool = false,
+        OPEN_FOR_BACKUP_INTENT: bool = false,
+        NO_COMPRESSION: bool = false,
+        OPEN_REQUIRING_OPLOCK: bool = false,
+        DISALLOW_EXCLUSIVE: bool = false,
+        SESSION_AWARE: bool = false,
+        __reserved0__: u1 = 0,
+        RESERVE_OPFILTER: bool = false,
+        OPEN_REPARSE_POINT: bool = false,
+        OPEN_NO_RECALL: bool = false,
+        OPEN_FOR_FREE_SPACE_QUERY: bool = false,
+        __reserved1__: u8 = 0,
+    };
+};
+
+pub const OBJECT = struct {
+    pub const ATTRIBUTES = extern struct {
+        length: ULONG = @sizeOf(@This()),
+        root_directory: ?HANDLE,
+        object_name: *const NT_UNICODE_STRING,
+        attributes: FLAGS,
+        security_descriptor: ?*anyopaque,
+        security_quality_of_service: ?*anyopaque,
+
+        pub const FLAGS = packed struct(ULONG) {
+            __reserved0__: u1 = 0,
+            INHERIT: bool = false,
+            __reserved1__: u2 = 0,
+            PERMANENT: bool = false,
+            EXCLUSIVE: bool = false,
+            CASE_INSENSITIVE: bool = false,
+            OPENIF: bool = false,
+            OPENLINK: bool = false,
+            KERNEL_HANDLE: bool = false,
+            FORCE_ACCESS_CHECK: bool = false,
+            IGNORE_IMPERSONATED_DEVICEMAP: bool = false,
+            DONT_REPARSE: bool = false,
+            __reserved2__: u19 = 0,
+        };
+    };
+};
+
+pub const PROCESS = struct {
+    pub const DPI_AWARENESS = enum(c_int) {
+        DPI_UNAWARE = 0,
+        SYSTEM_DPI_AWARE = 1,
+        PER_MONITOR_DPI_AWARE = 2,
+    };
+
+    pub const INFOCLASS = enum(c_int) {
+        /// q: PROCESS_BASIC_INFORMATION, PROCESS_EXTENDED_BASIC_INFORMATION
+        BasicInformation,
+        /// qs: QUOTA_LIMITS, QUOTA_LIMITS_EX
+        QuotaLimits,
+        /// q: IO_COUNTERS
+        IoCounters,
+        /// q: VM_COUNTERS, VM_COUNTERS_EX, VM_COUNTERS_EX2
+        VmCounters,
+        /// q: KERNEL_USER_TIMES // since VISTA
+        Times,
+        /// s: KPRIORITY
+        BasePriority,
+        /// s: PROCESS_RAISE_PRIORITY
+        RaisePriority,
+        /// q: HANDLE
+        DebugPort,
+        /// s: PROCESS_EXCEPTION_PORT (requires SeTcbPrivilege)
+        ExceptionPort,
+        /// s: PROCESS_ACCESS_TOKEN
+        AccessToken,
+        /// qs: PROCESS_LDT_INFORMATION // 10
+        LdtInformation,
+        /// s: PROCESS_LDT_SIZE
+        LdtSize,
+        /// qs: PROCESS_DEFAULT_HARD_ERROR_MODE
+        DefaultHardErrorMode,
+        /// s: PROCESS_IO_PORT_HANDLER_INFORMATION // (kernel-mode only)
+        IoPortHandlers,
+        /// q: POOLED_USAGE_AND_LIMITS
+        PooledUsageAndLimits,
+        /// qs: PROCESS_WS_WATCH_INFORMATION[]; s: void
+        WorkingSetWatch,
+        /// s: PROCESS_USER_MODE_IOPL (requires SeTcbPrivilege)
+        UserModeIOPL,
+        /// s: BOOLEAN
+        EnableAlignmentFaultFixup,
+        /// qs: PROCESS_PRIORITY_CLASS
+        PriorityClass,
+        /// qs: ULONG (requires SeTcbPrivilege) (VdmAllowed)
+        Wx86Information,
+        /// q: ULONG, PROCESS_HANDLE_INFORMATION // 20
+        HandleCount,
+        /// qs: KAFFINITY, qs: GROUP_AFFINITY
+        AffinityMask,
+        /// qs: PROCESS_PRIORITY_BOOST
+        PriorityBoost,
+        /// qs: PROCESS_DEVICEMAP_INFORMATION, PROCESS_DEVICEMAP_INFORMATION_EX
+        DeviceMap,
+        /// qs: PROCESS_SESSION_INFORMATION
+        SessionInformation,
+        /// s: PROCESS_FOREGROUND_BACKGROUND
+        ForegroundInformation,
+        /// q: ULONG_PTR
+        Wow64Information,
+        /// q: UNICODE_STRING
+        ImageFileName,
+        /// q: PROCESS_LUID_DEVICE_MAPS_ENABLED
+        LUIDDeviceMapsEnabled,
+        /// qs: ULONG
+        BreakOnTermination,
+        /// q: HANDLE // 30
+        DebugObjectHandle,
+        /// qs: PROCESS_DEBUG_FLAGS
+        DebugFlags,
+        /// qs: PROCESS_HANDLE_TRACING_QUERY; s: PROCESS_HANDLE_TRACING_ENABLE[_EX] or void to disable
+        HandleTracing,
+        /// qs: IO_PRIORITY_HINT (s: requires SeIncreaseBasePriorityPrivilege)
+        IoPriority,
+        /// qs: PROCESS_EXECUTE_FLAGS
+        ExecuteFlags,
+        /// s: PROCESS_TLS_INFORMATION // ProcessResourceManagement
+        TlsInformation,
+        /// q: ULONG
+        Cookie,
+        /// q: SECTION_IMAGE_INFORMATION
+        ImageInformation,
+        /// q: PROCESS_CYCLE_TIME_INFORMATION // since VISTA
+        CycleTime,
+        /// qs: PAGE_PRIORITY_INFORMATION
+        PagePriority,
+        /// s: PVOID or PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION // 40
+        InstrumentationCallback,
+        /// s: PROCESS_STACK_ALLOCATION_INFORMATION, PROCESS_STACK_ALLOCATION_INFORMATION_EX
+        ThreadStackAllocation,
+        /// qs: PROCESS_WS_WATCH_INFORMATION_EX[]; s: void
+        WorkingSetWatchEx,
+        /// q: UNICODE_STRING
+        ImageFileNameWin32,
+        /// q: HANDLE (input)
+        ImageFileMapping,
+        /// qs: PROCESS_AFFINITY_UPDATE_MODE
+        AffinityUpdateMode,
+        /// qs: PROCESS_MEMORY_ALLOCATION_MODE
+        MemoryAllocationMode,
+        /// q: PROCESS_GROUP_INFORMATION
+        GroupInformation,
+        /// s: ULONG
+        TokenVirtualizationEnabled,
+        /// qs: PROCESS_CONSOLE_HOST_PROCESS_INFORMATION
+        ConsoleHostProcess,
+        /// q: PROCESS_WINDOW_INFORMATION // 50
+        WindowInformation,
+        /// q: PROCESS_HANDLE_SNAPSHOT_INFORMATION // since WIN8
+        HandleInformation,
+        /// s: PROCESS_MITIGATION_POLICY_INFORMATION
+        MitigationPolicy,
+        /// s: PROCESS_DYNAMIC_FUNCTION_TABLE_INFORMATION
+        DynamicFunctionTableInformation,
+        /// qs: PROCESS_HANDLE_CHECKING_MODE; s: 0 disables, otherwise enables
+        HandleCheckingMode,
+        /// q: PROCESS_KEEPALIVE_COUNT_INFORMATION
+        KeepAliveCount,
+        /// s: PROCESS_REVOKE_FILE_HANDLES_INFORMATION
+        RevokeFileHandles,
+        /// s: PROCESS_WORKING_SET_CONTROL
+        WorkingSetControl,
+        /// q: ULONG[] // since WINBLUE
+        HandleTable,
+        /// qs: ULONG // KPROCESS->CheckStackExtents (CFG)
+        CheckStackExtentsMode,
+        /// q: UNICODE_STRING // 60
+        CommandLineInformation,
+        /// q: PS_PROTECTION
+        ProtectionInformation,
+        /// s: PROCESS_MEMORY_EXHAUSTION_INFO // since THRESHOLD
+        MemoryExhaustion,
+        /// s: PROCESS_FAULT_INFORMATION
+        FaultInformation,
+        /// q: PROCESS_TELEMETRY_ID_INFORMATION
+        TelemetryIdInformation,
+        /// qs: PROCESS_COMMIT_RELEASE_INFORMATION
+        CommitReleaseInformation,
+        /// qs: SYSTEM_CPU_SET_INFORMATION[5] // ProcessReserved1Information
+        DefaultCpuSetsInformation,
+        /// qs: SYSTEM_CPU_SET_INFORMATION[5] // ProcessReserved2Information
+        AllowedCpuSetsInformation,
+        /// s: void // EPROCESS->SubsystemProcess
+        SubsystemProcess,
+        /// q: PROCESS_JOB_MEMORY_INFO
+        JobMemoryInformation,
+        /// qs: BOOLEAN; s: void // ETW // since THRESHOLD2 // 70
+        InPrivate,
+        /// qs: PROCESS_RAISE_UM_EXCEPTION_ON_INVALID_HANDLE_CLOSE; s: 0 disables, otherwise enables
+        RaiseUMExceptionOnInvalidHandleClose,
+        /// qs: PROCESS_IUM_CHALLENGE_RESPONSE
+        IumChallengeResponse,
+        /// q: PROCESS_CHILD_PROCESS_INFORMATION
+        ChildProcessInformation,
+        /// qs: BOOLEAN; s: BOOLEAN (requires SeTcbPrivilege)
+        HighGraphicsPriorityInformation,
+        /// q: SUBSYSTEM_INFORMATION_TYPE // since REDSTONE2
+        SubsystemInformation,
+        /// q: PROCESS_ENERGY_VALUES, PROCESS_EXTENDED_ENERGY_VALUES, PROCESS_EXTENDED_ENERGY_VALUES_V1
+        EnergyValues,
+        /// qs: POWER_THROTTLING_PROCESS_STATE
+        PowerThrottlingState,
+        /// qs: Obsolete // PROCESS_ACTIVITY_THROTTLE_POLICY // ProcessReserved3Information
+        ActivityThrottlePolicy,
+        /// q: WIN32K_SYSCALL_FILTER
+        Win32kSyscallFilterInformation,
+        /// s: BOOLEAN // 80
+        DisableSystemAllowedCpuSets,
+        /// q: PROCESS_WAKE_INFORMATION // (kernel-mode only)
+        WakeInformation,
+        /// qs: PROCESS_ENERGY_TRACKING_STATE
+        EnergyTrackingState,
+        /// s: MANAGE_WRITES_TO_EXECUTABLE_MEMORY // since REDSTONE3
+        ManageWritesToExecutableMemory,
+        /// q: ULONG
+        CaptureTrustletLiveDump,
+        /// qs: TELEMETRY_COVERAGE_HEADER; s: TELEMETRY_COVERAGE_POINT
+        TelemetryCoverage,
+        /// qs: Obsolete
+        EnclaveInformation,
+        /// qs: PROCESS_READWRITEVM_LOGGING_INFORMATION
+        EnableReadWriteVmLogging,
+        /// q: PROCESS_UPTIME_INFORMATION
+        UptimeInformation,
+        /// q: HANDLE
+        ImageSection,
+        /// s: PROCESS_DEBUG_AUTH_INFORMATION // CiTool.exe -- device-id // PplDebugAuthorization // since RS4 // 90
+        DebugAuthInformation,
+        /// s: PROCESS_SYSTEM_RESOURCE_MANAGEMENT
+        SystemResourceManagement,
+        /// q: ULONGLONG
+        SequenceNumber,
+        /// qs: Obsolete // since RS5
+        LoaderDetour,
+        /// q: PROCESS_SECURITY_DOMAIN_INFORMATION
+        SecurityDomainInformation,
+        /// s: PROCESS_COMBINE_SECURITY_DOMAINS_INFORMATION
+        CombineSecurityDomainsInformation,
+        /// q: PROCESS_LOGGING_INFORMATION
+        EnableLogging,
+        /// qs: PROCESS_LEAP_SECOND_INFORMATION
+        LeapSecondInformation,
+        /// s: PROCESS_FIBER_SHADOW_STACK_ALLOCATION_INFORMATION // since 19H1
+        FiberShadowStackAllocation,
+        /// s: PROCESS_FREE_FIBER_SHADOW_STACK_ALLOCATION_INFORMATION
+        FreeFiberShadowStackAllocation,
+        /// s: PROCESS_SYSCALL_PROVIDER_INFORMATION // since 20H1 // 100
+        AltSystemCallInformation,
+        /// s: PROCESS_DYNAMIC_EH_CONTINUATION_TARGETS_INFORMATION
+        DynamicEHContinuationTargets,
+        /// s: PROCESS_DYNAMIC_ENFORCED_ADDRESS_RANGE_INFORMATION // since 20H2
+        DynamicEnforcedCetCompatibleRanges,
+        /// qs: Obsolete // since WIN11
+        CreateStateChange,
+        /// qs: Obsolete
+        ApplyStateChange,
+        /// s: ULONG64 // EnableProcessOptionalXStateFeatures
+        EnableOptionalXStateFeatures,
+        /// qs: OVERRIDE_PREFETCH_PARAMETER // App Launch Prefetch (ALPF) // since 22H1
+        AltPrefetchParam,
+        /// s: HANDLE[]
+        AssignCpuPartitions,
+        /// s: PROCESS_PRIORITY_CLASS_EX
+        PriorityClassEx,
+        /// q: PROCESS_MEMBERSHIP_INFORMATION
+        MembershipInformation,
+        /// q: IO_PRIORITY_HINT // 110
+        EffectiveIoPriority,
+        /// q: ULONG
+        EffectivePagePriority,
+        /// s: PROCESS_SCHEDULER_SHARED_DATA_SLOT_INFORMATION // since 24H2
+        SchedulerSharedData,
+        /// qs: no input buffer, length 0 on set, current process only
+        SlistRollbackInformation,
+        /// q: PROCESS_NETWORK_COUNTERS
+        NetworkIoCounters,
+        /// q: PROCESS_TEB_VALUE_INFORMATION // NtCurrentProcess
+        FindFirstThreadByTebValue,
+        /// qs: Obsolete // since 25H2
+        EnclaveAddressSpaceRestriction,
+        /// qs: Obsolete // PROCESS_AVAILABLE_CPUS_INFORMATION
+        AvailableCpus,
+
+        MaxProcessInfoClass,
+    };
+};
+
+pub const THREAD = struct {
+    pub const INFOCLASS = enum(c_int) {
+        /// q: THREAD_BASIC_INFORMATION
+        BasicInformation,
+        /// q: KERNEL_USER_TIMES // since VISTA
+        Times,
+        /// s: KPRIORITY (requires SeIncreaseBasePriorityPrivilege)
+        Priority,
+        /// s: KPRIORITY
+        BasePriority,
+        /// s: KAFFINITY
+        AffinityMask,
+        /// s: HANDLE
+        ImpersonationToken,
+        /// q: DESCRIPTOR_TABLE_ENTRY (or WOW64_DESCRIPTOR_TABLE_ENTRY)
+        DescriptorTableEntry,
+        /// s: BOOLEAN
+        EnableAlignmentFaultFixup,
+        /// q: Obsolete
+        EventPair,
+        /// q: PVOID
+        QuerySetWin32StartAddress,
+        /// s: ULONG // TlsIndex // 10
+        ZeroTlsCell,
+        /// q: LARGE_INTEGER
+        PerformanceCount,
+        /// q: ULONG
+        AmILastThread,
+        /// s: ULONG
+        IdealProcessor,
+        /// qs: ULONG
+        PriorityBoost,
+        /// s: ULONG_PTR
+        SetTlsArrayAddress,
+        /// q: ULONG
+        IsIoPending,
+        /// qs: BOOLEAN
+        HideFromDebugger,
+        /// qs: ULONG
+        BreakOnTermination,
+        /// s: void // NtCurrentThread // NPX/FPU
+        SwitchLegacyState,
+        /// q: ULONG // 20
+        IsTerminated,
+        /// q: THREAD_LAST_SYSCALL_INFORMATION
+        LastSystemCall,
+        /// qs: IO_PRIORITY_HINT (s: requires SeIncreaseBasePriorityPrivilege)
+        IoPriority,
+        /// q: THREAD_CYCLE_TIME_INFORMATION (requires THREAD_QUERY_LIMITED_INFORMATION)
+        CycleTime,
+        /// qs: PAGE_PRIORITY_INFORMATION
+        PagePriority,
+        /// q: LONG
+        ActualBasePriority,
+        /// q: THREAD_TEB_INFORMATION (requires THREAD_GET_CONTEXT + THREAD_SET_CONTEXT)
+        TebInformation,
+        /// q: Obsolete
+        CSwitchMon,
+        /// q: Obsolete
+        CSwitchPmu,
+        /// qs: WOW64_CONTEXT, ARM_NT_CONTEXT since 20H1
+        Wow64Context,
+        /// qs: GROUP_AFFINITY // 30
+        GroupInformation,
+        /// q: THREAD_UMS_INFORMATION // Obsolete
+        UmsInformation,
+        /// qs: THREAD_PROFILING_INFORMATION
+        CounterProfiling,
+        /// qs: PROCESSOR_NUMBER; s: previous PROCESSOR_NUMBER on return
+        IdealProcessorEx,
+        /// s: HANDLE // since WIN8
+        CpuAccountingInformation,
+        /// q: ULONG // since WINBLUE
+        SuspendCount,
+        /// qs: KHETERO_CPU_POLICY // since THRESHOLD
+        HeterogeneousCpuPolicy,
+        /// q: GUID
+        ContainerId,
+        /// qs: THREAD_NAME_INFORMATION (requires THREAD_SET_LIMITED_INFORMATION)
+        NameInformation,
+        /// qs: ULONG[]
+        SelectedCpuSets,
+        /// q: SYSTEM_THREAD_INFORMATION // 40
+        SystemThreadInformation,
+        /// q: GROUP_AFFINITY // since THRESHOLD2
+        ActualGroupAffinity,
+        /// qs: ULONG // NtCurrentThread
+        DynamicCodePolicyInfo,
+        /// qs: ULONG; s: 0 disables, otherwise enables // (requires SeDebugPrivilege and PsProtectedSignerAntimalware)
+        ExplicitCaseSensitivity,
+        /// q: RTL_WORK_ON_BEHALF_TICKET_EX; s: ALPC_WORK_ON_BEHALF_TICKET // NtCurrentThread
+        WorkOnBehalfTicket,
+        /// q: SUBSYSTEM_INFORMATION_TYPE // since REDSTONE2
+        SubsystemInformation,
+        /// s: ULONG
+        DbgkWerReportActive,
+        /// s: HANDLE (job object) // NtCurrentThread
+        AttachContainer,
+        /// s: MANAGE_WRITES_TO_EXECUTABLE_MEMORY // since REDSTONE3
+        ManageWritesToExecutableMemory,
+        /// qs: POWER_THROTTLING_THREAD_STATE // since REDSTONE3 (set), WIN11 22H2 (query)
+        PowerThrottlingState,
+        /// qs: THREAD_WORKLOAD_CLASS // since REDSTONE5 // 50
+        WorkloadClass,
+        /// s: Obsolete // since WIN11
+        CreateStateChange,
+        /// s: Obsolete
+        ApplyStateChange,
+        /// qs: ULONG // NtCurrentThread // since 22H1
+        StrongerBadHandleChecks,
+        /// q: IO_PRIORITY_HINT
+        EffectiveIoPriority,
+        /// q: ULONG
+        EffectivePagePriority,
+        /// s: THREAD_LOCK_OWNERSHIP // since 24H2
+        UpdateLockOwnership,
+        /// qs: THREAD_SCHEDULER_SHARED_DATA_SLOT_INFORMATION
+        SchedulerSharedDataSlot,
+        /// q: THREAD_TEB_INFORMATION (requires THREAD_GET_CONTEXT + THREAD_QUERY_INFORMATION)
+        TebInformationAtomic,
+        /// q: THREAD_INDEX_INFORMATION
+        IndexInformation,
+
+        MaxThreadInfoClass,
+    };
+};
+
+pub const MEM = packed struct(ULONG) {
+    EXTENDED_PARAMETER: packed struct(u9) {
+        GRAPHICS: bool = false, // 0x0000001
+        NONPAGED: bool = false, // 0x0000002
+        ZERO_PAGES_OPTIONAL: bool = false, // 0x0000004
+        NONPAGED_LARGE: bool = false, // 0x0000008
+        NONPAGED_HUGE: bool = false, // 0x0000010
+        SOFT_FAULT_PAGES: bool = false, // 0x0000020
+        EC_CODE: bool = false, // 0x0000040
+        SECURE_PAGES: bool = false, // 0x0000080
+        TAGGED: bool = false, // 0x0000100
+    } = .{},
+
+    __reserved0__: u3 = 0, // 0x0000200 - 0x0000800
+    COMMIT: bool = false, //0x0001000
+    RESERVE: bool = false, //0x0002000
+    DECOMMIT: bool = false, //0x0004000
+    RELEASE: bool = false, //0x0008000
+    FREE: bool = false, //0x0010000
+    PRIVATE: bool = false, //0x0020000
+    MAPPED: bool = false, //0x0040000
+    RESET: bool = false, //0x0080000
+    TOP_DOWN: bool = false, //0x0100000
+    WRITE_WATCH: bool = false, //0x0200000
+    PHYSICAL: bool = false, //0x0400000
+    ROTATE: bool = false, //0x0800000
+    NEW_IMAGE: bool = false, //0x1000000
+    LARGE_PAGES: bool = false, //0x2000000
+    __reserved1__: u1 = 0, //0x4000000
+    @"4MB_PAGES": bool = false, // 0x8000000
+    __reserved2__: u4 = 0,
+
+    pub const UNMAP_WITH_TRANSIENT_BOOST = MEM{ .EXTENDED_PARAMETER_GRAPHICS = true };
+    pub const COALESCE_PLACEHOLDERS = MEM{ .EXTENDED_PARAMETER_GRAPHICS = true };
+    pub const PRESERVE_PLACEHOLDER = MEM{ .EXTENDED_PARAMETER_NONPAGED = true };
+    pub const REPLACE_PLACEHOLDER = MEM{ .DECOMMIT = true };
+    pub const DOS_LIM = MEM{ .DECOMMIT = true };
+    pub const RESERVE_PLACEHOLDER = MEM{ .MAPPED = true };
+    pub const DIFFERENT_IMAGE_BASE_OK = MEM{ .ROTATE = true };
+    pub const RESET_UNDO = MEM{ .NEW_IMAGE = true };
+};
 
 pub const RECT = extern struct {
     left: LONG = 0,
@@ -1120,12 +1607,6 @@ pub const FILE_ATTRIBUTE_DATA = extern struct {
     file_size_low: DWORD,
 };
 
-pub const KeyState = packed struct(SHORT) {
-    toggled: bool,
-    reserved: u14,
-    down: bool,
-};
-
 pub const WINDOWPLACEMENT = extern struct {
     length: UINT = @sizeOf(@This()),
     flags: UINT = 0,
@@ -1146,12 +1627,6 @@ pub const MONITORINFO = extern struct {
 pub const GET_FILEEX_INFO_LEVELS = enum(c_int) {
     standard,
     max,
-};
-
-pub const PROCESS_DPI_AWARENESS = enum(c_int) {
-    DPI_UNAWARE = 0,
-    SYSTEM_DPI_AWARE = 1,
-    PER_MONITOR_DPI_AWARE = 2,
 };
 
 pub const MAPVK = enum(UINT) {
@@ -1186,7 +1661,7 @@ pub const MAPVK = enum(UINT) {
     VK_TO_VSC_EX = 4,
 };
 
-pub const CodePage = enum(c_int) {
+pub const CP = enum(c_int) {
     /// The current system ANSI code page.
     ACP = 0,
     /// The current system OEM code page.
@@ -1203,7 +1678,7 @@ pub const CodePage = enum(c_int) {
     UTF8 = 65001,
 };
 
-pub const MultiByteFlags = packed struct(DWORD) {
+pub const MB = packed struct(DWORD) {
     PRECOMPOSED: bool = false,
     COMPOSITE: bool = false,
     USEGLYPHCHARS: bool = false,
@@ -1211,374 +1686,10 @@ pub const MultiByteFlags = packed struct(DWORD) {
     __unused__: u28 = 0,
 };
 
-pub const NT_THREADINFOCLASS = enum(c_int) {
-    /// q: THREAD_BASIC_INFORMATION
-    ThreadBasicInformation,
-    /// q: KERNEL_USER_TIMES // since VISTA
-    ThreadTimes,
-    /// s: KPRIORITY (requires SeIncreaseBasePriorityPrivilege)
-    ThreadPriority,
-    /// s: KPRIORITY
-    ThreadBasePriority,
-    /// s: KAFFINITY
-    ThreadAffinityMask,
-    /// s: HANDLE
-    ThreadImpersonationToken,
-    /// q: DESCRIPTOR_TABLE_ENTRY (or WOW64_DESCRIPTOR_TABLE_ENTRY)
-    ThreadDescriptorTableEntry,
-    /// s: BOOLEAN
-    ThreadEnableAlignmentFaultFixup,
-    /// q: Obsolete
-    ThreadEventPair,
-    /// q: PVOID
-    ThreadQuerySetWin32StartAddress,
-    /// s: ULONG // TlsIndex // 10
-    ThreadZeroTlsCell,
-    /// q: LARGE_INTEGER
-    ThreadPerformanceCount,
-    /// q: ULONG
-    ThreadAmILastThread,
-    /// s: ULONG
-    ThreadIdealProcessor,
-    /// qs: ULONG
-    ThreadPriorityBoost,
-    /// s: ULONG_PTR
-    ThreadSetTlsArrayAddress,
-    /// q: ULONG
-    ThreadIsIoPending,
-    /// qs: BOOLEAN
-    ThreadHideFromDebugger,
-    /// qs: ULONG
-    ThreadBreakOnTermination,
-    /// s: void // NtCurrentThread // NPX/FPU
-    ThreadSwitchLegacyState,
-    /// q: ULONG // 20
-    ThreadIsTerminated,
-    /// q: THREAD_LAST_SYSCALL_INFORMATION
-    ThreadLastSystemCall,
-    /// qs: IO_PRIORITY_HINT (s: requires SeIncreaseBasePriorityPrivilege)
-    ThreadIoPriority,
-    /// q: THREAD_CYCLE_TIME_INFORMATION (requires THREAD_QUERY_LIMITED_INFORMATION)
-    ThreadCycleTime,
-    /// qs: PAGE_PRIORITY_INFORMATION
-    ThreadPagePriority,
-    /// q: LONG
-    ThreadActualBasePriority,
-    /// q: THREAD_TEB_INFORMATION (requires THREAD_GET_CONTEXT + THREAD_SET_CONTEXT)
-    ThreadTebInformation,
-    /// q: Obsolete
-    ThreadCSwitchMon,
-    /// q: Obsolete
-    ThreadCSwitchPmu,
-    /// qs: WOW64_CONTEXT, ARM_NT_CONTEXT since 20H1
-    ThreadWow64Context,
-    /// qs: GROUP_AFFINITY // 30
-    ThreadGroupInformation,
-    /// q: THREAD_UMS_INFORMATION // Obsolete
-    ThreadUmsInformation,
-    /// qs: THREAD_PROFILING_INFORMATION
-    ThreadCounterProfiling,
-    /// qs: PROCESSOR_NUMBER; s: previous PROCESSOR_NUMBER on return
-    ThreadIdealProcessorEx,
-    /// s: HANDLE // since WIN8
-    ThreadCpuAccountingInformation,
-    /// q: ULONG // since WINBLUE
-    ThreadSuspendCount,
-    /// qs: KHETERO_CPU_POLICY // since THRESHOLD
-    ThreadHeterogeneousCpuPolicy,
-    /// q: GUID
-    ThreadContainerId,
-    /// qs: THREAD_NAME_INFORMATION (requires THREAD_SET_LIMITED_INFORMATION)
-    ThreadNameInformation,
-    /// qs: ULONG[]
-    ThreadSelectedCpuSets,
-    /// q: SYSTEM_THREAD_INFORMATION // 40
-    ThreadSystemThreadInformation,
-    /// q: GROUP_AFFINITY // since THRESHOLD2
-    ThreadActualGroupAffinity,
-    /// qs: ULONG // NtCurrentThread
-    ThreadDynamicCodePolicyInfo,
-    /// qs: ULONG; s: 0 disables, otherwise enables // (requires SeDebugPrivilege and PsProtectedSignerAntimalware)
-    ThreadExplicitCaseSensitivity,
-    /// q: RTL_WORK_ON_BEHALF_TICKET_EX; s: ALPC_WORK_ON_BEHALF_TICKET // NtCurrentThread
-    ThreadWorkOnBehalfTicket,
-    /// q: SUBSYSTEM_INFORMATION_TYPE // since REDSTONE2
-    ThreadSubsystemInformation,
-    /// s: ULONG
-    ThreadDbgkWerReportActive,
-    /// s: HANDLE (job object) // NtCurrentThread
-    ThreadAttachContainer,
-    /// s: MANAGE_WRITES_TO_EXECUTABLE_MEMORY // since REDSTONE3
-    ThreadManageWritesToExecutableMemory,
-    /// qs: POWER_THROTTLING_THREAD_STATE // since REDSTONE3 (set), WIN11 22H2 (query)
-    ThreadPowerThrottlingState,
-    /// qs: THREAD_WORKLOAD_CLASS // since REDSTONE5 // 50
-    ThreadWorkloadClass,
-    /// s: Obsolete // since WIN11
-    ThreadCreateStateChange,
-    /// s: Obsolete
-    ThreadApplyStateChange,
-    /// qs: ULONG // NtCurrentThread // since 22H1
-    ThreadStrongerBadHandleChecks,
-    /// q: IO_PRIORITY_HINT
-    ThreadEffectiveIoPriority,
-    /// q: ULONG
-    ThreadEffectivePagePriority,
-    /// s: THREAD_LOCK_OWNERSHIP // since 24H2
-    ThreadUpdateLockOwnership,
-    /// qs: THREAD_SCHEDULER_SHARED_DATA_SLOT_INFORMATION
-    ThreadSchedulerSharedDataSlot,
-    /// q: THREAD_TEB_INFORMATION (requires THREAD_GET_CONTEXT + THREAD_QUERY_INFORMATION)
-    ThreadTebInformationAtomic,
-    /// q: THREAD_INDEX_INFORMATION
-    ThreadIndexInformation,
-
-    MaxThreadInfoClass,
-};
-
-pub const NT_PROCESS_INFO_CLASS = enum(c_int) {
-    /// q: PROCESS_BASIC_INFORMATION, PROCESS_EXTENDED_BASIC_INFORMATION
-    ProcessBasicInformation,
-    /// qs: QUOTA_LIMITS, QUOTA_LIMITS_EX
-    ProcessQuotaLimits,
-    /// q: IO_COUNTERS
-    ProcessIoCounters,
-    /// q: VM_COUNTERS, VM_COUNTERS_EX, VM_COUNTERS_EX2
-    ProcessVmCounters,
-    /// q: KERNEL_USER_TIMES // since VISTA
-    ProcessTimes,
-    /// s: KPRIORITY
-    ProcessBasePriority,
-    /// s: PROCESS_RAISE_PRIORITY
-    ProcessRaisePriority,
-    /// q: HANDLE
-    ProcessDebugPort,
-    /// s: PROCESS_EXCEPTION_PORT (requires SeTcbPrivilege)
-    ProcessExceptionPort,
-    /// s: PROCESS_ACCESS_TOKEN
-    ProcessAccessToken,
-    /// qs: PROCESS_LDT_INFORMATION // 10
-    ProcessLdtInformation,
-    /// s: PROCESS_LDT_SIZE
-    ProcessLdtSize,
-    /// qs: PROCESS_DEFAULT_HARD_ERROR_MODE
-    ProcessDefaultHardErrorMode,
-    /// s: PROCESS_IO_PORT_HANDLER_INFORMATION // (kernel-mode only)
-    ProcessIoPortHandlers,
-    /// q: POOLED_USAGE_AND_LIMITS
-    ProcessPooledUsageAndLimits,
-    /// qs: PROCESS_WS_WATCH_INFORMATION[]; s: void
-    ProcessWorkingSetWatch,
-    /// s: PROCESS_USER_MODE_IOPL (requires SeTcbPrivilege)
-    ProcessUserModeIOPL,
-    /// s: BOOLEAN
-    ProcessEnableAlignmentFaultFixup,
-    /// qs: PROCESS_PRIORITY_CLASS
-    ProcessPriorityClass,
-    /// qs: ULONG (requires SeTcbPrivilege) (VdmAllowed)
-    ProcessWx86Information,
-    /// q: ULONG, PROCESS_HANDLE_INFORMATION // 20
-    ProcessHandleCount,
-    /// qs: KAFFINITY, qs: GROUP_AFFINITY
-    ProcessAffinityMask,
-    /// qs: PROCESS_PRIORITY_BOOST
-    ProcessPriorityBoost,
-    /// qs: PROCESS_DEVICEMAP_INFORMATION, PROCESS_DEVICEMAP_INFORMATION_EX
-    ProcessDeviceMap,
-    /// qs: PROCESS_SESSION_INFORMATION
-    ProcessSessionInformation,
-    /// s: PROCESS_FOREGROUND_BACKGROUND
-    ProcessForegroundInformation,
-    /// q: ULONG_PTR
-    ProcessWow64Information,
-    /// q: UNICODE_STRING
-    ProcessImageFileName,
-    /// q: PROCESS_LUID_DEVICE_MAPS_ENABLED
-    ProcessLUIDDeviceMapsEnabled,
-    /// qs: ULONG
-    ProcessBreakOnTermination,
-    /// q: HANDLE // 30
-    ProcessDebugObjectHandle,
-    /// qs: PROCESS_DEBUG_FLAGS
-    ProcessDebugFlags,
-    /// qs: PROCESS_HANDLE_TRACING_QUERY; s: PROCESS_HANDLE_TRACING_ENABLE[_EX] or void to disable
-    ProcessHandleTracing,
-    /// qs: IO_PRIORITY_HINT (s: requires SeIncreaseBasePriorityPrivilege)
-    ProcessIoPriority,
-    /// qs: PROCESS_EXECUTE_FLAGS
-    ProcessExecuteFlags,
-    /// s: PROCESS_TLS_INFORMATION // ProcessResourceManagement
-    ProcessTlsInformation,
-    /// q: ULONG
-    ProcessCookie,
-    /// q: SECTION_IMAGE_INFORMATION
-    ProcessImageInformation,
-    /// q: PROCESS_CYCLE_TIME_INFORMATION // since VISTA
-    ProcessCycleTime,
-    /// qs: PAGE_PRIORITY_INFORMATION
-    ProcessPagePriority,
-    /// s: PVOID or PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION // 40
-    ProcessInstrumentationCallback,
-    /// s: PROCESS_STACK_ALLOCATION_INFORMATION, PROCESS_STACK_ALLOCATION_INFORMATION_EX
-    ProcessThreadStackAllocation,
-    /// qs: PROCESS_WS_WATCH_INFORMATION_EX[]; s: void
-    ProcessWorkingSetWatchEx,
-    /// q: UNICODE_STRING
-    ProcessImageFileNameWin32,
-    /// q: HANDLE (input)
-    ProcessImageFileMapping,
-    /// qs: PROCESS_AFFINITY_UPDATE_MODE
-    ProcessAffinityUpdateMode,
-    /// qs: PROCESS_MEMORY_ALLOCATION_MODE
-    ProcessMemoryAllocationMode,
-    /// q: PROCESS_GROUP_INFORMATION
-    ProcessGroupInformation,
-    /// s: ULONG
-    ProcessTokenVirtualizationEnabled,
-    /// qs: PROCESS_CONSOLE_HOST_PROCESS_INFORMATION
-    ProcessConsoleHostProcess,
-    /// q: PROCESS_WINDOW_INFORMATION // 50
-    ProcessWindowInformation,
-    /// q: PROCESS_HANDLE_SNAPSHOT_INFORMATION // since WIN8
-    ProcessHandleInformation,
-    /// s: PROCESS_MITIGATION_POLICY_INFORMATION
-    ProcessMitigationPolicy,
-    /// s: PROCESS_DYNAMIC_FUNCTION_TABLE_INFORMATION
-    ProcessDynamicFunctionTableInformation,
-    /// qs: PROCESS_HANDLE_CHECKING_MODE; s: 0 disables, otherwise enables
-    ProcessHandleCheckingMode,
-    /// q: PROCESS_KEEPALIVE_COUNT_INFORMATION
-    ProcessKeepAliveCount,
-    /// s: PROCESS_REVOKE_FILE_HANDLES_INFORMATION
-    ProcessRevokeFileHandles,
-    /// s: PROCESS_WORKING_SET_CONTROL
-    ProcessWorkingSetControl,
-    /// q: ULONG[] // since WINBLUE
-    ProcessHandleTable,
-    /// qs: ULONG // KPROCESS->CheckStackExtents (CFG)
-    ProcessCheckStackExtentsMode,
-    /// q: UNICODE_STRING // 60
-    ProcessCommandLineInformation,
-    /// q: PS_PROTECTION
-    ProcessProtectionInformation,
-    /// s: PROCESS_MEMORY_EXHAUSTION_INFO // since THRESHOLD
-    ProcessMemoryExhaustion,
-    /// s: PROCESS_FAULT_INFORMATION
-    ProcessFaultInformation,
-    /// q: PROCESS_TELEMETRY_ID_INFORMATION
-    ProcessTelemetryIdInformation,
-    /// qs: PROCESS_COMMIT_RELEASE_INFORMATION
-    ProcessCommitReleaseInformation,
-    /// qs: SYSTEM_CPU_SET_INFORMATION[5] // ProcessReserved1Information
-    ProcessDefaultCpuSetsInformation,
-    /// qs: SYSTEM_CPU_SET_INFORMATION[5] // ProcessReserved2Information
-    ProcessAllowedCpuSetsInformation,
-    /// s: void // EPROCESS->SubsystemProcess
-    ProcessSubsystemProcess,
-    /// q: PROCESS_JOB_MEMORY_INFO
-    ProcessJobMemoryInformation,
-    /// qs: BOOLEAN; s: void // ETW // since THRESHOLD2 // 70
-    ProcessInPrivate,
-    /// qs: PROCESS_RAISE_UM_EXCEPTION_ON_INVALID_HANDLE_CLOSE; s: 0 disables, otherwise enables
-    ProcessRaiseUMExceptionOnInvalidHandleClose,
-    /// qs: PROCESS_IUM_CHALLENGE_RESPONSE
-    ProcessIumChallengeResponse,
-    /// q: PROCESS_CHILD_PROCESS_INFORMATION
-    ProcessChildProcessInformation,
-    /// qs: BOOLEAN; s: BOOLEAN (requires SeTcbPrivilege)
-    ProcessHighGraphicsPriorityInformation,
-    /// q: SUBSYSTEM_INFORMATION_TYPE // since REDSTONE2
-    ProcessSubsystemInformation,
-    /// q: PROCESS_ENERGY_VALUES, PROCESS_EXTENDED_ENERGY_VALUES, PROCESS_EXTENDED_ENERGY_VALUES_V1
-    ProcessEnergyValues,
-    /// qs: POWER_THROTTLING_PROCESS_STATE
-    ProcessPowerThrottlingState,
-    /// qs: Obsolete // PROCESS_ACTIVITY_THROTTLE_POLICY // ProcessReserved3Information
-    ProcessActivityThrottlePolicy,
-    /// q: WIN32K_SYSCALL_FILTER
-    ProcessWin32kSyscallFilterInformation,
-    /// s: BOOLEAN // 80
-    ProcessDisableSystemAllowedCpuSets,
-    /// q: PROCESS_WAKE_INFORMATION // (kernel-mode only)
-    ProcessWakeInformation,
-    /// qs: PROCESS_ENERGY_TRACKING_STATE
-    ProcessEnergyTrackingState,
-    /// s: MANAGE_WRITES_TO_EXECUTABLE_MEMORY // since REDSTONE3
-    ProcessManageWritesToExecutableMemory,
-    /// q: ULONG
-    ProcessCaptureTrustletLiveDump,
-    /// qs: TELEMETRY_COVERAGE_HEADER; s: TELEMETRY_COVERAGE_POINT
-    ProcessTelemetryCoverage,
-    /// qs: Obsolete
-    ProcessEnclaveInformation,
-    /// qs: PROCESS_READWRITEVM_LOGGING_INFORMATION
-    ProcessEnableReadWriteVmLogging,
-    /// q: PROCESS_UPTIME_INFORMATION
-    ProcessUptimeInformation,
-    /// q: HANDLE
-    ProcessImageSection,
-    /// s: PROCESS_DEBUG_AUTH_INFORMATION // CiTool.exe -- device-id // PplDebugAuthorization // since RS4 // 90
-    ProcessDebugAuthInformation,
-    /// s: PROCESS_SYSTEM_RESOURCE_MANAGEMENT
-    ProcessSystemResourceManagement,
-    /// q: ULONGLONG
-    ProcessSequenceNumber,
-    /// qs: Obsolete // since RS5
-    ProcessLoaderDetour,
-    /// q: PROCESS_SECURITY_DOMAIN_INFORMATION
-    ProcessSecurityDomainInformation,
-    /// s: PROCESS_COMBINE_SECURITY_DOMAINS_INFORMATION
-    ProcessCombineSecurityDomainsInformation,
-    /// q: PROCESS_LOGGING_INFORMATION
-    ProcessEnableLogging,
-    /// qs: PROCESS_LEAP_SECOND_INFORMATION
-    ProcessLeapSecondInformation,
-    /// s: PROCESS_FIBER_SHADOW_STACK_ALLOCATION_INFORMATION // since 19H1
-    ProcessFiberShadowStackAllocation,
-    /// s: PROCESS_FREE_FIBER_SHADOW_STACK_ALLOCATION_INFORMATION
-    ProcessFreeFiberShadowStackAllocation,
-    /// s: PROCESS_SYSCALL_PROVIDER_INFORMATION // since 20H1 // 100
-    ProcessAltSystemCallInformation,
-    /// s: PROCESS_DYNAMIC_EH_CONTINUATION_TARGETS_INFORMATION
-    ProcessDynamicEHContinuationTargets,
-    /// s: PROCESS_DYNAMIC_ENFORCED_ADDRESS_RANGE_INFORMATION // since 20H2
-    ProcessDynamicEnforcedCetCompatibleRanges,
-    /// qs: Obsolete // since WIN11
-    ProcessCreateStateChange,
-    /// qs: Obsolete
-    ProcessApplyStateChange,
-    /// s: ULONG64 // EnableProcessOptionalXStateFeatures
-    ProcessEnableOptionalXStateFeatures,
-    /// qs: OVERRIDE_PREFETCH_PARAMETER // App Launch Prefetch (ALPF) // since 22H1
-    ProcessAltPrefetchParam,
-    /// s: HANDLE[]
-    ProcessAssignCpuPartitions,
-    /// s: PROCESS_PRIORITY_CLASS_EX
-    ProcessPriorityClassEx,
-    /// q: PROCESS_MEMBERSHIP_INFORMATION
-    ProcessMembershipInformation,
-    /// q: IO_PRIORITY_HINT // 110
-    ProcessEffectiveIoPriority,
-    /// q: ULONG
-    ProcessEffectivePagePriority,
-    /// s: PROCESS_SCHEDULER_SHARED_DATA_SLOT_INFORMATION // since 24H2
-    ProcessSchedulerSharedData,
-    /// qs: no input buffer, length 0 on set, current process only
-    ProcessSlistRollbackInformation,
-    /// q: PROCESS_NETWORK_COUNTERS
-    ProcessNetworkIoCounters,
-    /// q: PROCESS_TEB_VALUE_INFORMATION // NtCurrentProcess
-    ProcessFindFirstThreadByTebValue,
-    /// qs: Obsolete // since 25H2
-    ProcessEnclaveAddressSpaceRestriction,
-    /// qs: Obsolete // PROCESS_AVAILABLE_CPUS_INFORMATION
-    ProcessAvailableCpus,
-
-    MaxProcessInfoClass,
-};
-
 pub const NT_UNICODE_STRING = extern struct {
+    /// !! In bytes !!
     length: USHORT,
+    /// !! In bytes !!
     maximum_length: USHORT,
     buffer: PWSTR,
 
@@ -1593,31 +1704,6 @@ pub const NT_UNICODE_STRING = extern struct {
     pub fn slice(this: *const NT_UNICODE_STRING) [:0]u16 {
         return this.buffer[0 .. this.length / @sizeOf(u16) :0];
     }
-};
-
-pub const NT_OBJECT_ATTRIBUTES = extern struct {
-    length: ULONG = @sizeOf(@This()),
-    root_directory: ?HANDLE,
-    object_name: *const NT_UNICODE_STRING,
-    attributes: NT_OBJECT_ATTRIBUTE_FLAGS,
-    security_descriptor: ?*anyopaque,
-    security_quality_of_service: ?*anyopaque,
-};
-
-pub const NT_OBJECT_ATTRIBUTE_FLAGS = packed struct(ULONG) {
-    __reserved0__: u1 = 0,
-    INHERIT: bool = false,
-    __reserved1__: u2 = 0,
-    PERMANENT: bool = false,
-    EXCLUSIVE: bool = false,
-    CASE_INSENSITIVE: bool = false,
-    OPENIF: bool = false,
-    OPENLINK: bool = false,
-    KERNEL_HANDLE: bool = false,
-    FORCE_ACCESS_CHECK: bool = false,
-    IGNORE_IMPERSONATED_DEVICEMAP: bool = false,
-    DONT_REPARSE: bool = false,
-    __reserved2__: u19 = 0,
 };
 
 pub const NT_SECURITY_DESCRIPTOR = extern struct {
@@ -1649,19 +1735,67 @@ pub const NT_SID_IDENTIFIER_AUTHORITY = extern struct {
     value: [6]BYTE,
 };
 
-pub const NT_FILE_BASIC_INFORMATION = extern struct {
-    creation_time: LARGE_INTEGER,
-    last_access_time: LARGE_INTEGER,
-    last_write_time: LARGE_INTEGER,
-    change_time: LARGE_INTEGER,
-    file_attributes: ULONG,
-};
-
 pub const NT_KERNEL_USER_TIMES = extern struct {
     create_time: LARGE_INTEGER,
     exit_time: LARGE_INTEGER,
     kernel_time: LARGE_INTEGER,
     user_time: LARGE_INTEGER,
+};
+
+pub const NT_IO_STATUS_BLOCK = extern struct {
+    u: extern union {
+        status: NTSTATUS,
+        pointer: *anyopaque,
+    },
+    information: *ULONG,
+};
+
+pub const ACCESS_MASK = packed struct(DWORD) {
+    // specific_rights: u16 = 0,
+    specific: packed union {
+        FILE: packed struct(u16) {
+            READ_DATA: bool = false,
+            WRITE_DATA: bool = false,
+            APPEND_DATA: bool = false,
+            READ_EA: bool = false,
+            WRITE_EA: bool = false,
+            EXECUTE: bool = false,
+            DELETE_CHILD: bool = false,
+            READ_ATTRIBUTES: bool = false,
+            WRITE_ATTRIBUTES: bool = false,
+            __reserved__: u7 = 0,
+
+            pub const LIST_DIRECTORY = @This(){ .READ_DATA = true };
+            pub const ADD_FILE = @This(){ .WRITE_DATA = true };
+            pub const ADD_SUBDIRECTORY = @This(){ .APPEND_DATA = true };
+            pub const CREATE_PIPE_INSTANCE = @This(){ .APPEND_DATA = true };
+            pub const TRAVERSE = @This(){ .EXECUTE = true };
+        },
+        // TODO: KEY_*, PROCESS_*, THREAD_*
+    } = .{ .FILE = .{} },
+
+    DELETE: bool = false,
+    READ_CONTROL: bool = false,
+    WRITE_DAC: bool = false,
+    WRITE_OWNER: bool = false,
+    SYNCHRONIZE: bool = false,
+    __reserved0__: u3 = 0,
+
+    SYSTEM_SECURITY: bool = false,
+    MAXIMUM_ALLOWED: bool = false,
+    __reserved1__: u2 = 0,
+    GENERIC_ALL: bool = false,
+    GENERIC_EXECUTE: bool = false,
+    GENERIC_WRITE: bool = false,
+    GENERIC_READ: bool = false,
+
+    pub const SPECIFIC_RIGHTS_ALL: ACCESS_MASK = @bitCast(@as(DWORD, 0xFFFF));
+
+    pub const STANDARD_RIGHTS_REQUIRED = ACCESS_MASK{ .DELETE = true, .READ_CONTROL = true, .WRITE_DAC = true, .WRITE_OWNER = true };
+    pub const STANDARD_RIGHTS_READ = ACCESS_MASK{ .READ_CONTROL = true };
+    pub const STANDARD_RIGHTS_WRITE = ACCESS_MASK{ .READ_CONTROL = true };
+    pub const STANDARD_RIGHTS_EXECUTE = ACCESS_MASK{ .READ_CONTROL = true };
+    pub const STANDARD_RIGTHS_ALL = ACCESS_MASK{ .DELETE = true, .READ_CONTROL = true, .WRITE_DAC = true, .WRITE_OWNER = true, .SYNCHRONIZE = true };
 };
 
 pub const RTL_RELATIVE_NAME_U = extern struct {
@@ -1722,12 +1856,12 @@ pub inline fn HIWORD(l: anytype) WORD {
 
 pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
 
-pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: DWORD, protect: DWORD) callconv(.winapi) ?[*]u8;
-pub extern "kernel32" fn VirtualFree(address: [*]const u8, size: SIZE_T, free_type: DWORD) callconv(.winapi) BOOL;
+pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: MEM, protect: DWORD) callconv(.winapi) ?[*]u8;
+pub extern "kernel32" fn VirtualFree(address: [*]const u8, size: SIZE_T, free_type: MEM) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CreateFileMappingA(file: HANDLE, file_mapping_attributes: ?*SECURITY_ATTRIBUTES, protect: DWORD, maximum_size_high: DWORD, maximum_size_low: DWORD, name: ?LPCSTR) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn MapViewOfFile(file_mapping_object: HANDLE, desired_access: DWORD, file_offset_high: DWORD, file_offset_low: DWORD, number_of_bytes_to_map: SIZE_T) callconv(.winapi) ?LPVOID;
 pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
-pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: DWORD, share_mode: DWORD, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: ACCESS_MASK, share_mode: FILE.SHARE, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn GetFileAttributesExA(file_name: LPCSTR, info_level_id: GET_FILEEX_INFO_LEVELS, file_info: LPVOID) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, size: *LARGE_INTEGER) callconv(.winapi) BOOL;
 pub extern "kernel32" fn ReadFile(handle: HANDLE, buffer: LPVOID, bytes_to_read: DWORD, bytes_read: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
@@ -1742,7 +1876,7 @@ pub extern "kernel32" fn LoadLibraryA(lib_file_name: LPCSTR) callconv(.winapi) ?
 pub extern "kernel32" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) callconv(.winapi) ?FARPROC;
 pub extern "kernel32" fn FreeLibrary(lib_module: HMODULE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetCurrentDirectoryA(buffer_length: DWORD, buffer: LPCSTR) callconv(.winapi) DWORD;
-pub extern "kernel32" fn MultiByteToWideChar(code_page: CodePage, flags: MultiByteFlags, multi_byte_string: LPCCH, multi_byte_string_len: c_int, out_wide_char_string: LPWSTR, out_wide_char_string_len: c_int) callconv(.winapi) c_int;
+pub extern "kernel32" fn MultiByteToWideChar(code_page: CP, flags: MB, multi_byte_string: LPCCH, multi_byte_string_len: c_int, out_wide_char_string: LPWSTR, out_wide_char_string_len: c_int) callconv(.winapi) c_int;
 pub extern "kernel32" fn GetLastError() callconv(.winapi) ERROR;
 pub extern "kernel32" fn GetFinalPathNameByHandleW(handle: HANDLE, file_path_out: LPWSTR, file_path_len: DWORD, flags: DWORD) callconv(.winapi) DWORD;
 
@@ -1786,7 +1920,7 @@ pub extern "user32" fn GetCursorPos(point: *POINT) callconv(.winapi) BOOL;
 pub extern "user32" fn LoadCursorA(instance: ?HINSTANCE, cursor_name: LPCSTR) callconv(.winapi) HCURSOR;
 pub extern "user32" fn SetCursor(cursor: ?HCURSOR) callconv(.winapi) HCURSOR;
 pub extern "user32" fn ScreenToClient(hwnd: HWND, point: *POINT) callconv(.winapi) BOOL;
-pub extern "user32" fn GetKeyState(key: c_int) callconv(.winapi) KeyState;
+pub extern "user32" fn GetKeyState(key: c_int) callconv(.winapi) packed struct(SHORT) { toggled: bool, __reserved__: u14, down: bool };
 
 pub extern "user32" fn SetWindowLongA(hwnd: HWND, index: c_int, new_long: LONG) callconv(.winapi) LONG;
 pub extern "user32" fn GetWindowLongA(hwnd: HWND, index: c_int) callconv(.winapi) LONG;
@@ -1808,14 +1942,17 @@ pub extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(.winapi) HDC;
 pub extern "gdi32" fn GetDC(window: ?HWND) callconv(.winapi) HDC;
 pub extern "gdi32" fn ReleaseDC(window: ?HWND, hdc: HDC) callconv(.winapi) c_int;
 
-pub extern "shcore" fn SetProcessDpiAwareness(value: PROCESS_DPI_AWARENESS) callconv(.winapi) HRESULT;
+pub extern "shcore" fn SetProcessDpiAwareness(value: PROCESS.DPI_AWARENESS) callconv(.winapi) HRESULT;
 
 pub extern "ntdll" fn RtlQueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) NT_LOGICAL;
 pub extern "ntdll" fn RtlQueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) NT_LOGICAL;
 pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) ULONGLONG;
-pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: NT_THREADINFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: NT_PROCESS_INFO_CLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const NT_OBJECT_ATTRIBUTES, file_info_out: *NT_FILE_BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: THREAD.INFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: PROCESS.INFOCLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const OBJECT.ATTRIBUTES, file_info_out: *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn RtlDosPathNameToNtPathName_U_WithStatus(dos_file_name: PCWSTR, nt_file_name_out: *NT_UNICODE_STRING, file_part: ?PWSTR, relative_name: ?*RTL_RELATIVE_NAME_U) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn RtlFreeUnicodeString(unicode_string: *NT_UNICODE_STRING) callconv(.winapi) void;
 pub extern "ntdll" fn RtlGetFullPathName_U(file_name: PCWSTR, buffer_length: ULONG, out_buffer: PWSTR, out_file_part: ?PWSTR) callconv(.winapi) ULONG;
+pub extern "ntdll" fn NtOpenFile(out_handle: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT.ATTRIBUTES, out_io_status_block: *NT_IO_STATUS_BLOCK, shared_access: FILE.SHARE, open_options: FILE.MODE) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtClose(handle: HANDLE) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn RtlIsDosDeviceName_U(dos_file_name: PCWSTR) callconv(.winapi) ULONG;
