@@ -433,7 +433,7 @@ pub fn main(init: std.process.Init.Minimal) u8 {
     // if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS).toBool() == false) {
     // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
 
-    // if (win32.CreateFileA("nul", win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.OPEN_EXISTING, win32.FILE_ATTRIBUTE_NORMAL, null)) |handle| {
+    // if (win32.CreateFileA("nul", win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.OPEN_EXISTING, win32.FILE_ATTRIBUTE_.default, null)) |handle| {
     //     _ = handle;
     // _ = win.SetStdHandle(win.STD_INPUT_HANDLE, handle);
     // _ = win.SetStdHandle(win.STD_OUTPUT_HANDLE, handle);
@@ -634,7 +634,7 @@ pub fn windowsEntry(
                 for (&shared_state.replay_buffers, 1..) |*replay_buffer, i| {
                     const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
 
-                    replay_buffer.file_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true, .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .{ .NORMAL = true }, null);
+                    replay_buffer.file_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true, .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .default, null);
 
                     const max_size: win32.LARGE_INTEGER = .{ .quad_part = shared_state.game_memory_block.len };
 
@@ -1149,7 +1149,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
-        shared_state.recording_handle = win32.CreateFileA(file_name, .{ .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .{ .NORMAL = true }, null);
+        shared_state.recording_handle = win32.CreateFileA(file_name, .{ .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .default, null);
 
         @memcpy(replay_buffer.memory, shared_state.game_memory_block);
     }
@@ -1169,7 +1169,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
-        shared_state.playback_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true }, .{}, null, .OPEN_EXISTING, .{ .NORMAL = true }, null);
+        shared_state.playback_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true }, .{}, null, .OPEN_EXISTING, .{}, null);
 
         @memcpy(shared_state.game_memory_block, replay_buffer.memory);
     }
@@ -1221,7 +1221,7 @@ pub const DEBUG = struct {
     pub fn readEntireFile(thread_context: *ThreadContext, path: [:0]const u8) common.DEBUG.ReadFileResult {
         var result: []u8 = &.{};
 
-        const handle = win32.CreateFileA(path, .{ .GENERIC_READ = true }, .{ .READ = true }, null, .OPEN_EXISTING, .{ .NORMAL = true }, null);
+        const handle = win32.CreateFileA(path, .{ .GENERIC_READ = true }, .{ .READ = true }, null, .OPEN_EXISTING, .{}, null);
 
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var file_size: win32.LARGE_INTEGER = undefined;
@@ -1255,7 +1255,7 @@ pub const DEBUG = struct {
 
         var result = false;
 
-        const handle = win32.CreateFileA(path, .{ .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .{ .NORMAL = true }, null);
+        const handle = win32.CreateFileA(path, .{ .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .default, null);
 
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var written: win32.DWORD = undefined;
