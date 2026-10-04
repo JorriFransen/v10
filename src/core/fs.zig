@@ -627,3 +627,8 @@ fn testDirnameN(input: []const u8, n: usize, expected: anytype) !void {
         try std.testing.expectEqualDeep(std_result_opt, output_opt);
     }
 }
+
+test existsAt {
+    // const t = std.testing;
+    // try t.expect(false);
+}
