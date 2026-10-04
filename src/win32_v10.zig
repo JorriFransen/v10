@@ -10,6 +10,7 @@ const core = @import("core");
 const TimeStamp = core.time.TimeStamp;
 const arch = core.arch;
 const assert = core.assert;
+const bits = core.bits;
 const dsound = core.lib.dsound;
 const fs = core.fs;
 const math = core.math;
@@ -226,7 +227,7 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32, dso
 const GamepadButton = std.meta.FieldEnum(xinput.GamepadButtonBits);
 
 fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller: *ControllerInput, input: *Input) void {
-    var msg = win32.MSG{};
+    var msg = win32.WND.MSG{};
 
     const buttons = &keyboard_controller.buttons.named;
 
@@ -240,66 +241,67 @@ fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller
         transition_state: bool,
     };
 
-    while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != .FALSE) {
+    while (win32.PeekMessageA(&msg, null, 0, 0, .{ .REMOVE = true }) != .FALSE) {
         const flags: Flags = @bitCast(@as(u32, @truncate(@as(usize, @bitCast(msg.lParam)))));
 
         switch (msg.message) {
-            win32.WM_QUIT => {
+            .QUIT => {
                 global_running = false;
             },
 
-            win32.WM_SYSKEYDOWN,
-            win32.WM_SYSKEYUP,
-            win32.WM_KEYDOWN,
-            win32.WM_KEYUP,
+            .SYSKEYDOWN,
+            .SYSKEYUP,
+            .KEYDOWN,
+            .KEYUP,
             => {
                 const vk_code = msg.wParam;
+                const key: win32.VK = @enumFromInt(vk_code);
                 const was_down = flags.previous_state;
                 const is_down = !flags.transition_state;
 
                 if (is_down != was_down) {
-                    if (vk_code == win32.VK_Q) {
+                    if (key == .Q) {
                         processKeyboardMessage(&buttons.left_shoulder, is_down);
-                    } else if (vk_code == win32.VK_E) {
+                    } else if (key == .E) {
                         processKeyboardMessage(&buttons.right_shoulder, is_down);
-                    } else if (vk_code == win32.VK_W) {
+                    } else if (key == .W) {
                         processKeyboardMessage(&buttons.move_up, is_down);
-                    } else if (vk_code == win32.VK_S) {
+                    } else if (key == .S) {
                         processKeyboardMessage(&buttons.move_down, is_down);
-                    } else if (vk_code == win32.VK_A) {
+                    } else if (key == .A) {
                         processKeyboardMessage(&buttons.move_left, is_down);
-                    } else if (vk_code == win32.VK_D) {
+                    } else if (key == .D) {
                         processKeyboardMessage(&buttons.move_right, is_down);
-                    } else if (vk_code == win32.VK_UP) {
+                    } else if (key == .UP) {
                         processKeyboardMessage(&buttons.action_up, is_down);
-                    } else if (vk_code == win32.VK_DOWN) {
+                    } else if (key == .DOWN) {
                         processKeyboardMessage(&buttons.action_down, is_down);
-                    } else if (vk_code == win32.VK_LEFT) {
+                    } else if (key == .LEFT) {
                         processKeyboardMessage(&buttons.action_left, is_down);
-                    } else if (vk_code == win32.VK_RIGHT) {
+                    } else if (key == .RIGHT) {
                         processKeyboardMessage(&buttons.action_right, is_down);
-                    } else if (vk_code == win32.VK_ESCAPE) {
+                    } else if (key == .ESCAPE) {
                         processKeyboardMessage(&buttons.back, is_down);
-                    } else if (vk_code == win32.VK_SPACE) {
+                    } else if (key == .SPACE) {
                         processKeyboardMessage(&buttons.start, is_down);
                     }
 
                     if (options.internal_build) {
-                        if (vk_code == win32.VK_CONTROL) {
+                        if (key == .CONTROL) {
                             if (flags.extended)
                                 processKeyboardMessage(&input.debug_mod_keys.right_ctrl, is_down)
                             else
                                 processKeyboardMessage(&input.debug_mod_keys.left_ctrl, is_down);
-                        } else if (vk_code == win32.VK_MENU) {
+                        } else if (key == .MENU) {
                             if (flags.extended)
                                 processKeyboardMessage(&input.debug_mod_keys.right_alt, is_down)
                             else
                                 processKeyboardMessage(&input.debug_mod_keys.left_alt, is_down);
-                        } else if (vk_code == win32.VK_NUMLOCK) {
+                        } else if (key == .NUMLOCK) {
                             processKeyboardMessage(&input.debug_mod_keys.numlock, is_down);
-                        } else if (win32.MapVirtualKeyA(flags.scancode, .VSC_TO_VK_EX) == win32.VK_LSHIFT) {
+                        } else if (@as(win32.VK, @enumFromInt(win32.MapVirtualKeyA(flags.scancode, .VSC_TO_VK_EX))) == .LSHIFT) {
                             processKeyboardMessage(&input.debug_mod_keys.left_shift, is_down);
-                        } else if (win32.MapVirtualKeyA(flags.scancode, .VSC_TO_VK_EX) == win32.VK_RSHIFT) {
+                        } else if (@as(win32.VK, @enumFromInt(win32.MapVirtualKeyA(flags.scancode, .VSC_TO_VK_EX))) == .RSHIFT) {
                             processKeyboardMessage(&input.debug_mod_keys.right_shift, is_down);
                         }
 
@@ -319,9 +321,9 @@ fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller
                         }
 
                         if (is_down) {
-                            if (vk_code == win32.VK_P) {
+                            if (key == .P) {
                                 global_pause = !global_pause;
-                            } else if (vk_code == win32.VK_L) {
+                            } else if (key == .L) {
                                 if (shared_state.input_recording_index == 0 and shared_state.input_playing_index == 0) {
                                     beginRecordingInput(shared_state, 1);
                                 } else if (shared_state.input_recording_index == 1) {
@@ -333,10 +335,10 @@ fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller
                                 }
                             }
 
-                            if ((vk_code == win32.VK_F4) and alt_down) {
+                            if ((key == .F4) and alt_down) {
                                 global_running = false;
-                            } else if ((vk_code == win32.VK_RETURN and alt_down) or
-                                vk_code == win32.VK_F11)
+                            } else if ((key == .RETURN and alt_down) or
+                                key == .F11)
                             {
                                 toggleFullscreen(msg.hwnd.?);
                             }
@@ -428,19 +430,19 @@ pub fn main(init: std.process.Init.Minimal) u8 {
         }
     }
 
-    if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS).toBool() == false) {
-        // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
+    // if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS).toBool() == false) {
+    // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
 
-        // if (win32.CreateFileA("nul", win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.OPEN_EXISTING, win32.FILE_ATTRIBUTE_NORMAL, null)) |handle| {
-        //     _ = handle;
-        // _ = win.SetStdHandle(win.STD_INPUT_HANDLE, handle);
-        // _ = win.SetStdHandle(win.STD_OUTPUT_HANDLE, handle);
-        // _ = win.SetStdHandle(win.STD_ERROR_HANDLE, handle);
-        //     unreachable;
-        // } else {
-        //     unreachable;
-        // }
-    }
+    // if (win32.CreateFileA("nul", win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.OPEN_EXISTING, win32.FILE_ATTRIBUTE_NORMAL, null)) |handle| {
+    //     _ = handle;
+    // _ = win.SetStdHandle(win.STD_INPUT_HANDLE, handle);
+    // _ = win.SetStdHandle(win.STD_OUTPUT_HANDLE, handle);
+    // _ = win.SetStdHandle(win.STD_ERROR_HANDLE, handle);
+    //     unreachable;
+    // } else {
+    //     unreachable;
+    // }
+    // }
 
     const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
     // const command_line = win32.GetCommandLineA();
@@ -485,23 +487,23 @@ pub fn windowsEntry(
     log.info("gamecode load lock: '{s}'", .{gamecode_lock_file_name});
 
     const desired_scheduler_ms = 1;
-    const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.TIMERR_NOERROR;
+    const sleep_is_granular = win32.timeBeginPeriod(desired_scheduler_ms) == win32.MMRESULT.TIMERR_NOERROR;
     log.info("sleep_is_granular: {}", .{sleep_is_granular});
 
     const back_buffer_width = 960;
     const back_buffer_height = 540;
 
-    const window_class = win32.WNDCLASSA{
-        .style = win32.CS_HREDRAW | win32.CS_VREDRAW,
+    const window_class = win32.WND.CLASS.A{
+        .style = .{ .HREDRAW = true, .VREDRAW = true },
         .lpfnWndProc = mainWindowCallback,
         .hInstance = instance,
         .lpszClassName = "v10_window_class",
-        .hCursor = win32.LoadCursorA(null, win32.IDC_ARROW),
+        .hCursor = win32.LoadCursorA(null, win32.MAKEINTRESOURCEA(win32.IDC.ARROW)),
     };
 
     if (win32.RegisterClassA(&window_class) != 0) {
-        const style: win32.DWORD = win32.WS_OVERLAPPEDWINDOW | win32.WS_VISIBLE;
-        const ex_style: win32.DWORD = 0; //win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED;
+        const style = bits.@"or"(win32.WND.WS.OVERLAPPEDWINDOW, .{ .VISIBLE = true });
+        const ex_style: win32.WND.WS_EX = .{}; //win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED;
 
         var client_rect = win32.RECT{
             .left = 0,
@@ -511,7 +513,7 @@ pub fn windowsEntry(
         };
         log.debug("suggested window client rect: {}", .{client_rect});
         const awr_rc = win32.AdjustWindowRectEx(&client_rect, style, .FALSE, ex_style);
-        assert(awr_rc != win32.FALSE);
+        assert(awr_rc.toBool());
 
         log.debug("adjusted window client rect: {}", .{client_rect});
 
@@ -524,8 +526,8 @@ pub fn windowsEntry(
             window_class.lpszClassName,
             "v10",
             style,
-            win32.CW_USEDEFAULT,
-            win32.CW_USEDEFAULT,
+            win32.WND.CW.USEDEFAULT,
+            win32.WND.CW.USEDEFAULT,
             request_width,
             request_height,
             null,
@@ -542,7 +544,7 @@ pub fn windowsEntry(
 
             var monitor_refresh_hz: c_int = 60;
             const dc = win32.GetDC(window);
-            const win32_refresh_hz = win32.GetDeviceCaps(dc, win32.VREFRESH);
+            const win32_refresh_hz = win32.GetDeviceCaps(dc, .VREFRESH);
             if (win32_refresh_hz > 1) {
                 monitor_refresh_hz = win32_refresh_hz;
                 log.info("Detected monitor refresh rate: {}", .{monitor_refresh_hz});
@@ -586,7 +588,7 @@ pub fn windowsEntry(
                 null,
                 audio_output.buffer_byte_size,
                 .{ .RESERVE = true, .COMMIT = true },
-                win32.PAGE_READWRITE,
+                .{ .READWRITE = true },
             );
             audio_output.buffer = @as([*]AudioOutput.Frame, @ptrCast(@alignCast(audio_frames)))[0 .. audio_output.buffer_byte_size / @sizeOf(AudioOutput.Frame)];
 
@@ -603,7 +605,7 @@ pub fn windowsEntry(
                 base_address,
                 total_size,
                 .{ .RESERVE = true, .COMMIT = true },
-                win32.PAGE_READWRITE,
+                .{ .READWRITE = true },
             );
 
             const trans_opt: ?[*]u8 = if (perm_opt) |p|
@@ -632,13 +634,13 @@ pub fn windowsEntry(
                 for (&shared_state.replay_buffers, 1..) |*replay_buffer, i| {
                     const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
 
-                    replay_buffer.file_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true, .GENERIC_WRITE = true }, .{}, null, win32.CREATE_ALWAYS, 0, null);
+                    replay_buffer.file_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true, .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .{ .NORMAL = true }, null);
 
                     const max_size: win32.LARGE_INTEGER = .{ .quad_part = shared_state.game_memory_block.len };
 
-                    replay_buffer.memory_map = win32.CreateFileMappingA(replay_buffer.file_handle, null, win32.PAGE_READWRITE, @intCast(max_size.u.high_part), max_size.u.low_part, null);
+                    replay_buffer.memory_map = win32.CreateFileMappingA(replay_buffer.file_handle, null, .{ .READWRITE = true }, @intCast(max_size.u.high_part), max_size.u.low_part, null);
 
-                    if (win32.MapViewOfFile(replay_buffer.memory_map, win32.FILE_MAP_ALL_ACCESS, 0, 0, shared_state.game_memory_block.len)) |ptr| {
+                    if (win32.MapViewOfFile(replay_buffer.memory_map, .ALL_ACCESS, 0, 0, shared_state.game_memory_block.len)) |ptr| {
                         replay_buffer.memory = @as([*]u8, @ptrCast(ptr))[0..shared_state.game_memory_block.len];
                     } else {
                         log.warn("MapViewOfFile failed!", .{});
@@ -735,11 +737,11 @@ pub fn windowsEntry(
                             new_input.debug_mouse.z = 0;
 
                             const buttons = &new_input.debug_mouse.buttons.named;
-                            processKeyboardMessage(&buttons.left, win32.GetKeyState(win32.VK_LBUTTON).down);
-                            processKeyboardMessage(&buttons.right, win32.GetKeyState(win32.VK_RBUTTON).down);
-                            processKeyboardMessage(&buttons.middle, win32.GetKeyState(win32.VK_MBUTTON).down);
-                            processKeyboardMessage(&buttons.extra0, win32.GetKeyState(win32.VK_XBUTTON1).down);
-                            processKeyboardMessage(&buttons.extra1, win32.GetKeyState(win32.VK_XBUTTON2).down);
+                            processKeyboardMessage(&buttons.left, win32.GetKeyState(.LBUTTON).down);
+                            processKeyboardMessage(&buttons.right, win32.GetKeyState(.RBUTTON).down);
+                            processKeyboardMessage(&buttons.middle, win32.GetKeyState(.MBUTTON).down);
+                            processKeyboardMessage(&buttons.extra0, win32.GetKeyState(.XBUTTON1).down);
+                            processKeyboardMessage(&buttons.extra1, win32.GetKeyState(.XBUTTON2).down);
                         }
 
                         var max_controller_count: usize = xinput.XUSER_MAX_COUNT;
@@ -1023,14 +1025,14 @@ pub fn windowsEntry(
     return 0;
 }
 
-pub fn mainWindowCallback(window: win32.HWND, message: c_uint, wparam: win32.WPARAM, lparam: win32.LPARAM) callconv(.winapi) win32.LRESULT {
+pub fn mainWindowCallback(window: win32.HWND, message: win32.WND.WM, wparam: win32.WPARAM, lparam: win32.LPARAM) callconv(.winapi) win32.LRESULT {
     var result: win32.LRESULT = 0;
 
     switch (message) {
-        win32.WM_CLOSE, win32.WM_DESTROY => {
+        .CLOSE, .DESTROY => {
             global_running = false;
         },
-        win32.WM_ACTIVATEAPP => {
+        .ACTIVATEAPP => {
             // if (wparam != 0) {
             //     _ = win32.SetLayeredWindowAttributes(window, win32.RGB(0, 0, 0), 255, win32.LWA_ALPHA);
             // } else {
@@ -1038,25 +1040,25 @@ pub fn mainWindowCallback(window: win32.HWND, message: c_uint, wparam: win32.WPA
             // }
         },
 
-        win32.WM_SETCURSOR => {
-            if (global_DEBUG_show_cursor or !(win32.LOWORD(lparam) == win32.HTCLIENT)) {
+        .SETCURSOR => {
+            if (global_DEBUG_show_cursor or !(@as(win32.WND.HT, @enumFromInt(win32.LOWORD(lparam))) == .CLIENT)) {
                 // Set the wanted cursor in window class
                 result = win32.DefWindowProcA(window, message, wparam, lparam);
             } else {
                 _ = win32.SetCursor(null);
-                result = @intFromEnum(win32.TRUE);
+                result = @intFromEnum(win32.BOOL.TRUE);
             }
         },
 
-        win32.WM_SYSKEYDOWN,
-        win32.WM_SYSKEYUP,
-        win32.WM_KEYDOWN,
-        win32.WM_KEYUP,
+        .SYSKEYDOWN,
+        .SYSKEYUP,
+        .KEYDOWN,
+        .KEYUP,
         => {
             @panic("Unexpected WM_KEY* message"); // Assume keys are dispatched/handled in the main loop
         },
 
-        win32.WM_PAINT => {
+        .PAINT => {
             var paint: win32.PAINTSTRUCT = undefined;
             const dc = win32.BeginPaint(window, &paint);
             {
@@ -1090,7 +1092,7 @@ fn resizeDibSection(buffer: *Win32OffscreenBuffer, width: c_int, height: c_int) 
         .biHeight = -@as(win32.LONG, @intCast(buffer.height)),
         .biPlanes = 1,
         .biBitCount = 32,
-        .biCompression = win32.BI_RGB,
+        .biCompression = .RGB,
     } };
 
     const bitmap_memory_size: usize = @intCast(width * height * bytes_per_pixel);
@@ -1098,7 +1100,7 @@ fn resizeDibSection(buffer: *Win32OffscreenBuffer, width: c_int, height: c_int) 
         null,
         bitmap_memory_size,
         .{ .RESERVE = true, .COMMIT = true },
-        win32.PAGE_READWRITE,
+        .{ .READWRITE = true },
     );
     buffer.memory_opt = @as([*]u8, @ptrCast(memory));
     return memory != null;
@@ -1120,21 +1122,21 @@ fn displayBufferInWindow(dc: win32.HDC, window_width: i32, window_height: i32, b
     const buffer_mem = buffer.memory_opt.?;
 
     if (window_width >= buffer_width * 2 and window_height >= buffer_height * 2) {
-        _ = win32.PatBlt(dc, 2 * buffer_width, 0, window_width - (2 * buffer_width), window_height, win32.BLACKNESS);
-        _ = win32.PatBlt(dc, 0, 2 * buffer_height, 2 * buffer_width, window_height - (2 * buffer_height), win32.BLACKNESS);
-        win32.StretchDIBits(dc, 0, 0, 2 * buffer_width, 2 * buffer_height, 0, 0, buffer_width, buffer_height, buffer_mem, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+        _ = win32.PatBlt(dc, 2 * buffer_width, 0, window_width - (2 * buffer_width), window_height, .{ .op = .BLACKNESS });
+        _ = win32.PatBlt(dc, 0, 2 * buffer_height, 2 * buffer_width, window_height - (2 * buffer_height), .{ .op = .BLACKNESS });
+        win32.StretchDIBits(dc, 0, 0, 2 * buffer_width, 2 * buffer_height, 0, 0, buffer_width, buffer_height, buffer_mem, &buffer.info, .RGB_COLORS, .{ .op = .SRCCOPY });
     } else {
 
         // TODO: Offset mouse position by this
         const offset_x = 10;
         const offset_y = 10;
 
-        _ = win32.PatBlt(dc, 0, 0, window_width, offset_y, win32.BLACKNESS);
-        _ = win32.PatBlt(dc, 0, offset_y + buffer_height, window_width, window_height - (offset_y + buffer_height), win32.BLACKNESS);
-        _ = win32.PatBlt(dc, 0, 0, offset_x, window_height, win32.BLACKNESS);
-        _ = win32.PatBlt(dc, offset_x + buffer_width, 0, window_width - (offset_x + buffer_width), window_height, win32.BLACKNESS);
+        _ = win32.PatBlt(dc, 0, 0, window_width, offset_y, .{ .op = .BLACKNESS });
+        _ = win32.PatBlt(dc, 0, offset_y + buffer_height, window_width, window_height - (offset_y + buffer_height), .{ .op = .BLACKNESS });
+        _ = win32.PatBlt(dc, 0, 0, offset_x, window_height, .{ .op = .BLACKNESS });
+        _ = win32.PatBlt(dc, offset_x + buffer_width, 0, window_width - (offset_x + buffer_width), window_height, .{ .op = .BLACKNESS });
 
-        win32.StretchDIBits(dc, offset_x, offset_y, buffer_width, buffer_height, 0, 0, buffer_width, buffer_height, buffer_mem, &buffer.info, win32.DIB_RGB_COLORS, win32.SRCCOPY);
+        win32.StretchDIBits(dc, offset_x, offset_y, buffer_width, buffer_height, 0, 0, buffer_width, buffer_height, buffer_mem, &buffer.info, .RGB_COLORS, .{ .op = .SRCCOPY });
     }
 }
 
@@ -1147,7 +1149,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
-        shared_state.recording_handle = win32.CreateFileA(file_name, .{ .GENERIC_WRITE = true }, .{}, null, win32.CREATE_ALWAYS, 0, null);
+        shared_state.recording_handle = win32.CreateFileA(file_name, .{ .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .{ .NORMAL = true }, null);
 
         @memcpy(replay_buffer.memory, shared_state.game_memory_block);
     }
@@ -1167,7 +1169,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
         var file_name_buf: [fs.max_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
-        shared_state.playback_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true }, .{}, null, win32.OPEN_EXISTING, 0, null);
+        shared_state.playback_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true }, .{}, null, .OPEN_EXISTING, .{ .NORMAL = true }, null);
 
         @memcpy(shared_state.game_memory_block, replay_buffer.memory);
     }
@@ -1198,19 +1200,20 @@ pub fn playbackInput(shared_state: *common.SharedState, input: *Input) void {
 }
 
 pub fn toggleFullscreen(window: win32.HWND) void {
-    const style = win32.GetWindowLongA(window, win32.GWL_STYLE);
-    if (style & win32.WS_OVERLAPPEDWINDOW == win32.WS_OVERLAPPEDWINDOW) {
+    const style: win32.WND.WS = @bitCast(win32.GetWindowLongA(window, .STYLE));
+
+    if (bits.contains(style, .OVERLAPPEDWINDOW)) {
         var mi: win32.MONITORINFO = .{};
         if (win32.GetWindowPlacement(window, &global_window_position) != .FALSE and
-            win32.GetMonitorInfoA(win32.MonitorFromWindow(window, win32.MONITOR_DEFAULTTOPRIMARY), &mi) != .FALSE)
+            win32.GetMonitorInfoA(win32.MonitorFromWindow(window, .DEFAULTTOPRIMARY), &mi) != .FALSE)
         {
-            _ = win32.SetWindowLongA(window, win32.GWL_STYLE, style & @as(win32.LONG, @bitCast(~win32.WS_OVERLAPPEDWINDOW)));
-            _ = win32.SetWindowPos(window, win32.HWND_TOP, mi.monitor.left, mi.monitor.top, mi.monitor.right - mi.monitor.left, mi.monitor.bottom - mi.monitor.top, win32.SWP_NOOWNERZORDER | win32.SWP_FRAMECHANGED);
+            _ = win32.SetWindowLongA(window, .STYLE, @bitCast(bits.without(style, .OVERLAPPEDWINDOW)));
+            _ = win32.SetWindowPos(window, win32.WND.HWND_TOP, mi.monitor.left, mi.monitor.top, mi.monitor.right - mi.monitor.left, mi.monitor.bottom - mi.monitor.top, .{ .NOOWNERZORDER = true, .FRAMECHANGED = true });
         }
     } else {
-        _ = win32.SetWindowLongA(window, win32.GWL_STYLE, style | win32.WS_OVERLAPPEDWINDOW);
+        _ = win32.SetWindowLongA(window, .STYLE, @bitCast(bits.@"or"(style, .OVERLAPPEDWINDOW)));
         _ = win32.SetWindowPlacement(window, &global_window_position);
-        _ = win32.SetWindowPos(window, null, 0, 0, 0, 0, win32.SWP_NOMOVE | win32.SWP_NOSIZE | win32.SWP_NOZORDER | win32.SWP_NOOWNERZORDER | win32.SWP_FRAMECHANGED);
+        _ = win32.SetWindowPos(window, null, 0, 0, 0, 0, .{ .NOMOVE = true, .NOSIZE = true, .NOZORDER = true, .NOOWNERZORDER = true, .FRAMECHANGED = true });
     }
 }
 
@@ -1218,12 +1221,12 @@ pub const DEBUG = struct {
     pub fn readEntireFile(thread_context: *ThreadContext, path: [:0]const u8) common.DEBUG.ReadFileResult {
         var result: []u8 = &.{};
 
-        const handle = win32.CreateFileA(path, .{ .GENERIC_READ = true }, .{ .READ = true }, null, win32.OPEN_EXISTING, 0, null);
+        const handle = win32.CreateFileA(path, .{ .GENERIC_READ = true }, .{ .READ = true }, null, .OPEN_EXISTING, .{ .NORMAL = true }, null);
 
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var file_size: win32.LARGE_INTEGER = undefined;
             if (win32.GetFileSizeEx(handle, &file_size) != .FALSE) {
-                if (win32.VirtualAlloc(null, file_size.quad_part, .{ .RESERVE = true, .COMMIT = true }, win32.PAGE_READWRITE)) |alloc_res| {
+                if (win32.VirtualAlloc(null, file_size.quad_part, .{ .RESERVE = true, .COMMIT = true }, .{ .READWRITE = true })) |alloc_res| {
                     const file_size_32 = safeTruncateU64(file_size.quad_part);
 
                     var bytes_read: win32.DWORD = undefined;
@@ -1252,7 +1255,7 @@ pub const DEBUG = struct {
 
         var result = false;
 
-        const handle = win32.CreateFileA(path, .{ .GENERIC_WRITE = true }, .{}, null, win32.CREATE_ALWAYS, 0, null);
+        const handle = win32.CreateFileA(path, .{ .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .{ .NORMAL = true }, null);
 
         if (handle != win32.INVALID_HANDLE_VALUE) {
             var written: win32.DWORD = undefined;

@@ -72,6 +72,11 @@ pub inline fn matchStructType(comptime T: type) bool {
     return matchType(T, &.{.@"struct"});
 }
 
+pub inline fn matchPackedStructType(comptime T: type) bool {
+    const ti = @typeInfo(T);
+    return ti == .@"struct" and ti.@"struct".layout == .@"packed";
+}
+
 pub inline fn expectTypeIds(x: anytype, comptime type_ids: []const std.lang.TypeId) void {
     if (!matchTypeIds(x, type_ids))
         @compileError(std.fmt.comptimePrint("Expected one of: '{any}', got: '{}'", .{ type_ids, std.meta.activeTag(@typeInfo(@TypeOf(x))) }));
@@ -132,5 +137,11 @@ pub inline fn expectEnumType(comptime T: type) void {
 pub inline fn expectStructType(comptime T: type) void {
     if (!matchStructType(T)) {
         @compileError("Expected struct type");
+    }
+}
+
+pub inline fn expectPackedStructType(comptime T: type) void {
+    if (!matchPackedStructType(T)) {
+        @compileError("Expected packed struct type");
     }
 }

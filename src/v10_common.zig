@@ -259,7 +259,7 @@ pub fn getLastWriteTime(absolute_file_name: [:0]const u8) i96 {
 
     switch (builtin.os.tag) {
         .windows => {
-            var data: win32.FILE_ATTRIBUTE_DATA = undefined;
+            var data: win32.FILE.ATTRIBUTE_DATA = undefined;
             if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data).toBool()) {
                 result = @intCast(data.last_write_time.ticks);
             }

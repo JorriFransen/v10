@@ -109,14 +109,14 @@ pub const Arena = struct {
                     null,
                     options.reserved_capacity,
                     .{ .RESERVE = true },
-                    win32.PAGE_NOACCESS,
+                    .{ .NOACCESS = true },
                 ) orelse return error.Unexpected;
 
                 const commit_ptr = win32.VirtualAlloc(
                     reserved_ptr,
                     options.initial_commit,
                     .{ .COMMIT = true },
-                    win32.PAGE_READWRITE,
+                    .{ .READWRITE = true },
                 ) orelse return error.CommitFailed;
 
                 const ptr: [*]u8 = @ptrCast(commit_ptr);
@@ -194,7 +194,7 @@ pub const Arena = struct {
                     new_slice.ptr,
                     new_slice.len,
                     .{ .COMMIT = true },
-                    win32.PAGE_READWRITE,
+                    .{ .READWRITE = true },
                 ) orelse return error.Unexpected;
             },
         }
