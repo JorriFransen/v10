@@ -36,21 +36,44 @@ pub inline fn cwd() fs.Dir {
     return .{ .handle = std.os.windows.peb().ProcessParameters.CurrentDirectory.Handle };
 }
 
+pub inline fn close(handle: Handle) void {
+    _ = handle;
+    unreachable;
+}
+
+/// Always follows links
 pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
     var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
 
     const nt_path = try toNtPath(dir, path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
 
-    var out_info: win32.FILE.BASIC_INFORMATION = undefined;
-    switch (win32.NT.NtQueryAttributesFile(&object_attributes, &out_info)) {
-        .SUCCESS => return true,
+    var handle: Handle = undefined;
+    var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+    switch (win32.NT.NtOpenFile(
+        &handle,
+        .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
+        &object_attributes,
+        &io_status_block,
+        .{ .READ = true },
+        .{
+            .SYNCHRONOUS_IO_NONALERT = true,
+            .OPEN_FOR_BACKUP_INTENT = true,
+            .OPEN_NO_RECALL = true,
+        },
+    )) {
+        .SUCCESS => {
+            _ = win32.NT.NtClose(handle);
+            return true;
+        },
+
         .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return false,
-        .OBJECT_NAME_INVALID => return error.BadPath,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .IO_REPARSE_TAG_NOT_HANDLED => return error.TooManySymLinks,
-        else => |e| {
-            std.log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{ std.enums.tagName(win32.NTSTATUS, e) orelse "", @intFromEnum(e) });
+
+        else => |status| {
+            std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+                std.enums.tagName(win32.NTSTATUS, status) orelse "", @intFromEnum(status),
+            });
             return error.Unexpected;
         },
     }
@@ -158,11 +181,11 @@ const NtPath = struct {
     unicode_string: win32.NT.UNICODE_STRING,
     root_handle: ?win32.HANDLE,
 
-    inline fn ntObjectAttributes(this: *const NtPath) win32.OBJECT.ATTRIBUTES {
+    inline fn ntObjectAttributes(this: *const NtPath) win32.NT.OBJECT_ATTRIBUTES {
         return .{
             .root_directory = this.root_handle,
             .object_name = &this.unicode_string,
-            .attributes = .{ .CASE_INSENSITIVE = true },
+            .attributes = .default,
             .security_descriptor = null,
             .security_quality_of_service = null,
         };
@@ -285,15 +308,15 @@ fn resolveNonVerbatimNonRelativeNtPath(path: []const u8, path_type: ParsedPath.T
 
 fn ntPathIsDirOrVolumeRoot(dir: ?win32.HANDLE, path: [:0]u16) error{AccessDenied}!bool {
     const prefix_unicode = win32.NT.UNICODE_STRING.init(path);
-    const object_attributes = win32.OBJECT.ATTRIBUTES{
+    const object_attributes = win32.NT.OBJECT_ATTRIBUTES{
         .root_directory = dir,
         .object_name = &prefix_unicode,
-        .attributes = .{ .CASE_INSENSITIVE = true },
+        .attributes = .default,
         .security_descriptor = null,
         .security_quality_of_service = null,
     };
 
-    var info: win32.FILE.BASIC_INFORMATION = undefined;
+    var info: win32.NT.FILE.BASIC_INFORMATION = undefined;
     const query_res = win32.NT.NtQueryAttributesFile(&object_attributes, &info);
 
     switch (query_res) {
