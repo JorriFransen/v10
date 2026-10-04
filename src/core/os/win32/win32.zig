@@ -1,21 +1,20 @@
 const std = @import("std");
-
-pub const fs = @import("fs.zig");
+const zig_win32 = std.os.windows;
 
 const assert = @import("../../assert.zig").assert;
+const bits = @import("../../bits.zig");
+const math = @import("../../math.zig");
 const time = @import("../../time.zig");
-
-pub const ERROR = @import("error.zig").ERROR;
 
 pub fn getTime(clock: time.Clock) time.TimeStamp {
     switch (clock) {
         .monotonic => {
             const expected_qpf = 10_000_000;
             var qpf: LARGE_INTEGER = .{ .quad_part = expected_qpf };
-            _ = RtlQueryPerformanceFrequency(&qpf);
+            _ = NT.RtlQueryPerformanceFrequency(&qpf);
 
             var qpc: LARGE_INTEGER = .{ .quad_part = 0 };
-            return if (RtlQueryPerformanceCounter(&qpc).toBool())
+            return if (NT.RtlQueryPerformanceCounter(&qpc).toBool())
                 if (qpf.quad_part == 10_000_000)
                     .{ ._ns = @as(i96, qpc.quad_part) * 100 }
                 else
@@ -26,15 +25,15 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
 
         .real => {
             // 100ns ticks
-            const ticks = RtlGetSystemTimePrecise();
+            const ticks = NT.RtlGetSystemTimePrecise();
             return .{ ._ns = (@as(i96, ticks) * 100) + (std.time.epoch.windows * std.time.ns_per_s) };
         },
 
         .cpu_thread => {
-            var info: NT_KERNEL_USER_TIMES = undefined;
+            var info: NT.KERNEL_USER_TIMES = undefined;
             var return_len: c_ulong = undefined;
-            if (NtQueryInformationThread(NT_CURRENT_THREAD, .Times, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
-                assert(return_len == @sizeOf(NT_KERNEL_USER_TIMES));
+            if (NT.NtQueryInformationThread(NT.CURRENT_THREAD, .Times, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
+                assert(return_len == @sizeOf(NT.KERNEL_USER_TIMES));
                 // 100ns ticks
                 return .{ ._ns = (@as(i96, info.kernel_time.quad_part) + @as(i96, info.user_time.quad_part)) * 100 };
             } else {
@@ -43,10 +42,10 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
         },
 
         .cpu_process => {
-            var info: NT_KERNEL_USER_TIMES = undefined;
+            var info: NT.KERNEL_USER_TIMES = undefined;
             var return_len: c_ulong = undefined;
-            if (NtQueryInformationProcess(NT_CURRENT_PROCESS, .Times, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
-                assert(return_len == @sizeOf(NT_KERNEL_USER_TIMES));
+            if (NT.NtQueryInformationProcess(NT.CURRENT_PROCESS, .Times, &info, @sizeOf(@TypeOf(info)), &return_len) == .SUCCESS) {
+                assert(return_len == @sizeOf(NT.KERNEL_USER_TIMES));
                 // 100ns ticks
                 return .{ ._ns = (@as(i96, info.kernel_time.quad_part) + @as(i96, info.user_time.quad_part)) * 100 };
             } else {
@@ -64,924 +63,70 @@ pub inline fn peb() *zig_win32.PEB {
     );
 }
 
-const math = @import("../../math.zig");
-const zig_win32 = std.os.windows;
+pub const fs = @import("fs.zig");
+pub const NT = @import("ntdll.zig");
+pub const NTSTATUS = NT.NTSTATUS;
 
-fn cLiteral(comptime T: type, value: comptime_int) T {
-    return @bitCast(@as(T, @truncate(value)));
-}
+pub const BOOL = enum(c_int) {
+    FALSE = 0,
+    TRUE = 1,
+    _,
 
-pub const HINSTANCE = zig_win32.HINSTANCE;
-pub const HMODULE = zig_win32.HMODULE;
-pub const HANDLE = zig_win32.HANDLE;
-pub const HRESULT = LONG;
-pub const HDC = zig_win32.HDC;
-pub const HBITMAP = HANDLE;
-pub const HGDIOBJ = HANDLE;
-pub const MMRESULT = zig_win32.UINT;
-pub const LPBYTE = *BYTE;
-pub const LPSTR = zig_win32.LPSTR;
-pub const LPCSTR = zig_win32.LPCSTR;
-pub const LPWSTR = zig_win32.LPWSTR;
-pub const LPCWSTR = zig_win32.LPCWSTR;
-pub const LPCCH = [*:0]const CHAR;
-pub const PCWSTR = zig_win32.PCWSTR;
-pub const PWSTR = zig_win32.PWSTR;
-pub const LPMSG = *MSG;
-pub const HICON = zig_win32.HICON;
-pub const HCURSOR = zig_win32.HCURSOR;
-pub const HBRUSH = zig_win32.HBRUSH;
-pub const HWND = zig_win32.HWND;
+    pub inline fn toBool(this: BOOL) bool {
+        return @intFromEnum(this) != 0;
+    }
+};
+
+pub const ERROR = @import("error.zig").ERROR;
+pub const HANDLE = *anyopaque;
+pub const HINSTANCE = HANDLE;
+pub const HMODULE = HANDLE;
+pub const HWND = HANDLE;
+pub const HICON = HANDLE;
+pub const HCURSOR = HICON;
+pub const HBRUSH = HANDLE;
+pub const HMENU = HANDLE;
+pub const HDC = HANDLE;
 pub const HMONITOR = HANDLE;
-pub const HMENU = zig_win32.HMENU;
-pub const WPARAM = usize;
-pub const LPARAM = zig_win32.LPARAM;
-pub const LRESULT = zig_win32.LONG_PTR;
-pub const ATOM = zig_win32.ATOM;
-pub const BOOL = zig_win32.BOOL;
-pub const WORD = zig_win32.WORD;
-pub const DWORD = zig_win32.DWORD;
-pub const BYTE = zig_win32.BYTE;
-pub const CHAR = zig_win32.CHAR;
-pub const SHORT = zig_win32.SHORT;
-pub const USHORT = zig_win32.USHORT;
-pub const INT = zig_win32.INT;
-pub const UINT = zig_win32.UINT;
-pub const LONG = zig_win32.LONG;
-pub const ULONG = zig_win32.ULONG;
-pub const ULONGLONG = zig_win32.ULONGLONG;
-pub const ULONG_PTR = zig_win32.ULONG_PTR;
-pub const PVOID = zig_win32.PVOID;
-pub const SIZE_T = zig_win32.SIZE_T;
-pub const LPVOID = zig_win32.LPVOID;
-pub const LPCVOID = zig_win32.LPCVOID;
+
+pub const BYTE = u8;
+pub const CHAR = u8;
+pub const WCHAR = u16;
+pub const WORD = u16;
+pub const SHORT = i16;
+pub const USHORT = u16;
+pub const DWORD = u32;
+pub const INT = i32;
+pub const UINT = u32;
+pub const LONG = i32;
+pub const ULONG = u32;
+pub const LONGLONG = i64;
+pub const ULONGLONG = u64;
+pub const WPARAM = u64;
+pub const LPARAM = i64;
+pub const LRESULT = i64;
+pub const ATOM = WORD;
+pub const HRESULT = LONG;
+pub const SIZE_T = usize;
+
+pub const LPSTR = [*:0]CHAR;
+pub const LPCSTR = [*:0]const CHAR;
+
+pub const PWSTR = [*:0]WCHAR;
+pub const LPWSTR = [*:0]WCHAR;
+pub const PCWSTR = [*:0]const WCHAR;
+
+pub const PVOID = *anyopaque;
+pub const LPVOID = *anyopaque;
+pub const LPCVOID = *const anyopaque;
+
 pub const FARPROC = *anyopaque;
-pub const NTSTATUS = zig_win32.NTSTATUS;
-pub const NT_SECURITY_DESCRIPTOR_CONTROL = WORD;
 
-pub const NT_LOGICAL = BOOL;
-comptime {
-    assert(@sizeOf(NT_LOGICAL) == @sizeOf(ULONG));
-}
+pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(math.maxInt(usize));
 
-pub const TRUE: BOOL = .TRUE;
-pub const FALSE: BOOL = .FALSE;
-pub const MAX_PATH = zig_win32.MAX_PATH;
-pub const PATH_MAX_WIDE = zig_win32.PATH_MAX_WIDE;
-pub const NAME_MAX = zig_win32.NAME_MAX;
-
-pub const INVALID_HANDLE_VALUE = zig_win32.INVALID_HANDLE_VALUE;
-pub const NT_CURRENT_PROCESS: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-pub const NT_CURRENT_THREAD: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
-
-pub const ATTACH_PARENT_PROCESS: DWORD = math.maxInt(DWORD);
-
-pub const PAGE_EXECUTE: DWORD = 0x10;
-pub const PAGE_EXECUTE_READ: DWORD = 0x20;
-pub const PAGE_EXECUTE_READWRITE: DWORD = 0x40;
-pub const PAGE_EXECUTE_WRITECOPY: DWORD = 0x80;
-pub const PAGE_NOACCESS: DWORD = 0x01;
-pub const PAGE_READONLY: DWORD = 0x02;
-pub const PAGE_READWRITE: DWORD = 0x04;
-pub const PAGE_WRITECOPY: DWORD = 0x08;
-pub const PAGE_TARGETS_INVALID: DWORD = 0x40000000;
-pub const PAGE_TARGETS_NO_UPDATE: DWORD = 0x40000000;
-pub const PAGE_GUARD: DWORD = 0x100;
-pub const PAGE_NOCACHE: DWORD = 0x200;
-pub const PAGE_WRITECOMBINE: DWORD = 0x400;
-
-pub const QS_KEY: c_uint = 0x0001;
-pub const QS_MOUSEMOVE: c_uint = 0x0002;
-pub const QS_MOUSEBUTTON: c_uint = 0x0004;
-pub const QS_POSTMESSAGE: c_uint = 0x0008;
-pub const QS_TIMER: c_uint = 0x0010;
-pub const QS_PAINT: c_uint = 0x0020;
-pub const QS_SENDMESSAGE: c_uint = 0x0040;
-pub const QS_HOTKEY: c_uint = 0x0080;
-pub const QS_ALLPOSTMESSAGE: c_uint = 0x0100;
-pub const QS_RAWINPUT: c_uint = 0x0400;
-pub const QS_TOUCH: c_uint = 0x0800;
-pub const QS_POINTER: c_uint = 0x1000;
-pub const QS_MOUSE: c_uint = (QS_MOUSEMOVE | QS_MOUSEBUTTON);
-pub const QS_INPUT: c_uint = (QS_MOUSE | QS_KEY | QS_RAWINPUT | QS_TOUCH | QS_POINTER);
-pub const QS_ALLEVENTS: c_uint = (QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY);
-pub const QS_ALLINPUT: c_uint = (QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY | QS_SENDMESSAGE);
-
-pub const PM_NOREMOVE: c_uint = 0x0000;
-pub const PM_REMOVE: c_uint = 0x0001;
-pub const PM_NOYIELD: c_uint = 0x0002;
-pub const PM_QS_INPUT: c_uint = (QS_INPUT << 16);
-pub const PM_QS_POSTMESSAGE: c_uint = ((QS_POSTMESSAGE | QS_HOTKEY | QS_TIMER) << 16);
-pub const PM_QS_PAINT: c_uint = (QS_PAINT << 16);
-pub const PM_QS_SENDMESSAGE: c_uint = (QS_SENDMESSAGE << 16);
-
-pub const MB_OK: c_uint = 0x0;
-pub const MB_OKCANCEL: c_uint = 0x1;
-pub const MB_ABORTRETRYIGNORE: c_uint = 0x2;
-pub const MB_YESNOCANCEL: c_uint = 0x3;
-pub const MB_YESNO: c_uint = 0x4;
-pub const MB_RETRYCANCEL: c_uint = 0x5;
-pub const MB_CANCELTRYCONTINUE: c_uint = 0x6;
-pub const MB_HELP: c_uint = 0x4000;
-
-pub const MB_ICONEXCLAMATION: c_uint = 0x30;
-pub const MB_ICONWARNING: c_uint = 0x30;
-pub const MB_ICONINFORMATION: c_uint = 0x40;
-pub const MB_ICONASTERISK: c_uint = 0x40;
-pub const MB_ICONQUESTION: c_uint = 0x20;
-pub const MB_ICONSTOP: c_uint = 0x10;
-pub const MB_ICONERROR: c_uint = 0x10;
-pub const MB_ICONHAND: c_uint = 0x10;
-
-pub const MB_DEFBUTTON1: c_uint = 0x0;
-pub const MB_DEFBUTTON2: c_uint = 0x100;
-pub const MB_DEFBUTTON3: c_uint = 0x200;
-pub const MB_DEFBUTTON4: c_uint = 0x300;
-
-pub const MB_APPLMODAL: c_uint = 0x0;
-pub const MB_SYSTEMMODAL: c_uint = 0x1000;
-pub const MB_TASKMODAL: c_uint = 0x2000;
-
-pub const MB_DEFAULT_DESKTOP_ONLY: c_uint = 0x20000;
-pub const MB_RIGHT: c_uint = 0x80000;
-pub const MB_RTLREADING: c_uint = 0x100000;
-pub const MB_SETFOREGROUND: c_uint = 0x10000;
-pub const MB_TOPMOST: c_uint = 0x40000;
-pub const MB_SERVICE_NOTIFICATION: c_uint = 0x200000;
-
-pub const IDABORT: c_int = 3;
-pub const IDCANCEL: c_int = 2;
-pub const IDCONTINUE: c_int = 11;
-pub const IDIGNORE: c_int = 5;
-pub const IDNO: c_int = 7;
-pub const IDOK: c_int = 1;
-pub const IDRETRY: c_int = 4;
-pub const IDTRYAGAIN: c_int = 10;
-pub const IDYES: c_int = 6;
-
-pub const CS_BYTEALIGNCLIENT: c_uint = 0x1000;
-pub const CS_BYTEALIGNWINDOW: c_uint = 0x2000;
-pub const CS_CLASSDC: c_uint = 0x0040;
-pub const CS_DBLCLKS: c_uint = 0x0008;
-pub const CS_DROPSHADOW: c_uint = 0x00020000;
-pub const CS_GLOBALCLASS: c_uint = 0x4000;
-pub const CS_HREDRAW: c_uint = 0x0002;
-pub const CS_NOCLOSE: c_uint = 0x0200;
-pub const CS_OWNDC: c_uint = 0x0020;
-pub const CS_PARENTDC: c_uint = 0x0080;
-pub const CS_SAVEBITS: c_uint = 0x0800;
-pub const CS_VREDRAW: c_uint = 0x0001;
-
-pub const WM_NULL: c_uint = 0x0000;
-pub const WM_CREATE: c_uint = 0x0001;
-pub const WM_DESTROY: c_uint = 0x0002;
-pub const WM_MOVE: c_uint = 0x0003;
-pub const WM_SIZE: c_uint = 0x0005;
-pub const WM_ACTIVATE: c_uint = 0x0006;
-pub const WM_SETFOCUS: c_uint = 0x0007;
-pub const WM_KILLFOCUS: c_uint = 0x0008;
-pub const WM_ENABLE: c_uint = 0x000A;
-pub const WM_SETREDRAW: c_uint = 0x000B;
-pub const WM_SETTEXT: c_uint = 0x000C;
-pub const WM_GETTEXT: c_uint = 0x000D;
-pub const WM_GETTEXTLENGTH: c_uint = 0x000E;
-pub const WM_PAINT: c_uint = 0x000F;
-pub const WM_CLOSE: c_uint = 0x0010;
-pub const WM_QUERYENDSESSION: c_uint = 0x0011;
-pub const WM_QUERYOPEN: c_uint = 0x0013;
-pub const WM_ENDSESSION: c_uint = 0x0016;
-pub const WM_QUIT: c_uint = 0x0012;
-pub const WM_ERASEBKGND: c_uint = 0x0014;
-pub const WM_SYSCOLORCHANGE: c_uint = 0x0015;
-pub const WM_SHOWWINDOW: c_uint = 0x0018;
-pub const WM_WININICHANGE: c_uint = 0x001A;
-pub const WM_SETTINGCHANGE: c_uint = 0x001A;
-pub const WM_DEVMODECHANGE: c_uint = 0x001B;
-pub const WM_ACTIVATEAPP: c_uint = 0x001C;
-pub const WM_FONTCHANGE: c_uint = 0x001D;
-pub const WM_TIMECHANGE: c_uint = 0x001E;
-pub const WM_CANCELMODE: c_uint = 0x001F;
-pub const WM_SETCURSOR: c_uint = 0x0020;
-pub const WM_MOUSEACTIVATE: c_uint = 0x0021;
-pub const WM_CHILDACTIVATE: c_uint = 0x0022;
-pub const WM_QUEUESYNC: c_uint = 0x0023;
-pub const WM_GETMINMAXINFO: c_uint = 0x0024;
-pub const WM_PAINTICON: c_uint = 0x0026;
-pub const WM_ICONERASEBKGND: c_uint = 0x0027;
-pub const WM_NEXTDLGCTL: c_uint = 0x0028;
-pub const WM_SPOOLERSTATUS: c_uint = 0x002A;
-pub const WM_DRAWITEM: c_uint = 0x002B;
-pub const WM_MEASUREITEM: c_uint = 0x002C;
-pub const WM_DELETEITEM: c_uint = 0x002D;
-pub const WM_VKEYTOITEM: c_uint = 0x002E;
-pub const WM_CHARTOITEM: c_uint = 0x002F;
-pub const WM_SETFONT: c_uint = 0x0030;
-pub const WM_GETFONT: c_uint = 0x0031;
-pub const WM_SETHOTKEY: c_uint = 0x0032;
-pub const WM_GETHOTKEY: c_uint = 0x0033;
-pub const WM_QUERYDRAGICON: c_uint = 0x0037;
-pub const WM_COMPAREITEM: c_uint = 0x0039;
-pub const WM_GETOBJECT: c_uint = 0x003D;
-pub const WM_COMPACTING: c_uint = 0x0041;
-pub const WM_COMMNOTIFY: c_uint = 0x0044;
-pub const WM_WINDOWPOSCHANGING: c_uint = 0x0046;
-pub const WM_WINDOWPOSCHANGED: c_uint = 0x0047;
-pub const WM_POWER: c_uint = 0x0048;
-pub const WM_COPYDATA: c_uint = 0x004A;
-pub const WM_CANCELJOURNAL: c_uint = 0x004B;
-pub const WM_NOTIFY: c_uint = 0x004E;
-pub const WM_INPUTLANGCHANGEREQUEST: c_uint = 0x0050;
-pub const WM_INPUTLANGCHANGE: c_uint = 0x0051;
-pub const WM_TCARD: c_uint = 0x0052;
-pub const WM_HELP: c_uint = 0x0053;
-pub const WM_USERCHANGED: c_uint = 0x0054;
-pub const WM_NOTIFYFORMAT: c_uint = 0x0055;
-pub const WM_CONTEXTMENU: c_uint = 0x007B;
-pub const WM_STYLECHANGING: c_uint = 0x007C;
-pub const WM_STYLECHANGED: c_uint = 0x007D;
-pub const WM_DISPLAYCHANGE: c_uint = 0x007E;
-pub const WM_GETICON: c_uint = 0x007F;
-pub const WM_SETICON: c_uint = 0x0080;
-pub const WM_NCCREATE: c_uint = 0x0081;
-pub const WM_NCDESTROY: c_uint = 0x0082;
-pub const WM_NCCALCSIZE: c_uint = 0x0083;
-pub const WM_NCHITTEST: c_uint = 0x0084;
-pub const WM_NCPAINT: c_uint = 0x0085;
-pub const WM_NCACTIVATE: c_uint = 0x0086;
-pub const WM_GETDLGCODE: c_uint = 0x0087;
-pub const WM_SYNCPAINT: c_uint = 0x0088;
-pub const WM_NCMOUSEMOVE: c_uint = 0x00A0;
-pub const WM_NCLBUTTONDOWN: c_uint = 0x00A1;
-pub const WM_NCLBUTTONUP: c_uint = 0x00A2;
-pub const WM_NCLBUTTONDBLCLK: c_uint = 0x00A3;
-pub const WM_NCRBUTTONDOWN: c_uint = 0x00A4;
-pub const WM_NCRBUTTONUP: c_uint = 0x00A5;
-pub const WM_NCRBUTTONDBLCLK: c_uint = 0x00A6;
-pub const WM_NCMBUTTONDOWN: c_uint = 0x00A7;
-pub const WM_NCMBUTTONUP: c_uint = 0x00A8;
-pub const WM_NCMBUTTONDBLCLK: c_uint = 0x00A9;
-pub const WM_NCXBUTTONDOWN: c_uint = 0x00AB;
-pub const WM_NCXBUTTONUP: c_uint = 0x00AC;
-pub const WM_NCXBUTTONDBLCLK: c_uint = 0x00AD;
-pub const WM_INPUT: c_uint = 0x00FF;
-pub const WM_KEYFIRST: c_uint = 0x0100;
-pub const WM_KEYDOWN: c_uint = 0x0100;
-pub const WM_KEYUP: c_uint = 0x0101;
-pub const WM_CHAR: c_uint = 0x0102;
-pub const WM_DEADCHAR: c_uint = 0x0103;
-pub const WM_SYSKEYDOWN: c_uint = 0x0104;
-pub const WM_SYSKEYUP: c_uint = 0x0105;
-pub const WM_SYSCHAR: c_uint = 0x0106;
-pub const WM_SYSDEADCHAR: c_uint = 0x0107;
-pub const WM_KEYLAST: c_uint = 0x0109;
-pub const WM_UNICHAR: c_uint = 0x0109;
-pub const WM_IME_STARTCOMPOSITION: c_uint = 0x010D;
-pub const WM_IME_ENDCOMPOSITION: c_uint = 0x010E;
-pub const WM_IME_COMPOSITION: c_uint = 0x010F;
-pub const WM_IME_KEYLAST: c_uint = 0x010F;
-pub const WM_INITDIALOG: c_uint = 0x0110;
-pub const WM_COMMAND: c_uint = 0x0111;
-pub const WM_SYSCOMMAND: c_uint = 0x0112;
-pub const WM_TIMER: c_uint = 0x0113;
-pub const WM_HSCROLL: c_uint = 0x0114;
-pub const WM_VSCROLL: c_uint = 0x0115;
-pub const WM_INITMENU: c_uint = 0x0116;
-pub const WM_INITMENUPOPUP: c_uint = 0x0117;
-pub const WM_MENUSELECT: c_uint = 0x011F;
-pub const WM_MENUCHAR: c_uint = 0x0120;
-pub const WM_ENTERIDLE: c_uint = 0x0121;
-pub const WM_MENURBUTTONUP: c_uint = 0x0122;
-pub const WM_MENUDRAG: c_uint = 0x0123;
-pub const WM_MENUGETOBJECT: c_uint = 0x0124;
-pub const WM_UNINITMENUPOPUP: c_uint = 0x0125;
-pub const WM_MENUCOMMAND: c_uint = 0x0126;
-pub const WM_CHANGEUISTATE: c_uint = 0x0127;
-pub const WM_UPDATEUISTATE: c_uint = 0x0128;
-pub const WM_QUERYUISTATE: c_uint = 0x0129;
-pub const WM_CTLCOLORMSGBOX: c_uint = 0x0132;
-pub const WM_CTLCOLOREDIT: c_uint = 0x0133;
-pub const WM_CTLCOLORLISTBOX: c_uint = 0x0134;
-pub const WM_CTLCOLORBTN: c_uint = 0x0135;
-pub const WM_CTLCOLORDLG: c_uint = 0x0136;
-pub const WM_CTLCOLORSCROLLBAR: c_uint = 0x0137;
-pub const WM_CTLCOLORSTATIC: c_uint = 0x0138;
-pub const WM_MOUSEFIRST: c_uint = 0x0200;
-pub const WM_MOUSEMOVE: c_uint = 0x0200;
-pub const WM_LBUTTONDOWN: c_uint = 0x0201;
-pub const WM_LBUTTONUP: c_uint = 0x0202;
-pub const WM_LBUTTONDBLCLK: c_uint = 0x0203;
-pub const WM_RBUTTONDOWN: c_uint = 0x0204;
-pub const WM_RBUTTONUP: c_uint = 0x0205;
-pub const WM_RBUTTONDBLCLK: c_uint = 0x0206;
-pub const WM_MBUTTONDOWN: c_uint = 0x0207;
-pub const WM_MBUTTONUP: c_uint = 0x0208;
-pub const WM_MBUTTONDBLCLK: c_uint = 0x0209;
-pub const WM_MOUSELAST_95: c_uint = 0x0209;
-pub const WM_MOUSEWHEEL: c_uint = 0x020A;
-pub const WM_MOUSELAST_NT4_98: c_uint = 0x020A;
-pub const WM_XBUTTONDOWN: c_uint = 0x020B;
-pub const WM_XBUTTONUP: c_uint = 0x020C;
-pub const WM_XBUTTONDBLCLK: c_uint = 0x020D;
-pub const WM_MOUSELAST_2K_XP_2k3: c_uint = 0x020D;
-pub const WM_PARENTNOTIFY: c_uint = 0x0210;
-pub const WM_ENTERMENULOOP: c_uint = 0x0211;
-pub const WM_EXITMENULOOP: c_uint = 0x0212;
-pub const WM_NEXTMENU: c_uint = 0x0213;
-pub const WM_SIZING: c_uint = 0x0214;
-pub const WM_CAPTURECHANGED: c_uint = 0x0215;
-pub const WM_MOVING: c_uint = 0x0216;
-pub const WM_POWERBROADCAST: c_uint = 0x0218;
-pub const WM_DEVICECHANGE: c_uint = 0x0219;
-pub const WM_MDICREATE: c_uint = 0x0220;
-pub const WM_MDIDESTROY: c_uint = 0x0221;
-pub const WM_MDIACTIVATE: c_uint = 0x0222;
-pub const WM_MDIRESTORE: c_uint = 0x0223;
-pub const WM_MDINEXT: c_uint = 0x0224;
-pub const WM_MDIMAXIMIZE: c_uint = 0x0225;
-pub const WM_MDITILE: c_uint = 0x0226;
-pub const WM_MDICASCADE: c_uint = 0x0227;
-pub const WM_MDIICONARRANGE: c_uint = 0x0228;
-pub const WM_MDIGETACTIVE: c_uint = 0x0229;
-pub const WM_MDISETMENU: c_uint = 0x0230;
-pub const WM_ENTERSIZEMOVE: c_uint = 0x0231;
-pub const WM_EXITSIZEMOVE: c_uint = 0x0232;
-pub const WM_DROPFILES: c_uint = 0x0233;
-pub const WM_MDIREFRESHMENU: c_uint = 0x0234;
-pub const WM_IME_SETCONTEXT: c_uint = 0x0281;
-pub const WM_IME_NOTIFY: c_uint = 0x0282;
-pub const WM_IME_CONTROL: c_uint = 0x0283;
-pub const WM_IME_COMPOSITIONFULL: c_uint = 0x0284;
-pub const WM_IME_SELECTpub: c_uint = 0x0285;
-pub const WM_IME_CHAR: c_uint = 0x0286;
-pub const WM_IME_REQUEST: c_uint = 0x0288;
-pub const WM_IME_KEYDOWN: c_uint = 0x0290;
-pub const WM_IME_KEYUP: c_uint = 0x0291;
-pub const WM_MOUSEHOVER: c_uint = 0x02A1;
-pub const WM_MOUSELEAVE: c_uint = 0x02A3;
-pub const WM_NCMOUSEHOVER: c_uint = 0x02A0;
-pub const WM_NCMOUSELEAVE: c_uint = 0x02A2;
-pub const WM_WTSSESSION_CHANGE: c_uint = 0x02B1;
-pub const WM_TABLET_FIRST: c_uint = 0x02C0;
-pub const WM_TABLET_LAST: c_uint = 0x02DF;
-pub const WM_CUT: c_uint = 0x0300;
-pub const WM_COPY: c_uint = 0x0301;
-pub const WM_PASTE: c_uint = 0x0302;
-pub const WM_CLEAR: c_uint = 0x0303;
-pub const WM_UNDO: c_uint = 0x0304;
-pub const WM_RENDERFORMAT: c_uint = 0x0305;
-pub const WM_RENDERALLFORMATS: c_uint = 0x0306;
-pub const WM_DESTROYCLIPBOARD: c_uint = 0x0307;
-pub const WM_DRAWCLIPBOARD: c_uint = 0x0308;
-pub const WM_PAINTCLIPBOARD: c_uint = 0x0309;
-pub const WM_VSCROLLCLIPBOARD: c_uint = 0x030A;
-pub const WM_SIZECLIPBOARD: c_uint = 0x030B;
-pub const WM_ASKCBFORMATNAME: c_uint = 0x030C;
-pub const WM_CHANGECBCHAIN: c_uint = 0x030D;
-pub const WM_HSCROLLCLIPBOARD: c_uint = 0x030E;
-pub const WM_QUERYNEWPALETTE: c_uint = 0x030F;
-pub const WM_PALETTEISCHANGING: c_uint = 0x0310;
-pub const WM_PALETTECHANGED: c_uint = 0x0311;
-pub const WM_HOTKEY: c_uint = 0x0312;
-pub const WM_PRINT: c_uint = 0x0317;
-pub const WM_PRINTCLIENT: c_uint = 0x0318;
-pub const WM_APPCOMMAND: c_uint = 0x0319;
-pub const WM_THEMECHANGED: c_uint = 0x031A;
-pub const WM_HANDHELDFIRST: c_uint = 0x0358;
-pub const WM_HANDHELDLAST: c_uint = 0x035F;
-pub const WM_AFXFIRST: c_uint = 0x0360;
-pub const WM_AFXLAST: c_uint = 0x037F;
-pub const WM_PENWINFIRST: c_uint = 0x0380;
-pub const WM_PENWINLAST: c_uint = 0x038F;
-pub const WM_USER: c_uint = 0x0400;
-pub const WM_APP: c_uint = 0x8000;
-
-pub const WS_BORDER: DWORD = 0x00800000;
-pub const WS_CAPTION: DWORD = 0x00C00000;
-pub const WS_CHILD: DWORD = 0x40000000;
-pub const WS_CHILDWINDOW: DWORD = 0x40000000;
-pub const WS_CLIPCHILDREN: DWORD = 0x02000000;
-pub const WS_CLIPSIBLINGS: DWORD = 0x04000000;
-pub const WS_DISABLED: DWORD = 0x08000000;
-pub const WS_DLGFRAME: DWORD = 0x00400000;
-pub const WS_GROUP: DWORD = 0x00020000;
-pub const WS_HSCROLL: DWORD = 0x00100000;
-pub const WS_ICONIC: DWORD = 0x20000000;
-pub const WS_MAXIMIZE: DWORD = 0x01000000;
-pub const WS_MAXIMIZEBOX: DWORD = 0x00010000;
-pub const WS_MINIMIZE: DWORD = 0x20000000;
-pub const WS_MINIMIZEBOX: DWORD = 0x00020000;
-pub const WS_OVERLAPPED: DWORD = 0x00000000;
-pub const WS_OVERLAPPEDWINDOW: DWORD = (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-pub const WS_POPUP: DWORD = 0x80000000;
-pub const WS_POPUPWINDOW: DWORD = (WS_POPUP | WS_BORDER | WS_SYSMENU);
-pub const WS_SIZEBOX: DWORD = 0x00040000;
-pub const WS_SYSMENU: DWORD = 0x00080000;
-pub const WS_TABSTOP: DWORD = 0x00010000;
-pub const WS_THICKFRAME: DWORD = 0x00040000;
-pub const WS_TILED: DWORD = 0x00000000;
-pub const WS_VISIBLE: DWORD = 0x10000000;
-pub const WS_VSCROLL: DWORD = 0x00200000;
-
-pub const WS_EX_ACCEPTFILES: DWORD = 0x00000010;
-pub const WS_EX_APPWINDOW: DWORD = 0x00040000;
-pub const WS_EX_CLIENTEDGE: DWORD = 0x00000200;
-pub const WS_EX_COMPOSITED: DWORD = 0x02000000;
-pub const WS_EX_CONTEXTHELP: DWORD = 0x00000400;
-pub const WS_EX_CONTROLPARENT: DWORD = 0x00010000;
-pub const WS_EX_DLGMODALFRAME: DWORD = 0x00000001;
-pub const WS_EX_LAYERED: DWORD = 0x00080000;
-pub const WS_EX_LAYOUTRTL: DWORD = 0x00400000;
-pub const WS_EX_LEFT: DWORD = 0x00000000;
-pub const WS_EX_LEFTSCROLLBAR: DWORD = 0x00004000;
-pub const WS_EX_LTRREADING: DWORD = 0x00000000;
-pub const WS_EX_MDICHILD: DWORD = 0x00000040;
-pub const WS_EX_NOACTIVATE: DWORD = 0x08000000;
-pub const WS_EX_NOINHERITLAYOUT: DWORD = 0x00100000;
-pub const WS_EX_NOPARENTNOTIFY: DWORD = 0x00000004;
-pub const WS_EX_NOREDIRECTIONBITMAP: DWORD = 0x00200000;
-pub const WS_EX_OVERLAPPEDWINDOW: DWORD = (WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE);
-pub const WS_EX_PALETTEWINDOW: DWORD = (WS_EX_WINDOWEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST);
-pub const WS_EX_RIGHT: DWORD = 0x00001000;
-pub const WS_EX_RIGHTSCROLLBAR: DWORD = 0x00000000;
-pub const WS_EX_RTLREADING: DWORD = 0x00002000;
-pub const WS_EX_STATICEDGE: DWORD = 0x00020000;
-pub const WS_EX_TOOLWINDOW: DWORD = 0x00000080;
-pub const WS_EX_TOPMOST: DWORD = 0x00000008;
-pub const WS_EX_TRANSPARENT: DWORD = 0x00000020;
-pub const WS_EX_WINDOWEDGE: DWORD = 0x00000100;
-
-pub const CW_USEDEFAULT = cLiteral(c_int, 0x80000000);
-
-pub const SRCCOPY: DWORD = 0x00CC0020;
-pub const SRCPAINT: DWORD = 0x00EE0086;
-pub const SRCAND: DWORD = 0x008800C6;
-pub const SRCINVERT: DWORD = 0x00660046;
-pub const SRCERASE: DWORD = 0x00440328;
-pub const NOTSRCCOPY: DWORD = 0x00330008;
-pub const NOTSRCERASE: DWORD = 0x001100A6;
-pub const MERGECOPY: DWORD = 0x00C000CA;
-pub const MERGEPAINT: DWORD = 0x00BB0226;
-pub const PATCOPY: DWORD = 0x00F00021;
-pub const PATPAINT: DWORD = 0x00FB0A09;
-pub const PATINVERT: DWORD = 0x005A0049;
-pub const DSTINVERT: DWORD = 0x00550009;
-pub const BLACKNESS: DWORD = 0x00000042;
-pub const WHITENESS: DWORD = 0x00FF0062;
-pub const NOMIRRORBITMAP: DWORD = 0x80000000;
-pub const CAPTUREBLT: DWORD = 0x40000000;
-
-pub const VK_LBUTTON: WPARAM = 0x01;
-pub const VK_RBUTTON: WPARAM = 0x02;
-pub const VK_CANCEL: WPARAM = 0x03;
-pub const VK_MBUTTON: WPARAM = 0x04;
-pub const VK_XBUTTON1: WPARAM = 0x05;
-pub const VK_XBUTTON2: WPARAM = 0x06;
-pub const VK_BACK: WPARAM = 0x08;
-pub const VK_TAB: WPARAM = 0x09;
-pub const VK_CLEAR: WPARAM = 0x0C;
-pub const VK_RETURN: WPARAM = 0x0D;
-pub const VK_SHIFT: WPARAM = 0x10;
-pub const VK_CONTROL: WPARAM = 0x11;
-pub const VK_MENU: WPARAM = 0x12;
-pub const VK_PAUSE: WPARAM = 0x13;
-pub const VK_CAPITAL: WPARAM = 0x14;
-pub const VK_KANA: WPARAM = 0x15;
-pub const VK_HANGUL: WPARAM = 0x15;
-pub const VK_IME_ON: WPARAM = 0x16;
-pub const VK_JUNJA: WPARAM = 0x17;
-pub const VK_FINAL: WPARAM = 0x18;
-pub const VK_HANJA: WPARAM = 0x19;
-pub const VK_KANJI: WPARAM = 0x19;
-pub const VK_IME_OFF: WPARAM = 0x1A;
-pub const VK_ESCAPE: WPARAM = 0x1B;
-pub const VK_CONVERT: WPARAM = 0x1C;
-pub const VK_NONCONVERT: WPARAM = 0x1D;
-pub const VK_ACCEPT: WPARAM = 0x1E;
-pub const VK_MODECHANGE: WPARAM = 0x1F;
-pub const VK_SPACE: WPARAM = 0x20;
-pub const VK_PRIOR: WPARAM = 0x21;
-pub const VK_NEXT: WPARAM = 0x22;
-pub const VK_END: WPARAM = 0x23;
-pub const VK_HOME: WPARAM = 0x24;
-pub const VK_LEFT: WPARAM = 0x25;
-pub const VK_UP: WPARAM = 0x26;
-pub const VK_RIGHT: WPARAM = 0x27;
-pub const VK_DOWN: WPARAM = 0x28;
-pub const VK_SELECT: WPARAM = 0x29;
-pub const VK_PRINT: WPARAM = 0x2A;
-pub const VK_EXECUTE: WPARAM = 0x2B;
-pub const VK_SNAPSHOT: WPARAM = 0x2C;
-pub const VK_INSERT: WPARAM = 0x2D;
-pub const VK_DELETE: WPARAM = 0x2E;
-pub const VK_HELP: WPARAM = 0x2F;
-pub const VK_0: WPARAM = '0';
-pub const VK_1: WPARAM = '1';
-pub const VK_2: WPARAM = '2';
-pub const VK_3: WPARAM = '3';
-pub const VK_4: WPARAM = '4';
-pub const VK_5: WPARAM = '5';
-pub const VK_6: WPARAM = '6';
-pub const VK_7: WPARAM = '7';
-pub const VK_8: WPARAM = '8';
-pub const VK_A: WPARAM = 0x41;
-pub const VK_B: WPARAM = 0x42;
-pub const VK_C: WPARAM = 0x43;
-pub const VK_D: WPARAM = 0x44;
-pub const VK_E: WPARAM = 0x45;
-pub const VK_F: WPARAM = 0x46;
-pub const VK_G: WPARAM = 0x47;
-pub const VK_H: WPARAM = 0x48;
-pub const VK_I: WPARAM = 0x49;
-pub const VK_J: WPARAM = 0x4A;
-pub const VK_K: WPARAM = 0x4B;
-pub const VK_L: WPARAM = 0x4C;
-pub const VK_M: WPARAM = 0x4D;
-pub const VK_N: WPARAM = 0x4E;
-pub const VK_O: WPARAM = 0x4F;
-pub const VK_P: WPARAM = 0x50;
-pub const VK_Q: WPARAM = 0x51;
-pub const VK_R: WPARAM = 0x52;
-pub const VK_S: WPARAM = 0x53;
-pub const VK_T: WPARAM = 0x54;
-pub const VK_U: WPARAM = 0x55;
-pub const VK_V: WPARAM = 0x56;
-pub const VK_W: WPARAM = 0x57;
-pub const VK_X: WPARAM = 0x58;
-pub const VK_Y: WPARAM = 0x59;
-pub const VK_Z: WPARAM = 0x5A;
-pub const VK_LWIN: WPARAM = 0x5B;
-pub const VK_RWIN: WPARAM = 0x5C;
-pub const VK_APPS: WPARAM = 0x5D;
-pub const VK_SLEEP: WPARAM = 0x5F;
-pub const VK_NUMPAD0: WPARAM = 0x60;
-pub const VK_NUMPAD1: WPARAM = 0x61;
-pub const VK_NUMPAD2: WPARAM = 0x62;
-pub const VK_NUMPAD3: WPARAM = 0x63;
-pub const VK_NUMPAD4: WPARAM = 0x64;
-pub const VK_NUMPAD5: WPARAM = 0x65;
-pub const VK_NUMPAD6: WPARAM = 0x66;
-pub const VK_NUMPAD7: WPARAM = 0x67;
-pub const VK_NUMPAD8: WPARAM = 0x68;
-pub const VK_NUMPAD9: WPARAM = 0x69;
-pub const VK_MULTIPLY: WPARAM = 0x6A;
-pub const VK_ADD: WPARAM = 0x6B;
-pub const VK_SEPARATOR: WPARAM = 0x6C;
-pub const VK_SUBTRACT: WPARAM = 0x6D;
-pub const VK_DECIMAL: WPARAM = 0x6E;
-pub const VK_DIVIDE: WPARAM = 0x6F;
-pub const VK_F1: WPARAM = 0x70;
-pub const VK_F2: WPARAM = 0x71;
-pub const VK_F3: WPARAM = 0x72;
-pub const VK_F4: WPARAM = 0x73;
-pub const VK_F5: WPARAM = 0x74;
-pub const VK_F6: WPARAM = 0x75;
-pub const VK_F7: WPARAM = 0x76;
-pub const VK_F8: WPARAM = 0x77;
-pub const VK_F9: WPARAM = 0x78;
-pub const VK_F10: WPARAM = 0x79;
-pub const VK_F11: WPARAM = 0x7A;
-pub const VK_F12: WPARAM = 0x7B;
-pub const VK_F13: WPARAM = 0x7C;
-pub const VK_F14: WPARAM = 0x7D;
-pub const VK_F15: WPARAM = 0x7E;
-pub const VK_F16: WPARAM = 0x7F;
-pub const VK_F17: WPARAM = 0x80;
-pub const VK_F18: WPARAM = 0x81;
-pub const VK_F19: WPARAM = 0x82;
-pub const VK_F20: WPARAM = 0x83;
-pub const VK_F21: WPARAM = 0x84;
-pub const VK_F22: WPARAM = 0x85;
-pub const VK_F23: WPARAM = 0x86;
-pub const VK_F24: WPARAM = 0x87;
-pub const VK_NUMLOCK: WPARAM = 0x90;
-pub const VK_SCROLL: WPARAM = 0x91;
-pub const VK_LSHIFT: WPARAM = 0xA0;
-pub const VK_RSHIFT: WPARAM = 0xA1;
-pub const VK_LCONTROL: WPARAM = 0xA2;
-pub const VK_RCONTROL: WPARAM = 0xA3;
-pub const VK_LMENU: WPARAM = 0xA4;
-pub const VK_RMENU: WPARAM = 0xA5;
-pub const VK_BROWSER_BACK: WPARAM = 0xA6;
-pub const VK_BROWSER_FORWARD: WPARAM = 0xA7;
-pub const VK_BROWSER_REFRESH: WPARAM = 0xA8;
-pub const VK_BROWSER_STOP: WPARAM = 0xA9;
-pub const VK_BROWSER_SEARCH: WPARAM = 0xAA;
-pub const VK_BROWSER_FAVORITES: WPARAM = 0xAB;
-pub const VK_BROWSER_HOME: WPARAM = 0xAC;
-pub const VK_VOLUME_MUTE: WPARAM = 0xAD;
-pub const VK_VOLUME_DOWN: WPARAM = 0xAE;
-pub const VK_VOLUME_UP: WPARAM = 0xAF;
-pub const VK_MEDIA_NEXT_TRACK: WPARAM = 0xB0;
-pub const VK_MEDIA_PREV_TRACK: WPARAM = 0xB1;
-pub const VK_MEDIA_STOP: WPARAM = 0xB2;
-pub const VK_MEDIA_PLAY_PAUSE: WPARAM = 0xB3;
-pub const VK_LAUNCH_MAIL: WPARAM = 0xB4;
-pub const VK_LAUNCH_MEDIA_SELECT: WPARAM = 0xB5;
-pub const VK_LAUNCH_APP1: WPARAM = 0xB6;
-pub const VK_LAUNCH_APP2: WPARAM = 0xB7;
-pub const VK_OEM_1: WPARAM = 0xBA;
-pub const VK_OEM_PLUS: WPARAM = 0xBB;
-pub const VK_OEM_COMMA: WPARAM = 0xBC;
-pub const VK_OEM_MINUS: WPARAM = 0xBD;
-pub const VK_OEM_PERIOD: WPARAM = 0xBE;
-pub const VK_OEM_2: WPARAM = 0xBF;
-pub const VK_OEM_3: WPARAM = 0xC0;
-pub const VK_OEM_4: WPARAM = 0xDB;
-pub const VK_OEM_5: WPARAM = 0xDC;
-pub const VK_OEM_6: WPARAM = 0xDD;
-pub const VK_OEM_7: WPARAM = 0xDE;
-pub const VK_OEM_8: WPARAM = 0xDF;
-pub const VK_OEM_102: WPARAM = 0xE2;
-pub const VK_PROCESSKEY: WPARAM = 0xE5;
-pub const VK_PACKET: WPARAM = 0xE7;
-pub const VK_ATTN: WPARAM = 0xF6;
-pub const VK_CRSEL: WPARAM = 0xF7;
-pub const VK_EXSEL: WPARAM = 0xF8;
-pub const VK_EREOF: WPARAM = 0xF9;
-pub const VK_PLAY: WPARAM = 0xFA;
-pub const VK_ZOOM: WPARAM = 0xFB;
-pub const VK_NONAME: WPARAM = 0xFC;
-pub const VK_PA1: WPARAM = 0xFD;
-pub const VK_OEM_CLEAR: WPARAM = 0xFE;
-
-pub const DIB_RGB_COLORS: c_int = 0;
-pub const DIB_PAL_COLORS: c_int = 1;
-
-pub const BI_RGB: c_int = 0;
-pub const BI_RLE8: c_int = 1;
-pub const BI_RLE4: c_int = 2;
-pub const BI_BITFIELDS: c_int = 3;
-pub const BI_JPEG: c_int = 4;
-pub const bi_png: c_int = 5;
-
-pub const STRETCH_ANDSCANS = 0x01;
-pub const STRETCH_ORSCANS = 0x02;
-pub const STRETCH_DELETESCANS = 0x03;
-pub const STRETCH_HALFTONE = 0x04;
-pub const BLACKONWHITE = STRETCH_ANDSCANS;
-pub const COLORONCOLOR = STRETCH_DELETESCANS;
-pub const HALFTONE = STRETCH_HALFTONE;
-pub const WHITEONBLACK = STRETCH_ORSCANS;
-
-pub const CREATE_ALWAYS = 2;
-pub const CREATE_NEW = 1;
-pub const OPEN_ALWAYS = 4;
-pub const OPEN_EXISTING = 3;
-pub const TRUNCATE_EXISTING = 5;
-
-pub const FILE_MAP_WRITE = 0x0002;
-pub const FILE_MAP_READ = 0x0004;
-pub const FILE_MAP_COPY = 0x0001;
-pub const FILE_MAP_EXECUTE = 0x0020;
-pub const FILE_MAP_ALL_ACCESS = 0x001F;
-pub const FILE_MAP_LARGE_PAGES = 0x20000000;
-pub const FILE_MAP_TARGETS_INVALID = 0x40000000;
-pub const FILE_MAP_RESERVE = 0x80000000;
-
-pub const TIMERR_BASE = 96;
-pub const TIMERR_NOERROR = 0;
-pub const TIMERR_NOCANDO = TIMERR_BASE + 1;
-pub const TIMERR_STRUCT = TIMERR_BASE + 33;
-
-pub const LWA_ALPHA = 0x00000002;
-pub const LWA_COLORKEY = 0x00000001;
-
-pub const DRIVERVERSION = 0;
-pub const TECHNOLOGY = 2;
-pub const HORZSIZE = 4;
-pub const VERTSIZE = 6;
-pub const HORZRES = 8;
-pub const VERTRES = 10;
-pub const BITSPIXEL = 12;
-pub const PLANES = 14;
-pub const NUMBRUSHES = 16;
-pub const NUMPENS = 18;
-pub const NUMMARKERS = 20;
-pub const NUMFONTS = 22;
-pub const NUMCOLORS = 24;
-pub const PDEVICESIZE = 26;
-pub const CURVECAPS = 28;
-pub const LINECAPS = 30;
-pub const POLYGONALCAPS = 32;
-pub const TEXTCAPS = 34;
-pub const CLIPCAPS = 36;
-pub const RASTERCAPS = 38;
-pub const ASPECTX = 40;
-pub const ASPECTY = 42;
-pub const ASPECTXY = 44;
-pub const LOGPIXELSX = 88;
-pub const LOGPIXELSY = 90;
-pub const CAPS1 = 94;
-pub const SIZEPALETTE = 104;
-pub const NUMRESERVED = 106;
-pub const COLORRES = 108;
-pub const PHYSICALWIDTH = 110;
-pub const PHYSICALHEIGHT = 111;
-pub const PHYSICALOFFSETX = 112;
-pub const PHYSICALOFFSETY = 113;
-pub const SCALINGFACTORX = 114;
-pub const SCALINGFACTORY = 115;
-pub const VREFRESH = 116;
-pub const DESKTOPVERTRES = 117;
-pub const DESKTOPHORZRES = 118;
-pub const BLTALIGNMENT = 119;
-pub const SHADEBLENDCAPS = 120;
-pub const COLORMGMTCAPS = 121;
-
-pub const IDC_ARROW = MAKEINTRESOURCEA(32512);
-pub const IDC_IBEAM = MAKEINTRESOURCEA(32513);
-pub const IDC_WAIT = MAKEINTRESOURCEA(32514);
-pub const IDC_CROSS = MAKEINTRESOURCEA(32515);
-pub const IDC_UPARROW = MAKEINTRESOURCEA(32516);
-pub const IDC_SIZENWSE = MAKEINTRESOURCEA(32642);
-pub const IDC_SIZENESW = MAKEINTRESOURCEA(32643);
-pub const IDC_SIZEWE = MAKEINTRESOURCEA(32644);
-pub const IDC_SIZENS = MAKEINTRESOURCEA(32645);
-pub const IDC_SIZEALL = MAKEINTRESOURCEA(32646);
-pub const IDC_NO = MAKEINTRESOURCEA(32648);
-pub const IDC_HAND = MAKEINTRESOURCEA(32649);
-pub const IDC_APPSTARTING = MAKEINTRESOURCEA(32650);
-pub const IDC_HELP = MAKEINTRESOURCEA(32651);
-pub const IDC_PIN = MAKEINTRESOURCEA(32671);
-pub const IDC_PERSON = MAKEINTRESOURCEA(32672);
-
-pub const HTBORDER = 18;
-pub const HTBOTTOM = 15;
-pub const HTBOTTOMLEFT = 16;
-pub const HTBOTTOMRIGHT = 17;
-pub const HTCAPTION = 2;
-pub const HTCLIENT = 1;
-pub const HTCLOSE = 20;
-pub const HTERROR = -2;
-pub const HTGROWBOX = 4;
-pub const HTHELP = 21;
-pub const HTHSCROLL = 6;
-pub const HTLEFT = 10;
-pub const HTMENU = 5;
-pub const HTMAXBUTTON = 9;
-pub const HTMINBUTTON = 8;
-pub const HTNOWHERE = 0;
-pub const HTREDUCE = 8;
-pub const HTRIGHT = 11;
-pub const HTSIZE = 4;
-pub const HTSYSMENU = 3;
-pub const HTTOP = 12;
-pub const HTTOPLEFT = 13;
-pub const HTTOPRIGHT = 14;
-pub const HTTRANSPARENT = -1;
-pub const HTVSCROLL = 7;
-pub const HTZOOM = 9;
-
-pub const GWL_EXSTYLE = -20;
-pub const GWL_HINSTANCE = -6;
-pub const GWL_HWNDPARENT = -8;
-pub const GWL_ID = -12;
-pub const GWL_STYLE = -16;
-pub const GWL_USERDATA = -21;
-pub const GWL_WNDPROC = -4;
-
-pub const MONITOR_DEFAULTTONULL = 0x00000000;
-pub const MONITOR_DEFAULTTOPRIMARY = 0x00000001;
-pub const MONITOR_DEFAULTTONEAREST = 0x00000002;
-
-pub const HWND_BOTTOM: ?HWND = @ptrFromInt(1);
-pub const HWND_NOTOPMOST: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
-pub const HWND_TOP: ?HWND = @ptrFromInt(0);
-pub const HWND_TOPMOST: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-
-pub const SWP_ASYNCWINDOWPOS = 0x4000;
-pub const SWP_DEFERERASE = 0x2000;
-pub const SWP_DRAWFRAME = 0x0020;
-pub const SWP_FRAMECHANGED = 0x0020;
-pub const SWP_HIDEWINDOW = 0x0080;
-pub const SWP_NOACTIVATE = 0x0010;
-pub const SWP_NOCOPYBITS = 0x0100;
-pub const SWP_NOMOVE = 0x0002;
-pub const SWP_NOOWNERZORDER = 0x0200;
-pub const SWP_NOREDRAW = 0x0008;
-pub const SWP_NOREPOSITION = 0x0200;
-pub const SWP_NOSENDCHANGING = 0x0400;
-pub const SWP_NOSIZE = 0x0001;
-pub const SWP_NOZORDER = 0x0004;
-pub const SWP_SHOWWINDOW = 0x0040;
-
-pub const FILE_NAME_NORMALIZED = 0x0;
-pub const FILE_NAME_OPENED = 0x8;
-pub const VOLUME_NAME_DOS = 0x0;
-pub const VOLUME_NAME_GUID = 0x1;
-pub const VOLUME_NAME_NONE = 0x4;
-pub const VOLUME_NAME_NT = 0x2;
-
-pub const FILE = struct {
-    pub const BASIC_INFORMATION = extern struct {
-        creation_time: LARGE_INTEGER,
-        last_access_time: LARGE_INTEGER,
-        last_write_time: LARGE_INTEGER,
-        change_time: LARGE_INTEGER,
-        file_attributes: ATTRIBUTE,
-    };
-
-    pub const ATTRIBUTE = packed struct(ULONG) {
-        READONLY: bool = false,
-        HIDDEN: bool = false,
-        SYSTEM: bool = false,
-        __reserved0__: u1 = 0,
-        DIRECTORY: bool = false,
-        ARCHIVE: bool = false,
-        DEVICE: bool = false,
-        NORMAL: bool = false,
-        TEMPORARY: bool = false,
-        SPARSE_FILE: bool = false,
-        REPARSE_POINT: bool = false,
-        COMPRESSED: bool = false,
-        OFFLINE: bool = false,
-        NOT_CONTENT_INDEXED: bool = false,
-        ENCRYPTED: bool = false,
-        INTEGRITY_STREAM: bool = false,
-        VIRTUAL: bool = false,
-        NO_SCRUB_DATA: bool = false,
-        EA: bool = false,
-        PINNED: bool = false,
-        UNPINNED: bool = false,
-        OPEN_REPARSE_POINT: bool = false,
-        RECALL_ON_DATA_ACCESS: bool = false,
-        SESSION_AWARE: bool = false,
-        POSIX_SEMANTICS: bool = false,
-        BACKUP_SEMANTICS: bool = false,
-        DELETE_ON_CLOSE: bool = false,
-        SEQUENTIAL_SCAN: bool = false,
-        RANDOM_ACCESS: u1 = 0,
-        NO_BUFFERING: bool = false,
-        OVERLAPPED: bool = false,
-        WRITE_THROUGH: bool = false,
-
-        pub const RECALL_ON_OPEN_MASK = 0x40000;
-        pub const RECALL_ON_OPEN = ATTRIBUTE{ .EA = true };
-        pub const NO_RECALL = ATTRIBUTE{ .UNPINNED = true };
-    };
-
-    pub const SHARE = packed struct(DWORD) {
-        READ: bool = false,
-        WRITE: bool = false,
-        DELETE: bool = false,
-        __reserved__: @Int(.unsigned, @bitSizeOf(DWORD) - 3) = 0,
-    };
-
-    pub const MODE = packed struct(ULONG) {
-        DIRECTORY_FILE: bool = false,
-        WRITE_THROUGH: bool = false,
-        SEQUENTIAL_ONLY: bool = false,
-        NO_INTERMEDIATE_BUFFERING: bool = false,
-        SYNCHRONOUS_IO_ALERT: bool = false,
-        SYNCHRONOUS_IO_NONALERT: bool = false,
-        NON_DIRECTORY_FILE: bool = false,
-        CREATE_TREE_CONNECTION: bool = false,
-        COMPLETE_IF_OPLOCKED: bool = false,
-        NO_EA_KNOWLEDGE: bool = false,
-        OPEN_REMOTE_INSTANCE: bool = false,
-        RANDOM_ACCESS: bool = false,
-        DELETE_ON_CLOSE: bool = false,
-        OPEN_BY_FILE_ID: bool = false,
-        OPEN_FOR_BACKUP_INTENT: bool = false,
-        NO_COMPRESSION: bool = false,
-        OPEN_REQUIRING_OPLOCK: bool = false,
-        DISALLOW_EXCLUSIVE: bool = false,
-        SESSION_AWARE: bool = false,
-        __reserved0__: u1 = 0,
-        RESERVE_OPFILTER: bool = false,
-        OPEN_REPARSE_POINT: bool = false,
-        OPEN_NO_RECALL: bool = false,
-        OPEN_FOR_FREE_SPACE_QUERY: bool = false,
-        __reserved1__: u8 = 0,
-    };
-};
-
-pub const OBJECT = struct {
-    pub const ATTRIBUTES = extern struct {
-        length: ULONG = @sizeOf(@This()),
-        root_directory: ?HANDLE,
-        object_name: *const NT_UNICODE_STRING,
-        attributes: FLAGS,
-        security_descriptor: ?*anyopaque,
-        security_quality_of_service: ?*anyopaque,
-
-        pub const FLAGS = packed struct(ULONG) {
-            __reserved0__: u1 = 0,
-            INHERIT: bool = false,
-            __reserved1__: u2 = 0,
-            PERMANENT: bool = false,
-            EXCLUSIVE: bool = false,
-            CASE_INSENSITIVE: bool = false,
-            OPENIF: bool = false,
-            OPENLINK: bool = false,
-            KERNEL_HANDLE: bool = false,
-            FORCE_ACCESS_CHECK: bool = false,
-            IGNORE_IMPERSONATED_DEVICEMAP: bool = false,
-            DONT_REPARSE: bool = false,
-            __reserved2__: u19 = 0,
-        };
-    };
-};
+pub const MAX_PATH = 260;
+pub const PATH_MAX_WIDE = 32767;
+pub const NAME_MAX = 255;
 
 pub const PROCESS = struct {
     pub const DPI_AWARENESS = enum(c_int) {
@@ -1359,143 +504,670 @@ pub const THREAD = struct {
     };
 };
 
-pub const MEM = packed struct(ULONG) {
-    EXTENDED_PARAMETER: packed struct(u9) {
-        GRAPHICS: bool = false, // 0x0000001
-        NONPAGED: bool = false, // 0x0000002
-        ZERO_PAGES_OPTIONAL: bool = false, // 0x0000004
-        NONPAGED_LARGE: bool = false, // 0x0000008
-        NONPAGED_HUGE: bool = false, // 0x0000010
-        SOFT_FAULT_PAGES: bool = false, // 0x0000020
-        EC_CODE: bool = false, // 0x0000040
-        SECURE_PAGES: bool = false, // 0x0000080
-        TAGGED: bool = false, // 0x0000100
-    } = .{},
+pub const FILE = struct {
+    pub const BASIC_INFORMATION = extern struct {
+        creation_time: LARGE_INTEGER,
+        last_access_time: LARGE_INTEGER,
+        last_write_time: LARGE_INTEGER,
+        change_time: LARGE_INTEGER,
+        file_attributes: ATTRIBUTE,
+    };
 
-    __reserved0__: u3 = 0, // 0x0000200 - 0x0000800
-    COMMIT: bool = false, //0x0001000
-    RESERVE: bool = false, //0x0002000
-    DECOMMIT: bool = false, //0x0004000
-    RELEASE: bool = false, //0x0008000
-    FREE: bool = false, //0x0010000
-    PRIVATE: bool = false, //0x0020000
-    MAPPED: bool = false, //0x0040000
-    RESET: bool = false, //0x0080000
-    TOP_DOWN: bool = false, //0x0100000
-    WRITE_WATCH: bool = false, //0x0200000
-    PHYSICAL: bool = false, //0x0400000
-    ROTATE: bool = false, //0x0800000
-    NEW_IMAGE: bool = false, //0x1000000
-    LARGE_PAGES: bool = false, //0x2000000
-    __reserved1__: u1 = 0, //0x4000000
-    @"4MB_PAGES": bool = false, // 0x8000000
-    __reserved2__: u4 = 0,
+    pub const ATTRIBUTE = packed struct(ULONG) {
+        READONLY: bool = false,
+        HIDDEN: bool = false,
+        SYSTEM: bool = false,
+        __reserved0__: u1 = 0,
+        DIRECTORY: bool = false,
+        ARCHIVE: bool = false,
+        DEVICE: bool = false,
+        NORMAL: bool = false,
+        TEMPORARY: bool = false,
+        SPARSE_FILE: bool = false,
+        REPARSE_POINT: bool = false,
+        COMPRESSED: bool = false,
+        OFFLINE: bool = false,
+        NOT_CONTENT_INDEXED: bool = false,
+        ENCRYPTED: bool = false,
+        INTEGRITY_STREAM: bool = false,
+        VIRTUAL: bool = false,
+        NO_SCRUB_DATA: bool = false,
+        EA: bool = false,
+        PINNED: bool = false,
+        UNPINNED: bool = false,
+        OPEN_REPARSE_POINT: bool = false,
+        RECALL_ON_DATA_ACCESS: bool = false,
+        SESSION_AWARE: bool = false,
+        POSIX_SEMANTICS: bool = false,
+        BACKUP_SEMANTICS: bool = false,
+        DELETE_ON_CLOSE: bool = false,
+        SEQUENTIAL_SCAN: bool = false,
+        RANDOM_ACCESS: bool = false,
+        NO_BUFFERING: bool = false,
+        OVERLAPPED: bool = false,
+        WRITE_THROUGH: bool = false,
 
-    pub const UNMAP_WITH_TRANSIENT_BOOST = MEM{ .EXTENDED_PARAMETER_GRAPHICS = true };
-    pub const COALESCE_PLACEHOLDERS = MEM{ .EXTENDED_PARAMETER_GRAPHICS = true };
-    pub const PRESERVE_PLACEHOLDER = MEM{ .EXTENDED_PARAMETER_NONPAGED = true };
-    pub const REPLACE_PLACEHOLDER = MEM{ .DECOMMIT = true };
-    pub const DOS_LIM = MEM{ .DECOMMIT = true };
-    pub const RESERVE_PLACEHOLDER = MEM{ .MAPPED = true };
-    pub const DIFFERENT_IMAGE_BASE_OK = MEM{ .ROTATE = true };
-    pub const RESET_UNDO = MEM{ .NEW_IMAGE = true };
+        pub const RECALL_ON_OPEN_MASK = 0x40000;
+        pub const RECALL_ON_OPEN = ATTRIBUTE{ .EA = true };
+        pub const OPEN_NO_RECALL = ATTRIBUTE{ .UNPINNED = true };
+        pub const STRICTLY_SEQUENTIAL = ATTRIBUTE{ .NO_BUFFERING = true };
+    };
+
+    pub const ATTRIBUTE_DATA = extern struct {
+        file_attributes: ATTRIBUTE,
+        creation_time: FILETIME,
+        last_access_time: FILETIME,
+        last_write_time: FILETIME,
+        file_size_high: DWORD,
+        file_size_low: DWORD,
+    };
+
+    pub const SHARE = packed struct(DWORD) {
+        READ: bool = false,
+        WRITE: bool = false,
+        DELETE: bool = false,
+        __reserved__: @Int(.unsigned, @bitSizeOf(DWORD) - 3) = 0,
+    };
+
+    pub const MODE = packed struct(ULONG) {
+        DIRECTORY_FILE: bool = false,
+        WRITE_THROUGH: bool = false,
+        SEQUENTIAL_ONLY: bool = false,
+        NO_INTERMEDIATE_BUFFERING: bool = false,
+        SYNCHRONOUS_IO_ALERT: bool = false,
+        SYNCHRONOUS_IO_NONALERT: bool = false,
+        NON_DIRECTORY_FILE: bool = false,
+        CREATE_TREE_CONNECTION: bool = false,
+        COMPLETE_IF_OPLOCKED: bool = false,
+        NO_EA_KNOWLEDGE: bool = false,
+        OPEN_REMOTE_INSTANCE: bool = false,
+        RANDOM_ACCESS: bool = false,
+        DELETE_ON_CLOSE: bool = false,
+        OPEN_BY_FILE_ID: bool = false,
+        OPEN_FOR_BACKUP_INTENT: bool = false,
+        NO_COMPRESSION: bool = false,
+        OPEN_REQUIRING_OPLOCK: bool = false,
+        DISALLOW_EXCLUSIVE: bool = false,
+        SESSION_AWARE: bool = false,
+        __reserved0__: u1 = 0,
+        RESERVE_OPFILTER: bool = false,
+        OPEN_REPARSE_POINT: bool = false,
+        OPEN_NO_RECALL: bool = false,
+        OPEN_FOR_FREE_SPACE_QUERY: bool = false,
+        __reserved1__: u8 = 0,
+    };
+
+    pub const Disposition = enum(ULONG) {
+        CREATE_ALWAYS = 2,
+        CREATE_NEW = 1,
+        OPEN_ALWAYS = 4,
+        OPEN_EXISTING = 3,
+        TRUNCATE_EXISTING = 5,
+    };
 };
 
-pub const RECT = extern struct {
-    left: LONG = 0,
-    top: LONG = 0,
-    right: LONG = 0,
-    bottom: LONG = 0,
+pub const OBJECT = struct {
+    pub const ATTRIBUTES = extern struct {
+        length: ULONG = @sizeOf(@This()),
+        root_directory: ?HANDLE,
+        object_name: *const NT.UNICODE_STRING,
+        attributes: FLAGS,
+        security_descriptor: ?*anyopaque,
+        security_quality_of_service: ?*anyopaque,
+
+        pub const FLAGS = packed struct(ULONG) {
+            __reserved0__: u1 = 0,
+            INHERIT: bool = false,
+            __reserved1__: u2 = 0,
+            PERMANENT: bool = false,
+            EXCLUSIVE: bool = false,
+            CASE_INSENSITIVE: bool = false,
+            OPENIF: bool = false,
+            OPENLINK: bool = false,
+            KERNEL_HANDLE: bool = false,
+            FORCE_ACCESS_CHECK: bool = false,
+            IGNORE_IMPERSONATED_DEVICEMAP: bool = false,
+            DONT_REPARSE: bool = false,
+            __reserved2__: u19 = 0,
+        };
+    };
 };
 
-pub const POINT = extern struct {
-    x: LONG = 0,
-    y: LONG = 0,
+pub const WND = struct {
+    pub const PROC = *const fn (HWND, WM, WPARAM, LPARAM) callconv(.winapi) LRESULT;
+
+    pub const HWND_BOTTOM: ?HWND = @ptrFromInt(1);
+    pub const HWND_NOTOPMOST: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
+    pub const HWND_TOP: ?HWND = @ptrFromInt(0);
+    pub const HWND_TOPMOST: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+
+    pub const CS = packed struct(UINT) {
+        VREDRAW: bool = false,
+        HREDRAW: bool = false,
+        __reserved0__: u1 = 0,
+        DBLCLKS: bool = false,
+        __reserved1__: u1 = 0,
+        OWNDC: bool = false,
+        CLASSDC: bool = false,
+        PARENTDC: bool = false,
+        __reserved2__: u1 = 0,
+        NOCLOSE: bool = false,
+        __reserved3__: u1 = 0,
+        SAVEBITS: bool = false,
+        BYTEALIGNCLIENT: bool = false,
+        BYTEALIGNWINDOW: bool = false,
+        GLOBALCLASS: bool = false,
+        __reserved4__: u2 = 0,
+        DROPSHADOW: u1 = 0,
+        __reserved5__: u14 = 0,
+    };
+
+    pub const CLASS = struct {
+        pub const A = extern struct {
+            style: CS = .{},
+            lpfnWndProc: ?PROC = null,
+            cbClsExtra: c_int = 0,
+            cbWndExtra: c_int = 0,
+            hInstance: ?HINSTANCE = null,
+            hIcon: ?HICON = null,
+            hCursor: ?HCURSOR = null,
+            hbrBackground: ?HBRUSH = null,
+            lpszMenuName: ?LPCSTR = null,
+            lpszClassName: ?LPCSTR = null,
+        };
+    };
+
+    pub const WS = packed struct(ULONG) {
+        __reserved__: u16 = 0,
+        TABSTOP: bool = false,
+        GROUP: bool = false,
+        THICKFRAME: bool = false,
+        SYSMENU: bool = false,
+        HSCROLL: bool = false,
+        VSCROLL: bool = false,
+        DLGFRAME: bool = false,
+        BORDER: bool = false,
+        MAXIMIZE: bool = false,
+        CLIPCHILDREN: bool = false,
+        CLIPSIBLINGS: bool = false,
+        DISABLED: bool = false,
+        VISIBLE: bool = false,
+        MINIMIZE: bool = false,
+        CHILD: bool = false,
+        POPUP: bool = false,
+
+        pub const OVERLAPPED = WS{};
+        pub const TILED = WS{};
+        pub const OVERLAPPEDWINDOW = WS{ .BORDER = true, .DLGFRAME = true, .SYSMENU = true, .THICKFRAME = true, .GROUP = true, .TABSTOP = true };
+        pub const POPUPWINDOW = WS{ .POPUP = true, .BORDER = true, .SYSMENU = true };
+        pub const CHILD_WINDOW = WS{ .CHILD = true };
+        pub const ICONIC = WS{ .MINIMIZE = true };
+        pub const MINIMIZEBOX = WS{ .GROUP = true };
+        pub const MAXIMIZEBOX = WS{ .TABSTOP = true };
+        pub const SIZEBOX = WS{ .THICKFRAME = true };
+        pub const CAPTION = WS{ .BORDER = true, .DLGFRAME = true };
+    };
+
+    pub const WS_EX = packed struct(ULONG) {
+        DLGMODALFRAME: bool = false,
+        __reserved0__: u1 = 0,
+        NOPARENTNOTIFY: bool = false,
+        TOPMOST: bool = false,
+        ACCEPTFILES: bool = false,
+        TRANSPARENT: bool = false,
+        MDICHILD: bool = false,
+        TOOLWINDOW: bool = false,
+        WINDOWEDGE: bool = false,
+        CLIENTEDGE: bool = false,
+        CONTEXTHELP: bool = false,
+        __reserved1__: u1 = 0,
+        RIGHT: bool = false,
+        RTLREADING: bool = false,
+        LEFTSCROLLBAR: bool = false,
+        __reserved2__: u1 = 0,
+        CONTROLPARENT: bool = false,
+        STATICEDGE: bool = false,
+        APPWINDOW: bool = false,
+        LAYERED: bool = false,
+        NOINHERITLAYOUT: bool = false,
+        NOREDIRECTIONBITMAP: bool = false,
+        LAYOUTRTL: bool = false,
+        __reserved3: u2 = 0,
+        COMPOSITED: bool = false,
+        __reserved4: u1 = 0,
+        NOACTIVATE: bool = false,
+        __reserve5: u4 = 0,
+
+        pub const LEFT = WS_EX{};
+        pub const LTRREADING = WS_EX{};
+        pub const RIGHTSCROLLBAR = WS_EX{};
+        pub const OVERLAPPEDWINDOW = WS_EX{ .WINDOWEDGE = true, .CLIENTEDGE = true };
+        pub const PALETTEWINDOW = WS_EX{ .WINDOWEDGE = true, .TOOLWINDOW = true, .TOPMOST = true };
+    };
+
+    pub const CW = struct {
+        pub const USEDEFAULT: c_int = @bitCast(@as(c_uint, 0x80000000));
+    };
+
+    pub const MSG = extern struct {
+        hwnd: ?HWND = null,
+        message: WM = .NULL,
+        wParam: WPARAM = 0,
+        lParam: LPARAM = 0,
+        time: DWORD = 0,
+        pt: POINT = .{ .x = 0, .y = 0 },
+        lPrivate: DWORD = 0,
+    };
+
+    pub const WM = enum(c_uint) {
+        NULL = 0x0000,
+        CREATE = 0x0001,
+        DESTROY = 0x0002,
+        MOVE = 0x0003,
+        SIZE = 0x0005,
+        ACTIVATE = 0x0006,
+        SETFOCUS = 0x0007,
+        KILLFOCUS = 0x0008,
+        ENABLE = 0x000A,
+        SETREDRAW = 0x000B,
+        SETTEXT = 0x000C,
+        GETTEXT = 0x000D,
+        GETTEXTLENGTH = 0x000E,
+        PAINT = 0x000F,
+        CLOSE = 0x0010,
+        QUERYENDSESSION = 0x0011,
+        QUERYOPEN = 0x0013,
+        ENDSESSION = 0x0016,
+        QUIT = 0x0012,
+        ERASEBKGND = 0x0014,
+        SYSCOLORCHANGE = 0x0015,
+        SHOWWINDOW = 0x0018,
+        WININICHANGE = 0x001A,
+        DEVMODECHANGE = 0x001B,
+        ACTIVATEAPP = 0x001C,
+        FONTCHANGE = 0x001D,
+        TIMECHANGE = 0x001E,
+        CANCELMODE = 0x001F,
+        SETCURSOR = 0x0020,
+        MOUSEACTIVATE = 0x0021,
+        CHILDACTIVATE = 0x0022,
+        QUEUESYNC = 0x0023,
+        GETMINMAXINFO = 0x0024,
+        PAINTICON = 0x0026,
+        ICONERASEBKGND = 0x0027,
+        NEXTDLGCTL = 0x0028,
+        SPOOLERSTATUS = 0x002A,
+        DRAWITEM = 0x002B,
+        MEASUREITEM = 0x002C,
+        DELETEITEM = 0x002D,
+        VKEYTOITEM = 0x002E,
+        CHARTOITEM = 0x002F,
+        SETFONT = 0x0030,
+        GETFONT = 0x0031,
+        SETHOTKEY = 0x0032,
+        GETHOTKEY = 0x0033,
+        QUERYDRAGICON = 0x0037,
+        COMPAREITEM = 0x0039,
+        GETOBJECT = 0x003D,
+        COMPACTING = 0x0041,
+        COMMNOTIFY = 0x0044,
+        WINDOWPOSCHANGING = 0x0046,
+        WINDOWPOSCHANGED = 0x0047,
+        POWER = 0x0048,
+        COPYDATA = 0x004A,
+        CANCELJOURNAL = 0x004B,
+        NOTIFY = 0x004E,
+        INPUTLANGCHANGEREQUEST = 0x0050,
+        INPUTLANGCHANGE = 0x0051,
+        TCARD = 0x0052,
+        HELP = 0x0053,
+        USERCHANGED = 0x0054,
+        NOTIFYFORMAT = 0x0055,
+        CONTEXTMENU = 0x007B,
+        STYLECHANGING = 0x007C,
+        STYLECHANGED = 0x007D,
+        DISPLAYCHANGE = 0x007E,
+        GETICON = 0x007F,
+        SETICON = 0x0080,
+        NCCREATE = 0x0081,
+        NCDESTROY = 0x0082,
+        NCCALCSIZE = 0x0083,
+        NCHITTEST = 0x0084,
+        NCPAINT = 0x0085,
+        NCACTIVATE = 0x0086,
+        GETDLGCODE = 0x0087,
+        SYNCPAINT = 0x0088,
+        NCMOUSEMOVE = 0x00A0,
+        NCLBUTTONDOWN = 0x00A1,
+        NCLBUTTONUP = 0x00A2,
+        NCLBUTTONDBLCLK = 0x00A3,
+        NCRBUTTONDOWN = 0x00A4,
+        NCRBUTTONUP = 0x00A5,
+        NCRBUTTONDBLCLK = 0x00A6,
+        NCMBUTTONDOWN = 0x00A7,
+        NCMBUTTONUP = 0x00A8,
+        NCMBUTTONDBLCLK = 0x00A9,
+        NCXBUTTONDOWN = 0x00AB,
+        NCXBUTTONUP = 0x00AC,
+        NCXBUTTONDBLCLK = 0x00AD,
+        INPUT = 0x00FF,
+        KEYDOWN = 0x0100,
+        KEYUP = 0x0101,
+        CHAR = 0x0102,
+        DEADCHAR = 0x0103,
+        SYSKEYDOWN = 0x0104,
+        SYSKEYUP = 0x0105,
+        SYSCHAR = 0x0106,
+        SYSDEADCHAR = 0x0107,
+        UNICHAR = 0x0109,
+        IME_STARTCOMPOSITION = 0x010D,
+        IME_ENDCOMPOSITION = 0x010E,
+        IME_COMPOSITION = 0x010F,
+        INITDIALOG = 0x0110,
+        COMMAND = 0x0111,
+        SYSCOMMAND = 0x0112,
+        TIMER = 0x0113,
+        HSCROLL = 0x0114,
+        VSCROLL = 0x0115,
+        INITMENU = 0x0116,
+        INITMENUPOPUP = 0x0117,
+        MENUSELECT = 0x011F,
+        MENUCHAR = 0x0120,
+        ENTERIDLE = 0x0121,
+        MENURBUTTONUP = 0x0122,
+        MENUDRAG = 0x0123,
+        MENUGETOBJECT = 0x0124,
+        UNINITMENUPOPUP = 0x0125,
+        MENUCOMMAND = 0x0126,
+        CHANGEUISTATE = 0x0127,
+        UPDATEUISTATE = 0x0128,
+        QUERYUISTATE = 0x0129,
+        CTLCOLORMSGBOX = 0x0132,
+        CTLCOLOREDIT = 0x0133,
+        CTLCOLORLISTBOX = 0x0134,
+        CTLCOLORBTN = 0x0135,
+        CTLCOLORDLG = 0x0136,
+        CTLCOLORSCROLLBAR = 0x0137,
+        CTLCOLORSTATIC = 0x0138,
+        MOUSEMOVE = 0x0200,
+        LBUTTONDOWN = 0x0201,
+        LBUTTONUP = 0x0202,
+        LBUTTONDBLCLK = 0x0203,
+        RBUTTONDOWN = 0x0204,
+        RBUTTONUP = 0x0205,
+        RBUTTONDBLCLK = 0x0206,
+        MBUTTONDOWN = 0x0207,
+        MBUTTONUP = 0x0208,
+        MBUTTONDBLCLK = 0x0209,
+        MOUSEWHEEL = 0x020A,
+        XBUTTONDOWN = 0x020B,
+        XBUTTONUP = 0x020C,
+        XBUTTONDBLCLK = 0x020D,
+        PARENTNOTIFY = 0x0210,
+        ENTERMENULOOP = 0x0211,
+        EXITMENULOOP = 0x0212,
+        NEXTMENU = 0x0213,
+        SIZING = 0x0214,
+        CAPTURECHANGED = 0x0215,
+        MOVING = 0x0216,
+        POWERBROADCAST = 0x0218,
+        DEVICECHANGE = 0x0219,
+        MDICREATE = 0x0220,
+        MDIDESTROY = 0x0221,
+        MDIACTIVATE = 0x0222,
+        MDIRESTORE = 0x0223,
+        MDINEXT = 0x0224,
+        MDIMAXIMIZE = 0x0225,
+        MDITILE = 0x0226,
+        MDICASCADE = 0x0227,
+        MDIICONARRANGE = 0x0228,
+        MDIGETACTIVE = 0x0229,
+        MDISETMENU = 0x0230,
+        ENTERSIZEMOVE = 0x0231,
+        EXITSIZEMOVE = 0x0232,
+        DROPFILES = 0x0233,
+        MDIREFRESHMENU = 0x0234,
+        IME_SETCONTEXT = 0x0281,
+        IME_NOTIFY = 0x0282,
+        IME_CONTROL = 0x0283,
+        IME_COMPOSITIONFULL = 0x0284,
+        IME_SELECT = 0x0285,
+        IME_CHAR = 0x0286,
+        IME_REQUEST = 0x0288,
+        IME_KEYDOWN = 0x0290,
+        IME_KEYUP = 0x0291,
+        MOUSEHOVER = 0x02A1,
+        MOUSELEAVE = 0x02A3,
+        NCMOUSEHOVER = 0x02A0,
+        NCMOUSELEAVE = 0x02A2,
+        WTSSESSION_CHANGE = 0x02B1,
+        TABLET_FIRST = 0x02C0,
+        TABLET_LAST = 0x02DF,
+        CUT = 0x0300,
+        COPY = 0x0301,
+        PASTE = 0x0302,
+        CLEAR = 0x0303,
+        UNDO = 0x0304,
+        RENDERFORMAT = 0x0305,
+        RENDERALLFORMATS = 0x0306,
+        DESTROYCLIPBOARD = 0x0307,
+        DRAWCLIPBOARD = 0x0308,
+        PAINTCLIPBOARD = 0x0309,
+        VSCROLLCLIPBOARD = 0x030A,
+        SIZECLIPBOARD = 0x030B,
+        ASKCBFORMATNAME = 0x030C,
+        CHANGECBCHAIN = 0x030D,
+        HSCROLLCLIPBOARD = 0x030E,
+        QUERYNEWPALETTE = 0x030F,
+        PALETTEISCHANGING = 0x0310,
+        PALETTECHANGED = 0x0311,
+        HOTKEY = 0x0312,
+        PRINT = 0x0317,
+        PRINTCLIENT = 0x0318,
+        APPCOMMAND = 0x0319,
+        THEMECHANGED = 0x031A,
+        HANDHELDFIRST = 0x0358,
+        HANDHELDLAST = 0x035F,
+        AFXFIRST = 0x0360,
+        AFXLAST = 0x037F,
+        PENWINFIRST = 0x0380,
+        PENWINLAST = 0x038F,
+        USER = 0x0400,
+        APP = 0x8000,
+
+        _,
+
+        pub const SETTINGCHANGE = .WININICHANGE;
+        pub const KEYFIRST = .KEYDOWN;
+        pub const KEYLAST = .UNICHAR;
+        pub const IME_KEYLAST = .IME_COMPOSITION;
+        pub const MOUSEFIRST = .MOUSEMOVE;
+        pub const MOUSELAST_95 = .MBUTTONDBLCLK;
+        pub const MOUSELAST_NT4_98 = .MOUSEWHEEL;
+        pub const MOUSELAST_2K_XP_2k3 = .XBUTTONDBLCLK;
+    };
+
+    pub const PM = packed struct(c_int) {
+        REMOVE: bool = false,
+        NOYIELD: bool = false,
+        __reserved__: @Int(.unsigned, @bitSizeOf(c_int) - 2) = 0,
+
+        pub const NOREMOVE = PM{};
+        pub const QS_INPUT: PM = @bitCast(@as(c_int, @bitCast(QS.INPUT)) << 16);
+        pub const QS_POSTMESSAGE: PM = @bitCast(@as(c_int, @bitCast(QS{ .POSTMESSAGE = true, .HOTKEY = true, .TIMER = true })) << 16);
+        pub const QS_PAINT: PM = @bitCast(@as(c_int, @bitCast(QS{ .PAINT = true })) << 16);
+        pub const QS_SENDMESSAGE: PM = @bitCast(@as(c_int, @bitCast(QS{ .SENDMESSAGE = true })) << 16);
+    };
+
+    pub const HT = enum(c_int) {
+        BORDER = 18,
+        BOTTOM = 15,
+        BOTTOMLEFT = 16,
+        BOTTOMRIGHT = 17,
+        CAPTION = 2,
+        CLIENT = 1,
+        CLOSE = 20,
+        ERROR = -2,
+        GROWBOX = 4,
+        HELP = 21,
+        HSCROLL = 6,
+        LEFT = 10,
+        MENU = 5,
+        MAXBUTTON = 9,
+        MINBUTTON = 8,
+        NOWHERE = 0,
+        RIGHT = 11,
+        SYSMENU = 3,
+        TOP = 12,
+        TOPLEFT = 13,
+        TOPRIGHT = 14,
+        TRANSPARENT = -1,
+        VSCROLL = 7,
+        _,
+
+        pub const REDUCE = .MINBUTTON;
+        pub const SIZE = .GROWBOX;
+        pub const ZOOM = .MAXBUTTON;
+    };
+
+    pub const SWP = packed struct(UINT) {
+        NOSIZE: bool = false,
+        NOMOVE: bool = false,
+        NOZORDER: bool = false,
+        NOREDRAW: bool = false,
+        NOACTIVATE: bool = false,
+        FRAMECHANGED: bool = false,
+        SHOWWINDOW: bool = false,
+        HIDEWINDOW: bool = false,
+        NOCOPYBITS: bool = false,
+        NOOWNERZORDER: bool = false,
+        NOSENDCHANGING: bool = false,
+        __reserved0__: u2 = 0,
+        DEFERERASE: bool = false,
+        ASYNCWINDOWPOS: bool = false,
+        __reserved1__: @Int(.unsigned, @bitSizeOf(UINT) - 15) = 0,
+
+        pub const DRAWFRAME = SWP{ .FRAMECHANGED = true };
+        pub const NOREPOSITION = SWP{ .NOOWNERZORDER = true };
+    };
+
+    pub const WL = enum(c_int) {
+        USERDATA = -21,
+        EXSTYLE = -20,
+        STYLE = -16,
+        ID = -12,
+        HWNDPARENT = -8,
+        HINSTANCE = -6,
+        WNDPROC = -4,
+        DIALOG_MSGRESULT = 0,
+        DIALOG_DLGPROC = 4,
+        DIALOG_USER = 8,
+    };
 };
 
-pub const GUID = extern struct {
-    data1: u32 = 0,
-    data2: u16 = 0,
-    data3: u16 = 0,
-    data4: [8]u8 = @splat(0),
+pub const MONITORINFO = extern struct {
+    size: DWORD = @sizeOf(@This()),
+    monitor: RECT = .{},
+    work: RECT = .{},
+    flags: DWORD = 0,
 };
 
-pub const WNDCLASSA = extern struct {
-    style: c_uint = 0,
-    lpfnWndProc: ?WNDPROC = null,
-    cbClsExtra: c_int = 0,
-    cbWndExtra: c_int = 0,
-    hInstance: ?HINSTANCE = null,
-    hIcon: ?HICON = null,
-    hCursor: ?HCURSOR = null,
-    hbrBackground: ?HBRUSH = null,
-    lpszMenuName: ?LPCSTR = null,
-    lpszClassName: ?LPCSTR = null,
+pub const WINDOWPLACEMENT = extern struct {
+    length: UINT = @sizeOf(@This()),
+    flags: UINT = 0,
+    chow_cmd: UINT = 0,
+    min_position: POINT = .{},
+    max_position: POINT = .{},
+    normal_position: RECT = .{},
+    device: RECT = .{},
 };
 
-pub const WNDCLASSW = extern struct {
-    style: c_uint = 0,
-    lpfnWndProc: ?WNDPROC = null,
-    cbClsExtra: c_int = 0,
-    cbWndExtra: c_int = 0,
-    hInstance: ?HINSTANCE = null,
-    hIcon: ?HICON = null,
-    hCursor: ?HCURSOR = null,
-    hbrBackground: ?HBRUSH = null,
-    lpszMenuName: ?LPCWSTR = null,
-    lpszClassName: ?LPCWSTR = null,
+pub const IDC = enum(c_int) {
+    ARROW = 32512,
+    IBEAM = 32513,
+    WAIT = 32514,
+    CROSS = 32515,
+    UPARROW = 32516,
+    SIZENWSE = 32642,
+    SIZENESW = 32643,
+    SIZEWE = 32644,
+    SIZENS = 32645,
+    SIZEALL = 32646,
+    NO = 32648,
+    HAND = 32649,
+    APPSTARTING = 32650,
+    HELP = 32651,
+    PIN = 32671,
+    PERSON = 32672,
 };
 
-pub const STARTUPINFOA = extern struct {
-    cb: DWORD = 0,
-    lpReserved: ?LPSTR = null,
-    lpDesktop: ?LPSTR = null,
-    lpTitle: ?LPSTR = null,
-    dwX: DWORD = 0,
-    dwY: DWORD = 0,
-    dwXSize: DWORD = 0,
-    dwYSize: DWORD = 0,
-    dwXCountChars: DWORD = 0,
-    dwYCountChars: DWORD = 0,
-    dwFillAttribute: DWORD = 0,
-    dwFlags: DWORD = 0,
-    wShowWindow: WORD = 0,
-    cbReserved2: WORD = 0,
-    lpReserved2: ?LPBYTE = null,
-    hStdInput: ?HANDLE = null,
-    hStdOutput: ?HANDLE = null,
-    hStdError: ?HANDLE = null,
+pub const BITMAPINFOHEADER = extern struct {
+    biSize: DWORD = @sizeOf(BITMAPINFOHEADER),
+    biWidth: LONG,
+    biHeight: LONG,
+    biPlanes: WORD,
+    biBitCount: WORD,
+    biCompression: COMPRESSION,
+    biSizeImage: DWORD = 0,
+    biXPelsPerMeter: LONG = 0,
+    biYPelsPerMeter: LONG = 0,
+    biClrUsed: DWORD = 0,
+    biClrImportant: DWORD = 0,
+
+    pub const COMPRESSION = enum(DWORD) {
+        RGB = 0,
+        RLE8 = 1,
+        RLE4 = 2,
+        BITFIELDS = 3,
+        JPEG = 4,
+        PNG = 5,
+
+        _,
+    };
 };
 
-pub const STARTUPINFOW = extern struct {
-    cb: DWORD = 0,
-    lpReserved: LPWSTR = null,
-    lpDesktop: LPWSTR = null,
-    lpTitle: LPWSTR = null,
-    dwX: DWORD = 0,
-    dwY: DWORD = 0,
-    dwXSize: DWORD = 0,
-    dwYSize: DWORD = 0,
-    dwXCountChars: DWORD = 0,
-    dwYCountChars: DWORD = 0,
-    dwFillAttribute: DWORD = 0,
-    dwFlags: DWORD = 0,
-    wShowWindow: WORD = 0,
-    cbReserved2: WORD = 0,
-    lpReserved2: LPBYTE = null,
-    hStdInput: HANDLE = null,
-    hStdOutput: HANDLE = null,
-    hStdError: HANDLE = null,
+pub const BITMAPINFO = extern struct {
+    bmiHeader: BITMAPINFOHEADER,
+    bmiColors: [1]RGBQUAD = .{.{}},
 };
 
-pub const MSG = extern struct {
-    hwnd: ?HWND = null,
-    message: c_uint = 0,
-    wParam: WPARAM = 0,
-    lParam: LPARAM = 0,
-    time: DWORD = 0,
-    pt: POINT = .{ .x = 0, .y = 0 },
-    lPrivate: DWORD = 0,
+pub const RGBQUAD = extern struct {
+    rgbBlue: BYTE = 0,
+    rgbGreen: BYTE = 0,
+    rgbRed: BYTE = 0,
+    rgbReserved: BYTE = 0,
+};
+
+pub const ROP = packed struct(DWORD) {
+    op: OP,
+    __reserved__: u1 = 0,
+    CAPTUREBLT: bool = false,
+    NOMIRRORBITMAP: bool = false,
+
+    pub const OP = enum(u29) {
+        BLACKNESS = 0x00000042,
+        NOTSRCERASE = 0x001100A6,
+        NOTSRCCOPY = 0x00330008,
+        SRCERASE = 0x00440328,
+        DSTINVERT = 0x00550009,
+        PATINVERT = 0x005A0049,
+        SRCINVERT = 0x00660046,
+        SRCAND = 0x008800C6,
+        MERGEPAINT = 0x00BB0226,
+        MERGECOPY = 0x00C000CA,
+        SRCCOPY = 0x00CC0020,
+        SRCPAINT = 0x00EE0086,
+        PATCOPY = 0x00F00021,
+        PATPAINT = 0x00FB0A09,
+        WHITENESS = 0x00FF0062,
+
+        _,
+    };
+};
+
+pub const DIB_USAGE = enum(c_uint) {
+    RGB_COLORS = 0,
+    PAL_COLORS = 1,
 };
 
 pub const PAINTSTRUCT = extern struct {
@@ -1507,30 +1179,368 @@ pub const PAINTSTRUCT = extern struct {
     rgbReserved: [32]BYTE,
 };
 
-pub const BITMAPINFOHEADER = extern struct {
-    biSize: DWORD = @sizeOf(BITMAPINFOHEADER),
-    biWidth: LONG = 0,
-    biHeight: LONG = 0,
-    biPlanes: WORD = 0,
-    biBitCount: WORD = 0,
-    biCompression: DWORD = 0,
-    biSizeImage: DWORD = 0,
-    biXPelsPerMeter: LONG = 0,
-    biYPelsPerMeter: LONG = 0,
-    biClrUsed: DWORD = 0,
-    biClrImportant: DWORD = 0,
+pub const MEM = struct {
+    comptime {
+        assert(@bitSizeOf(ALL) == @bitSizeOf(ALLOC));
+        assert(@bitSizeOf(ALL) == @bitSizeOf(FREE));
+    }
+
+    pub const ALL = packed struct(ULONG) {
+        EXTENDED_PARAMETER: packed struct(u9) {
+            GRAPHICS: bool = false,
+            NONPAGED: bool = false,
+            ZERO_PAGES_OPTIONAL: bool = false,
+            NONPAGED_LARGE: bool = false,
+            NONPAGED_HUGE: bool = false,
+            SOFT_FAULT_PAGES: bool = false,
+            EC_CODE: bool = false,
+            SECURE_PAGES: bool = false,
+            TAGGED: bool = false,
+        } = .{},
+
+        __reserved0__: u3 = 0,
+        COMMIT: bool = false,
+        RESERVE: bool = false,
+        DECOMMIT: bool = false,
+        RELEASE: bool = false,
+        FREE: bool = false,
+        PRIVATE: bool = false,
+        MAPPED: bool = false,
+        RESET: bool = false,
+        TOP_DOWN: bool = false,
+        WRITE_WATCH: bool = false,
+        PHYSICAL: bool = false,
+        ROTATE: bool = false,
+        RESET_UNDO: bool = false,
+        __reserved1__: u4 = 0,
+        LARGE_PAGES: bool = false,
+        __reserved2__: u1 = 0,
+        @"4MB_PAGES": bool = false,
+    };
+
+    pub const ALLOC = packed struct(ULONG) {
+        __reserved0__: u12 = 0,
+        COMMIT: bool = false,
+        RESERVE: bool = false,
+        __reserved1__: u5 = 0,
+        RESET: bool = false,
+        TOP_DOWN: bool = false,
+        WRITE_WATCH: bool = false,
+        PHYSICAL: bool = false,
+        __reserved2__: u1 = 0,
+        RESET_UNDO: bool = false,
+        __reserved3__: u4 = 0,
+        LARGE_PAGES: bool = false,
+        __reserved4__: u2 = 0,
+    };
+
+    pub const FREE = packed struct(ULONG) {
+        COALESCE_PLACEHOLDERS: bool = false,
+        PRESERVE_PLACEHOLDER: bool = false,
+        __reserved0__: u12 = 0,
+        DECOMMIT: bool = false,
+        RELEASE: bool = false,
+        __reserved1__: u16 = 0,
+    };
+
+    pub const UNMAP_WITH_TRANSIENT_BOOST = ALL{ .EXTENDED_PARAMETER = .{ .GRAPHICS = true } };
+    pub const COALESCE_PLACEHOLDERS = ALL{ .EXTENDED_PARAMETER = .{ .GRAPHICS = true } };
+    pub const PRESERVE_PLACEHOLDER = ALL{ .EXTENDED_PARAMETER = .{ .GRAPHICS = true } };
+    pub const REPLACE_PLACEHOLDER = ALL{ .DECOMMIT = true };
+    pub const RESERVE_PLACEHOLDER = ALL{ .MAPPED = true };
+    pub const DIFFERENT_IMAGE_BASE_OK = ALL{ .ROTATE = true };
+    pub const IMAGE = ALL{ .RESET_UNDO = true };
 };
 
-pub const RGBQUAD = extern struct {
-    rgbBlue: BYTE = 0,
-    rgbGreen: BYTE = 0,
-    rgbRed: BYTE = 0,
-    rgbReserved: BYTE = 0,
+pub const PAGE = packed struct(ULONG) {
+    NOACCESS: bool = false,
+    READONLY: bool = false,
+    READWRITE: bool = false,
+    WRITECOPY: bool = false,
+    EXECUTE: bool = false,
+    EXECUTE_READ: bool = false,
+    EXECUTE_READWRITE: bool = false,
+    EXECUTE_WRITECOPY: bool = false,
+    GUARD: bool = false,
+    NOCACHE: bool = false,
+    WRITECOMBINE: bool = false,
+    __reserved0__: u19 = 0,
+    TARGETS_INVALID: bool = false,
+    __reserved1__: u1 = 0,
+
+    pub const TARGETS_NO_UPDATE = PAGE{ .TARGETS_INVALID = true };
 };
 
-pub const BITMAPINFO = extern struct {
-    bmiHeader: BITMAPINFOHEADER = .{},
-    bmiColors: [1]RGBQUAD = std.mem.zeroes([1]RGBQUAD),
+pub const FILE_MAP = packed struct(ULONG) {
+    COPY: bool = false,
+    WRITE: bool = false,
+    READ: bool = false,
+    __reserved0__: u2 = 0,
+    EXECUTE: bool = false,
+    __reserved1__: u23 = 0,
+    LARGE_PAGES: bool = false,
+    TARGETS_INVALID: bool = false,
+    RESERVE: bool = false,
+
+    pub const ALL_ACCESS: FILE_MAP = @bitCast(@as(ULONG, 0xF001F));
+};
+
+pub const VK = enum(c_int) {
+    LBUTTON = 0x01,
+    RBUTTON = 0x02,
+    CANCEL = 0x03,
+    MBUTTON = 0x04,
+    XBUTTON1 = 0x05,
+    XBUTTON2 = 0x06,
+    BACK = 0x08,
+    TAB = 0x09,
+    CLEAR = 0x0C,
+    RETURN = 0x0D,
+    SHIFT = 0x10,
+    CONTROL = 0x11,
+    MENU = 0x12,
+    PAUSE = 0x13,
+    CAPITAL = 0x14,
+    KANA = 0x15,
+    IME_ON = 0x16,
+    JUNJA = 0x17,
+    FINAL = 0x18,
+    HANJA = 0x19,
+    IME_OFF = 0x1A,
+    ESCAPE = 0x1B,
+    CONVERT = 0x1C,
+    NONCONVERT = 0x1D,
+    ACCEPT = 0x1E,
+    MODECHANGE = 0x1F,
+    SPACE = 0x20,
+    PRIOR = 0x21,
+    NEXT = 0x22,
+    END = 0x23,
+    HOME = 0x24,
+    LEFT = 0x25,
+    UP = 0x26,
+    RIGHT = 0x27,
+    DOWN = 0x28,
+    SELECT = 0x29,
+    PRINT = 0x2A,
+    EXECUTE = 0x2B,
+    SNAPSHOT = 0x2C,
+    INSERT = 0x2D,
+    DELETE = 0x2E,
+    HELP = 0x2F,
+    @"0" = '0',
+    @"1" = '1',
+    @"2" = '2',
+    @"3" = '3',
+    @"4" = '4',
+    @"5" = '5',
+    @"6" = '6',
+    @"7" = '7',
+    @"8" = '8',
+    @"9" = '9',
+    A = 0x41,
+    B = 0x42,
+    C = 0x43,
+    D = 0x44,
+    E = 0x45,
+    F = 0x46,
+    G = 0x47,
+    H = 0x48,
+    I = 0x49,
+    J = 0x4A,
+    K = 0x4B,
+    L = 0x4C,
+    M = 0x4D,
+    N = 0x4E,
+    O = 0x4F,
+    P = 0x50,
+    Q = 0x51,
+    R = 0x52,
+    S = 0x53,
+    T = 0x54,
+    U = 0x55,
+    V = 0x56,
+    W = 0x57,
+    X = 0x58,
+    Y = 0x59,
+    Z = 0x5A,
+    LWIN = 0x5B,
+    RWIN = 0x5C,
+    APPS = 0x5D,
+    SLEEP = 0x5F,
+    NUMPAD0 = 0x60,
+    NUMPAD1 = 0x61,
+    NUMPAD2 = 0x62,
+    NUMPAD3 = 0x63,
+    NUMPAD4 = 0x64,
+    NUMPAD5 = 0x65,
+    NUMPAD6 = 0x66,
+    NUMPAD7 = 0x67,
+    NUMPAD8 = 0x68,
+    NUMPAD9 = 0x69,
+    MULTIPLY = 0x6A,
+    ADD = 0x6B,
+    SEPARATOR = 0x6C,
+    SUBTRACT = 0x6D,
+    DECIMAL = 0x6E,
+    DIVIDE = 0x6F,
+    F1 = 0x70,
+    F2 = 0x71,
+    F3 = 0x72,
+    F4 = 0x73,
+    F5 = 0x74,
+    F6 = 0x75,
+    F7 = 0x76,
+    F8 = 0x77,
+    F9 = 0x78,
+    F10 = 0x79,
+    F11 = 0x7A,
+    F12 = 0x7B,
+    F13 = 0x7C,
+    F14 = 0x7D,
+    F15 = 0x7E,
+    F16 = 0x7F,
+    F17 = 0x80,
+    F18 = 0x81,
+    F19 = 0x82,
+    F20 = 0x83,
+    F21 = 0x84,
+    F22 = 0x85,
+    F23 = 0x86,
+    F24 = 0x87,
+    NUMLOCK = 0x90,
+    SCROLL = 0x91,
+    LSHIFT = 0xA0,
+    RSHIFT = 0xA1,
+    LCONTROL = 0xA2,
+    RCONTROL = 0xA3,
+    LMENU = 0xA4,
+    RMENU = 0xA5,
+    BROWSER_BACK = 0xA6,
+    BROWSER_FORWARD = 0xA7,
+    BROWSER_REFRESH = 0xA8,
+    BROWSER_STOP = 0xA9,
+    BROWSER_SEARCH = 0xAA,
+    BROWSER_FAVORITES = 0xAB,
+    BROWSER_HOME = 0xAC,
+    VOLUME_MUTE = 0xAD,
+    VOLUME_DOWN = 0xAE,
+    VOLUME_UP = 0xAF,
+    MEDIA_NEXT_TRACK = 0xB0,
+    MEDIA_PREV_TRACK = 0xB1,
+    MEDIA_STOP = 0xB2,
+    MEDIA_PLAY_PAUSE = 0xB3,
+    LAUNCH_MAIL = 0xB4,
+    LAUNCH_MEDIA_SELECT = 0xB5,
+    LAUNCH_APP1 = 0xB6,
+    LAUNCH_APP2 = 0xB7,
+    OEM_1 = 0xBA,
+    OEM_PLUS = 0xBB,
+    OEM_COMMA = 0xBC,
+    OEM_MINUS = 0xBD,
+    OEM_PERIOD = 0xBE,
+    OEM_2 = 0xBF,
+    OEM_3 = 0xC0,
+    OEM_4 = 0xDB,
+    OEM_5 = 0xDC,
+    OEM_6 = 0xDD,
+    OEM_7 = 0xDE,
+    OEM_8 = 0xDF,
+    OEM_102 = 0xE2,
+    PROCESSKEY = 0xE5,
+    PACKET = 0xE7,
+    ATTN = 0xF6,
+    CRSEL = 0xF7,
+    EXSEL = 0xF8,
+    EREOF = 0xF9,
+    PLAY = 0xFA,
+    ZOOM = 0xFB,
+    NONAME = 0xFC,
+    PA1 = 0xFD,
+    OEM_CLEAR = 0xFE,
+
+    _,
+
+    pub const HANGUL = .KANA;
+    pub const KANJI = .HANJA;
+};
+
+pub const QS = packed struct(c_uint) {
+    KEY: bool = false,
+    MOUSEMOVE: bool = false,
+    MOUSEBUTTON: bool = false,
+    POSTMESSAGE: bool = false,
+    TIMER: bool = false,
+    PAINT: bool = false,
+    SENDMESSAGE: bool = false,
+    HOTKEY: bool = false,
+    ALLPOSTMESSAGE: bool = false,
+    __reserved0__: u1 = 0,
+    RAWINPUT: bool = false,
+    TOUCH: bool = false,
+    POINTER: bool = false,
+
+    __reserved1__: @Int(.unsigned, @bitSizeOf(c_uint) - 13) = 0,
+
+    pub const MOUSE: QS = .{ .MOUSEMOVE = true, .MOUSEBUTTON = true };
+    pub const INPUT: QS = .{ .MOUSEMOVE = true, .MOUSEBUTTON = true, .KEY = true, .RAWINPUT = true, .TOUCH = true, .POINTER = true };
+    pub const ALLEVENTS = bits.@"or"(QS.INPUT, .{ .POSTMESSAGE = true, .TIMER = true, .PAINT = true, .HOTKEY = true });
+    pub const ALLINPUT = bits.@"or"(QS.INPUT, .{ .POSTMESSAGE = true, .TIMER = true, .PAINT = true, .HOTKEY = true, .SENDMESSAGE = true });
+};
+
+pub const ACCESS_MASK = packed struct(DWORD) {
+    specific: packed union(u16) {
+        FILE: ACCESS_MASK.FILE,
+        // TODO: KEY_*, PROCESS_*, THREAD_*
+    } = .{ .FILE = .{} },
+
+    DELETE: bool = false,
+    READ_CONTROL: bool = false,
+    WRITE_DAC: bool = false,
+    WRITE_OWNER: bool = false,
+    SYNCHRONIZE: bool = false,
+    __reserved0__: u3 = 0,
+
+    SYSTEM_SECURITY: bool = false,
+    MAXIMUM_ALLOWED: bool = false,
+    __reserved1__: u2 = 0,
+    GENERIC_ALL: bool = false,
+    GENERIC_EXECUTE: bool = false,
+    GENERIC_WRITE: bool = false,
+    GENERIC_READ: bool = false,
+
+    pub const FILE = packed struct(u16) {
+        READ_DATA: bool = false,
+        WRITE_DATA: bool = false,
+        APPEND_DATA: bool = false,
+        READ_EA: bool = false,
+        WRITE_EA: bool = false,
+        EXECUTE: bool = false,
+        DELETE_CHILD: bool = false,
+        READ_ATTRIBUTES: bool = false,
+        WRITE_ATTRIBUTES: bool = false,
+        __reserved__: u7 = 0,
+
+        pub const LIST_DIRECTORY = @This(){ .READ_DATA = true };
+        pub const ADD_FILE = @This(){ .WRITE_DATA = true };
+        pub const ADD_SUBDIRECTORY = @This(){ .APPEND_DATA = true };
+        pub const CREATE_PIPE_INSTANCE = @This(){ .APPEND_DATA = true };
+        pub const TRAVERSE = @This(){ .EXECUTE = true };
+    };
+
+    pub const SPECIFIC_RIGHTS_ALL: ACCESS_MASK = @bitCast(@as(DWORD, 0xFFFF));
+
+    pub const STANDARD_RIGHTS_REQUIRED = ACCESS_MASK{ .DELETE = true, .READ_CONTROL = true, .WRITE_DAC = true, .WRITE_OWNER = true };
+    pub const STANDARD_RIGHTS_READ = ACCESS_MASK{ .READ_CONTROL = true };
+    pub const STANDARD_RIGHTS_WRITE = ACCESS_MASK{ .READ_CONTROL = true };
+    pub const STANDARD_RIGHTS_EXECUTE = ACCESS_MASK{ .READ_CONTROL = true };
+    pub const STANDARD_RIGHTS_ALL = ACCESS_MASK{ .DELETE = true, .READ_CONTROL = true, .WRITE_DAC = true, .WRITE_OWNER = true, .SYNCHRONIZE = true };
+};
+
+pub const SECURITY_ATTRIBUTES = extern struct {
+    length: DWORD = @sizeOf(@This()),
+    security_descriptor: LPVOID,
+    inherit_handle: BOOL,
 };
 
 pub const LARGE_INTEGER = extern union {
@@ -1541,10 +1551,33 @@ pub const LARGE_INTEGER = extern union {
     quad_part: u64,
 };
 
-pub const SECURITY_ATTRIBUTES = extern struct {
-    length: DWORD = @sizeOf(@This()),
-    security_descriptor: LPVOID,
-    inherit_handle: BOOL,
+pub const POINT = extern struct {
+    x: LONG = 0,
+    y: LONG = 0,
+};
+
+pub const RECT = extern struct {
+    left: LONG = 0,
+    top: LONG = 0,
+    right: LONG = 0,
+    bottom: LONG = 0,
+};
+
+pub const FILETIME = extern union {
+    u: extern struct {
+        low: DWORD = 0,
+        high: DWORD = 0,
+    },
+
+    // 100ns ticks
+    ticks: u64 align(@alignOf(DWORD)),
+};
+
+pub const GUID = extern struct {
+    data1: u32 = 0,
+    data2: u16 = 0,
+    data3: u16 = 0,
+    data4: [8]u8 = @splat(0),
 };
 
 pub const OVERLAPPED = extern struct {
@@ -1562,72 +1595,87 @@ pub const OVERLAPPED = extern struct {
     event: HANDLE,
 };
 
-pub const FILETIME = extern union {
-    u: extern struct {
-        low: DWORD = 0,
-        high: DWORD = 0,
-    },
+pub const MMRESULT = enum(UINT) {
+    NOERROR = 0,
+    ERROR = 1,
+    BADDEVICEID = 2,
+    NOTENABLED = 3,
+    ALLOCATED = 4,
+    INVALHANDLE = 5,
+    NODRIVER = 6,
+    NOMEM = 7,
+    NOTSUPPORTED = 8,
+    BADERRNUM = 9,
+    INVALFLAG = 10,
+    INVALPARAM = 11,
+    HANDLEBUSY = 12,
+    INVALIDALIAS = 13,
+    BADDB = 14,
+    KEYNOTFOUND = 15,
+    READERROR = 16,
+    WRITEERROR = 17,
+    DELETEERROR = 18,
+    VALNOTFOUND = 19,
+    NODRIVERCB = 20,
+    WAVERR_BADFORMAT = 32,
+    WAVERR_STILLPLAYING = 33,
+    WAVERR_UNPREPARED = 34,
 
-    // 100ns ticks
-    ticks: u64 align(@alignOf(DWORD)),
+    TIMERR_BASE = 96,
+    TIMERR_NOCANDO = 97,
+    TIMERR_STRUCT = 129,
+
+    _,
+
+    pub const TIMERR_NOERROR = .NOERROR;
 };
 
-pub const WIN32_FIND_DATA = extern struct {
-    file_attributes: DWORD = 0,
-    creation_time: FILETIME = .{},
-    last_access_time: FILETIME = .{},
-    last_write_time: FILETIME = .{},
-    file_size_high: DWORD = 0,
-    file_size_low: DWORD = 0,
-    dwReserved0: DWORD = 0,
-    dwReserved1: DWORD = 0,
-    cFileName: [MAX_PATH]CHAR = std.mem.zeroes([MAX_PATH]CHAR),
-    cAlternateFileName: [14]CHAR = std.mem.zeroes([14]CHAR),
-    /// Obsolete
-    dwFileType: DWORD = 0,
-    /// Obsolete
-    dwCreatorType: DWORD = 0,
-    /// Obsolete
-    wFinderFlags: WORD = 0,
+pub inline fn LOWORD(l: anytype) WORD {
+    const T = @TypeOf(l);
+    comptime {
+        const info = @typeInfo(T);
+        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
+    }
+
+    const UT = @Int(.unsigned, @bitSizeOf(T));
+    const i: DWORD = @truncate(@as(UT, @bitCast(l)));
+    return @truncate(i & 0xffff);
+}
+
+pub inline fn HIWORD(l: anytype) WORD {
+    const T = @TypeOf(l);
+    comptime {
+        const info = @typeInfo(T);
+        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
+    }
+    const UT = @Int(.unsigned, @bitSizeOf(T));
+    const i: DWORD = @truncate(@as(UT, @bitCast(l)));
+    return @truncate((i & 0xffff0000) >> 16);
+}
+
+pub inline fn MAKEINTRESOURCEA(comptime i: anytype) LPCSTR {
+    const T = @TypeOf(i);
+    const info = @typeInfo(T);
+    switch (info) {
+        else => @compileError("Expected integer or enum type"),
+        .int, .comptime_int => {
+            assert(i >= 0 and i <= math.maxInt(usize));
+            return @ptrFromInt(i);
+        },
+        .@"enum" => {
+            assert(@sizeOf(T) <= @sizeOf(usize));
+            return @ptrFromInt(@intFromEnum(i));
+        },
+    }
+}
+
+pub const MonitorFromFlags = enum(DWORD) {
+    DEFAULTTONULL = 0x00000000,
+    DEFAULTTOPRIMARY = 0x00000001,
+    DEFAULTTONEAREST = 0x00000002,
 };
 
-pub const COLORREF = packed struct(DWORD) {
-    red: BYTE = 0,
-    green: BYTE = 0,
-    blue: BYTE = 0,
-    reserved: BYTE = 0,
-};
-
-pub const FILE_ATTRIBUTE_DATA = extern struct {
-    file_attributes: DWORD,
-    creation_time: FILETIME,
-    last_access_time: FILETIME,
-    last_write_time: FILETIME,
-    file_size_high: DWORD,
-    file_size_low: DWORD,
-};
-
-pub const WINDOWPLACEMENT = extern struct {
-    length: UINT = @sizeOf(@This()),
-    flags: UINT = 0,
-    chow_cmd: UINT = 0,
-    min_position: POINT = .{},
-    max_position: POINT = .{},
-    normal_position: RECT = .{},
-    device: RECT = .{},
-};
-
-pub const MONITORINFO = extern struct {
-    size: DWORD = @sizeOf(@This()),
-    monitor: RECT = .{},
-    work: RECT = .{},
-    flags: DWORD = 0,
-};
-
-pub const GET_FILEEX_INFO_LEVELS = enum(c_int) {
-    standard,
-    max,
-};
+pub const KeyState = packed struct(SHORT) { toggled: bool, __reserved__: u14, down: bool };
 
 pub const MAPVK = enum(UINT) {
     /// The uCode parameter is a virtual-key code and is translated into a scan
@@ -1661,298 +1709,115 @@ pub const MAPVK = enum(UINT) {
     VK_TO_VSC_EX = 4,
 };
 
-pub const CP = enum(c_int) {
-    /// The current system ANSI code page.
-    ACP = 0,
-    /// The current system OEM code page.
-    OEMCP = 1,
-    /// The current system Macintosh code page.
-    MACCP = 2,
-    /// The current thread's ANSI code page.
-    THREAD_ACP = 3,
-    /// Symbol translations.
-    SYMBOL = 42,
-    /// UTF-7 translation (deprecated; avoid for secure apps).
-    UTF7 = 65000,
-    /// UTF-8 translation.
-    UTF8 = 65001,
-};
-
-pub const MB = packed struct(DWORD) {
-    PRECOMPOSED: bool = false,
-    COMPOSITE: bool = false,
-    USEGLYPHCHARS: bool = false,
-    ERR_INVALID_CHARS: bool = false,
-    __unused__: u28 = 0,
-};
-
-pub const NT_UNICODE_STRING = extern struct {
-    /// !! In bytes !!
-    length: USHORT,
-    /// !! In bytes !!
-    maximum_length: USHORT,
-    buffer: PWSTR,
-
-    pub fn init(wide_str: [:0]u16) NT_UNICODE_STRING {
-        return .{
-            .length = @intCast(wide_str.len * @sizeOf(u16)),
-            .maximum_length = @intCast((wide_str.len + 1) * @sizeOf(u16)),
-            .buffer = wide_str.ptr,
-        };
-    }
-
-    pub fn slice(this: *const NT_UNICODE_STRING) [:0]u16 {
-        return this.buffer[0 .. this.length / @sizeOf(u16) :0];
-    }
-};
-
-pub const NT_SECURITY_DESCRIPTOR = extern struct {
-    revision: BYTE,
-    sbz1: BYTE,
-    control: NT_SECURITY_DESCRIPTOR_CONTROL,
-    owner: *NT_SID,
-    group: *NT_SID,
-    s_acl: *NT_ACL,
-    d_acl: *NT_ACL,
-};
-
-pub const NT_ACL = extern struct {
-    acl_revision: BYTE,
-    sbz1: BYTE,
-    acl_size: WORD,
-    ace_count: WORD,
-    sbz2: WORD,
-};
-
-pub const NT_SID = extern struct {
-    revision: BYTE,
-    sub_authority_count: BYTE,
-    identifier_authority: NT_SID_IDENTIFIER_AUTHORITY,
-    sub_authority: BYTE,
-};
-
-pub const NT_SID_IDENTIFIER_AUTHORITY = extern struct {
-    value: [6]BYTE,
-};
-
-pub const NT_KERNEL_USER_TIMES = extern struct {
-    create_time: LARGE_INTEGER,
-    exit_time: LARGE_INTEGER,
-    kernel_time: LARGE_INTEGER,
-    user_time: LARGE_INTEGER,
-};
-
-pub const NT_IO_STATUS_BLOCK = extern struct {
-    u: extern union {
-        status: NTSTATUS,
-        pointer: *anyopaque,
-    },
-    information: *ULONG,
-};
-
-pub const ACCESS_MASK = packed struct(DWORD) {
-    // specific_rights: u16 = 0,
-    specific: packed union {
-        FILE: packed struct(u16) {
-            READ_DATA: bool = false,
-            WRITE_DATA: bool = false,
-            APPEND_DATA: bool = false,
-            READ_EA: bool = false,
-            WRITE_EA: bool = false,
-            EXECUTE: bool = false,
-            DELETE_CHILD: bool = false,
-            READ_ATTRIBUTES: bool = false,
-            WRITE_ATTRIBUTES: bool = false,
-            __reserved__: u7 = 0,
-
-            pub const LIST_DIRECTORY = @This(){ .READ_DATA = true };
-            pub const ADD_FILE = @This(){ .WRITE_DATA = true };
-            pub const ADD_SUBDIRECTORY = @This(){ .APPEND_DATA = true };
-            pub const CREATE_PIPE_INSTANCE = @This(){ .APPEND_DATA = true };
-            pub const TRAVERSE = @This(){ .EXECUTE = true };
-        },
-        // TODO: KEY_*, PROCESS_*, THREAD_*
-    } = .{ .FILE = .{} },
-
-    DELETE: bool = false,
-    READ_CONTROL: bool = false,
-    WRITE_DAC: bool = false,
-    WRITE_OWNER: bool = false,
-    SYNCHRONIZE: bool = false,
-    __reserved0__: u3 = 0,
-
-    SYSTEM_SECURITY: bool = false,
-    MAXIMUM_ALLOWED: bool = false,
-    __reserved1__: u2 = 0,
-    GENERIC_ALL: bool = false,
-    GENERIC_EXECUTE: bool = false,
-    GENERIC_WRITE: bool = false,
-    GENERIC_READ: bool = false,
-
-    pub const SPECIFIC_RIGHTS_ALL: ACCESS_MASK = @bitCast(@as(DWORD, 0xFFFF));
-
-    pub const STANDARD_RIGHTS_REQUIRED = ACCESS_MASK{ .DELETE = true, .READ_CONTROL = true, .WRITE_DAC = true, .WRITE_OWNER = true };
-    pub const STANDARD_RIGHTS_READ = ACCESS_MASK{ .READ_CONTROL = true };
-    pub const STANDARD_RIGHTS_WRITE = ACCESS_MASK{ .READ_CONTROL = true };
-    pub const STANDARD_RIGHTS_EXECUTE = ACCESS_MASK{ .READ_CONTROL = true };
-    pub const STANDARD_RIGTHS_ALL = ACCESS_MASK{ .DELETE = true, .READ_CONTROL = true, .WRITE_DAC = true, .WRITE_OWNER = true, .SYNCHRONIZE = true };
-};
-
-pub const RTL_RELATIVE_NAME_U = extern struct {
-    relative_name: NT_UNICODE_STRING,
-    containing_directory: HANDLE,
-    cur_dir_ref: *RTLP_CURDIR_REF,
-};
-
-pub const RTLP_CURDIR_REF = extern struct {
-    reference_count: LONG,
-    directory_handle: HANDLE,
-};
-
-pub inline fn RGB(r: BYTE, g: BYTE, b: BYTE) COLORREF {
-    return .{ .red = r, .green = g, .blue = b };
-}
-
-pub inline fn MAKEINTRESOURCEA(comptime i: anytype) LPCSTR {
-    comptime {
-        const T = @TypeOf(i);
-        const info = @typeInfo(T);
-        const size = switch (info) {
-            else => @compileError("Expected integer type"),
-            .int => @sizeOf(T),
-            .comptime_int => blk: {
-                break :blk @sizeOf(LPCSTR);
-            },
-        };
-
-        if (size > @sizeOf(LPCSTR)) @compileError("Integer type too big");
-    }
-
-    return @ptrFromInt(i);
-}
-
-pub inline fn LOWORD(l: anytype) WORD {
-    const T = @TypeOf(l);
-    comptime {
-        const info = @typeInfo(T);
-        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
-    }
-
-    const UT = @Int(.unsigned, @bitSizeOf(T));
-    const i: DWORD = @truncate(@as(UT, @bitCast(l)));
-    return @truncate(i & 0xffff);
-}
-
-pub inline fn HIWORD(l: anytype) WORD {
-    const T = @TypeOf(l);
-    comptime {
-        const info = @typeInfo(T);
-        if (info != .int and info != .comptime_int) @compileError("Expected integer type");
-    }
-    const UT = @Int(.unsigned, @bitSizeOf(T));
-    const i: DWORD = @truncate(@as(UT, @bitCast(l)));
-    return @truncate((i & 0xffff0000) >> 16);
-}
-
-pub const WNDPROC = *const fn (HWND, c_uint, WPARAM, LPARAM) callconv(.winapi) LRESULT;
-
-pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: MEM, protect: DWORD) callconv(.winapi) ?[*]u8;
-pub extern "kernel32" fn VirtualFree(address: [*]const u8, size: SIZE_T, free_type: MEM) callconv(.winapi) BOOL;
-pub extern "kernel32" fn CreateFileMappingA(file: HANDLE, file_mapping_attributes: ?*SECURITY_ATTRIBUTES, protect: DWORD, maximum_size_high: DWORD, maximum_size_low: DWORD, name: ?LPCSTR) callconv(.winapi) HANDLE;
-pub extern "kernel32" fn MapViewOfFile(file_mapping_object: HANDLE, desired_access: DWORD, file_offset_high: DWORD, file_offset_low: DWORD, number_of_bytes_to_map: SIZE_T) callconv(.winapi) ?LPVOID;
-pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
-pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: ACCESS_MASK, share_mode: FILE.SHARE, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: DWORD, flags_and_attributes: DWORD, template_file: ?HANDLE) callconv(.winapi) HANDLE;
-pub extern "kernel32" fn GetFileAttributesExA(file_name: LPCSTR, info_level_id: GET_FILEEX_INFO_LEVELS, file_info: LPVOID) callconv(.winapi) BOOL;
-pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, size: *LARGE_INTEGER) callconv(.winapi) BOOL;
-pub extern "kernel32" fn ReadFile(handle: HANDLE, buffer: LPVOID, bytes_to_read: DWORD, bytes_read: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
-pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, bytes_written: *DWORD, overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
-pub extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
-pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
-pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LPCSTR, fail_if_exists: BOOL) callconv(.winapi) BOOL;
-pub extern "kernel32" fn FindFirstFileA(file_name: LPCSTR, find_file_data: *WIN32_FIND_DATA) callconv(.winapi) HANDLE;
-pub extern "kernel32" fn FindClose(find_file: HANDLE) callconv(.winapi) BOOL;
-pub extern "kernel32" fn GetModuleFileNameA(module: ?HMODULE, file_name: LPSTR, size: DWORD) callconv(.winapi) DWORD;
-pub extern "kernel32" fn LoadLibraryA(lib_file_name: LPCSTR) callconv(.winapi) ?HMODULE;
-pub extern "kernel32" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) callconv(.winapi) ?FARPROC;
-pub extern "kernel32" fn FreeLibrary(lib_module: HMODULE) callconv(.winapi) BOOL;
-pub extern "kernel32" fn GetCurrentDirectoryA(buffer_length: DWORD, buffer: LPCSTR) callconv(.winapi) DWORD;
-pub extern "kernel32" fn MultiByteToWideChar(code_page: CP, flags: MB, multi_byte_string: LPCCH, multi_byte_string_len: c_int, out_wide_char_string: LPWSTR, out_wide_char_string_len: c_int) callconv(.winapi) c_int;
-pub extern "kernel32" fn GetLastError() callconv(.winapi) ERROR;
-pub extern "kernel32" fn GetFinalPathNameByHandleW(handle: HANDLE, file_path_out: LPWSTR, file_path_len: DWORD, flags: DWORD) callconv(.winapi) DWORD;
-
-pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
-
-pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
-pub extern "user32" fn GetModuleHandleW(module_name: ?LPCWSTR) callconv(.winapi) HMODULE;
-pub extern "user32" fn GetCommandLineA() callconv(.winapi) LPSTR;
-pub extern "user32" fn GetCommandLineW() callconv(.winapi) LPWSTR;
-pub extern "user32" fn GetStartupInfoA(info: *STARTUPINFOA) callconv(.winapi) void;
-pub extern "user32" fn GetStartupInfoW(info: *STARTUPINFOW) callconv(.winapi) void;
-
-pub extern "user32" fn MessageBoxA(instance: ?HINSTANCE, text: LPCSTR, caption: LPCSTR, type: c_uint) callconv(.winapi) c_int;
-pub extern "user32" fn MessageBoxW(instance: ?HINSTANCE, text: LPCWSTR, caption: LPCWSTR, type: c_uint) callconv(.winapi) c_int;
-
-pub extern "user32" fn DefWindowProcA(window: HWND, msg: c_uint, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT;
-pub extern "user32" fn DefWindowProcW(window: HWND, msg: c_uint, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT;
-
-pub extern "user32" fn RegisterClassA(class: *const WNDCLASSA) callconv(.winapi) ATOM;
-pub extern "user32" fn RegisterClassW(class: *const WNDCLASSW) callconv(.winapi) ATOM;
-
-pub extern "user32" fn AdjustWindowRectEx(rect: *RECT, style: DWORD, menu: BOOL, ex_style: DWORD) callconv(.winapi) BOOL;
-pub extern "user32" fn CreateWindowExA(ex_style: DWORD, class_name: ?LPCSTR, window_name: ?LPCSTR, style: DWORD, x: c_int, y: c_int, width: c_int, height: c_int, parent_window: ?HWND, menu: ?HMENU, instance: ?HINSTANCE, param: ?LPVOID) callconv(.winapi) ?HWND;
-pub extern "user32" fn DestroyWindow(hwnd: HWND) callconv(.winapi) BOOL;
-pub extern "user32" fn SetLayeredWindowAttributes(hwnd: HWND, crKey: COLORREF, bAlpha: BYTE, dwFlags: DWORD) callconv(.winapi) BOOL;
-
-pub extern "user32" fn GetMessageA(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
-pub extern "user32" fn GetMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint) callconv(.winapi) BOOL;
-pub extern "user32" fn PeekMessageA(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint, remove_msg: c_uint) callconv(.winapi) BOOL;
-pub extern "user32" fn PeekMessageW(msg: LPMSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint, remove_msg: c_uint) callconv(.winapi) BOOL;
-
-pub extern "user32" fn TranslateMessage(msg: *const MSG) callconv(.winapi) BOOL;
-pub extern "user32" fn DispatchMessageA(msg: *const MSG) callconv(.winapi) LRESULT;
-pub extern "user32" fn DispatchMessageW(msg: *const MSG) callconv(.winapi) LRESULT;
-pub extern "user32" fn PostQuitMessage(exit_code: c_int) callconv(.winapi) void;
-
-pub extern "user32" fn BeginPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) HDC;
-pub extern "user32" fn EndPaint(hwnd: HWND, paint: *PAINTSTRUCT) callconv(.winapi) BOOL;
+pub extern "user32" fn AdjustWindowRectEx(rect: *RECT, style: WND.WS, menu: BOOL, ex_style: WND.WS_EX) callconv(.winapi) BOOL;
+pub extern "user32" fn BeginPaint(hwnd: HWND, out_paint: *PAINTSTRUCT) callconv(.winapi) HDC;
+pub extern "user32" fn CreateWindowExA(ex_style: WND.WS_EX, class_name: ?LPCSTR, window_name: ?LPCSTR, style: WND.WS, x: c_int, y: c_int, width: c_int, height: c_int, parent_window: ?HWND, menu: ?HMENU, instance: ?HINSTANCE, param: ?LPVOID) callconv(.winapi) ?HWND;
+pub extern "user32" fn DefWindowProcA(window: HWND, msg: WND.WM, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT;
+pub extern "user32" fn DispatchMessageA(msg: *const WND.MSG) callconv(.winapi) LRESULT;
+pub extern "user32" fn EndPaint(hwnd: HWND, paint: *const PAINTSTRUCT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetClientRect(hwnd: HWND, rect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetCursorPos(point: *POINT) callconv(.winapi) BOOL;
+pub extern "user32" fn GetKeyState(key: VK) callconv(.winapi) KeyState;
+pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
+pub extern "user32" fn GetMonitorInfoA(monitor: HMONITOR, out_info: *MONITORINFO) callconv(.winapi) BOOL;
+pub extern "user32" fn GetWindowLongA(hwnd: HWND, index: WND.WL) callconv(.winapi) LONG;
+pub extern "user32" fn GetWindowPlacement(hwnd: HWND, in_out_placement: *WINDOWPLACEMENT) callconv(.winapi) BOOL;
 pub extern "user32" fn LoadCursorA(instance: ?HINSTANCE, cursor_name: LPCSTR) callconv(.winapi) HCURSOR;
-pub extern "user32" fn SetCursor(cursor: ?HCURSOR) callconv(.winapi) HCURSOR;
-pub extern "user32" fn ScreenToClient(hwnd: HWND, point: *POINT) callconv(.winapi) BOOL;
-pub extern "user32" fn GetKeyState(key: c_int) callconv(.winapi) packed struct(SHORT) { toggled: bool, __reserved__: u14, down: bool };
-
-pub extern "user32" fn SetWindowLongA(hwnd: HWND, index: c_int, new_long: LONG) callconv(.winapi) LONG;
-pub extern "user32" fn GetWindowLongA(hwnd: HWND, index: c_int) callconv(.winapi) LONG;
-pub extern "user32" fn GetWindowPlacement(hwnd: HWND, placement: *WINDOWPLACEMENT) callconv(.winapi) BOOL;
-pub extern "user32" fn SetWindowPlacement(hwnd: HWND, placement: *const WINDOWPLACEMENT) callconv(.winapi) BOOL;
-pub extern "user32" fn SetWindowPos(hwnd: HWND, insert_after: ?HWND, x: c_int, y: c_int, cx: c_int, cy: c_int, flags: UINT) callconv(.winapi) BOOL;
-pub extern "user32" fn MonitorFromWindow(hwnd: HWND, flags: DWORD) callconv(.winapi) HMONITOR;
-pub extern "user32" fn GetMonitorInfoA(monitor: HMONITOR, info: *MONITORINFO) callconv(.winapi) BOOL;
-
 pub extern "user32" fn MapVirtualKeyA(code: UINT, map_type: MAPVK) callconv(.winapi) UINT;
-
-pub extern "gdi32" fn GetDeviceCaps(hdc: HDC, index: c_int) callconv(.winapi) c_int;
-pub extern "gdi32" fn PatBlt(hdc: ?HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: DWORD) callconv(.winapi) BOOL;
-pub extern "gdi32" fn CreateDIBSection(hdc: ?HDC, bitmap_info: *const BITMAPINFO, usage: c_uint, ppv_bit: **anyopaque, section: ?HANDLE, offset: DWORD) callconv(.winapi) HBITMAP;
-pub extern "gdi32" fn StretchDIBits(hdc: HDC, xdest: c_int, ydest: c_int, wdest: c_int, hdest: c_int, xsrc: c_int, ysrc: c_int, wsrc: c_int, hsrc: c_int, bits: *const anyopaque, bits_info: *const BITMAPINFO, usage: c_uint, rop: DWORD) callconv(.winapi) void;
-pub extern "gdi32" fn SetStretchBltMode(hdc: HDC, mode: c_int) callconv(.winapi) c_int;
-pub extern "gdi32" fn DeleteObject(obj: HGDIOBJ) callconv(.winapi) BOOL;
-pub extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(.winapi) HDC;
-pub extern "gdi32" fn GetDC(window: ?HWND) callconv(.winapi) HDC;
-pub extern "gdi32" fn ReleaseDC(window: ?HWND, hdc: HDC) callconv(.winapi) c_int;
+pub extern "user32" fn MonitorFromWindow(hwnd: HWND, flags: MonitorFromFlags) callconv(.winapi) HMONITOR;
+pub extern "user32" fn PeekMessageA(msg: *WND.MSG, hwnd: ?HWND, msg_filter_min: c_uint, msg_filter_max: c_uint, remove_msg: WND.PM) callconv(.winapi) BOOL;
+pub extern "user32" fn RegisterClassA(class: *const WND.CLASS.A) callconv(.winapi) ATOM;
+pub extern "user32" fn ScreenToClient(hwnd: HWND, point: *POINT) callconv(.winapi) BOOL;
+pub extern "user32" fn SetCursor(cursor: ?HCURSOR) callconv(.winapi) HCURSOR;
+pub extern "user32" fn SetWindowLongA(hwnd: HWND, index: WND.WL, new_long: LONG) callconv(.winapi) LONG;
+pub extern "user32" fn SetWindowPlacement(hwnd: HWND, placement: *const WINDOWPLACEMENT) callconv(.winapi) BOOL;
+pub extern "user32" fn SetWindowPos(hwnd: HWND, insert_after: ?HWND, x: c_int, y: c_int, cx: c_int, cy: c_int, flags: WND.SWP) callconv(.winapi) BOOL;
+pub extern "user32" fn TranslateMessage(msg: *const WND.MSG) callconv(.winapi) BOOL;
 
 pub extern "shcore" fn SetProcessDpiAwareness(value: PROCESS.DPI_AWARENESS) callconv(.winapi) HRESULT;
 
-pub extern "ntdll" fn RtlQueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) NT_LOGICAL;
-pub extern "ntdll" fn RtlQueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) NT_LOGICAL;
-pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) ULONGLONG;
-pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: THREAD.INFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: PROCESS.INFOCLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const OBJECT.ATTRIBUTES, file_info_out: *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn RtlDosPathNameToNtPathName_U_WithStatus(dos_file_name: PCWSTR, nt_file_name_out: *NT_UNICODE_STRING, file_part: ?PWSTR, relative_name: ?*RTL_RELATIVE_NAME_U) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn RtlFreeUnicodeString(unicode_string: *NT_UNICODE_STRING) callconv(.winapi) void;
-pub extern "ntdll" fn RtlGetFullPathName_U(file_name: PCWSTR, buffer_length: ULONG, out_buffer: PWSTR, out_file_part: ?PWSTR) callconv(.winapi) ULONG;
-pub extern "ntdll" fn NtOpenFile(out_handle: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT.ATTRIBUTES, out_io_status_block: *NT_IO_STATUS_BLOCK, shared_access: FILE.SHARE, open_options: FILE.MODE) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtClose(handle: HANDLE) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn RtlIsDosDeviceName_U(dos_file_name: PCWSTR) callconv(.winapi) ULONG;
+pub extern "winmm" fn timeBeginPeriod(period_ms: UINT) callconv(.winapi) MMRESULT;
+
+pub const GetDeviceCapsIndex = enum(c_int) {
+    DRIVERVERSION = 0,
+    TECHNOLOGY = 2,
+    HORZSIZE = 4,
+    VERTSIZE = 6,
+    HORZRES = 8,
+    VERTRES = 10,
+    BITSPIXEL = 12,
+    PLANES = 14,
+    NUMBRUSHES = 16,
+    NUMPENS = 18,
+    NUMMARKERS = 20,
+    NUMFONTS = 22,
+    NUMCOLORS = 24,
+    PDEVICESIZE = 26,
+    CURVECAPS = 28,
+    LINECAPS = 30,
+    POLYGONALCAPS = 32,
+    TEXTCAPS = 34,
+    CLIPCAPS = 36,
+    RASTERCAPS = 38,
+    ASPECTX = 40,
+    ASPECTY = 42,
+    ASPECTXY = 44,
+    LOGPIXELSX = 88,
+    LOGPIXELSY = 90,
+    SIZEPALETTE = 104,
+    NUMRESERVED = 106,
+    COLORRES = 108,
+    PHYSICALWIDTH = 110,
+    PHYSICALHEIGHT = 111,
+    PHYSICALOFFSETX = 112,
+    PHYSICALOFFSETY = 113,
+    SCALINGFACTORX = 114,
+    SCALINGFACTORY = 115,
+    VREFRESH = 116,
+    DESKTOPVERTRES = 117,
+    DESKTOPHORZRES = 118,
+    BLTALIGNMENT = 119,
+    SHADEBLENDCAPS = 120,
+    COLORMGMTCAPS = 121,
+};
+
+pub extern "gdi32" fn GetDC(window: ?HWND) callconv(.winapi) HDC;
+pub extern "gdi32" fn GetDeviceCaps(hdc: HDC, index: GetDeviceCapsIndex) callconv(.winapi) c_int;
+pub extern "gdi32" fn PatBlt(hdc: ?HDC, x: c_int, y: c_int, w: c_int, h: c_int, rop: ROP) callconv(.winapi) BOOL;
+pub extern "gdi32" fn ReleaseDC(window: ?HWND, hdc: HDC) callconv(.winapi) c_int;
+pub extern "gdi32" fn StretchDIBits(hdc: HDC, xdest: c_int, ydest: c_int, wdest: c_int, hdest: c_int, xsrc: c_int, ysrc: c_int, wsrc: c_int, hsrc: c_int, bits: *const anyopaque, bits_info: *const BITMAPINFO, usage: DIB_USAGE, rop: ROP) callconv(.winapi) void;
+
+pub const GET_FILEEX_INFO_LEVELS = enum(c_int) {
+    standard,
+    // max, // standard is the only value valid to use
+};
+
+pub const GetFinalPathNameByHandleFlags = packed struct(DWORD) {
+    VOLUME_NAME: VolumeName,
+    FILE_NAME_OPENED: bool = false,
+    __reserved__: u28 = 0,
+
+    pub const VolumeName = enum(u3) { DOS = 0x0, GUID = 0x1, NT = 0x2, NONE = 0x4 };
+
+    pub const FILE_NAME_NORMALIZED = @This(){};
+};
+
+pub extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn CopyFileA(existing_file_name: LPCSTR, new_file_name: LPCSTR, fail_if_exists: BOOL) callconv(.winapi) BOOL;
+pub extern "kernel32" fn CreateFileA(file_name: LPCSTR, desired_access: ACCESS_MASK, share_mode: FILE.SHARE, security_attributes: ?*SECURITY_ATTRIBUTES, creation_disposition: FILE.Disposition, flags_and_attributes: FILE.ATTRIBUTE, template_file: ?HANDLE) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn CreateFileMappingA(file: HANDLE, file_mapping_attributes: ?*SECURITY_ATTRIBUTES, protect: PAGE, maximum_size_high: DWORD, maximum_size_low: DWORD, name: ?LPCSTR) callconv(.winapi) HANDLE;
+pub extern "kernel32" fn FreeLibrary(lib_module: HMODULE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetCurrentDirectoryA(buffer_length: DWORD, buffer: LPCSTR) callconv(.winapi) DWORD;
+pub extern "kernel32" fn GetFileAttributesExA(file_name: LPCSTR, info_level_id: GET_FILEEX_INFO_LEVELS, file_info: LPVOID) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, out_size: *LARGE_INTEGER) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GetFinalPathNameByHandleW(handle: HANDLE, file_path_out: LPWSTR, file_path_len: DWORD, flags: GetFinalPathNameByHandleFlags) callconv(.winapi) DWORD;
+pub extern "kernel32" fn GetLastError() callconv(.winapi) ERROR;
+pub extern "kernel32" fn GetModuleFileNameA(module: ?HMODULE, file_name: LPSTR, size: DWORD) callconv(.winapi) DWORD;
+pub extern "kernel32" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) callconv(.winapi) ?FARPROC;
+pub extern "kernel32" fn LoadLibraryA(lib_file_name: LPCSTR) callconv(.winapi) ?HMODULE;
+pub extern "kernel32" fn MapViewOfFile(file_mapping_object: HANDLE, desired_access: FILE_MAP, file_offset_high: DWORD, file_offset_low: DWORD, number_of_bytes_to_map: SIZE_T) callconv(.winapi) ?LPVOID;
+pub extern "kernel32" fn ReadFile(handle: HANDLE, out_buffer: LPVOID, bytes_to_read: DWORD, bytes_read: ?*DWORD, in_out_overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
+pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
+pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: MEM.ALLOC, protect: PAGE) callconv(.winapi) ?[*]u8;
+pub extern "kernel32" fn VirtualFree(address: [*]const u8, size: SIZE_T, free_type: MEM.FREE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, out_bytes_written: ?*DWORD, in_out_overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;

@@ -5,6 +5,7 @@ pub const TimeParts = @import("timeparts.zig").TimeParts;
 
 pub const arch = @import("arch/arch.zig").arch;
 pub const assert = @import("assert.zig").assert;
+pub const bits = @import("bits.zig");
 pub const cli_arg_parser = @import("cli_arg_parser.zig");
 pub const fs = @import("fs.zig");
 pub const intrinsics = @import("intrinsics.zig");
