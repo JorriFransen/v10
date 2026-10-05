@@ -154,15 +154,25 @@ fn SliceToSentinelRet(comptime Slice: type, comptime sentinel: std.meta.Elem(Sli
     }
 }
 
-pub inline fn copySentinel(dest: anytype, slice: anytype, comptime sentinel: std.meta.Elem(@TypeOf(slice))) [:sentinel]std.meta.Elem(@TypeOf(slice)) {
-    // TODO: meta.expectSlice?
-    comptime assert(std.meta.Elem(@TypeOf(slice)) == std.meta.Elem(@TypeOf(dest)));
-    meta.expectTypeIds(slice, &.{.pointer});
-    comptime assert(@typeInfo(@TypeOf(slice)).pointer.size == .slice);
+pub inline fn copySentinel(dest: anytype, slice: []const std.meta.Elem(@TypeOf(dest)), comptime sentinel: std.meta.Elem(@TypeOf(slice))) [:sentinel]std.meta.Elem(@TypeOf(slice)) {
+    const DT = @TypeOf(dest);
+    const dti = @typeInfo(DT);
 
-    assert(dest.len > slice.len);
+    const dest_sentinel_opt = switch (dti.pointer.size) {
+        .slice => dti.pointer.sentinel(),
+        .one => @typeInfo(dti.pointer.child).array.sentinel(), // assume array at this point because std.memta.Elem(@TypeOf(dest)) succeeded.
+        else => @compileError("Expected slice (dest)"),
+    };
 
-    @memcpy(dest, slice);
-    dest[slice.len] = sentinel;
+    const dest_cap = if (dest_sentinel_opt) |dest_sentinel|
+        if (dest_sentinel == sentinel) dest.len else @compileError("Mismatching sentinel")
+    else
+        dest.len - 1;
+
+    assert(dest_cap >= slice.len);
+
+    @memcpy(dest[0..slice.len], slice);
+    dest.ptr[slice.len] = sentinel;
+
     return dest[0..slice.len :sentinel];
 }
