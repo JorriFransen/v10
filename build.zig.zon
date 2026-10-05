@@ -12,6 +12,9 @@
         "tools/",
         "vendor/",
     },
+    .dependencies = .{
+        .core = .{ .path = "lib/core" },
+    },
     .fingerprint = 0x4fb9faee3e8a9632,
 
 }

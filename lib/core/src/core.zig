@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const options = @import("options");
+
 pub const DynLib = @import("dynlib.zig");
 pub const TimeParts = @import("timeparts.zig").TimeParts;
 

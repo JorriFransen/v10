@@ -628,7 +628,8 @@ fn testDirnameN(input: []const u8, n: usize, expected: anytype) !void {
     }
 }
 
-test existsAt {
-    // const t = std.testing;
-    // try t.expect(false);
+test {
+    if (@import("options").test_fs) {
+        std.testing.refAllDecls(@import("tests/fs.zig"));
+    }
 }
