@@ -2,8 +2,8 @@ const std = @import("std");
 const log = std.log.scoped(.cli_arg_parse);
 const Allocator = std.mem.Allocator;
 
-const core = @import("core.zig");
 const assert = @import("assert.zig").assert;
+const meta = @import("meta.zig");
 
 const String = struct {
     slice: []const u8,
@@ -54,19 +54,19 @@ pub const OptionDefinition = struct {
 
     /// Define an integer option.
     pub fn int(comptime T: type, default: T, name: []const u8, short_opt: ?u8, desc_opt: ?[]const u8) OptionDefinition {
-        core.meta.expectIntType(T);
+        meta.expectIntType(T);
         return def(T, T, default, name, short_opt, desc_opt);
     }
 
     /// Define a float option.
     pub fn float(comptime T: type, default: T, name: []const u8, short_opt: ?u8, desc_opt: ?[]const u8) OptionDefinition {
-        core.meta.expectFloatType(T);
+        meta.expectFloatType(T);
         return def(T, T, default, name, short_opt, desc_opt);
     }
 
     /// Define an enum option.
     pub fn @"enum"(comptime T: type, default: T, name: []const u8, short_opt: ?u8, desc_opt: ?[]const u8) OptionDefinition {
-        core.meta.expectEnumType(T);
+        meta.expectEnumType(T);
         return def(T, T, default, name, short_opt, desc_opt);
     }
 
@@ -77,19 +77,19 @@ pub const OptionDefinition = struct {
 
     /// Define an integer array option.
     pub fn intArray(comptime Elem: type, default: []const Elem, name: []const u8, short_opt: ?u8, desc_opt: ?[]const u8) OptionDefinition {
-        core.meta.expectIntType(Elem);
+        meta.expectIntType(Elem);
         return def([]const Elem, []const Elem, default, name, short_opt, desc_opt);
     }
 
     /// Define a float array option
     pub fn floatArray(comptime Elem: type, default: []const Elem, name: []const u8, short_opt: ?u8, desc_opt: ?[]const u8) OptionDefinition {
-        core.meta.expectFloatType(Elem);
+        meta.expectFloatType(Elem);
         return def([]const Elem, []const Elem, default, name, short_opt, desc_opt);
     }
 
     /// Define an enum array option
     pub fn enumArray(comptime Elem: type, default: []const Elem, name: []const u8, short_opt: ?u8, desc_opt: ?[]const u8) OptionDefinition {
-        core.meta.expectEnumType(Elem);
+        meta.expectEnumType(Elem);
         return def([]const Elem, []const Elem, default, name, short_opt, desc_opt);
     }
 
@@ -629,7 +629,7 @@ fn typeName(comptime T: type) []const u8 {
             .float,
             => @typeName(T),
 
-            .@"enum" => core.meta.typeNameLeaf(T),
+            .@"enum" => meta.typeNameLeaf(T),
 
             else => if (isArray(T))
                 "[]" ++ comptime typeName(std.meta.Elem(T))

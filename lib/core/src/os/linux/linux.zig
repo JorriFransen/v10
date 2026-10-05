@@ -4,7 +4,7 @@ const log = std.log.scoped(.linux);
 const builtin = @import("builtin");
 
 const arch = @import("arch/arch.zig").arch;
-const assert = @import("../../core.zig").assert;
+const assert = @import("../../assert.zig").assert;
 const core_fs = @import("../../fs.zig");
 const math = @import("../../math.zig");
 const mem = @import("../../mem/mem.zig");
