@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const assert = @import("core.zig").assert;
+const assert = @import("assert.zig").assert;
 
 pub inline fn typeNameLeaf(comptime T: type) []const u8 {
     const full_name = @typeName(T);

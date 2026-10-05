@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const assert = @import("src/core/assert.zig").assert;
+// const assert = @import("lib/core/src/assert.zig").assert;
+const assert = std.debug.assert;
 
 const Build = std.Build;
 const Module = Build.Module;
@@ -18,9 +19,8 @@ var debug_asset_compiler: bool = false;
 var asset_compiler_perf_timers: bool = false;
 // TODO: pulsePull requires locking during gamecode reload
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
-var cross_compile = false;
-
-const src_path = "src";
+var cross_compile: bool = false;
+var test_core_fs: ?bool = null;
 
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
@@ -40,6 +40,7 @@ pub fn build(b: *Build) !void {
     verbose_asset_compiler = b.option(bool, "verbose_asset_compiler", "Verbose asset compiler logging") orelse verbose_asset_compiler;
     debug_asset_compiler = b.option(bool, "debug_asset_compiler", "Debug asset compiler logging") orelse debug_asset_compiler;
     asset_compiler_perf_timers = b.option(bool, "asset_compiler_perf_timers", "Enable performance timers for asset compiler") orelse asset_compiler_perf_timers;
+    test_core_fs = b.option(bool, "test_core_fs", "Enable fs modifying fs tests from core");
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
@@ -48,14 +49,12 @@ pub fn build(b: *Build) !void {
 
     const options_module = options.createModule();
 
-    const core_module = b.createModule(.{
-        .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/core/core.zig"),
-    });
+    const core_dep = b.dependency("core", .{ .optimize = optimize });
+    const core_module = core_dep.module("core");
 
     const common_module = b.createModule(.{
         .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/v10_common.zig"),
+        .root_source_file = b.path("src/v10_common.zig"),
         .imports = &.{
             .{ .name = "options", .module = options_module },
             .{ .name = "core", .module = core_module },
@@ -167,7 +166,7 @@ fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget)
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
-        .root_source_file = b.path(src_path ++ "/win32_v10.zig"),
+        .root_source_file = b.path("src/win32_v10.zig"),
         .link_libc = false,
     });
 
@@ -211,7 +210,7 @@ fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, m
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
-        .root_source_file = b.path(src_path ++ "/linux_v10.zig"),
+        .root_source_file = b.path("src/linux_v10.zig"),
         .link_libc = true,
         .imports = &.{
             .{ .name = "wayland", .module = wayland_module },
@@ -237,7 +236,7 @@ fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engin
     const game_root_module = b.addModule("gamelib", .{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path(src_path ++ "/v10.zig"),
+        .root_source_file = b.path("src/v10.zig"),
         .link_libc = true,
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
@@ -437,10 +436,10 @@ pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: OptimizeMode) !Te
     const test_step = b.step("test", "run all tests");
     const test_install_step = b.step("test_install", "install tests");
 
-    const core_test_module = b.createModule(.{
+    const core_dep = b.dependency("core", .{
         .target = target,
-        .root_source_file = b.path(src_path ++ "/core/core.zig"),
         .optimize = optimize,
+        .test_fs = test_core_fs,
     });
 
     // Workaround for wine related output in stderr: even if all tests pass, the build process prints
@@ -453,7 +452,7 @@ pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: OptimizeMode) !Te
     } else null;
 
     const core_test_exe = b.addTest(.{
-        .root_module = core_test_module,
+        .root_module = core_dep.module("core"),
         .name = "core_tests",
         .test_runner = test_runner,
     });

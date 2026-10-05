@@ -1,0 +1,12 @@
+
+.{
+    .name = .core,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.17.0-dev.387+31f157d80",
+    .paths = .{
+        "build.zig",
+        "src/",
+    },
+    .fingerprint = 0x6b8d854fab4c1ac3,
+
+}

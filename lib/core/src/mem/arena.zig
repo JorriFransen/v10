@@ -5,7 +5,7 @@ const log = std.log.scoped(.arena);
 
 const builtin = @import("builtin");
 
-const assert = @import("../core.zig").assert;
+const assert = @import("../assert.zig").assert;
 const mem = @import("mem.zig");
 const os = @import("../os/os.zig");
 const linux = os.linux;
