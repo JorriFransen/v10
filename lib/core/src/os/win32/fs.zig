@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const assert = @import("../../assert.zig").assert;
+const bits = @import("../../bits.zig");
 const fs = @import("../../fs.zig");
 const meta = @import("../../meta.zig");
 const win32 = @import("win32.zig");
@@ -105,9 +106,40 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
 }
 
 pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
-    _ = dir;
-    _ = path;
-    _ = options;
+    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    const nt_path = try toNtPath(dir, path, &nt_path_buf);
+
+    var handle: Handle = undefined;
+    var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+    const object_attributes = nt_path.ntObjectAttributes();
+
+    switch (win32.NT.NtOpenFile(
+        &handle,
+        .{
+            .SYNCHRONIZE = true,
+            .specific = .{
+                .FILE = bits.unionAll(win32.ACCESS_MASK.FILE, &.{
+                    .TRAVERSE,
+                    .{ .READ_ATTRIBUTES = true },
+                    if (options.iterate) .LIST_DIRECTORY else .{},
+                }),
+            },
+        },
+        &object_attributes,
+        &io_status_block,
+        .{ .READ = true },
+        .{
+            .DIRECTORY_FILE = true,
+            .SYNCHRONOUS_IO_NONALERT = true,
+            .OPEN_FOR_BACKUP_INTENT = true,
+            .OPEN_NO_RECALL = !options.iterate,
+            .OPEN_REPARSE_POINT = !options.follow_symlinks,
+        },
+    )) {
+        .SUCCESS => return .{ .handle = handle },
+        else => unreachable,
+    }
+
     unreachable;
 }
 

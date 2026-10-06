@@ -1056,8 +1056,8 @@ pub const QS = packed struct(c_uint) {
 
     pub const MOUSE: QS = .{ .MOUSEMOVE = true, .MOUSEBUTTON = true };
     pub const INPUT: QS = .{ .MOUSEMOVE = true, .MOUSEBUTTON = true, .KEY = true, .RAWINPUT = true, .TOUCH = true, .POINTER = true };
-    pub const ALLEVENTS = bits.@"or"(QS.INPUT, .{ .POSTMESSAGE = true, .TIMER = true, .PAINT = true, .HOTKEY = true });
-    pub const ALLINPUT = bits.@"or"(QS.INPUT, .{ .POSTMESSAGE = true, .TIMER = true, .PAINT = true, .HOTKEY = true, .SENDMESSAGE = true });
+    pub const ALLEVENTS = bits.unionOf(QS.INPUT, .{ .POSTMESSAGE = true, .TIMER = true, .PAINT = true, .HOTKEY = true });
+    pub const ALLINPUT = bits.unionOf(QS.INPUT, .{ .POSTMESSAGE = true, .TIMER = true, .PAINT = true, .HOTKEY = true, .SENDMESSAGE = true });
 };
 
 pub const LARGE_INTEGER = extern union {
