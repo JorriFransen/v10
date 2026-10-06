@@ -37,12 +37,13 @@ pub inline fn cwd() fs.Dir {
 }
 
 pub inline fn close(handle: Handle) void {
-    _ = handle;
-    unreachable;
+    _ = win32.NT.NtClose(handle);
 }
 
 /// Always follows links
 pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
+    const require_dir = path.len > 1 and isSep(path[path.len - 1]) and path[path.len - 2] != ':';
+
     var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
 
     const nt_path = try toNtPath(dir, path, &nt_path_buf);
@@ -64,11 +65,35 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
         },
     )) {
         .SUCCESS => {
-            _ = win32.NT.NtClose(handle);
+            defer _ = win32.NT.NtClose(handle);
+
+            if (require_dir) {
+                var info: win32.NT.FILE.BASIC_INFORMATION = undefined;
+                switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &info, @sizeOf(@TypeOf(info)), .BasicInformation)) {
+                    .SUCCESS => if (!info.file_attributes.DIRECTORY) return false,
+                    .ACCESS_DENIED => return error.AccessDenied,
+                    else => return false,
+                }
+            }
+
             return true;
         },
 
-        .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return false,
+        .OBJECT_NAME_NOT_FOUND,
+        .OBJECT_PATH_NOT_FOUND,
+        .BAD_NETWORK_NAME,
+        .BAD_NETWORK_PATH,
+        .DELETE_PENDING,
+        => return false,
+
+        .OBJECT_NAME_INVALID => if (require_dir) return false else return error.BadPath,
+        .OBJECT_PATH_INVALID => return error.BadPath,
+        .NAME_TOO_LONG => return error.NameTooLong,
+        .ACCESS_DENIED, .USER_MAPPED_FILE => return error.AccessDenied,
+        .STOPPED_ON_SYMLINK, .REPARSE_POINT_NOT_RESOLVED => return error.SymLinkNotResolved,
+
+        .INVALID_PARAMETER => unreachable,
+        .INVALID_HANDLE => if (nt_path.is_dos_device) return error.Unexpected else unreachable,
 
         else => |status| {
             std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
@@ -180,6 +205,7 @@ pub fn parsePath(path: []const u8) error{BadPath}!ParsedPath {
 const NtPath = struct {
     unicode_string: win32.NT.UNICODE_STRING,
     root_handle: ?win32.HANDLE,
+    is_dos_device: bool,
 
     inline fn ntObjectAttributes(this: *const NtPath) win32.NT.OBJECT_ATTRIBUTES {
         return .{
@@ -208,12 +234,12 @@ fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: [:0]u16) !NtPath {
             const name_len = try wtf8ToWtf16LeCheckedLen(buf, path);
             buf[name_len] = 0;
             buf[0..nt_path_prefix.len].* = nt_path_prefix;
-            break :values .{ .name = buf[0..name_len :0], .handle = null };
+            break :values .{ .name = buf[0..name_len :0], .handle = null, .is_dos_device = false };
         },
 
         .local_device, .rooted, .drive_relative, .drive_absolute, .unc => {
             const name_len = try resolveNonVerbatimNonRelativeNtPath(path, parsed_path.type, buf);
-            break :values .{ .name = buf[0..name_len :0], .handle = null };
+            break :values .{ .name = buf[0..name_len :0], .handle = null, .is_dos_device = false };
         },
 
         .relative => {
@@ -229,12 +255,14 @@ fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: [:0]u16) !NtPath {
             .maximum_length = @intCast(result.name.len * @sizeOf(u16)),
         },
         .root_handle = result.handle,
+        .is_dos_device = result.is_dos_device,
     };
 }
 
 const ResolveResult = struct {
     name: [:0]u16,
     handle: ?win32.HANDLE,
+    is_dos_device: bool,
 };
 
 fn resolveRelativeNtPath(dir: fs.Dir, path: []const u8, dest: [:0]u16) !ResolveResult {
@@ -268,21 +296,55 @@ fn resolveRelativeNtPath(dir: fs.Dir, path: []const u8, dest: [:0]u16) !ResolveR
     name_len = nt_path_prefix.len + dos_dev_len;
     dest[name_len] = 0;
 
-    return .{ .name = dest[0..name_len :0], .handle = null };
+    return .{ .name = dest[0..name_len :0], .handle = null, .is_dos_device = true };
 }
 
 fn resolveRelativeNtPathInner(dir: fs.Dir, narrow_path: []const u8, wide_len: usize, dest: [:0]u16) !ResolveResult {
     if (std.os.windows.normalizePath(u16, dest[0..wide_len])) |normalized_len| {
         dest[normalized_len] = 0;
-        return .{ .name = dest[0..normalized_len :0], .handle = dir.handle };
+
+        const trimmed_len = trimTrailingDotsAndSpacesPerElement(dest[0..normalized_len :0]);
+
+        return .{ .name = dest[0..trimmed_len :0], .handle = dir.handle, .is_dos_device = false };
     } else |e| switch (e) {
         error.TooManyParentDirs => {
             const name_len = try resolveRelativeEscapingDirHandleNtPath(dir, narrow_path, dest);
-            return .{ .name = dest[0..name_len :0], .handle = null };
+            return .{ .name = dest[0..name_len :0], .handle = null, .is_dos_device = false };
         },
     }
 
     unreachable;
+}
+
+fn trimTrailingDotsAndSpacesPerElement(path: [:0]u16) usize {
+    var read: usize = 0;
+    var write: usize = 0;
+
+    while (read < path.len) {
+        const comp_start = read;
+        while (read < path.len and path[read] != path_sep) read += 1;
+        const comp_end = read;
+        const is_last = read >= path.len;
+
+        var keep = comp_end;
+        while (keep > comp_start and path[keep - 1] == '.') keep -= 1;
+        if (is_last) {
+            while (keep > comp_start and path[keep - 1] == ' ') keep -= 1;
+        }
+
+        const n = keep - comp_start;
+        @memmove(path[write..][0..n], path[comp_start..keep]);
+        write += n;
+
+        if (!is_last) {
+            path[write] = path_sep;
+            write += 1;
+            read += 1;
+        }
+    }
+
+    path[write] = 0;
+    return write;
 }
 
 fn resolveNonVerbatimNonRelativeNtPath(path: []const u8, path_type: ParsedPath.Type, dest: [:0]u16) !usize {
@@ -715,10 +777,13 @@ test toNtPath {
     try testToNtPathRelativeNoEscape("a\\b\\..\\..", "");
     try testToNtPathRelativeNoEscape(".\\a", "a");
     try testToNtPathRelativeNoEscape("a\\..", "");
-    try testToNtPathRelativeNoEscape("a.", "a.");
-    try testToNtPathRelativeNoEscape("a ", "a ");
-    try testToNtPathRelativeNoEscape("...", "...");
+    try testToNtPathRelativeNoEscape("a.", "a");
+    try testToNtPathRelativeNoEscape("a ", "a");
+    try testToNtPathRelativeNoEscape("...", "");
     try testToNtPathRelativeNoEscape("..a", "..a");
+    try testToNtPathAgainstRtl("con.", .relative);
+    try testToNtPathAgainstRtl("con ", .relative);
+    try testToNtPathAgainstRtl("src\\con ", .relative); // Assumes .\\src is a dir
 
     // relative (escaping root handle)
     try testToNtPathRelativeEscaping("..", 1, "");
