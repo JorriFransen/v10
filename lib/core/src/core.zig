@@ -69,7 +69,7 @@ pub fn defaultLogFileTerminal(
     try t.writer.print(format ++ "\n", args);
 }
 
-test {
+comptime {
     const t = std.testing;
 
     t.refAllDecls(cli_arg_parser);

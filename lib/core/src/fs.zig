@@ -44,7 +44,9 @@ pub const Dir = struct {
         os.close(this.handle);
     }
 
-    pub fn stdDir(this: Dir) @import("std").Io.Dir {
+    // TODO: Remove
+    /// Temporary!
+    pub inline fn stdDir(this: Dir) std.Io.Dir {
         return .{ .handle = this.handle };
     }
 };
@@ -62,7 +64,7 @@ pub const ExistsAtError = error{
     NameTooLong,
     OutOfMemory,
     PermissionDenied,
-    TooManySymLinks,
+    SymLinkNotResolved,
 
     Unexpected,
 };
@@ -82,8 +84,8 @@ pub const OpenDirAtError = error{
     PermissionDenied,
     ProcessHandleQuotaExceeded,
     ReadOnlyFileSystem,
+    SymLinkNotResolved,
     SystemHandleQuotaExceeded,
-    TooManySymLinks,
 
     Unexpected,
 };
@@ -95,17 +97,17 @@ pub const openDirAt = os.openDirAt;
 
 pub const CreateDirAtError = error{
     AccessDenied,
-    PermissionDenied,
-    NoSpace,
     AlreadyExists,
     BadPath,
-    TooManySymLinks,
-    NameTooLong,
     FileNotFound,
-    OutOfMemory,
-    NotDir,
-    ReadOnlyFileSystem,
     MissingIdMapping,
+    NameTooLong,
+    NoSpace,
+    NotDir,
+    OutOfMemory,
+    PermissionDenied,
+    ReadOnlyFileSystem,
+    SymLinkNotResolved,
 
     Unexpected,
 };
@@ -306,7 +308,7 @@ pub fn dirnameN(path: []const u8, n: usize) error{BadPath}!?[]const u8 {
 // =============================================================================
 
 test "PathIterator linux" {
-    if (builtin.os.tag != .linux) return;
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
 
     const t = std.testing;
 
@@ -468,7 +470,7 @@ test "PathIterator linux" {
 }
 
 test "PathIterator windows" {
-    if (builtin.os.tag != .windows) return;
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const t = std.testing;
 
@@ -550,7 +552,7 @@ test "PathIterator windows" {
 }
 
 test "dirnameN linux" { // TODO: Windows version
-    if (builtin.os.tag != .linux) return;
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
 
     try testDirnameN("/a/b/c", 1, "/a/b");
     try testDirnameN("/a/b/c///", 1, "/a/b");
@@ -628,7 +630,7 @@ fn testDirnameN(input: []const u8, n: usize, expected: anytype) !void {
     }
 }
 
-test {
+comptime {
     if (@import("options").test_fs) {
         std.testing.refAllDecls(@import("tests/fs.zig"));
     }
