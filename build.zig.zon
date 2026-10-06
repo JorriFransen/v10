@@ -6,7 +6,9 @@
         "build.zig",
         "LICENSE.md",
         "NOTICE.txt",
+
         "data/",
+        "lib/",
         "raw_art/",
         "src/",
         "tools/",

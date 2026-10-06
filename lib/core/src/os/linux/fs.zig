@@ -38,6 +38,8 @@ pub inline fn cwd() fs.Dir {
 }
 
 pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
+    if (path.len == 0) return error.BadPath;
+
     const result = linux.faccessat(dir.handle, path, .F_OK) catch |e| switch (e) {
         error.BADF => @panic("Invalid dir handle"),
         error.FAULT => @panic("Invalid path pointer"),
@@ -45,8 +47,8 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
 
         error.ACCES => return error.AccessDenied,
         error.PERM => return error.PermissionDenied,
-        error.IO => return error.IO, // What does std do?
-        error.LOOP => return error.TooManySymLinks,
+        error.IO => return error.IO,
+        error.LOOP => return error.SymLinkNotResolved,
         error.NAMETOOLONG => return error.NameTooLong,
         error.NOMEM => return error.OutOfMemory,
 
@@ -85,7 +87,7 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
         error.DQUOT, error.NOSPC => return error.NoSpace,
         error.EXIST => return error.AlreadyExists,
         error.INTR => return error.Interrupted,
-        error.LOOP => return error.TooManySymLinks,
+        error.LOOP => return error.SymLinkNotResolved,
         error.MFILE => return error.ProcessHandleQuotaExceeded,
         error.NAMETOOLONG => return error.NameTooLong,
         error.NFILE => return error.SystemHandleQuotaExceeded,
@@ -108,7 +110,7 @@ pub fn createDirAt(dir: fs.Dir, dir_name: [:0]const u8, options: fs.CreateDirAtO
         error.DQUOT, error.NOSPC => return error.NoSpace,
         error.EXIST => return error.AlreadyExists,
         error.INVAL => return error.BadPath,
-        error.LOOP, error.MLINK => return error.TooManySymLinks,
+        error.LOOP => return error.SymLinkNotResolved,
         error.NAMETOOLONG => return error.NameTooLong,
         error.NOENT => return error.FileNotFound,
         error.NOMEM => return error.OutOfMemory,
@@ -116,6 +118,7 @@ pub fn createDirAt(dir: fs.Dir, dir_name: [:0]const u8, options: fs.CreateDirAtO
         error.ROFS => return error.ReadOnlyFileSystem,
         error.OVERFLOW => return error.MissingIdMapping,
 
+        error.MLINK => return error.Unexpected,
         else => return error.Unexpected,
     };
 }
