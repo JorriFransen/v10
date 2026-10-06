@@ -612,10 +612,12 @@ test "dirnameN linux" { // TODO: Windows version
 }
 
 fn testDirnameN(input: []const u8, n: usize, expected: anytype) !void {
+    const t = std.testing;
+
     const output_opt_or_err = dirnameN(input, n);
 
     if (@typeInfo(@TypeOf(expected)) == .error_set) {
-        try std.testing.expectError(expected, output_opt_or_err);
+        try t.expectError(expected, output_opt_or_err);
     } else {
         var std_result_opt: ?[]const u8 = input;
         for (0..n) |_| {
@@ -624,9 +626,9 @@ fn testDirnameN(input: []const u8, n: usize, expected: anytype) !void {
 
         const output_opt = try output_opt_or_err;
 
-        try std.testing.expectEqualDeep(expected, std_result_opt);
-        try std.testing.expectEqualDeep(expected, output_opt);
-        try std.testing.expectEqualDeep(std_result_opt, output_opt);
+        try t.expectEqualDeep(expected, std_result_opt);
+        try t.expectEqualDeep(expected, output_opt);
+        try t.expectEqualDeep(std_result_opt, output_opt);
     }
 }
 

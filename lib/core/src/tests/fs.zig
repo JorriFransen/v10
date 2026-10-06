@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 const builtin = @import("builtin");
 
 const fs = @import("../fs.zig");
@@ -6,7 +7,6 @@ const fs = @import("../fs.zig");
 const is_windows = builtin.os.tag == .windows;
 
 test "cwd" {
-    const t = std.testing;
     var _a = std.heap.ArenaAllocator.init(t.allocator);
     defer _a.deinit();
     const a = _a.allocator();
@@ -21,16 +21,15 @@ test "cwd" {
 
     const std_cwd = std.Io.Dir{ .handle = fs.cwd().handle };
 
-    try t.expectEqual({}, std_cwd.access(t.io, tmp_cwd_rel_path, .{}));
-    try t.expectError(error.FileNotFound, std_cwd.access(t.io, tmp_cwd_rel_file_path, .{}));
+    try t.expect(try access(std_cwd, tmp_cwd_rel_path));
+    try t.expectError(error.FileNotFound, access(std_cwd, tmp_cwd_rel_file_path));
 
     const file_handle = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
     file_handle.close(t.io);
-    try t.expectEqual({}, std_cwd.access(t.io, tmp_cwd_rel_file_path, .{}));
+    try t.expect(try access(std_cwd, tmp_cwd_rel_file_path));
 }
 
 test "existsAt" {
-    const t = std.testing;
     var _a = std.heap.ArenaAllocator.init(t.allocator);
     defer _a.deinit();
     const a = _a.allocator();
@@ -188,4 +187,66 @@ test "existsAt" {
     try zig_tmp_dir.dir.symLink(t.io, "loop_a", "loop_b", .{});
 
     try t.expectError(error.SymLinkNotResolved, tmp_dir.exists("loop_a"));
+}
+
+test "openDirAt" {
+    var _a = std.heap.ArenaAllocator.init(t.allocator);
+    defer _a.deinit();
+    const a = _a.allocator();
+
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_cwd_rel_path = try std.fs.path.joinZ(a, &.{ ".zig-cache", "tmp", &zig_tmp_dir.sub_path });
+    // const tmp_cwd_rel_file_path = try std.fs.path.joinZ(a, &.{ tmp_cwd_rel_path, "file" });
+
+    try zig_tmp_dir.dir.createDir(t.io, "subdir", .default_dir);
+
+    const tmp_dir = try fs.cwd().openDir(tmp_cwd_rel_path, .{});
+    defer tmp_dir.close();
+
+    {
+        const dir = try tmp_dir.openDir(".", .{});
+        defer dir.close();
+
+        const std_dir = std.Io.Dir{ .handle = dir.handle };
+        try t.expect(try access(std_dir, "subdir"));
+        try t.expectError(error.FileNotFound, access(std_dir, "x"));
+
+        const sub_dir = try tmp_dir.openDir("subdir", .{});
+        defer sub_dir.close();
+
+        const std_sub_dir = std.Io.Dir{ .handle = sub_dir.handle };
+        try t.expect(try access(std_sub_dir, "."));
+        try t.expectError(error.FileNotFound, access(std_sub_dir, "x"));
+    }
+
+    // const sub_dir = try tmp_dir.openDir("subdir", .{});
+    // defer sub_dir.close();
+
+    // try t.expect(false);
+}
+
+test "std access windows (wine?) broken" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    try zig_tmp_dir.dir.createDir(t.io, "subdir", .default_dir);
+
+    if (is_windows) {
+        try t.expectEqual(error.FileNotFound, zig_tmp_dir.dir.access(t.io, "subdir", .{}));
+    } else {
+        try t.expectEqual({}, zig_tmp_dir.dir.access(t.io, "subdir", .{}));
+    }
+}
+
+fn access(dir: std.Io.Dir, path: [:0]const u8) !bool {
+    if (is_windows) {
+        const handle = try dir.openFile(t.io, path, .{});
+        handle.close(t.io);
+        return true;
+    } else {
+        try dir.access(t.io, path, .{});
+        return true;
+    }
 }
