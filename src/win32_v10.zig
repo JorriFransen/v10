@@ -502,7 +502,7 @@ pub fn windowsEntry(
     };
 
     if (win32.RegisterClassA(&window_class) != 0) {
-        const style = bits.@"or"(win32.WND.WS.OVERLAPPEDWINDOW, .{ .VISIBLE = true });
+        const style = bits.unionOf(win32.WND.WS.OVERLAPPEDWINDOW, .{ .VISIBLE = true });
         const ex_style: win32.WND.WS_EX = .{}; //win32.WS_EX_TOPMOST | win32.WS_EX_LAYERED;
 
         var client_rect = win32.RECT{
@@ -1211,7 +1211,7 @@ pub fn toggleFullscreen(window: win32.HWND) void {
             _ = win32.SetWindowPos(window, win32.WND.HWND_TOP, mi.monitor.left, mi.monitor.top, mi.monitor.right - mi.monitor.left, mi.monitor.bottom - mi.monitor.top, .{ .NOOWNERZORDER = true, .FRAMECHANGED = true });
         }
     } else {
-        _ = win32.SetWindowLongA(window, .STYLE, @bitCast(bits.@"or"(style, .OVERLAPPEDWINDOW)));
+        _ = win32.SetWindowLongA(window, .STYLE, @bitCast(bits.unionOf(style, .OVERLAPPEDWINDOW)));
         _ = win32.SetWindowPlacement(window, &global_window_position);
         _ = win32.SetWindowPos(window, null, 0, 0, 0, 0, .{ .NOMOVE = true, .NOSIZE = true, .NOZORDER = true, .NOOWNERZORDER = true, .FRAMECHANGED = true });
     }
