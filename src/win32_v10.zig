@@ -422,7 +422,7 @@ pub fn main(init: std.process.Init.Minimal) u8 {
         stdout.flush() catch {};
     }
 
-    // _ = win32.AttachConsole(win32.ATTACH_PARENT_PROCESS);
+    _ = win32.AttachConsole(win32.ATTACH_PARENT_PROCESS);
 
     const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
     // const command_line = win32.GetCommandLineA();

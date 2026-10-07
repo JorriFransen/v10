@@ -62,39 +62,33 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
         .{
             .SYNCHRONOUS_IO_NONALERT = true,
             .OPEN_FOR_BACKUP_INTENT = true,
-            .OPEN_NO_RECALL = true,
+            .DIRECTORY_FILE = require_dir,
         },
     )) {
         .SUCCESS => {
-            defer _ = win32.NT.NtClose(handle);
-
-            if (require_dir) {
-                var info: win32.NT.FILE.BASIC_INFORMATION = undefined;
-                switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &info, @sizeOf(@TypeOf(info)), .BasicInformation)) {
-                    .SUCCESS => if (!info.file_attributes.DIRECTORY) return false,
-                    .ACCESS_DENIED => return error.AccessDenied,
-                    else => return false,
-                }
-            }
-
+            _ = win32.NT.NtClose(handle);
             return true;
         },
 
+        .DELETE_PENDING => return true,
+
+        .NOT_A_DIRECTORY,
         .OBJECT_NAME_NOT_FOUND,
         .OBJECT_PATH_NOT_FOUND,
         .BAD_NETWORK_NAME,
         .BAD_NETWORK_PATH,
-        .DELETE_PENDING,
         => return false,
 
-        .OBJECT_NAME_INVALID => if (require_dir) return false else return error.BadPath,
-        .OBJECT_PATH_INVALID => return error.BadPath,
-        .NAME_TOO_LONG => return error.NameTooLong,
+        .OBJECT_NAME_INVALID,
+        .OBJECT_PATH_INVALID,
+        .OBJECT_PATH_SYNTAX_BAD,
+        => return if (anyElementTooLong(nt_path)) error.NameTooLong else false,
+
+        .INSUFFICIENT_RESOURCES, .NO_MEMORY => return error.OutOfMemory,
         .ACCESS_DENIED, .USER_MAPPED_FILE => return error.AccessDenied,
         .STOPPED_ON_SYMLINK, .REPARSE_POINT_NOT_RESOLVED => return error.SymLinkNotResolved,
 
-        .INVALID_PARAMETER => unreachable,
-        .INVALID_HANDLE => if (nt_path.is_dos_device) return error.Unexpected else unreachable,
+        .INVALID_PARAMETER, .INVALID_HANDLE => if (nt_path.is_device) return error.Unexpected else unreachable,
 
         else => |status| {
             std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
@@ -109,11 +103,13 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
     var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
     const nt_path = try toNtPath(dir, path, &nt_path_buf);
 
+    if (nt_path.is_device) return error.BadPath;
+
     var handle: Handle = undefined;
     var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
     const object_attributes = nt_path.ntObjectAttributes();
 
-    switch (win32.NT.NtOpenFile(
+    const status = switch (win32.NT.NtOpenFile(
         &handle,
         .{
             .SYNCHRONIZE = true,
@@ -127,20 +123,46 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
         },
         &object_attributes,
         &io_status_block,
-        .{ .READ = true },
+        .{ .READ = true, .WRITE = true, .DELETE = true },
         .{
             .DIRECTORY_FILE = true,
             .SYNCHRONOUS_IO_NONALERT = true,
             .OPEN_FOR_BACKUP_INTENT = true,
-            .OPEN_NO_RECALL = !options.iterate,
             .OPEN_REPARSE_POINT = !options.follow_symlinks,
         },
     )) {
         .SUCCESS => return .{ .handle = handle },
-        else => unreachable,
-    }
 
-    unreachable;
+        .OBJECT_NAME_INVALID,
+        .OBJECT_PATH_INVALID,
+        .OBJECT_PATH_SYNTAX_BAD,
+        => return if (anyElementTooLong(nt_path)) error.NameTooLong else error.BadPath,
+
+        .OBJECT_NAME_NOT_FOUND,
+        .OBJECT_PATH_NOT_FOUND,
+        .BAD_NETWORK_NAME,
+        => return error.FileNotFound,
+
+        .BAD_NETWORK_PATH => return error.BadPath,
+        .NOT_A_DIRECTORY => return error.NotDir,
+        .INSUFFICIENT_RESOURCES, .NO_MEMORY => return error.OutOfMemory,
+        .ACCESS_DENIED, .USER_MAPPED_FILE => return error.AccessDenied,
+        .SHARING_VIOLATION, .DELETE_PENDING => return error.DeviceBusy,
+
+        .STOPPED_ON_SYMLINK, .REPARSE_POINT_NOT_RESOLVED => |s| blk: {
+            if (options.follow_symlinks) return error.SymLinkNotResolved;
+            break :blk s;
+        },
+
+        .INVALID_HANDLE, .INVALID_PARAMETER => unreachable,
+
+        else => |s| s,
+    };
+
+    std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+        std.enums.tagName(win32.NTSTATUS, status) orelse "", @intFromEnum(status),
+    });
+    return error.Unexpected;
 }
 
 pub fn createDirAt(dir: fs.Dir, dir_name: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {
@@ -237,7 +259,7 @@ pub fn parsePath(path: []const u8) error{BadPath}!ParsedPath {
 const NtPath = struct {
     unicode_string: win32.NT.UNICODE_STRING,
     root_handle: ?win32.HANDLE,
-    is_dos_device: bool,
+    is_device: bool,
 
     inline fn ntObjectAttributes(this: *const NtPath) win32.NT.OBJECT_ATTRIBUTES {
         return .{
@@ -261,33 +283,55 @@ fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: [:0]u16) !NtPath {
         }
     }
 
-    const result: ResolveResult = values: switch (parsed_path.type) {
+    var is_device = false;
+
+    const name: [:0]u16, const handle: ?Handle, const need_device_check = values: switch (parsed_path.type) {
         .verbatim => {
             const name_len = try wtf8ToWtf16LeCheckedLen(buf, path);
             buf[name_len] = 0;
             buf[0..nt_path_prefix.len].* = nt_path_prefix;
-            break :values .{ .name = buf[0..name_len :0], .handle = null, .is_dos_device = false };
+            break :values .{ buf[0..name_len :0], null, true };
         },
 
         .local_device, .rooted, .drive_relative, .drive_absolute, .unc => {
             const name_len = try resolveNonVerbatimNonRelativeNtPath(path, parsed_path.type, buf);
-            break :values .{ .name = buf[0..name_len :0], .handle = null, .is_dos_device = false };
+            break :values .{ buf[0..name_len :0], null, true };
         },
 
         .relative => {
-            break :values try resolveRelativeNtPath(dir, path, buf);
+            const result = try resolveRelativeNtPath(dir, path, buf);
+            is_device = result.is_dos_device;
+            break :values .{ result.name, result.handle, false };
         },
+    };
+
+    if (need_device_check) is_device = blk: {
+        if (!std.mem.startsWith(u16, name, &nt_path_prefix)) break :blk false;
+        const rel = name[nt_path_prefix.len..];
+
+        const dos_device_info = win32.NT.RtlIsDosDeviceName_U(rel);
+        if (dos_device_info != 0) {
+            const dos_device_len: u16 = @intCast((dos_device_info & 0xFFFF) / @sizeOf(u16));
+            const dos_device_offset: u16 = @intCast(((dos_device_info & 0xFFFF0000) >> 16) / @sizeOf(u16));
+            if (dos_device_offset == 0 and dos_device_len == rel.len) break :blk true;
+        }
+
+        const head = rel[0..(std.mem.indexOfScalar(u16, rel, path_sep) orelse rel.len)];
+        break :blk eqlIgnoreCaseWtf16LiteralWtf8(head, "PIPE") or
+            eqlIgnoreCaseWtf16LiteralWtf8(head, "GLOBALROOT") or
+            eqlIgnoreCaseWtf16LiteralWtf8(head, "Device") or
+            eqlIgnoreCaseWtf16LiteralWtf8(head, "DosDevices");
     };
 
     return .{
         .unicode_string = .{
-            .buffer = result.name.ptr,
-            .length = @intCast(result.name.len * @sizeOf(u16)),
+            .buffer = name.ptr,
+            .length = @intCast(name.len * @sizeOf(u16)),
             // Do not include null to avoid overflow when len == PATH_MAX_WIDE
-            .maximum_length = @intCast(result.name.len * @sizeOf(u16)),
+            .maximum_length = @intCast(name.len * @sizeOf(u16)),
         },
-        .root_handle = result.handle,
-        .is_dos_device = result.is_dos_device,
+        .root_handle = handle,
+        .is_device = is_device,
     };
 }
 
@@ -353,29 +397,32 @@ fn trimTrailingDotsAndSpacesPerElement(path: [:0]u16) usize {
     var write: usize = 0;
 
     while (read < path.len) {
-        const comp_start = read;
-        while (read < path.len and path[read] != path_sep) read += 1;
-        const comp_end = read;
-        const is_last = read >= path.len;
+        var end = read;
+        while (end < path.len and path[end] != path_sep) end += 1;
 
-        var keep = comp_end;
-        while (keep > comp_start and path[keep - 1] == '.') keep -= 1;
-        if (is_last) {
-            while (keep > comp_start and path[keep - 1] == ' ') keep -= 1;
-        }
+        const last_element = end == path.len;
 
-        const n = keep - comp_start;
-        @memmove(path[write..][0..n], path[comp_start..keep]);
-        write += n;
-
-        if (!is_last) {
+        if (write != 0) {
             path[write] = path_sep;
             write += 1;
-            read += 1;
         }
+
+        var len = end - read;
+
+        if (last_element) {
+            while (len > 0 and (path[read..][len - 1] == '.' or path[read..][len - 1] == ' '))
+                len -= 1;
+        } else if (len > 0 and path[read..][len - 1] == '.' and !(len > 1 and path[read..][len - 2] == '.'))
+            len -= 1;
+
+        @memmove(path[write..][0..len], path[read..][0..len]);
+        write += len;
+
+        read = end + 1;
     }
 
     path[write] = 0;
+
     return write;
 }
 
@@ -441,7 +488,9 @@ fn resolveAndPrefixNonVerbatimNonRelative(path: []const u8, path_type: ParsedPat
 
     const cap: u32 = @intCast((1 + dest.len - resolve_offset) * @sizeOf(u16));
     const result_len_bytes = win32.NT.RtlGetFullPathName_U(&wide_buf, cap, dest[resolve_offset..], null);
-    if (result_len_bytes == 0) return error.BadPath;
+    // Assume the only way RtlGetFullPathName_U can fail is NameTooLong,
+    // malformed paths should have been rejected already.
+    if (result_len_bytes == 0) return error.NameTooLong;
     if (result_len_bytes >= cap) return error.NameTooLong;
 
     const result_len = result_len_bytes / @sizeOf(u16);
@@ -511,7 +560,7 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
         }
     }
 
-    if (dir_path_len + path.len + 1 > buf.len) return error.NameTooLong;
+    if (dir_path_len + 1 > buf.len) return error.NameTooLong;
     buf[dir_path_len] = path_sep;
 
     const path_len = try wtf8ToWtf16LeCheckedLen(buf[dir_path_len + 1 ..], path);
@@ -525,7 +574,9 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
 
     const dest_len_bytes = (dest.len + 1 - resolve_offset) * @sizeOf(u16);
     const result_len_bytes = win32.NT.RtlGetFullPathName_U(unresolved_name, @intCast(dest_len_bytes), dest[resolve_offset..].ptr, null);
-    if (result_len_bytes == 0) return error.BadPath;
+    // Assume the only way RtlGetFullPathName_U can fail is NameTooLong,
+    // malformed paths should have been rejected already.
+    assert(result_len_bytes != 0);
     if (result_len_bytes >= dest_len_bytes) return error.NameTooLong;
 
     const resolved_len: usize = (result_len_bytes / @sizeOf(u16));
@@ -557,10 +608,24 @@ inline fn wtf8ToWtf16LeCheckedLen(dest: []u16, src: []const u8) error{ NameTooLo
     return wide_len;
 }
 
+inline fn eqlIgnoreCaseWtf16LiteralWtf8(head: []const u16, comptime name: []const u8) bool {
+    return std.os.windows.eqlIgnoreCaseWtf16(head, std.unicode.utf8ToUtf16LeStringLiteral(name));
+}
+
+inline fn anyElementTooLong(nt_path: NtPath) bool {
+    var it = std.mem.splitScalar(u16, nt_path.unicode_string.slice(), path_sep);
+    while (it.next()) |element| {
+        if (element.len > win32.NAME_MAX) return true;
+    }
+
+    return false;
+}
+
 test toNtPath {
     const t = std.testing;
 
     const test_nt_path_prefix: [4]u16 = .{ '\\', '?', '?', '\\' };
+    const test_verbatim_prefix: [4]u16 = .{ '\\', '\\', '?', '\\' };
 
     const F = struct {
         pub fn testToNtPathAgainstRtl(unstripped_path: [:0]const u8, expected_path_type: ParsedPath.Type) !void {
@@ -576,54 +641,68 @@ test toNtPath {
             }
 
             var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-            const result = try toNtPath(cwd(), unstripped_path, &buf);
+            const result_or_err = toNtPath(cwd(), unstripped_path, &buf);
 
-            var result_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-            const result_len = try std.unicode.wtf8ToWtf16Le(&result_buf, path);
-            result_buf[result_len] = 0;
-            const result_name = result_buf[0..result_len :0];
+            var expected_name_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            const expected_name_len = try std.unicode.wtf8ToWtf16Le(&expected_name_buf, path);
+            expected_name_buf[expected_name_len] = 0;
+            const expected_name = expected_name_buf[0..expected_name_len :0];
 
-            var rtl_unicode_result: win32.NT.UNICODE_STRING = undefined;
-            const rc = win32.NT.RtlDosPathNameToNtPathName_U_WithStatus(result_name, &rtl_unicode_result, null, null);
-            try t.expectEqual(win32.NTSTATUS.SUCCESS, rc);
-            defer win32.NT.RtlFreeUnicodeString(&rtl_unicode_result);
+            var rtl_expected_unicode: win32.NT.UNICODE_STRING = undefined;
+            switch (win32.NT.RtlDosPathNameToNtPathName_U_WithStatus(expected_name, &rtl_expected_unicode, null, null)) {
+                else => |status| {
+                    try t.expectEqual(win32.NTSTATUS.SUCCESS, status);
 
-            const expected_result = rtl_unicode_result.slice();
+                    defer win32.NT.RtlFreeUnicodeString(&rtl_expected_unicode);
 
-            if (!std.mem.eql(u16, expected_result, result.unicode_string.slice())) {
-                std.debug.print("expected: '{f}', got: '{f}'\n", .{ std.unicode.fmtUtf16Le(expected_result), std.unicode.fmtUtf16Le(result.unicode_string.slice()) });
-                return error.TestExpectedEqual;
+                    const result = try result_or_err;
+
+                    var expected_result = rtl_expected_unicode.slice();
+
+                    // std.debug.print("expected_result: '{f}'\n", .{std.unicode.fmtUtf16Le(expected_result)});
+
+                    if (result.root_handle) |handle| {
+                        try t.expectEqual(fs.cwd().handle, handle);
+                        try t.expect(!result.is_device);
+
+                        var handle_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+                        const handle_path_len = win32.GetFinalPathNameByHandleW(handle, &handle_path_buf, handle_path_buf.len + 1, .{ .VOLUME_NAME = .DOS });
+                        try t.expect(handle_path_len != 0);
+                        try t.expect(handle_path_len != handle_path_buf.len + 1);
+
+                        var handle_path = handle_path_buf[0..handle_path_len :0];
+                        try t.expectEqualSlices(u16, &test_verbatim_prefix, handle_path[0..test_verbatim_prefix.len]);
+                        handle_path[0..test_nt_path_prefix.len].* = test_nt_path_prefix;
+
+                        // std.debug.print("handle_path: '{f}'\n", .{std.unicode.fmtUtf16Le(handle_path)});
+
+                        try t.expect(expected_result.len >= handle_path.len);
+                        try t.expectEqualSlices(u16, handle_path, expected_result[0..handle_path.len]);
+
+                        var expected_rem = expected_result[handle_path_len..];
+                        // std.debug.print("expected_rem: '{f}'\n", .{std.unicode.fmtUtf16Le(expected_rem)});
+                        try t.expect(expected_rem.len >= result.unicode_string.slice().len);
+
+                        expected_result = expected_rem[expected_rem.len - result.unicode_string.slice().len .. :0];
+                        expected_rem.len -= expected_result.len;
+
+                        for (expected_rem) |char| try t.expectEqual('\\', char);
+                    }
+
+                    if (!std.mem.eql(u16, expected_result, result.unicode_string.slice())) {
+                        std.debug.print("expected: '{f}', got: '{f}' (has_handle: {})\n", .{
+                            std.unicode.fmtUtf16Le(expected_result),
+                            std.unicode.fmtUtf16Le(result.unicode_string.slice()),
+                            result.root_handle != null,
+                        });
+                        return error.TestExpectedEqual;
+                    }
+                },
+
+                .OBJECT_NAME_INVALID => {
+                    try t.expectError(error.BadPath, result_or_err);
+                },
             }
-
-            try t.expect(result.root_handle == null);
-        }
-
-        pub fn testToNtPathAgainstRtlError(unstripped_path: [:0]const u8, expected_path_type: ParsedPath.Type, expected_error: anyerror) !void {
-            const parsed = try parsePath(unstripped_path);
-            try t.expectEqual(expected_path_type, parsed.type);
-
-            var path: []const u8 = unstripped_path;
-            if (parsed.type != .verbatim) {
-                while (path.len > 1 and isSep(path[path.len - 1])) {
-                    if (path[path.len - 2] == ':') break;
-                    path.len -= 1;
-                }
-            }
-
-            var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-            try t.expectError(expected_error, toNtPath(cwd(), unstripped_path, &buf));
-
-            var result_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-            const result_len = try std.unicode.wtf8ToWtf16Le(&result_buf, path);
-            result_buf[result_len] = 0;
-
-            var rtl_unicode_result: win32.NT.UNICODE_STRING = undefined;
-            const rc = win32.NT.RtlDosPathNameToNtPathName_U_WithStatus(result_buf[0..result_len :0], &rtl_unicode_result, null, null);
-            if (rc == .SUCCESS) std.debug.print("RtlDosPathNameToNtPathName: '{f}' -> '{f}'", .{
-                std.unicode.fmtUtf16Le(result_buf[0..result_len]),
-                std.unicode.fmtUtf16Le(rtl_unicode_result.slice()),
-            });
-            try t.expectEqual(win32.NTSTATUS.OBJECT_NAME_INVALID, rc);
         }
 
         pub fn testToNtPathRelativeNoEscape(path: [:0]const u8, expected_narrow_result: []const u8) !void {
@@ -704,10 +783,22 @@ test toNtPath {
     };
 
     const testToNtPathAgainstRtl = F.testToNtPathAgainstRtl;
-    const testToNtPathAgainstRtlError = F.testToNtPathAgainstRtlError;
     const testToNtPathRelativeNoEscape = F.testToNtPathRelativeNoEscape;
     const testToNtPathRelativeEscaping = F.testToNtPathRelativeEscaping;
     const testToNtPathLength = F.testToNtPathLength;
+
+    try testToNtPathAgainstRtl("...", .relative);
+    try testToNtPathAgainstRtl("a.b. ", .relative);
+    try testToNtPathAgainstRtl("a. . ", .relative);
+    try testToNtPathAgainstRtl("x\\... ", .relative);
+
+    try testToNtPathAgainstRtl("a.\\b", .relative);
+    try testToNtPathAgainstRtl("a. \\b", .relative);
+    try testToNtPathAgainstRtl("a \\b", .relative);
+    try testToNtPathAgainstRtl("a..b", .relative);
+
+    try testToNtPathAgainstRtl("a..\\y", .relative);
+    try testToNtPathAgainstRtl("x\\...\\y", .relative);
 
     // verbatim
     try testToNtPathAgainstRtl("\\\\?\\C:\\foo", .verbatim);
@@ -841,23 +932,23 @@ test toNtPath {
     try testToNtPathAgainstRtl("\\\\?\\C:\\COM1", .verbatim);
     try testToNtPathAgainstRtl("\\\\server\\share\\COM1", .unc);
 
-    try testToNtPathAgainstRtlError("foo\\CON", .relative, error.BadPath); // Assumes .\\foo is not a dir
-    try testToNtPathAgainstRtl("src\\CON", .relative); // Assumes .\\src is a dir
+    try testToNtPathAgainstRtl("foo\\CON", .relative);
+    try testToNtPathAgainstRtl("src\\CON", .relative);
     try testToNtPathAgainstRtl("C:\\Windows\\CON", .drive_absolute);
-    try testToNtPathAgainstRtlError("C:\\notvalid\\COM1", .drive_absolute, error.BadPath); // Assumes C:\\notvalid is not a dir
+    try testToNtPathAgainstRtl("C:\\notvalid\\COM1", .drive_absolute);
     try testToNtPathAgainstRtl("CON", .relative);
     try testToNtPathAgainstRtl("..\\..\\CON", .relative);
     try testToNtPathAgainstRtl("\\.CON", .rooted);
     try testToNtPathAgainstRtl("\\\\.\\CON", .local_device);
     try testToNtPathAgainstRtl("\\.\\CON", .rooted);
-    try testToNtPathAgainstRtlError("..\\notvalid\\CON", .relative, error.BadPath); // Assumes ..\\notvalid is not a dir
-    try testToNtPathAgainstRtlError("..\\..\\notvalid\\CON", .relative, error.BadPath); // Assumes ..\\..\\notvalid is not a dir
-    try testToNtPathAgainstRtlError("C:\\NUL\\CON", .drive_absolute, error.BadPath); // Assumes C:\\NULL is not a dir
+    try testToNtPathAgainstRtl("..\\notvalid\\CON", .relative);
+    try testToNtPathAgainstRtl("..\\..\\notvalid\\CON", .relative);
+    try testToNtPathAgainstRtl("C:\\NUL\\CON", .drive_absolute);
 
     try testToNtPathAgainstRtl("C:\\CON\\", .drive_absolute);
     try testToNtPathAgainstRtl("CON\\", .relative);
-    try testToNtPathAgainstRtl("src\\CON\\", .relative); // Assumes .\\src is a dir
-    try testToNtPathAgainstRtlError("foo\\CON\\", .relative, error.BadPath); // Assumes .\\foo is not a dir
+    try testToNtPathAgainstRtl("src\\CON\\", .relative);
+    try testToNtPathAgainstRtl("foo\\CON\\", .relative);
 
     // capacity
     var verbatim_exact_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
@@ -883,6 +974,36 @@ test toNtPath {
     @memset(rooted_long_buf[1..win32.PATH_MAX_WIDE], 'a');
     rooted_long_buf[win32.PATH_MAX_WIDE] = 0;
     try testToNtPathLength(rooted_long_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
+
+    {
+        var dir_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+        const dir_len = win32.GetFinalPathNameByHandleW(cwd().handle, &dir_buf, dir_buf.len, .{ .VOLUME_NAME = .DOS });
+        if (dir_len == 0 or dir_len >= dir_buf.len) return error.TestUnexpected;
+
+        const escape_head = "..\\";
+        var escaping_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
+        const filler_len = win32.PATH_MAX_WIDE - dir_len - escape_head.len;
+        @memcpy(escaping_buf[0..escape_head.len], escape_head);
+        @memset(escaping_buf[escape_head.len..][0..filler_len], 'a');
+        escaping_buf[escape_head.len + filler_len] = 0;
+        try testToNtPathLength(escaping_buf[0 .. escape_head.len + filler_len :0], error.NameTooLong);
+    }
+    {
+        const wide_count = 20000;
+        var utf8_buf: [40010]u8 = undefined;
+        @memcpy(utf8_buf[0..3], "..\\");
+        var i: usize = 3;
+        while (i < 3 + wide_count * 2) : (i += 2) @memcpy(utf8_buf[i..][0..2], "\u{00E9}");
+        utf8_buf[i] = 0;
+
+        var utf8_res: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+        const r = try toNtPath(cwd(), utf8_buf[0..i :0], &utf8_res);
+        try t.expect(r.root_handle == null); // escaped the handle, so it resolved absolutely
+
+        var tail: [wide_count]u16 = undefined;
+        @memset(&tail, 0x00E9);
+        try t.expect(std.mem.endsWith(u16, r.unicode_string.slice(), &tail));
+    }
 }
 
 test parsePath {
