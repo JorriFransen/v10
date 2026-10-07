@@ -128,6 +128,7 @@ pub const LPCVOID = *const anyopaque;
 pub const FARPROC = *anyopaque;
 
 pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(math.maxInt(usize));
+pub const ATTACH_PARENT_PROCESS: DWORD = @bitCast(@as(i32, -1));
 
 pub const MAX_PATH = 260;
 pub const PATH_MAX_WIDE = 32767;
@@ -1314,3 +1315,4 @@ pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;
 pub extern "kernel32" fn VirtualAlloc(address: ?LPVOID, size: SIZE_T, allocation_type: MEM.ALLOC, protect: PAGE) callconv(.winapi) ?[*]u8;
 pub extern "kernel32" fn VirtualFree(address: [*]const u8, size: SIZE_T, free_type: MEM.FREE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn WriteFile(handle: HANDLE, buffer: LPCVOID, bytes_to_write: DWORD, out_bytes_written: ?*DWORD, in_out_overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
+pub extern "kernel32" fn AttachConsole(process_id: DWORD) callconv(.winapi) BOOL;
