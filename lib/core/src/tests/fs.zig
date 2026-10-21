@@ -3,6 +3,7 @@ const t = std.testing;
 const builtin = @import("builtin");
 
 const fs = @import("../fs.zig");
+const win32 = @import("../os/win32/win32.zig");
 
 const is_windows = builtin.os.tag == .windows;
 
@@ -149,10 +150,20 @@ test "existsAt" {
 }
 
 test "existsAt symlinks" {
-    if (true) return error.SkipZigTest;
-
     var zig_tmp_dir = t.tmpDir(.{});
     defer zig_tmp_dir.cleanup();
+
+    if (is_windows) {
+        var was_enabled: win32.NT.BOOLEAN = undefined;
+        _ = win32.NT.RtlAdjustPrivilege(.CREATE_SYMBOLIC_LINK_PRIVILEGE, .TRUE, .FALSE, &was_enabled);
+
+        zig_tmp_dir.dir.symLink(t.io, "probe_target", "probe_link", .{}) catch |e| switch (e) {
+            error.PermissionDenied => return error.SkipZigTest,
+            else => return e,
+        };
+
+        try zig_tmp_dir.dir.deleteFile(t.io, "probe_link");
+    }
 
     const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
 
