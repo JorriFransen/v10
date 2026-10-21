@@ -24,6 +24,16 @@ comptime {
     assert(@sizeOf(LOGICAL) == @sizeOf(ULONG));
 }
 
+pub const BOOLEAN = enum(c_int) {
+    FALSE = 0,
+    TRUE = 1,
+    _,
+
+    pub inline fn toBool(this: BOOLEAN) bool {
+        return @intFromEnum(this) != 0;
+    }
+};
+
 pub const OBJECT_ATTRIBUTES = extern struct {
     length: ULONG = @sizeOf(@This()),
     root_directory: ?HANDLE,
@@ -784,6 +794,46 @@ pub const ACCESS_MASK = packed struct(DWORD) {
     pub const STANDARD_RIGHTS_ALL = ACCESS_MASK{ .DELETE = true, .READ_CONTROL = true, .WRITE_DAC = true, .WRITE_OWNER = true, .SYNCHRONIZE = true };
 };
 
+pub const SE = enum(ULONG) {
+    CREATE_TOKEN_PRIVILEGE = 2,
+    ASSIGNPRIMARYTOKEN_PRIVILEGE = 3,
+    LOCK_MEMORY_PRIVILEGE = 4,
+    INCREASE_QUOTA_PRIVILEGE = 5,
+    MACHINE_ACCOUNT_PRIVILEGE = 6,
+    TCB_PRIVILEGE = 7,
+    SECURITY_PRIVILEGE = 8,
+    TAKE_OWNERSHIP_PRIVILEGE = 9,
+    LOAD_DRIVER_PRIVILEGE = 10,
+    SYSTEM_PROFILE_PRIVILEGE = 11,
+    SYSTEMTIME_PRIVILEGE = 12,
+    PROF_SINGLE_PROCESS_PRIVILEGE = 13,
+    INC_BASE_PRIORITY_PRIVILEGE = 14,
+    CREATE_PAGEFILE_PRIVILEGE = 15,
+    CREATE_PERMANENT_PRIVILEGE = 16,
+    BACKUP_PRIVILEGE = 17,
+    RESTORE_PRIVILEGE = 18,
+    SHUTDOWN_PRIVILEGE = 19,
+    DEBUG_PRIVILEGE = 20,
+    AUDIT_PRIVILEGE = 21,
+    SYSTEM_ENVIRONMENT_PRIVILEGE = 22,
+    CHANGE_NOTIFY_PRIVILEGE = 23,
+    REMOTE_SHUTDOWN_PRIVILEGE = 24,
+    UNDOCK_PRIVILEGE = 25,
+    SYNC_AGENT_PRIVILEGE = 26,
+    ENABLE_DELEGATION_PRIVILEGE = 27,
+    MANAGE_VOLUME_PRIVILEGE = 28,
+    IMPERSONATE_PRIVILEGE = 29,
+    CREATE_GLOBAL_PRIVILEGE = 30,
+    TRUSTED_CREDMAN_ACCESS_PRIVILEGE = 31,
+    RELABEL_PRIVILEGE = 32,
+    INC_WORKING_SET_PRIVILEGE = 33,
+    TIME_ZONE_PRIVILEGE = 34,
+    CREATE_SYMBOLIC_LINK_PRIVILEGE = 35,
+
+    pub const MIN_WELL_KNOWN_PRIVILEGE: SE = .CREATE_TOKEN_PRIVILEGE;
+    pub const MAX_WELL_KNOWN_PRIVILEGE: SE = .CREATE_SYMBOLIC_LINK_PRIVILEGE;
+};
+
 pub const FILETIME = extern union {
     u: extern struct {
         low: DWORD = 0,
@@ -809,3 +859,4 @@ pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) ULONGLONG;
 pub extern "ntdll" fn RtlIsDosDeviceName_U(dos_file_name: PCWSTR) callconv(.winapi) ULONG;
 pub extern "ntdll" fn RtlQueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) LOGICAL;
 pub extern "ntdll" fn RtlQueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) LOGICAL;
+pub extern "ntdll" fn RtlAdjustPrivilege(privilege: SE, enable: BOOLEAN, client: BOOLEAN, out_was_enabled: *BOOLEAN) callconv(.winapi) NTSTATUS;
