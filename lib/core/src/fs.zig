@@ -36,6 +36,8 @@ pub const Dir = struct {
         return CreateDirParentsAt(this, dir_path, options);
     }
 
+    /// Follows links.
+    /// TODO: Add symLinkExists
     pub inline fn exists(this: Dir, path: [:0]const u8) ExistsAtError!bool {
         return existsAt(this, path);
     }

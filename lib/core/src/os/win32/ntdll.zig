@@ -3,6 +3,7 @@ const assert = @import("../../assert.zig").assert;
 
 const HANDLE = win32.HANDLE;
 const USHORT = win32.USHORT;
+const BYTE = win32.BYTE;
 const LONG = win32.LONG;
 const ULONG = win32.ULONG;
 const ULONGLONG = win32.ULONGLONG;
@@ -24,7 +25,7 @@ comptime {
     assert(@sizeOf(LOGICAL) == @sizeOf(ULONG));
 }
 
-pub const BOOLEAN = enum(c_int) {
+pub const BOOLEAN = enum(BYTE) {
     FALSE = 0,
     TRUE = 1,
     _,
@@ -600,6 +601,7 @@ pub const FILE = struct {
         /// qs: MUP_PROVIDER_INFORMATION
         MupProviderInfo,
     };
+
     /// This must stay in sync with win32.FILE.FLAGS_AND_ATTRIBUTES.
     pub const ATTRIBUTES = packed struct(ULONG) {
         READONLY: bool = false,
@@ -640,6 +642,17 @@ pub const FILE = struct {
         last_write_time: LARGE_INTEGER,
         change_time: LARGE_INTEGER,
         file_attributes: ATTRIBUTES,
+    };
+
+    pub const ATTRIBUTE_TAG_INFORMATION = extern struct {
+        file_attributes: ATTRIBUTES,
+        reparse_tag: ULONG,
+    };
+
+    pub const IO_REPARSE_TAG = struct {
+        pub const IS_NAME_SURROGATE: ULONG = 0x20000000;
+        pub const SYMLINK: ULONG = 0xA000000C;
+        pub const MOUNT_POINT: ULONG = 0xA0000003;
     };
 
     pub const SHARE = packed struct(DWORD) {

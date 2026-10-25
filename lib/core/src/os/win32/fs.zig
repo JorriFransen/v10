@@ -109,7 +109,7 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
     var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
     const object_attributes = nt_path.ntObjectAttributes();
 
-    const status = switch (win32.NT.NtOpenFile(
+    switch (win32.NT.NtOpenFile(
         &handle,
         .{
             .SYNCHRONIZE = true,
@@ -131,7 +131,7 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
             .OPEN_REPARSE_POINT = !options.follow_symlinks,
         },
     )) {
-        .SUCCESS => return .{ .handle = handle },
+        .SUCCESS => {},
 
         .OBJECT_NAME_INVALID,
         .OBJECT_PATH_INVALID,
@@ -143,26 +143,54 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
         .BAD_NETWORK_NAME,
         => return error.FileNotFound,
 
-        .BAD_NETWORK_PATH => return error.BadPath,
+        .INSUFFICIENT_RESOURCES,
+        .NO_MEMORY,
+        => return error.OutOfMemory,
+
+        .ACCESS_DENIED,
+        .USER_MAPPED_FILE,
+        => return error.AccessDenied,
+
+        .SHARING_VIOLATION,
+        .DELETE_PENDING,
+        => return error.DeviceBusy,
+
+        .STOPPED_ON_SYMLINK,
+        .REPARSE_POINT_NOT_RESOLVED,
+        => return error.SymLinkNotResolved,
+
         .NOT_A_DIRECTORY => return error.NotDir,
-        .INSUFFICIENT_RESOURCES, .NO_MEMORY => return error.OutOfMemory,
-        .ACCESS_DENIED, .USER_MAPPED_FILE => return error.AccessDenied,
-        .SHARING_VIOLATION, .DELETE_PENDING => return error.DeviceBusy,
 
-        .STOPPED_ON_SYMLINK, .REPARSE_POINT_NOT_RESOLVED => |s| blk: {
-            if (options.follow_symlinks) return error.SymLinkNotResolved;
-            break :blk s;
+        .BAD_NETWORK_PATH => return error.BadPath,
+
+        .INVALID_HANDLE,
+        .INVALID_PARAMETER,
+        => unreachable,
+
+        else => |s| {
+            std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+                std.enums.tagName(win32.NTSTATUS, s) orelse "", @intFromEnum(s),
+            });
+            return error.Unexpected;
         },
+    }
 
-        .INVALID_HANDLE, .INVALID_PARAMETER => unreachable,
+    errdefer _ = win32.NT.NtClose(handle);
 
-        else => |s| s,
-    };
+    if (!options.follow_symlinks) {
+        var tag_info: win32.NT.FILE.ATTRIBUTE_TAG_INFORMATION = undefined;
+        const status = win32.NT.NtQueryInformationFile(handle, &io_status_block, &tag_info, @sizeOf(@TypeOf(tag_info)), .AttributeTagInformation);
+        assert(status == .SUCCESS);
+        if (status != .SUCCESS) return error.Unexpected;
 
-    std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
-        std.enums.tagName(win32.NTSTATUS, status) orelse "", @intFromEnum(status),
-    });
-    return error.Unexpected;
+        if (tag_info.file_attributes.REPARSE_POINT and
+            tag_info.reparse_tag & win32.NT.FILE.IO_REPARSE_TAG.IS_NAME_SURROGATE != 0)
+        {
+            return error.SymLinkNotResolved;
+        }
+    }
+
+    return .{ .handle = handle };
 }
 
 pub fn createDirAt(dir: fs.Dir, dir_name: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {

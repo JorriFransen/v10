@@ -442,9 +442,9 @@ pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: Optimize) !Tests 
     });
 
     // Workaround for wine related output in stderr: even if all tests pass, the build process prints
-    // a spurious line about the test exe, e.g.
-    //   `failed command: "./.zig-cache/o/<hash>/<test-exe>.exe" --cache-dir=./.zig-cache --seed=<seed> --listen=-`
-    const cross_windows = target.result.os.tag == .windows and b.graph.host.result.os.tag != .windows;
+    // a spurious line about the test exe.
+    // `failed command: "./.zig-cache/o/<hash>/<test-exe>.exe" --cache-dir=./.zig-cache --seed=<seed> --listen=-`
+    const cross_windows = target.result.os.tag == .windows and cross_compile;
     const test_runner: ?Step.Compile.TestRunner = if (cross_windows) .{
         .path = .{ .cwd_relative = try zig_lib_dir.join(b.allocator, &.{ "compiler", "test_runner.zig" }) },
         .mode = .simple,
@@ -456,6 +456,7 @@ pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: Optimize) !Tests 
         .test_runner = test_runner,
     });
 
+    // TODO: Add option to run via 'b.addSystemCommand', so skipped tests can be identified.
     const core_test_run = b.addRunArtifact(core_test_exe);
     const core_test_install = b.addInstallArtifact(core_test_exe, .{ .dest_dir = .{ .override = .{ .custom = "test" } } });
 

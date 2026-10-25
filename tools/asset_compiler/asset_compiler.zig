@@ -178,7 +178,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
             error.FileNotFound => {
                 ctx.verbose("Creating output dir: '{s}'", .{ctx.output_dir_path});
 
-                fs.cwd().createDirParents(ctx.output_dir_path, .{}) catch |de| {
+                fs.cwd().stdDir().createDirPath(ctx.io, ctx.output_dir_path) catch |de| {
                     ctx.err("Unable to create output dir '{s}', error: '{s}'", .{ ctx.output_dir_path, @errorName(de) });
                     return de;
                 };
