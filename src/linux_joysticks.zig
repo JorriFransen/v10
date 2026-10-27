@@ -68,7 +68,7 @@ pub const Joystick = struct {
         deadzone: i32 = 0,
     };
 
-    pub const axis_count = @typeInfo(Axis).@"enum".fields.len;
+    pub const axis_count = @typeInfo(Axis).@"enum".field_names.len;
     pub const Axis = enum {
         left_x,
         left_y,
@@ -80,7 +80,7 @@ pub const Joystick = struct {
         dpad_y,
     };
 
-    pub const button_count = @typeInfo(Button).@"enum".fields.len;
+    pub const button_count = @typeInfo(Button).@"enum".field_names.len;
     pub const Buttons = std.StaticBitSet(button_count);
     pub const Button = enum {
         north,
@@ -208,12 +208,12 @@ pub const Joystick = struct {
 
         const ev_bits: EV.BitSet = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
 
-        const has_axis = ev_bits.isSet(@intFromEnum(EV.ABS));
-        const has_buttons = ev_bits.isSet(@intFromEnum(EV.KEY));
+        const has_axis = ev_bits.isSet(@backingInt(EV.ABS));
+        const has_buttons = ev_bits.isSet(@backingInt(EV.KEY));
 
-        const has_rumble: bool = if (ev_bits.isSet(@intFromEnum(EV.FF))) blk: {
+        const has_rumble: bool = if (ev_bits.isSet(@backingInt(EV.FF))) blk: {
             const ff_bits: FF.BitSet = linux.ioctl_EVIOCGBIT(fd, FF) catch .empty;
-            break :blk ff_bits.isSet(@intFromEnum(FF.RUMBLE));
+            break :blk ff_bits.isSet(@backingInt(FF.RUMBLE));
         } else false;
 
         this.* = .{
@@ -231,11 +231,13 @@ pub const Joystick = struct {
         if (has_axis) {
             const abs_bits: ABS.BitSet = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
 
-            inline for (std.meta.fields(Axis)) |field| {
-                const axis_idx = field.value;
-                const abs: ABS = @field(map.axis, field.name);
+            const ax_ti = @typeInfo(Axis).@"enum";
 
-                if (abs_bits.isSet(@intFromEnum(abs))) {
+            inline for (ax_ti.field_names, ax_ti.field_values) |field_name, field_value| {
+                const axis_idx = field_value;
+                const abs: ABS = @field(map.axis, field_name);
+
+                if (abs_bits.isSet(@backingInt(abs))) {
                     this.axis_meta[axis_idx] = if (linux.ioctl_EVIOCGABS(fd, abs)) |abs_info|
                         .{
                             .available = true,
@@ -276,12 +278,14 @@ pub const Joystick = struct {
     fn handleEvent(this: *Joystick, event: *const InputEvent) void {
         switch (event.type) {
             .ABS => {
-                inline for (std.meta.fields(Axis)) |field| {
-                    const mapped_abs_axis = @field(this.map.axis, field.name);
+                const ax_ti = @typeInfo(Axis).@"enum";
 
-                    if (event.code == @intFromEnum(mapped_abs_axis)) {
-                        const axis_idx: usize = field.value;
-                        const axis = @field(Axis, field.name);
+                inline for (ax_ti.field_names, ax_ti.field_values) |field_name, field_value| {
+                    const mapped_abs_axis = @field(this.map.axis, field_name);
+
+                    if (event.code == @backingInt(mapped_abs_axis)) {
+                        const axis_idx: usize = field_value;
+                        const axis = @field(Axis, field_name);
 
                         const axis_value = this.normalizedAxis(axis, event.value);
                         this.axis[axis_idx] = axis_value;
@@ -316,11 +320,11 @@ pub const Joystick = struct {
             },
 
             .KEY => {
-                inline for (std.meta.fields(Button)) |field| {
-                    const mapped_key: KEY = @field(this.map.buttons, field.name);
+                inline for (@typeInfo(Button).@"enum".field_names) |field_name| {
+                    const mapped_key: KEY = @field(this.map.buttons, field_name);
 
-                    if (event.code == @intFromEnum(mapped_key)) {
-                        const button = @field(Button, field.name);
+                    if (event.code == @backingInt(mapped_key)) {
+                        const button = @field(Button, field_name);
                         this.setButtonState(button, event.value != 0);
                         break;
                     }
@@ -328,7 +332,7 @@ pub const Joystick = struct {
             },
 
             .SYN => {
-                if (event.code == @intFromEnum(linux.SYN.REPORT) and this.state == .wait_settle) {
+                if (event.code == @backingInt(linux.SYN.REPORT) and this.state == .wait_settle) {
                     this.sync_report_count += 1;
                 }
             },
@@ -353,22 +357,26 @@ pub const Joystick = struct {
         if (this.capabilities.button) {
             const key_bits: KEY.BitSet = linux.ioctl_EVIOCGKEY(this.fd) catch .empty;
 
-            inline for (std.meta.fields(Button)) |field| {
-                const button: Button = @enumFromInt(field.value);
-                const mapped_key: KEY = @field(this.map.buttons, field.name);
+            const but_ti = @typeInfo(Button).@"enum";
 
-                this.setButtonState(button, key_bits.isSet(@intFromEnum(mapped_key)));
+            inline for (but_ti.field_names, but_ti.field_values) |field_name, field_value| {
+                const button: Button = @fromBackingInt(@intCast(field_value));
+                const mapped_key: KEY = @field(this.map.buttons, field_name);
+
+                this.setButtonState(button, key_bits.isSet(@backingInt(mapped_key)));
             }
         }
 
         if (this.capabilities.axis) {
             const abs_bits: ABS.BitSet = linux.ioctl_EVIOCGBIT(this.fd, ABS) catch .empty;
 
-            inline for (std.meta.fields(Axis)) |field| {
-                const axis: Axis = @enumFromInt(field.value);
-                const mapped_abs: ABS = @field(this.map.axis, field.name);
+            const ax_ti = @typeInfo(Axis).@"enum";
 
-                this.axis[field.value] = if (abs_bits.isSet(@intFromEnum(mapped_abs)))
+            inline for (ax_ti.field_names, ax_ti.field_values) |field_name, field_value| {
+                const axis: Axis = @fromBackingInt(@intCast(field_value));
+                const mapped_abs: ABS = @field(this.map.axis, field_name);
+
+                this.axis[field_value] = if (abs_bits.isSet(@backingInt(mapped_abs)))
                     if (linux.ioctl_EVIOCGABS(this.fd, mapped_abs)) |abs_info|
                         this.normalizedAxis(axis, abs_info.value)
                     else |_|
@@ -445,17 +453,17 @@ pub const Joystick = struct {
     }
 
     pub inline fn getButtonState(this: *const Joystick, button: Button) bool {
-        return this.buttons.isSet(@intFromEnum(button));
+        return this.buttons.isSet(@backingInt(button));
     }
 
     inline fn setButtonState(this: *Joystick, button: Button, state: bool) void {
-        this.buttons.setValue(@intFromEnum(button), state);
+        this.buttons.setValue(@backingInt(button), state);
     }
 
     fn normalizedAxis(this: *const Joystick, axis: Axis, raw: i32) f32 {
         var result: f32 = 0;
 
-        const meta = &this.axis_meta[@intFromEnum(axis)];
+        const meta = &this.axis_meta[@backingInt(axis)];
 
         if (raw < -meta.deadzone or raw > meta.deadzone) {
             const min: f32 = @floatFromInt(meta.min);
@@ -1266,8 +1274,8 @@ fn eventFdIsJoystick(fd: fd_t) bool {
 
     const ev_bits: EV.BitSet = linux.ioctl_EVIOCGBIT(fd, EV) catch .empty;
 
-    if (ev_bits.isSet(@intFromEnum(EV.ABS)) or
-        ev_bits.isSet(@intFromEnum(EV.KEY)))
+    if (ev_bits.isSet(@backingInt(EV.ABS)) or
+        ev_bits.isSet(@backingInt(EV.KEY)))
     {
         const abs_bits: ABS.BitSet = linux.ioctl_EVIOCGBIT(fd, ABS) catch .empty;
         const key_bits: KEY.BitSet = linux.ioctl_EVIOCGBIT(fd, KEY) catch .empty;
@@ -1275,8 +1283,8 @@ fn eventFdIsJoystick(fd: fd_t) bool {
         const check_key_bits: KEY.BitSet = comptime blk: {
             var bits: KEY.BitSet = .empty;
             bits.setRangeValue(.{
-                .start = @intFromEnum(KEY.BTN_JOYSTICK),
-                .end = @intFromEnum(KEY.BTN_THUMBR),
+                .start = @backingInt(KEY.BTN_JOYSTICK),
+                .end = @backingInt(KEY.BTN_THUMBR),
             }, true);
             break :blk bits;
         };
@@ -1284,8 +1292,8 @@ fn eventFdIsJoystick(fd: fd_t) bool {
         const has_some_buttons = check_key_bits.intersectWith(key_bits).findFirstSet() != null;
 
         const has_xy =
-            abs_bits.isSet(@intFromEnum(ABS.X)) and
-            abs_bits.isSet(@intFromEnum(ABS.Y));
+            abs_bits.isSet(@backingInt(ABS.X)) and
+            abs_bits.isSet(@backingInt(ABS.Y));
 
         result = has_some_buttons and has_xy;
     }

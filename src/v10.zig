@@ -873,7 +873,7 @@ pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memo
             basis.* = .{ .p = .zero };
             render_group.default_basis = basis;
 
-            const hero_bitmap = &game_state.hero_bitmaps[@intFromEnum(entity.facing_direction)];
+            const hero_bitmap = &game_state.hero_bitmaps[@backingInt(entity.facing_direction)];
 
             switch (entity.type) {
                 .null => unreachable,

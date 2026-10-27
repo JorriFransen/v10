@@ -17,7 +17,7 @@ const Signature = trampolines.Signature;
 pub const Display = wl_core.Display;
 
 comptime {
-    if (options.verbose_wayland and builtin.mode != .Debug) {
+    if (options.verbose_wayland and builtin.mode != .debug) {
         @compileError("Option verbose_wayland requires debug mode");
     }
 }
@@ -102,9 +102,9 @@ pub fn displayConnect(path_opt: ?[*:0]const u8, environ_opt: ?*const std.process
     var result: ?*Display = null;
 
     if (linux.fcntl(fd, linux.F.GETFL, 0)) |flags| {
-        var socket_flags: linux.O = @bitCast(flags);
+        var socket_flags: linux.O = @fromBackingInt(@truncate(flags));
         socket_flags.NONBLOCK = true;
-        if (linux.fcntl(fd, linux.F.SETFL, @as(u32, @bitCast(socket_flags)))) |_| {
+        if (linux.fcntl(fd, linux.F.SETFL, @as(c_uint, @bitCast(@backingInt(socket_flags))))) |_| {
             if (path_opt) |cpath| {
                 const path = std.mem.span(cpath);
                 assert(path.len <= sock_addr.path.len);
@@ -235,7 +235,7 @@ pub const Timeout = enum(i64) {
     pub inline fn timeout(ns: anytype) Timeout {
         meta.expectUnsigned(ns);
         const _ns: u63 = @intCast(ns);
-        return @enumFromInt(_ns);
+        return @fromBackingInt(@intCast(_ns));
     }
 };
 
@@ -245,7 +245,7 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout_ns: Timeout) isiz
     verbose("display_dispatch(id = {}, timeout = {} ({})) ...", .{
         display.object.id,
         std.enums.tagName(Timeout, first_timeout_ns) orelse "",
-        @intFromEnum(first_timeout_ns),
+        @backingInt(first_timeout_ns),
     });
 
     var result: isize = 0;
@@ -257,7 +257,7 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout_ns: Timeout) isiz
         const tsp: ?*const linux.timespec = if (cur_timeout == .infinite)
             null
         else blk: {
-            const ns: i64 = @intFromEnum(cur_timeout);
+            const ns: i64 = @backingInt(cur_timeout);
             break :blk &.{ .sec = @divTrunc(ns, std.time.ns_per_s), .nsec = @rem(ns, std.time.ns_per_s) };
         };
 
@@ -599,7 +599,7 @@ pub fn marshalRequest(object: *Object, op: u32, args: []const Argument) void {
         arg_type_switch_blk: switch (arg) {
             .i => |i| marshalArg(payload_buf, &payload_used, @bitCast(i)),
             .u => |u| marshalArg(payload_buf, &payload_used, u),
-            .f => |f| marshalArg(payload_buf, &payload_used, @bitCast(f)),
+            .f => |f| marshalArg(payload_buf, &payload_used, @bitCast(f.value)),
             .s => |s| {
                 marshalArg(payload_buf, &payload_used, @intCast(s.len + 1));
                 var remaining = s.len;

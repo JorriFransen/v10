@@ -76,7 +76,7 @@ pub const ControllerInput = struct {
         },
         comptime {
             const dummy: @This() = std.mem.zeroes(@This());
-            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".field_names.len);
         }
     },
 };
@@ -95,7 +95,7 @@ pub const DebugMouseInput = struct {
 
         comptime {
             const dummy: @This() = std.mem.zeroes(@This());
-            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".fields.len);
+            assert(dummy.array.len == @typeInfo(@TypeOf(@field(dummy, "named"))).@"struct".field_names.len);
         }
     } = std.mem.zeroes(@FieldType(@This(), "buttons")),
 

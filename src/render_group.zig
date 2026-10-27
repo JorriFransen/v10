@@ -210,7 +210,7 @@ const PushRectOutlineOptions = struct {
     thickness: f32 = 0.1,
 };
 
-pub inline fn pushRectOutline(this: *RenderGroup, offset: V2, offset_z: f32, dim: V2, color: Color, o: PushRectOutlineOptions) void {
+pub fn pushRectOutline(this: *RenderGroup, offset: V2, offset_z: f32, dim: V2, color: Color, o: PushRectOutlineOptions) void {
     const t: f32 = o.thickness;
 
     if (false) {

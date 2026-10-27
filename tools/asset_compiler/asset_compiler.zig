@@ -1075,6 +1075,7 @@ fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, in
 
 fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, input_file: *const InputFile, rel_output_dir_path: []const u8, perf_timers: *PerfTimers) AsepriteError!void {
     assert(pathIsAbsolute(input_file.abs_path));
+    assert(pathIsAbsolute(compile_options.aseprite_script_path));
 
     var _arena = mem.TempArena.init(arena);
     errdefer _arena.release();

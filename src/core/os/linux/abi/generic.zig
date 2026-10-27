@@ -6,7 +6,7 @@ const linux = @import("../linux.zig");
 
 const ACCMODE = linux.ACCMODE;
 
-pub const O = packed struct(u32) {
+pub const O = packed struct(c_int) {
     ACCMODE: ACCMODE = .RDONLY,
     _2: u4 = 0,
     CREAT: bool = false,

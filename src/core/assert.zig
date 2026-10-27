@@ -6,7 +6,7 @@ pub fn assert(cond: bool) void {
         if (!cond) {
             @trap();
         }
-    } else if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+    } else if (builtin.mode == .debug or builtin.mode == .safe) {
         if (!cond) {
             @branchHint(.cold);
             std.debug.dumpCurrentStackTrace(.{ .first_address = @returnAddress() });

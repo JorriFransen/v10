@@ -103,7 +103,7 @@ fn run(context: *Context) !void {
         return error.InvalidArgs;
     }
 
-    const output_dir = std.Io.Dir.openDirAbsolute(context.io, context.args.out, .{}) catch {
+    const output_dir = std.Io.Dir.cwd().openDir(context.io, context.args.out, .{}) catch {
         try context.stderr.print("Invalid output directory: {s}\n", .{context.args.out});
         return error.OutputDirDoesNotExist;
     };
@@ -122,7 +122,7 @@ fn run(context: *Context) !void {
 
     var core_protocol: AST.Protocol = undefined;
 
-    if (std.Io.Dir.openFileAbsolute(context.io, context.args.wayland, .{})) |core_xml_file| {
+    if (std.Io.Dir.cwd().openFile(context.io, context.args.wayland, .{})) |core_xml_file| {
         if (parser.parse(context, &stderr_writer.interface, context.args.wayland)) |prot| {
             core_protocol = prot;
         } else |e| {
@@ -160,7 +160,7 @@ fn run(context: *Context) !void {
     const protocol_xml_paths = context.args.positionals;
 
     for (protocol_xml_paths) |protocol_path| {
-        if (std.Io.Dir.openFileAbsolute(context.io, protocol_path, .{})) |protocol_xml_file| {
+        if (std.Io.Dir.cwd().openFile(context.io, protocol_path, .{})) |protocol_xml_file| {
             var protocol = parser.parse(context, &stderr_writer.interface, protocol_path) catch |e| {
                 protocol_xml_file.close(context.io);
                 try context.stderr.print("Protocol parse failed: '{s}'\n", .{protocol_path});

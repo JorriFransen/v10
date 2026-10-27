@@ -141,11 +141,11 @@ fn SliceToSentinelRet(comptime Slice: type, comptime sentinel: std.meta.Elem(Sli
             const E = std.meta.Elem(Slice);
 
             return @Pointer(.slice, .{
-                .@"const" = pi.is_const,
-                .@"volatile" = pi.is_volatile,
-                .@"allowzero" = pi.is_allowzero and pi.size != .c,
-                .@"align" = pi.alignment,
-                .@"addrspace" = pi.address_space,
+                .@"const" = pi.attrs.@"const",
+                .@"volatile" = pi.attrs.@"volatile",
+                .@"allowzero" = pi.attrs.@"allowzero" and pi.size != .c,
+                .@"align" = pi.attrs.@"align",
+                .@"addrspace" = pi.attrs.@"addrspace",
             }, E, sentinel);
         },
 

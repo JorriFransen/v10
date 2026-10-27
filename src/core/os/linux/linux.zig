@@ -25,18 +25,18 @@ pub const page_size = std.heap.page_size_min;
 inline fn handleErrno(comptime E: type, rc: isize) E!void {
     if (rc < 0) {
         if (std.math.cast(@typeInfo(Errno).@"enum".tag_type, -%rc)) |nrc| {
-            const e: Errno = @enumFromInt(nrc);
-            inline for (std.meta.fields(E)) |field| {
-                if (@hasField(Errno, field.name) or @hasDecl(Errno, field.name)) {
-                    if (e == @field(Errno, field.name)) {
-                        return @field(E, field.name);
+            const e: Errno = @fromBackingInt(@intCast(nrc));
+            inline for (@typeInfo(E).error_set.error_names.?) |name| {
+                if (@hasField(Errno, name) or @hasDecl(Errno, name)) {
+                    if (e == @field(Errno, name)) {
+                        return @field(E, name);
                     }
-                } else if (comptime !std.mem.eql(u8, field.name, "UnexpectedErrno")) {
-                    @compileError(std.fmt.comptimePrint("Error code not in 'Errno': '{s}'", .{field.name}));
+                } else if (comptime !std.mem.eql(u8, name, "UnexpectedErrno")) {
+                    @compileError(std.fmt.comptimePrint("Error code not in 'Errno': '{s}'", .{name}));
                 }
             } else {
                 if (!builtin.is_test) {
-                    log.warn("Unexpected errno for {s}: {s} ({})", .{ @typeName(E), std.enums.tagName(Errno, e) orelse "", @intFromEnum(e) });
+                    log.warn("Unexpected errno for {s}: {s} ({})", .{ @typeName(E), std.enums.tagName(Errno, e) orelse "", @backingInt(e) });
                 }
                 return error.UnexpectedErrno;
             }
@@ -53,12 +53,12 @@ test "handleErrno" {
     try handleErrno(OpenatError, 0);
     try handleErrno(OpenatError, 42);
 
-    try std.testing.expectError(error.ACCES, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.ACCES))));
-    try std.testing.expectError(error.NOENT, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.NOENT))));
-    try std.testing.expectError(error.TXTBSY, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.TXTBSY))));
+    try std.testing.expectError(error.ACCES, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.ACCES))));
+    try std.testing.expectError(error.NOENT, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.NOENT))));
+    try std.testing.expectError(error.TXTBSY, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.TXTBSY))));
 
-    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.ADDRINUSE))));
-    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @intFromEnum(Errno.SRCH))));
+    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.ADDRINUSE))));
+    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.SRCH))));
 }
 
 const sep = std.fs.path.sep_posix;
@@ -738,7 +738,7 @@ pub const FcntlError = error{
     UnexpectedErrno,
 };
 
-pub fn fcntl(fd: fd_t, op: c_int, arg: usize) FcntlError!c_int {
+pub fn fcntl(fd: fd_t, op: c_int, arg: c_ulong) FcntlError!c_long {
     const rc = syscall3(
         .fcntl,
         safeExtendToUsize(fd),
@@ -746,7 +746,7 @@ pub fn fcntl(fd: fd_t, op: c_int, arg: usize) FcntlError!c_int {
         arg,
     );
     try handleErrno(FcntlError, rc);
-    return safeTrunc(c_int, rc);
+    return safeTrunc(c_long, rc);
 }
 
 // =============================================================================
@@ -760,7 +760,7 @@ pub const SEEK = enum(c_uint) {
     DATA = 3,
     HOLE = 4,
 
-    pub const MAX: c_uint = @intFromEnum(.HOLE);
+    pub const MAX: c_uint = @backingInt(.HOLE);
 };
 
 // =============================================================================
@@ -884,7 +884,7 @@ pub fn inotify_rm_watch(fd: fd_t, wd: c_int) InotifyRmWatchError!void {
 
 pub const InputEvent = extern struct {
     time: timeval = .{ .sec = 0, .usec = 0 },
-    type: EV = @enumFromInt(0),
+    type: EV = @fromBackingInt(@intCast(0)),
     code: u16 = 0,
     value: i32 = 0,
 };
@@ -1059,11 +1059,11 @@ pub inline fn EVIOCGBIT(ev: u8, len: _IOC.SizeInt) _IOC {
 }
 /// Get abs value/limits
 pub inline fn EVIOCGABS(abs: ABS) _IOC {
-    return _IOR('E', 0x40 + @intFromEnum(abs), InputAbsInfo);
+    return _IOR('E', 0x40 + @backingInt(abs), InputAbsInfo);
 }
 /// Set abs value/limits
 pub inline fn EVIOCSABS(abs: ABS) _IOC {
-    return _IOW('E', 0xc0 + @intFromEnum(abs), InputAbsInfo);
+    return _IOW('E', 0xc0 + @backingInt(abs), InputAbsInfo);
 }
 /// Send a force effect to a force feedback device
 pub const EVIOCSFF: _IOC = _IOW('E', 0x80, FfEffect);
@@ -1223,7 +1223,7 @@ pub inline fn ioctl_EVIOCGPROP(fd: fd_t) IoctlError!InputProp {
 /// The length of 'slot_buf' must be 'slot_count + 1' because the code is put in the first slot for the ioctl request.
 pub inline fn ioctl_EVIOCGMTSLOTS(fd: fd_t, slot: ABS.MT, slot_count: usize, slot_buf: []i32) IoctlError![]i32 {
     assert(slot_count + 1 == slot_buf.len);
-    slot_buf[0] = @intFromEnum(slot);
+    slot_buf[0] = @backingInt(slot);
     const rc = try ioctlRead(fd, EVIOCGMTSLOTS(@intCast(slot_buf.len * @sizeOf(i32))), slot_buf.ptr);
     assert(rc == 0);
     return slot_buf[1..];
@@ -1386,7 +1386,7 @@ pub const EV = enum(u16) {
         return switch (T) {
             else => @compileError("Invalid event type"),
             EV => 0,
-            ABS, KEY, FF, REL, MSC, LED, SND, SW => @intFromEnum(@field(EV, meta.typeNameLeaf(T))),
+            ABS, KEY, FF, REL, MSC, LED, SND, SW => @backingInt(@field(EV, meta.typeNameLeaf(T))),
         };
     }
 };
@@ -1441,20 +1441,20 @@ pub const ABS = enum(u8) {
     pub const CNT: u16 = (MAX + 1);
 
     pub const MT = enum(u8) {
-        TOUCH_MAJOR = @intFromEnum(ABS.MT_TOUCH_MAJOR),
-        TOUCH_MINOR = @intFromEnum(ABS.MT_TOUCH_MINOR),
-        WIDTH_MAJOR = @intFromEnum(ABS.MT_WIDTH_MAJOR),
-        WIDTH_MINOR = @intFromEnum(ABS.MT_WIDTH_MINOR),
-        ORIENTATION = @intFromEnum(ABS.MT_ORIENTATION),
-        POSITION_X = @intFromEnum(ABS.MT_POSITION_X),
-        POSITION_Y = @intFromEnum(ABS.MT_POSITION_Y),
-        TOOL_TYPE = @intFromEnum(ABS.MT_TOOL_TYPE),
-        BLOB_ID = @intFromEnum(ABS.MT_BLOB_ID),
-        TRACKING_ID = @intFromEnum(ABS.MT_TRACKING_ID),
-        PRESSURE = @intFromEnum(ABS.MT_PRESSURE),
-        DISTANCE = @intFromEnum(ABS.MT_DISTANCE),
-        TOOL_X = @intFromEnum(ABS.MT_TOOL_X),
-        TOOL_Y = @intFromEnum(ABS.MT_TOOL_Y),
+        TOUCH_MAJOR = @backingInt(ABS.MT_TOUCH_MAJOR),
+        TOUCH_MINOR = @backingInt(ABS.MT_TOUCH_MINOR),
+        WIDTH_MAJOR = @backingInt(ABS.MT_WIDTH_MAJOR),
+        WIDTH_MINOR = @backingInt(ABS.MT_WIDTH_MINOR),
+        ORIENTATION = @backingInt(ABS.MT_ORIENTATION),
+        POSITION_X = @backingInt(ABS.MT_POSITION_X),
+        POSITION_Y = @backingInt(ABS.MT_POSITION_Y),
+        TOOL_TYPE = @backingInt(ABS.MT_TOOL_TYPE),
+        BLOB_ID = @backingInt(ABS.MT_BLOB_ID),
+        TRACKING_ID = @backingInt(ABS.MT_TRACKING_ID),
+        PRESSURE = @backingInt(ABS.MT_PRESSURE),
+        DISTANCE = @backingInt(ABS.MT_DISTANCE),
+        TOOL_X = @backingInt(ABS.MT_TOOL_X),
+        TOOL_Y = @backingInt(ABS.MT_TOOL_Y),
     };
 
     pub const BitSet = EnumBitSet(@This());
@@ -1482,31 +1482,31 @@ pub const FF = enum(u16) {
     AUTOCENTER = 0x61,
 
     pub const EFFECT = enum(u16) {
-        HAPTIC = @intFromEnum(FF.HAPTIC),
-        RUMBLE = @intFromEnum(FF.RUMBLE),
-        PERIODIC = @intFromEnum(FF.PERIODIC),
-        CONSTANT = @intFromEnum(FF.CONSTANT),
-        SPRING = @intFromEnum(FF.SPRING),
-        FRICTION = @intFromEnum(FF.FRICTION),
-        DAMPER = @intFromEnum(FF.DAMPER),
-        INERTIA = @intFromEnum(FF.INERTIA),
-        RAMP = @intFromEnum(FF.RAMP),
+        HAPTIC = @backingInt(FF.HAPTIC),
+        RUMBLE = @backingInt(FF.RUMBLE),
+        PERIODIC = @backingInt(FF.PERIODIC),
+        CONSTANT = @backingInt(FF.CONSTANT),
+        SPRING = @backingInt(FF.SPRING),
+        FRICTION = @backingInt(FF.FRICTION),
+        DAMPER = @backingInt(FF.DAMPER),
+        INERTIA = @backingInt(FF.INERTIA),
+        RAMP = @backingInt(FF.RAMP),
     };
 
     pub const WAVEFORM = enum(u16) {
-        SQUARE = @intFromEnum(FF.SQUARE),
-        TRIANGLE = @intFromEnum(FF.TRIANGLE),
-        SINE = @intFromEnum(FF.SINE),
-        SAW_UP = @intFromEnum(FF.SAW_UP),
-        SAW_DOWN = @intFromEnum(FF.SAW_DOWN),
-        CUSTOM = @intFromEnum(FF.CUSTOM),
+        SQUARE = @backingInt(FF.SQUARE),
+        TRIANGLE = @backingInt(FF.TRIANGLE),
+        SINE = @backingInt(FF.SINE),
+        SAW_UP = @backingInt(FF.SAW_UP),
+        SAW_DOWN = @backingInt(FF.SAW_DOWN),
+        CUSTOM = @backingInt(FF.CUSTOM),
     };
 
     pub const EFFECT_MIN: FF = .HAPTIC;
     pub const EFFECT_MAX: FF = .RAMP;
     pub const WAVEFORM_MIN: FF = .SQUARE;
     pub const WAVEFORM_MAX: FF = .CUSTOM;
-    pub const MAX_EFFECTS: u16 = @intFromEnum(FF.GAIN);
+    pub const MAX_EFFECTS: u16 = @backingInt(FF.GAIN);
 
     pub const MAX: u16 = 0x7f;
     pub const CNT: u16 = 0x80;
@@ -3117,8 +3117,8 @@ pub const CLOCK = enum(c_int) {
     pub const MAX_AUX_CLOCKS = 8;
     pub const CLOCK_AUX_LAST = (CLOCK_AUX + MAX_AUX_CLOCKS - 1);
 
-    pub const CLOCKS_MASK: c_int = (@intFromEnum(CLOCK.REALTIME) | @intFromEnum(CLOCK.MONOTONIC));
-    pub const CLOCKS_MONO: c_int = @intFromEnum(CLOCK.MONOTONIC);
+    pub const CLOCKS_MASK: c_int = (@backingInt(CLOCK.REALTIME) | @backingInt(CLOCK.MONOTONIC));
+    pub const CLOCKS_MONO: c_int = @backingInt(CLOCK.MONOTONIC);
 };
 
 pub const ClockGettimeError = error{
@@ -3280,12 +3280,12 @@ pub fn close(fd: fd_t) void {
     } else |e| switch (e) {
         error.INTR => {},
 
-        error.BADF => if (builtin.mode == .Debug) { // Double close of use after close
+        error.BADF => if (builtin.mode == .debug) { // Double close of use after close
             @breakpoint();
             unreachable;
         },
 
-        else => if (builtin.mode == .Debug) {
+        else => if (builtin.mode == .debug) {
             @breakpoint();
             unreachable;
         },
@@ -3543,7 +3543,7 @@ inline fn zeroExtendToUsize(x: anytype) usize {
             } else @compileError("Expected signed integer, enum or packed struct");
         },
 
-        .@"enum" => |ei| break :blk .{ ei.tag_type, @as(ei.tag_type, @intFromEnum(x)) },
+        .@"enum" => |ei| break :blk .{ ei.tag_type, @as(ei.tag_type, @backingInt(x)) },
 
         else => @compileError("Expected signed integer, enum or packed struct"),
     };

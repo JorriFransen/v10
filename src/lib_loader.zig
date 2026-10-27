@@ -33,15 +33,15 @@ pub fn load(comptime T: type, lib_names: []const []const u8, comptime options: L
     var load_stubs = false;
 
     if (lib_found) {
-        inline for (@typeInfo(T).@"struct".decls) |decl| {
-            const decl_type = @TypeOf(@field(T, decl.name));
+        inline for (@typeInfo(T).@"struct".decl_names) |decl_name| {
+            const decl_type = @TypeOf(@field(T, decl_name));
             const decl_type_info = @typeInfo(decl_type);
 
             if (decl_type_info == .pointer and @typeInfo(decl_type_info.pointer.child) == .@"fn") {
-                const name = if (options.search_prefix_opt) |sp| sp ++ decl.name else decl.name;
+                const name = if (options.search_prefix_opt) |sp| sp ++ decl_name else decl_name;
 
                 if (lib.lookup(decl_type, name)) |sym| {
-                    @field(T, decl.name) = sym;
+                    @field(T, decl_name) = sym;
                 } else {
                     load_stubs = true;
                     if (compile_options.internal_build) {
@@ -62,13 +62,13 @@ pub fn load(comptime T: type, lib_names: []const []const u8, comptime options: L
 }
 
 pub fn loadStubs(comptime T: type, comptime options: LoadOptions) void {
-    inline for (@typeInfo(T).@"struct".decls) |decl| {
-        const decl_type = @TypeOf(@field(T, decl.name));
+    inline for (@typeInfo(T).@"struct".decl_names) |decl_name| {
+        const decl_type = @TypeOf(@field(T, decl_name));
         const decl_type_info = @typeInfo(decl_type);
 
         if (decl_type_info == .pointer and @typeInfo(decl_type_info.pointer.child) == .@"fn") {
-            const stub_name = decl.name ++ options.stub_suffix_opt.?;
-            @field(T, decl.name) = &@field(T, stub_name);
+            const stub_name = decl_name ++ options.stub_suffix_opt.?;
+            @field(T, decl_name) = &@field(T, stub_name);
         }
     }
 }

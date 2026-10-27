@@ -85,8 +85,8 @@ pub const V2 = extern struct {
     x: f32 = 0,
     y: f32 = 0,
 
-    pub const zero = scalar(0);
-    pub const one = scalar(1);
+    pub const zero: V2 = scalar(0);
+    pub const one: V2 = scalar(1);
 
     pub const V = @Vector(2, f32);
 
@@ -110,55 +110,58 @@ pub const V2 = extern struct {
         return result;
     }
 
-    pub inline fn scalar(s: f32) V2 {
-        const result: V2 = @bitCast(@as(V, @splat(s)));
-        return result;
+    pub inline fn initV(v: V) V2 {
+        return .{ .x = v[0], .y = v[1] };
     }
 
-    pub inline fn v(this: V2) V {
-        const result: V = @bitCast(this);
+    pub inline fn toV(this: V2) V {
+        return .{ this.x, this.y };
+    }
+
+    pub inline fn scalar(s: f32) V2 {
+        const result = initV(@splat(s));
         return result;
     }
 
     pub inline fn add(a: V2, b: V2) V2 {
-        const result: V2 = @bitCast(a.v() + b.v());
+        const result: V2 = initV(a.toV() + b.toV());
         return result;
     }
 
     pub inline fn addAll(vecs: []const V2) V2 {
         var result: V = std.mem.zeroes(V);
-        for (vecs) |vec| result += vec.v();
-        return @bitCast(result);
+        for (vecs) |vec| result += vec.toV();
+        return initV(result);
     }
 
     pub inline fn sub(a: V2, b: V2) V2 {
-        const result: V2 = @bitCast(a.v() - b.v());
+        const result: V2 = initV(a.toV() - b.toV());
         return result;
     }
 
     pub inline fn neg(this: V2) V2 {
-        const result: V2 = @bitCast(-this.v());
+        const result: V2 = initV(-this.toV());
         return result;
     }
 
     pub inline fn mul(this: V2, s: f32) V2 {
-        const result: V2 = @bitCast(this.v() * @as(V, @splat(s)));
+        const result: V2 = initV(this.toV() * @as(V, @splat(s)));
         return result;
     }
 
     pub inline fn div(this: V2, s: f32) V2 {
-        const result: V2 = @bitCast(this.v() / @as(V, @splat(s)));
+        const result: V2 = initV(this.toV() / @as(V, @splat(s)));
         return result;
     }
 
     pub inline fn hadamard(a: V2, b: V2) V2 {
-        const result: V2 = @bitCast(a.v() * b.v());
+        const result: V2 = initV(a.toV() * b.toV());
         return result;
     }
 
     pub const dot = inner;
     pub inline fn inner(a: V2, b: V2) f32 {
-        const result: f32 = @reduce(.Add, a.v() * b.v());
+        const result: f32 = @reduce(.Add, a.toV() * b.toV());
         return result;
     }
 
@@ -181,7 +184,7 @@ pub const V2 = extern struct {
         const min: V = @splat(0);
         const max: V = @splat(1);
 
-        const result: V2 = @bitCast(@min(max, @max(min, this.v())));
+        const result: V2 = initV(@min(max, @max(min, this.toV())));
 
         return result;
     }
@@ -228,55 +231,58 @@ pub const V3 = extern struct {
         return result;
     }
 
-    pub inline fn scalar(s: f32) V3 {
-        const result: V3 = @bitCast(@as(V, @splat(s)));
-        return result;
+    pub inline fn initV(v: V) V3 {
+        return .{ .x = v[0], .y = v[1], .z = v[2] };
     }
 
-    pub inline fn v(this: V3) V {
-        const result: V = @bitCast(this);
+    pub inline fn toV(this: V3) V {
+        return .{ this.x, this.y, this.z };
+    }
+
+    pub inline fn scalar(s: f32) V3 {
+        const result: V3 = initV(@as(V, @splat(s)));
         return result;
     }
 
     pub inline fn add(a: V3, b: V3) V3 {
-        const result: V3 = @bitCast(a.v() + b.v());
+        const result: V3 = initV(a.toV() + b.toV());
         return result;
     }
 
     pub inline fn addAll(vecs: []const V3) V3 {
         var result: V = std.mem.zeroes(V);
-        for (vecs) |vec| result += vec.v();
-        return @bitCast(result);
+        for (vecs) |vec| result += vec.toV();
+        return initV(result);
     }
 
     pub inline fn sub(a: V3, b: V3) V3 {
-        const result: V3 = @bitCast(a.v() - b.v());
+        const result: V3 = initV(a.toV() - b.toV());
         return result;
     }
 
     pub inline fn neg(this: V3) V3 {
-        const result: V3 = @bitCast(-this.v());
+        const result: V3 = initV(-this.toV());
         return result;
     }
 
     pub inline fn mul(this: V3, s: f32) V3 {
-        const result: V3 = @bitCast(this.v() * @as(V, @splat(s)));
+        const result: V3 = initV(this.toV() * @as(V, @splat(s)));
         return result;
     }
 
     pub inline fn div(this: V3, s: f32) V3 {
-        const result: V3 = @bitCast(this.v() / @as(V, @splat(s)));
+        const result: V3 = initV(this.toV() / @as(V, @splat(s)));
         return result;
     }
 
     pub inline fn hadamard(a: V3, b: V3) V3 {
-        const result: V3 = @bitCast(a.v() * b.v());
+        const result: V3 = initV(a.toV() * b.toV());
         return result;
     }
 
     pub const dot = inner;
     pub inline fn inner(a: V3, b: V3) f32 {
-        const result: f32 = @reduce(.Add, a.v() * b.v());
+        const result: f32 = @reduce(.Add, a.toV() * b.toV());
         return result;
     }
 
@@ -299,7 +305,7 @@ pub const V3 = extern struct {
         const min: V = @splat(0);
         const max: V = @splat(1);
 
-        const result: V3 = @bitCast(@min(max, @max(min, this.v())));
+        const result: V3 = initV(@min(max, @max(min, this.toV())));
 
         return result;
     }
@@ -341,55 +347,58 @@ pub const V4 = extern struct {
         return result;
     }
 
-    pub inline fn scalar(s: f32) V4 {
-        const result: V4 = @bitCast(@as(V, @splat(s)));
-        return result;
+    pub inline fn initV(v: V) V4 {
+        return .{ .x = v[0], .y = v[1], .z = v[2], .w = v[3] };
     }
 
-    pub inline fn v(this: V4) V {
-        const result: V = @bitCast(this);
+    pub inline fn toV(this: V3) V {
+        return .{ this.x, this.y, this.z, this.w };
+    }
+
+    pub inline fn scalar(s: f32) V4 {
+        const result: V4 = initV(@as(V, @splat(s)));
         return result;
     }
 
     pub inline fn add(a: V4, b: V4) V4 {
-        const result: V4 = @bitCast(a.v() + b.v());
+        const result: V4 = initV(a.toV() + b.toV());
         return result;
     }
 
     pub inline fn addAll(vecs: []const V4) V4 {
         var result: V = std.mem.zeroes(V);
-        for (vecs) |vec| result += vec.v();
-        return @bitCast(result);
+        for (vecs) |vec| result += vec.toV();
+        return initV(result);
     }
 
     pub inline fn sub(a: V4, b: V4) V4 {
-        const result: V4 = @bitCast(a.v() - b.v());
+        const result: V4 = initV(a.toV() - b.toV());
         return result;
     }
 
     pub inline fn neg(this: V4) V4 {
-        const result: V4 = @bitCast(-this.v());
+        const result: V4 = initV(-this.toV());
         return result;
     }
 
     pub inline fn mul(this: V4, s: f32) V4 {
-        const result: V4 = @bitCast(this.v() * @as(V, @splat(s)));
+        const result: V4 = initV(this.toV() * @as(V, @splat(s)));
         return result;
     }
 
     pub inline fn div(this: V4, s: f32) V4 {
-        const result: V4 = @bitCast(this.v() / @as(V, @splat(s)));
+        const result: V4 = initV(this.toV() / @as(V, @splat(s)));
         return result;
     }
 
     pub inline fn hadamard(a: V4, b: V4) V4 {
-        const result: V4 = @bitCast(a.v() * b.v());
+        const result: V4 = initV(a.toV() * b.toV());
         return result;
     }
 
     pub const dot = inner;
     pub inline fn inner(a: V4, b: V4) f32 {
-        const result: f32 = @reduce(.add, a.v() * b.v());
+        const result: f32 = @reduce(.add, a.toV() * b.toV());
         return result;
     }
 
@@ -417,7 +426,7 @@ pub const V4 = extern struct {
         const min: V = @splat(0);
         const max: V = @splat(1);
 
-        const result: V3 = @bitCast(@min(max, @max(min, this.v())));
+        const result: V3 = initV(@min(max, @max(min, this.toV())));
 
         return result;
     }
@@ -447,9 +456,12 @@ pub const Color = extern struct {
         return result;
     }
 
-    pub inline fn v(this: Color) V4.V {
-        const result: V4.V = @bitCast(this);
-        return result;
+    pub inline fn initV(v: V4.V) Color {
+        return .{ .r = v[0], .g = v[1], .b = v[2], .a = v[3] };
+    }
+
+    pub inline fn toV(this: Color) V4.V {
+        return .{ this.r, this.g, this.b, this.a };
     }
 
     pub inline fn v4(this: Color) V4 {
@@ -463,7 +475,7 @@ pub const Color = extern struct {
     }
 
     pub inline fn lerp(a: Color, t: f32, b: Color) Color {
-        const result: Color = @bitCast(lerp4(a.v(), t, b.v()));
+        const result: Color = initV(lerp4(a.toV(), t, b.toV()));
         return result;
     }
 };

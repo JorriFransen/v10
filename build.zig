@@ -10,7 +10,7 @@ const Step = Build.Step;
 
 var enable_tests: bool = true;
 var use_llvm: bool = false;
-var tools_optimize: OptimizeMode = .ReleaseSafe;
+var tools_optimize: OptimizeMode = .safe;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var verbose_asset_compiler: bool = true;
@@ -22,11 +22,18 @@ var cross_compile = false;
 
 const src_path = "src";
 
+var cwd_path: []const u8 = undefined;
+var zig_lib_dir: Build.Cache.Directory = undefined;
+
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
     const native_target = b.graph.host;
     cross_compile = !target.query.eql(native_target.query);
+
+    cwd_path = try std.zig.getResolvedCwd(b.graph.io, b.allocator);
+
+    zig_lib_dir = try std.zig.findZigLibDirFromSelfExe(b.allocator, b.graph.io, cwd_path, b.graph.zig_exe);
 
     enable_tests = b.option(bool, "tests", "Enable tests") orelse enable_tests;
     use_llvm = b.option(bool, "llvm", "Use the llvm backend (ignored on windows, linux debug)") orelse use_llvm;
@@ -43,7 +50,7 @@ pub fn build(b: *Build) !void {
 
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
-    options.addOption(bool, "debug", optimize == .Debug);
+    options.addOption(bool, "debug", optimize == .debug);
     options.addOption(OptimizeMode, "tools_optimize", tools_optimize);
 
     const options_module = options.createModule();
@@ -88,8 +95,8 @@ pub fn build(b: *Build) !void {
             options.addOption(bool, "asset_compiler_verbose", verbose_asset_compiler);
             options.addOption(bool, "asset_compiler_debug", debug_asset_compiler);
 
-            options.addOption([]const u8, "asset_compiler_scan_dir", b.pathFromRoot(rel_scan_dir));
-            options.addOption([]const u8, "asset_compiler_output_dir", b.pathFromRoot(rel_output_dir));
+            options.addOption([]const u8, "asset_compiler_scan_dir", try b.root.joinString(b.allocator, rel_scan_dir));
+            options.addOption([]const u8, "asset_compiler_output_dir", try b.root.joinString(b.allocator, rel_output_dir));
         }
     } else {
         std.log.warn("Skipping asset compilation", .{});
@@ -116,7 +123,7 @@ pub fn build(b: *Build) !void {
     });
 
     const clip_run = b.addRunArtifact(clip_example_exe);
-    if (b.args) |a| clip_run.addArgs(a);
+    clip_run.addPassthruArgs();
     const clip_example = b.step("clip_example", "");
     clip_example.dependOn(&clip_run.step);
 }
@@ -155,19 +162,15 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     const run_exe = b.addRunArtifact(exe);
     run_exe.step.dependOn(b.getInstallStep()); // To ensure we run the installed exe, not the one in cache
 
-    if (b.build_root.path) |brp| {
-        std.Io.Dir.createDirAbsolute(b.graph.io, b.pathJoin(&.{ brp, "data" }), .default_dir) catch |e| switch (e) {
-            error.PathAlreadyExists => {},
-            else => return e,
-        };
-    }
+    b.root.createDirPath(b.graph.io, "data") catch |e| switch (e) {
+        error.PathAlreadyExists => {},
+        else => return e,
+    };
 
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
-    // run_exe.setCwd(b.graph.path(.install_prefix, ""));
-    // run_exe.addPassthruArgs();
     run_exe.setCwd(b.path("data/"));
-    if (b.args) |a| run_exe.addArgs(a);
+    run_exe.addPassthruArgs();
 
     return .{
         .build = exe,
@@ -195,7 +198,7 @@ fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget)
         .name = "v10",
         .root_module = root_module,
     });
-    exe.subsystem = .Windows;
+    exe.subsystem = .windows;
 
     return exe;
 }
@@ -362,7 +365,7 @@ const Tools = struct {
             else
                 &.{"aseprite"};
 
-            const aseprite_exe = b.findProgram(aseprite_names, &.{}) catch {
+            const aseprite_exe = b.findProgram(.{ .names = aseprite_names }) orelse {
                 std.log.warn("Unable to find aseprite executable", .{});
                 return null;
             };
@@ -370,7 +373,7 @@ const Tools = struct {
             const options = b.addOptions();
             options.addOption(bool, "perf_timers", asset_compiler_perf_timers);
             options.addOption([]const u8, "aseprite_exe_path", aseprite_exe);
-            options.addOptionPath("aseprite_script_path", b.path("tools/aseprite/"));
+            options.addOption([]const u8, "aseprite_script_path", b.pathJoin(&.{ cwd_path, "tools/aseprite/" }));
 
             const option_module = options.createModule();
 
@@ -425,7 +428,7 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
     asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
     asset_compiler_run.addPrefixedDirectoryArg("-o", b.path(output_dir));
 
-    if (b.args) |a| asset_compiler_run.addArgs(a);
+    asset_compiler_run.addPassthruArgs();
 
     switch (mode) {
         .engine => {
@@ -460,7 +463,7 @@ pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: OptimizeMode) !Te
     //   `failed command: "./.zig-cache/o/<hash>/<test-exe>.exe" --cache-dir=./.zig-cache --seed=<seed> --listen=-`
     const cross_windows = target.result.os.tag == .windows and b.graph.host.result.os.tag != .windows;
     const test_runner: ?Step.Compile.TestRunner = if (cross_windows) .{
-        .path = .{ .cwd_relative = try b.graph.zig_lib_directory.join(b.allocator, &.{ "compiler", "test_runner.zig" }) },
+        .path = .{ .cwd_relative = try zig_lib_dir.join(b.allocator, &.{ "compiler", "test_runner.zig" }) },
         .mode = .simple,
     } else null;
 

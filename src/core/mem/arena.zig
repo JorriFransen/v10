@@ -203,7 +203,7 @@ pub const Arena = struct {
     }
 
     pub fn rawAlloc(this: *@This(), size: usize, alignment: Alignment) ?[*]u8 {
-        if (builtin.mode == .Debug) {
+        if (builtin.mode == .debug) {
             if (!this.flags.@"align") assert(alignment.toByteUnits() == @alignOf(usize));
         }
 
@@ -318,7 +318,7 @@ test "Arena from slice" {
     try std.testing.expectEqual(first, &buf[0]);
     try std.testing.expectEqual(second, &buf[1]);
 
-    if (@import("builtin").mode == .Debug) {
+    if (@import("builtin").mode == .debug) {
         try std.testing.expectEqual(0xaa, first.*);
         try std.testing.expectEqual(0xaa, second.*);
     }
@@ -333,7 +333,7 @@ test "Arena from slice" {
 
     try std.testing.expectEqual(@as(*u8, @ptrCast(third.ptr)), &buf[4]);
 
-    if (@import("builtin").mode == .Debug) {
+    if (@import("builtin").mode == .debug) {
         try std.testing.expectEqualSlices(u8, &.{ 0xaa, 0xaa }, third);
         try std.testing.expectEqual(0xaa, third[0]);
         try std.testing.expectEqual(0xaa, third[1]);
@@ -355,7 +355,7 @@ test "Arena uncommitted" {
     const first = try aa.create(u8);
     const second = try aa.create(u8);
 
-    if (@import("builtin").mode == .Debug) {
+    if (@import("builtin").mode == .debug) {
         try std.testing.expectEqual(0xaa, first.*);
         try std.testing.expectEqual(0xaa, second.*);
     }
@@ -368,7 +368,7 @@ test "Arena uncommitted" {
 
     const third = try aa.alignedAlloc(u8, Alignment.@"4", 2);
 
-    if (@import("builtin").mode == .Debug) {
+    if (@import("builtin").mode == .debug) {
         try std.testing.expectEqualSlices(u8, &.{ 0xaa, 0xaa }, third);
         try std.testing.expectEqual(0xaa, third[0]);
         try std.testing.expectEqual(0xaa, third[1]);

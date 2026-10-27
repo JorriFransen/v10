@@ -130,7 +130,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
             return struct {
                 names: [meta_field_count][]const u8 = undefined,
                 types: [meta_field_count]type = undefined,
-                attrs: [meta_field_count]std.builtin.Type.StructField.Attributes = undefined,
+                attrs: [meta_field_count]std.builtin.Type.Struct.FieldAttributes = undefined,
             };
         }
     };
@@ -641,7 +641,7 @@ fn typeName(comptime T: type) []const u8 {
 
 fn isArray(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .pointer => |pi| pi.size == .slice and pi.is_const,
+        .pointer => |pi| pi.size == .slice and pi.attrs.@"const",
         else => false,
     };
 }

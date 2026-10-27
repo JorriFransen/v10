@@ -170,9 +170,9 @@ pub fn init(this: *Context, environ_opt: ?*const std.process.Environ, shared_sta
     }
     log.debug("Registry roundtrip done", .{});
 
-    inline for (std.meta.fields(@TypeOf(this.bound_interfaces))) |field| {
-        if (@field(this.bound_interfaces, field.name) == false) {
-            log.err("Failed to bind wayland interface: '{s}'", .{field.name});
+    inline for (@typeInfo(@TypeOf(this.bound_interfaces)).@"struct".field_names) |field_name| {
+        if (@field(this.bound_interfaces, field_name) == false) {
+            log.err("Failed to bind wayland interface: '{s}'", .{field_name});
             return error.MissingWaylandInterface;
         }
     }
@@ -877,7 +877,7 @@ fn handleKey(data: ?*anyopaque, keyboard: *wl.Keyboard, serial: u32, time: u32, 
     const ctx: *Context = @ptrCast(@alignCast(data));
 
     // TODO: Do this via the keymap with xkb!
-    const key: linux.KEY = @enumFromInt(raw_key);
+    const key: linux.KEY = @fromBackingInt(@intCast(raw_key));
     const was_down = state != .pressed;
     const is_down = state != .released;
 
@@ -921,7 +921,7 @@ fn handleMouseButton(data: ?*anyopaque, pointer: *wl.Pointer, serial: u32, time:
     _ = time;
     const ctx: *Context = @ptrCast(@alignCast(data));
 
-    const button: linux.KEY = @enumFromInt(raw_button);
+    const button: linux.KEY = @fromBackingInt(@intCast(raw_button));
     const was_down = state != .pressed;
     const is_down = state != .released;
     linux_v10.handleMouseButton(ctx, button, was_down, is_down);

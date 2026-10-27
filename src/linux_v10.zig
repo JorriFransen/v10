@@ -52,9 +52,9 @@ pub const std_options: std.Options = blk: {
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
 
 const use_debug_allocator = switch (builtin.mode) {
-    .Debug => true,
-    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
-    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+    .debug => true,
+    .safe => !builtin.link_libc, // Not ideal, but the best we have for now.
+    .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -350,8 +350,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             const mods = &input.new.debug_mod_keys;
             const old_mods = &input.old.debug_mod_keys;
             mods.* = std.mem.zeroes(common.DebugModKeys);
-            inline for (std.meta.fields(common.DebugModKeys)) |field| {
-                @field(mods, field.name).ended_down = @field(old_mods, field.name).ended_down;
+            inline for (@typeInfo(common.DebugModKeys).@"struct".field_names) |field_name| {
+                @field(mods, field_name).ended_down = @field(old_mods, field_name).ended_down;
             }
         }
 
@@ -378,8 +378,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                         new_controller.is_connected = true;
                         new_controller.is_analog = old_controller.is_analog;
 
-                        new_controller.stick_average_x = js.axis[@intFromEnum(Joystick.Axis.left_x)];
-                        new_controller.stick_average_y = -js.axis[@intFromEnum(Joystick.Axis.left_y)];
+                        new_controller.stick_average_x = js.axis[@backingInt(Joystick.Axis.left_x)];
+                        new_controller.stick_average_y = -js.axis[@backingInt(Joystick.Axis.left_y)];
 
                         if (new_controller.stick_average_x != 0 or new_controller.stick_average_y != 0) {
                             new_controller.is_analog = true;
@@ -407,25 +407,25 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                         processDigitalButton(
                             .{ .mask = if (new_controller.stick_average_x < -threshold) 1 else 0 },
                             &old_buttons.move_left,
-                            @enumFromInt(0),
+                            @fromBackingInt(@intCast(0)),
                             &new_buttons.move_left,
                         );
                         processDigitalButton(
                             .{ .mask = if (new_controller.stick_average_x > threshold) 1 else 0 },
                             &old_buttons.move_right,
-                            @enumFromInt(0),
+                            @fromBackingInt(@intCast(0)),
                             &new_buttons.move_right,
                         );
                         processDigitalButton(
                             .{ .mask = if (new_controller.stick_average_y < -threshold) 1 else 0 },
                             &old_buttons.move_down,
-                            @enumFromInt(0),
+                            @fromBackingInt(@intCast(0)),
                             &new_buttons.move_down,
                         );
                         processDigitalButton(
                             .{ .mask = if (new_controller.stick_average_y > threshold) 1 else 0 },
                             &old_buttons.move_up,
-                            @enumFromInt(0),
+                            @fromBackingInt(@intCast(0)),
                             &new_buttons.move_up,
                         );
 
@@ -439,8 +439,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                         processDigitalButton(js.buttons, &old_buttons.back, .select, &new_buttons.back);
                         processDigitalButton(js.buttons, &old_buttons.start, .start, &new_buttons.start);
 
-                        const strong = js.axis[@intFromEnum(Joystick.Axis.right_z)];
-                        const weak = js.axis[@intFromEnum(Joystick.Axis.left_z)];
+                        const strong = js.axis[@backingInt(Joystick.Axis.right_z)];
+                        const weak = js.axis[@backingInt(Joystick.Axis.left_z)];
                         js.setRumble(strong, weak) catch |e| log.warn("Failed to set joystick rumble, error: '{}'", .{e});
                     } else if (js.state == .inactive) {
                         new_controller.is_connected = false;
@@ -792,7 +792,7 @@ pub fn handleKey(window: *Window, input: *Input, key: linux.KEY, was_down: bool,
 }
 
 inline fn processDigitalButton(buttons: Joystick.Buttons, old_state: *const ButtonState, btn: Joystick.Button, new_state: *ButtonState) void {
-    new_state.ended_down = buttons.isSet(@intFromEnum(btn));
+    new_state.ended_down = buttons.isSet(@backingInt(btn));
     new_state.half_transition_count = if (old_state.ended_down == new_state.ended_down) 0 else 1;
 }
 

@@ -237,7 +237,7 @@ fn processPendingMessages(shared_state: *common.SharedState, keyboard_controller
     };
 
     while (win32.PeekMessageA(&msg, null, 0, 0, win32.PM_REMOVE) != .FALSE) {
-        const flags: Flags = @bitCast(@as(u32, @truncate(@as(usize, @bitCast(msg.lParam)))));
+        const flags: Flags = @fromBackingInt(@truncate(@as(usize, @bitCast(msg.lParam))));
 
         switch (msg.message) {
             win32.WM_QUIT => {
@@ -384,9 +384,9 @@ fn getWindowDimension(window: win32.HWND) WindowDimensions {
 }
 
 const use_debug_allocator = switch (builtin.mode) {
-    .Debug => true,
-    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
-    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+    .debug => true,
+    .safe => !builtin.link_libc, // Not ideal, but the best we have for now.
+    .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -787,27 +787,27 @@ pub fn windowsEntry(
 
                                 const threshold = 0.5;
                                 processXInputDigitalButton(
-                                    @bitCast(@as(win32.WORD, if (new_controller.stick_average_y < -threshold) 1 else 0)),
+                                    @fromBackingInt(if (new_controller.stick_average_y < -threshold) 1 else 0),
                                     &old_buttons.move_down,
-                                    @enumFromInt(0),
+                                    @fromBackingInt(0),
                                     &new_buttons.move_down,
                                 );
                                 processXInputDigitalButton(
-                                    @bitCast(@as(win32.WORD, if (new_controller.stick_average_y > threshold) 1 else 0)),
+                                    @fromBackingInt(if (new_controller.stick_average_y > threshold) 1 else 0),
                                     &old_buttons.move_up,
-                                    @enumFromInt(0),
+                                    @fromBackingInt(0),
                                     &new_buttons.move_up,
                                 );
                                 processXInputDigitalButton(
-                                    @bitCast(@as(win32.WORD, if (new_controller.stick_average_x < -threshold) 1 else 0)),
+                                    @fromBackingInt(if (new_controller.stick_average_x < -threshold) 1 else 0),
                                     &old_buttons.move_left,
-                                    @enumFromInt(0),
+                                    @fromBackingInt(0),
                                     &new_buttons.move_left,
                                 );
                                 processXInputDigitalButton(
-                                    @bitCast(@as(win32.WORD, if (new_controller.stick_average_x > threshold) 1 else 0)),
+                                    @fromBackingInt(if (new_controller.stick_average_x > threshold) 1 else 0),
                                     &old_buttons.move_right,
-                                    @enumFromInt(0),
+                                    @fromBackingInt(0),
                                     &new_buttons.move_right,
                                 );
 
@@ -1044,7 +1044,7 @@ pub fn mainWindowCallback(window: win32.HWND, message: c_uint, wparam: win32.WPA
                 result = win32.DefWindowProcA(window, message, wparam, lparam);
             } else {
                 _ = win32.SetCursor(null);
-                result = @intFromEnum(win32.TRUE);
+                result = @backingInt(win32.TRUE);
             }
         },
 

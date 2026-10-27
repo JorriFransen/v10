@@ -72,7 +72,7 @@ pub inline fn ptrOffset(ptr: anytype, offset: isize) @TypeOf(ptr) {
 pub inline fn ptrOffsetT(comptime T: type, ptr: *anyopaque, offset: isize) T {
     meta.expectPtrType(T);
 
-    if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+    if (builtin.mode == .debug or builtin.mode == .safe) {
         var result: [*]u8 = @ptrCast(@alignCast(ptr));
 
         if (offset >= 0) {

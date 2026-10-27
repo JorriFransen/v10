@@ -559,7 +559,7 @@ const Writer = struct {
                 .i, .u => {
                     if (arg.enum_type) |enum_type| {
                         if (enum_type.is_bitfield) {
-                            try this.appendf("@bitCast({s})", .{arg.name});
+                            try this.appendf("@backingInt({s})", .{arg.name});
                         } else {
                             try this.appendf("@intFromEnum({s})", .{arg.name});
                         }
