@@ -135,7 +135,7 @@ test "existsAt" {
         try t.expectError(error.BadPath, tmp_dir.exists("//"));
         try t.expect(try tmp_dir.exists("nul"));
     } else {
-        try t.expect(!try tmp_dir.exists("//"));
+        try t.expect(try tmp_dir.exists("//"));
         try t.expect(!try tmp_dir.exists("aux"));
         try t.expect(!try tmp_dir.exists("com1"));
         try t.expect(!try tmp_dir.exists("con"));
