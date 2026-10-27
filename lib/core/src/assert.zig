@@ -6,7 +6,7 @@ pub fn assert(cond: bool) void {
         if (!cond) {
             @trap();
         }
-    } else if (builtin.mode == .debug or builtin.mode == .releaseSafe) {
+    } else if (builtin.mode == .debug or builtin.mode == .safe) {
         if (!cond) {
             @branchHint(.cold);
             @disableInstrumentation();
