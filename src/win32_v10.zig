@@ -706,8 +706,8 @@ pub fn windowsEntry(
                         const mods = &new_input.debug_mod_keys;
                         const old_mods = &old_input.debug_mod_keys;
                         mods.* = std.mem.zeroes(common.DebugModKeys);
-                        inline for (std.meta.fields(common.DebugModKeys)) |field| {
-                            @field(mods, field.name).ended_down = @field(old_mods, field.name).ended_down;
+                        inline for (@typeInfo(common.DebugModKeys).@"struct".field_names) |field_name| {
+                            @field(mods, field_name).ended_down = @field(old_mods, field_name).ended_down;
                         }
                     }
 
