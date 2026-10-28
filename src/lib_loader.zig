@@ -14,7 +14,7 @@ pub const LoadOptions = struct {
     stub_suffix_opt: ?[]const u8 = "Stub",
 };
 
-pub fn load(comptime T: type, lib_names: []const []const u8, comptime options: LoadOptions) ?DynLib {
+pub fn load(comptime T: type, lib_names: []const [:0]const u8, comptime options: LoadOptions) ?DynLib {
     meta.expectStructType(T);
 
     var lib: DynLib = undefined;
