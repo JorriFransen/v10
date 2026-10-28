@@ -424,11 +424,7 @@ pub fn main(init: std.process.Init.Minimal) u8 {
 
     _ = win32.AttachConsole(win32.ATTACH_PARENT_PROCESS);
 
-    const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
-    // const command_line = win32.GetCommandLineA();
-    //
-    // var startup_info: win32.STARTUPINFOA = undefined;
-    // win32.GetStartupInfoA(&startup_info);
+    const instance: win32.HINSTANCE = @ptrCast(win32.peb().ImageBaseAddress);
 
     const ret_code = windowsEntry(io, gpa, instance) catch 1;
     assert(ret_code >= 0);

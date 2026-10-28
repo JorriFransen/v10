@@ -6,6 +6,25 @@ const bits = @import("../../bits.zig");
 const math = @import("../../math.zig");
 const time = @import("../../time.zig");
 
+var running_under_wine_opt: ?bool = null;
+pub fn runningUnderWine() bool {
+    if (running_under_wine_opt) |w| return w;
+
+    const dll_wide_name = std.unicode.wtf8ToWtf16LeStringLiteral("ntdll.dll");
+    var dll_handle: HANDLE = undefined;
+
+    if (NT.LdrGetDllHandle(null, null, &.init(dll_wide_name), &dll_handle) == .SUCCESS) {
+        var proc_addr: *anyopaque = undefined;
+        if (NT.LdrGetProcedureAddress(dll_handle, &.init("wine_get_version"), 0, &proc_addr) == .SUCCESS) {
+            running_under_wine_opt = true;
+            return true;
+        }
+    }
+
+    running_under_wine_opt = false;
+    return false;
+}
+
 pub fn getTime(clock: time.Clock) time.TimeStamp {
     switch (clock) {
         .monotonic => {
@@ -77,7 +96,7 @@ pub const BOOL = enum(c_int) {
     _,
 
     pub inline fn toBool(this: BOOL) bool {
-        return @intFromEnum(this) != 0;
+        return @backingInt(this) != 0;
     }
 };
 
@@ -1157,7 +1176,7 @@ pub inline fn MAKEINTRESOURCEA(comptime i: anytype) LPCSTR {
         },
         .@"enum" => {
             assert(@sizeOf(T) <= @sizeOf(usize));
-            return @ptrFromInt(@intFromEnum(i));
+            return @ptrFromInt(@backingInt(i));
         },
     }
 }
@@ -1211,7 +1230,6 @@ pub extern "user32" fn EndPaint(hwnd: HWND, paint: *const PAINTSTRUCT) callconv(
 pub extern "user32" fn GetClientRect(hwnd: HWND, rect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetCursorPos(point: *POINT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetKeyState(key: VK) callconv(.winapi) KeyState;
-pub extern "user32" fn GetModuleHandleA(module_name: ?LPCSTR) callconv(.winapi) HMODULE;
 pub extern "user32" fn GetMonitorInfoA(monitor: HMONITOR, out_info: *MONITORINFO) callconv(.winapi) BOOL;
 pub extern "user32" fn GetWindowLongA(hwnd: HWND, index: WND.WL) callconv(.winapi) LONG;
 pub extern "user32" fn GetWindowPlacement(hwnd: HWND, in_out_placement: *WINDOWPLACEMENT) callconv(.winapi) BOOL;
@@ -1307,8 +1325,6 @@ pub extern "kernel32" fn GetFileSizeEx(handle: HANDLE, out_size: *LARGE_INTEGER)
 pub extern "kernel32" fn GetFinalPathNameByHandleW(handle: HANDLE, file_path_out: LPWSTR, file_path_len: DWORD, flags: GetFinalPathNameByHandleFlags) callconv(.winapi) DWORD;
 pub extern "kernel32" fn GetLastError() callconv(.winapi) ERROR;
 pub extern "kernel32" fn GetModuleFileNameA(module: ?HMODULE, file_name: LPSTR, size: DWORD) callconv(.winapi) DWORD;
-pub extern "kernel32" fn GetProcAddress(module: HMODULE, proc_name: LPCSTR) callconv(.winapi) ?FARPROC;
-pub extern "kernel32" fn LoadLibraryA(lib_file_name: LPCSTR) callconv(.winapi) ?HMODULE;
 pub extern "kernel32" fn MapViewOfFile(file_mapping_object: HANDLE, desired_access: FILE_MAP, file_offset_high: DWORD, file_offset_low: DWORD, number_of_bytes_to_map: SIZE_T) callconv(.winapi) ?LPVOID;
 pub extern "kernel32" fn ReadFile(handle: HANDLE, out_buffer: LPVOID, bytes_to_read: DWORD, bytes_read: ?*DWORD, in_out_overlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
 pub extern "kernel32" fn Sleep(milliseconds: DWORD) callconv(.winapi) void;

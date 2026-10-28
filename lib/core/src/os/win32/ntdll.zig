@@ -2,8 +2,9 @@ const win32 = @import("win32.zig");
 const assert = @import("../../assert.zig").assert;
 
 const HANDLE = win32.HANDLE;
-const USHORT = win32.USHORT;
 const BYTE = win32.BYTE;
+const CHAR = win32.CHAR;
+const USHORT = win32.USHORT;
 const LONG = win32.LONG;
 const ULONG = win32.ULONG;
 const ULONGLONG = win32.ULONGLONG;
@@ -31,7 +32,7 @@ pub const BOOLEAN = enum(BYTE) {
     _,
 
     pub inline fn toBool(this: BOOLEAN) bool {
-        return @intFromEnum(this) != 0;
+        return @backingInt(this) != 0;
     }
 };
 
@@ -698,6 +699,34 @@ pub const KERNEL_USER_TIMES = extern struct {
     user_time: LARGE_INTEGER,
 };
 
+pub const ANSI_STRING = extern struct {
+    length: USHORT,
+    maximum_length: USHORT,
+    buffer: *CHAR,
+
+    pub fn init(str: [:0]u8) ANSI_STRING {
+        return .{
+            .length = @intCast(str.len),
+            .maximum_length = @intCast(str.len + 1),
+            .buffer = @ptrCast(str.ptr),
+        };
+    }
+};
+
+pub const CANSI_STRING = extern struct {
+    length: USHORT,
+    maximum_length: USHORT,
+    buffer: *const CHAR,
+
+    pub fn init(str: [:0]const u8) CANSI_STRING {
+        return .{
+            .length = @intCast(str.len),
+            .maximum_length = @intCast(str.len + 1),
+            .buffer = @ptrCast(str.ptr),
+        };
+    }
+};
+
 pub const UNICODE_STRING = extern struct {
     /// !! In bytes !!
     length: USHORT,
@@ -718,6 +747,25 @@ pub const UNICODE_STRING = extern struct {
     }
 };
 
+pub const CUNICODE_STRING = extern struct {
+    /// !! In bytes !!
+    length: USHORT,
+    /// !! In bytes !!
+    maximum_length: USHORT,
+    buffer: PCWSTR,
+
+    pub fn init(wide_str: [:0]const u16) CUNICODE_STRING {
+        return .{
+            .length = @intCast(wide_str.len * @sizeOf(u16)),
+            .maximum_length = @intCast((wide_str.len + 1) * @sizeOf(u16)),
+            .buffer = wide_str.ptr,
+        };
+    }
+
+    pub fn slice(this: *const CUNICODE_STRING) [:0]const u16 {
+        return this.buffer[0 .. this.length / @sizeOf(u16) :0];
+    }
+};
 pub const RTL_RELATIVE_NAME_U = extern struct {
     relative_name: UNICODE_STRING,
     containing_directory: HANDLE,
@@ -857,19 +905,24 @@ pub const FILETIME = extern union {
     ticks: u64 align(@alignOf(DWORD)),
 };
 
-pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const OBJECT_ATTRIBUTES, file_info_out: *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const OBJECT_ATTRIBUTES, out_file_info: *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: PROCESS.INFOCLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: THREAD.INFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtOpenFile(out_handle: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT_ATTRIBUTES, out_io_status_block: *IO_STATUS_BLOCK, share_access: FILE.SHARE, open_options: FILE.MODE) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtOpenFile(handle_out: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT_ATTRIBUTES, io_status_block_out: *IO_STATUS_BLOCK, share_access: FILE.SHARE, open_options: FILE.MODE) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtClose(handle: HANDLE) callconv(.winapi) NTSTATUS;
-pub extern "ntdll" fn NtQueryInformationFile(handle: HANDLE, out_io_status_block: *IO_STATUS_BLOCK, out_file_info: PVOID, file_info_len: ULONG, file_info_class: FILE.INFOCLASS) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryInformationFile(handle: HANDLE, io_status_block_out: *IO_STATUS_BLOCK, file_info_out: PVOID, file_info_len: ULONG, file_info_class: FILE.INFOCLASS) callconv(.winapi) NTSTATUS;
 
 pub extern "ntdll" fn RtlDosPathNameToNtPathName_U_WithStatus(dos_file_name: PCWSTR, nt_file_name_out: *UNICODE_STRING, file_part: ?PWSTR, relative_name: ?*RTL_RELATIVE_NAME_U) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn RtlFreeUnicodeString(unicode_string: *UNICODE_STRING) callconv(.winapi) void;
 /// Returned length is in bytes!
-pub extern "ntdll" fn RtlGetFullPathName_U(file_name: PCWSTR, buffer_length_bytes: ULONG, out_buffer: PWSTR, out_file_part: ?PWSTR) callconv(.winapi) ULONG;
+pub extern "ntdll" fn RtlGetFullPathName_U(file_name: PCWSTR, buffer_length_bytes: ULONG, buffer_out: PWSTR, file_part_out: ?PWSTR) callconv(.winapi) ULONG;
 pub extern "ntdll" fn RtlGetSystemTimePrecise() callconv(.winapi) ULONGLONG;
 pub extern "ntdll" fn RtlIsDosDeviceName_U(dos_file_name: PCWSTR) callconv(.winapi) ULONG;
 pub extern "ntdll" fn RtlQueryPerformanceCounter(perf_count: *LARGE_INTEGER) callconv(.winapi) LOGICAL;
 pub extern "ntdll" fn RtlQueryPerformanceFrequency(freq: *LARGE_INTEGER) callconv(.winapi) LOGICAL;
-pub extern "ntdll" fn RtlAdjustPrivilege(privilege: SE, enable: BOOLEAN, client: BOOLEAN, out_was_enabled: *BOOLEAN) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn RtlAdjustPrivilege(privilege: SE, enable: BOOLEAN, client: BOOLEAN, was_enabled_out: *BOOLEAN) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn LdrGetDllHandle(dll_path: ?PCWSTR, dll_characteristics: ?*ULONG, dll_name: *const CUNICODE_STRING, dll_handle_out: *HANDLE) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn LdrGetProcedureAddress(dll_handle: HANDLE, proc_name: ?*const CANSI_STRING, proc_num: ULONG, proc_addr_out: **anyopaque) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn LdrLoadDll(dll_path: ?PCWSTR, dll_characteristics: ?*ULONG, dll_name: *const CUNICODE_STRING, dll_handle_out: *HANDLE) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn LdrUnloadDll(dll_handle: HANDLE) callconv(.winapi) NTSTATUS;

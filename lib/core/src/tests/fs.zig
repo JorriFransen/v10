@@ -37,11 +37,9 @@ test "existsAt" {
 
     var zig_tmp_dir = t.tmpDir(.{});
     defer zig_tmp_dir.cleanup();
-    // std.debug.print("tmp dir: {s}\n", .{zig_tmp_dir.sub_path});
 
     const cwd_path = try std.process.currentPathAlloc(t.io, a);
     const abs_tmp_path = try std.fs.path.joinZ(a, &.{ cwd_path, ".zig-cache", "tmp", &zig_tmp_dir.sub_path });
-    // std.debug.print("abs_tmp_path: {s}\n", .{abs_tmp_path});
 
     const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
     const tmp_parent_dir = fs.Dir{ .handle = zig_tmp_dir.parent_dir.handle };
@@ -52,7 +50,6 @@ test "existsAt" {
     try t.expectError(error.BadPath, tmp_dir.exists(""));
 
     const abs_file_path = try std.fs.path.joinZ(a, &.{ abs_tmp_path, "file" });
-    // std.debug.print("abs file path: {s}\n", .{abs_file_path});
 
     try t.expect(!try tmp_dir.exists("file"));
     try t.expect(!try tmp_dir.exists(abs_file_path));
@@ -272,7 +269,12 @@ test "openDirAt" {
             try t.expectError(error.BadPath, tmp_dir.openDir("a*b", .{}));
             try t.expectError(error.BadPath, tmp_dir.openDir("<x.", .{}));
             try t.expectError(error.BadPath, tmp_dir.openDir("control\x01", .{}));
-            try t.expectError(error.BadPath, tmp_dir.openDir(":", .{}));
+
+            if (win32.runningUnderWine()) {
+                try t.expectError(error.FileNotFound, tmp_dir.openDir(":", .{}));
+            } else {
+                try t.expectError(error.BadPath, tmp_dir.openDir(":", .{}));
+            }
         } else {
             try t.expectError(error.FileNotFound, tmp_dir.openDir("", .{}));
             try t.expectError(error.NotDir, tmp_dir.openDir("file/x", .{}));
@@ -358,8 +360,13 @@ test "openDirAt symlinks" {
 
             try t.expectError(error.SymLinkNotResolved, tmp_dir.openDir("subdir_link", .{ .follow_symlinks = false }));
 
-            try t.expectError(error.NotDir, tmp_dir.openDir("loop_a", .{}));
-            try t.expectError(error.NotDir, tmp_dir.openDir("loop_b", .{}));
+            if (win32.runningUnderWine()) {
+                try t.expectError(error.SymLinkNotResolved, tmp_dir.openDir("loop_a", .{}));
+                try t.expectError(error.SymLinkNotResolved, tmp_dir.openDir("loop_b", .{}));
+            } else {
+                try t.expectError(error.NotDir, tmp_dir.openDir("loop_a", .{}));
+                try t.expectError(error.NotDir, tmp_dir.openDir("loop_b", .{}));
+            }
         } else {
             try t.expectError(error.NotDir, tmp_dir.openDir("dir_loop_a", .{ .follow_symlinks = false }));
             try t.expectError(error.NotDir, tmp_dir.openDir("dir_loop_b", .{ .follow_symlinks = false }));
