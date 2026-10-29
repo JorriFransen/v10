@@ -147,6 +147,9 @@ fn buildEngine(b: *Build, optimize: Optimize, target: ResolvedTarget, modules: *
     const run_exe = b.addRunArtifact(exe);
     run_exe.step.dependOn(b.getInstallStep()); // To ensure we run the installed exe, not the one in cache
 
+    // const mkdir_data = b.addSystemCommand(&.{ "mkdir", "-p", "data" });
+    // exe.step.dependOn(&mkdir_data.step);
+
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
     run_exe.setCwd(b.path("data/"));
@@ -354,6 +357,7 @@ const Tools = struct {
         fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?AssetCompiler {
             const options = b.addOptions();
             options.addOption(bool, "perf_timers", asset_compiler_perf_timers);
+
             options.addOption([]const u8, "aseprite_script_path", b.pathJoin(&.{ cwd_path, "tools/aseprite/" }));
 
             const option_module = options.createModule();

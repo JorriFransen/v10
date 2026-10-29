@@ -24,7 +24,7 @@ pub const syscall6 = arch.syscall6;
 
 pub const page_size = std.heap.page_size_min;
 
-pub inline fn getTime(clock: time.Clock) time.TimeStamp {
+pub fn getTime(clock: time.Clock) time.TimeStamp {
     const linux_clock: CLOCK = switch (clock) {
         .real => .REALTIME,
         .monotonic => .MONOTONIC,
@@ -2904,7 +2904,7 @@ pub const S = packed struct(mode_t) {
     ISVTX: bool = false, // 0o1000
     ISGID: bool = false, // 0o2000
     ISUID: bool = false, // 0o4000
-    TYPE: Type = @enumFromInt(0),
+    TYPE: Type = @fromBackingInt(@intCast(0)),
     _: u16 = 0,
 
     pub const Type = enum(u4) {
@@ -3050,7 +3050,7 @@ pub const ClockGettimeError = error{
     UnexpectedErrno,
 };
 
-pub inline fn clock_gettime(clockid: CLOCK, tp: *timespec) ClockGettimeError!void {
+pub fn clock_gettime(clockid: CLOCK, tp: *timespec) ClockGettimeError!void {
     const rc = syscall2(
         .clock_gettime,
         zeroExtendToUsize(clockid),

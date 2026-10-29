@@ -122,8 +122,9 @@ pub fn CreateDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAt
     if (createDirAt(dir, dir_path, options)) {
         return;
     } else |e| switch (e) {
-        else => return e,
+        error.AlreadyExists => return, // TODO: check if dir
         error.FileNotFound => {},
+        else => return e,
     }
 
     var it = try PathIterator.init(dir_path);
@@ -135,13 +136,17 @@ pub fn CreateDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAt
         if (createDirAt(dir, mem.copySentinel(&path_buf, elem.path, 0), options)) {
             break;
         } else |e| switch (e) {
-            else => return e,
+            error.AlreadyExists => break, // TODO: check if dir
             error.FileNotFound => {},
+            else => return e,
         }
     }
 
     while (it.next()) |elem| {
-        try createDirAt(dir, mem.copySentinel(&path_buf, elem.path, 0), options);
+        createDirAt(dir, mem.copySentinel(&path_buf, elem.path, 0), options) catch |e| switch (e) {
+            error.AlreadyExists => {}, // TODO: check if dir
+            else => return e,
+        };
     }
 }
 
@@ -303,6 +308,11 @@ pub fn dirnameN(path: []const u8, n: usize) error{BadPath}!?[]const u8 {
     }
 
     return if (it.prev()) |p| p.path else it.root();
+}
+
+pub inline fn dirname(path: []const u8) error{BadPath}!?[]const u8 {
+    const result = dirnameN(path, 1);
+    return result;
 }
 
 // =============================================================================
