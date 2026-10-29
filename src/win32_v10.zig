@@ -384,16 +384,15 @@ fn getWindowDimension(window: win32.HWND) WindowDimensions {
 }
 
 const use_debug_allocator = switch (builtin.mode) {
-    .debug => true,
-    .safe => !builtin.link_libc, // Not ideal, but the best we have for now.
+    .debug, .safe => true,
     .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub fn main(init: std.process.Init.Minimal) u8 {
-    const gpa = if (use_debug_allocator)
-        debug_allocator.allocator()
-    else if (builtin.link_libc)
+    const gpa = if (use_debug_allocator) blk: {
+        var implementation = std.heap.SafeAllocator.init(std.heap.page_allocator, .{});
+        break :blk implementation.allocator();
+    } else if (builtin.link_libc)
         std.heap.c_allocator
     else if (!builtin.single_threaded)
         std.heap.smp_allocator
@@ -417,26 +416,7 @@ pub fn main(init: std.process.Init.Minimal) u8 {
         stdout.flush() catch {};
     }
 
-    defer {
-        if (use_debug_allocator) {
-            _ = debug_allocator.detectLeaks();
-            _ = debug_allocator.deinit();
-        }
-    }
-
-    if (win32.AttachConsole(win32.ATTACH_PARENT_PROCESS).toBool() == false) {
-        // NOTE: this code is from zoverlay, i don't remember why we need createfile/sethandle, attachconsole by itself seems to be sufficient.
-
-        // if (win32.CreateFileA("nul", win32.GENERIC_READ | win32.GENERIC_WRITE, 0, null, win32.OPEN_EXISTING, win32.FILE_ATTRIBUTE_NORMAL, null)) |handle| {
-        //     _ = handle;
-        // _ = win.SetStdHandle(win.STD_INPUT_HANDLE, handle);
-        // _ = win.SetStdHandle(win.STD_OUTPUT_HANDLE, handle);
-        // _ = win.SetStdHandle(win.STD_ERROR_HANDLE, handle);
-        //     unreachable;
-        // } else {
-        //     unreachable;
-        // }
-    }
+    _ = win32.AttachConsole(win32.ATTACH_PARENT_PROCESS);
 
     const instance: win32.HINSTANCE = @ptrCast(win32.GetModuleHandleA(null));
     // const command_line = win32.GetCommandLineA();
@@ -446,6 +426,13 @@ pub fn main(init: std.process.Init.Minimal) u8 {
 
     const ret_code = windowsEntry(io, gpa, instance) catch 1;
     assert(ret_code >= 0);
+
+    if (use_debug_allocator) {
+        const debug_allocator: *std.heap.SafeAllocator = @ptrCast(@alignCast(gpa.ptr));
+        const num_leaks = debug_allocator.deinit();
+        if (num_leaks > 0) return 1;
+    }
+
     return @intCast(ret_code);
 }
 

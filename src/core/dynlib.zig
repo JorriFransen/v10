@@ -1,12 +1,13 @@
 const std = @import("std");
-const builtin = @import("builtin");
+
+const os_tag = @import("builtin").target.os.tag;
 
 const fs = @import("fs.zig");
 const win32 = @import("os/os.zig").win32;
 
 const DynLib = @This();
 
-const Inner = switch (builtin.os.tag) {
+const Inner = switch (os_tag) {
     .windows => struct {
         const Error = error{ FileNotFound, BadFormat, AccessDenied, DLLInitFailed, ModNotFound } ||
             std.Io.UnexpectedError ||

@@ -758,7 +758,7 @@ const Writer = struct {
         var tmp = mem.getTemp();
         defer tmp.release();
 
-        const str = try std.fmt.allocPrint(tmp.a, fmt, args);
+        const str = try tmp.a.print(fmt, args);
         try this.appendi(indent, str);
     }
 };

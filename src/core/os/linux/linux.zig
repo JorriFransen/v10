@@ -1089,7 +1089,7 @@ pub const EVIOCSCLOCKID: _IOC = _IOW('E', 0xa0, c_int);
 const sizeRequestFn = fn (_IOC.SizeInt) callconv(.@"inline") _IOC;
 
 fn EnumBitSet(comptime T: type) type {
-    return std.StaticBitSet(T.CNT);
+    return std.bit_set.Static(T.CNT);
 }
 
 pub inline fn ioctlRead(fd: fd_t, request: _IOC, arg: *anyopaque) IoctlError!usize {

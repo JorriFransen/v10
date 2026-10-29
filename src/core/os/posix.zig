@@ -1,5 +1,6 @@
 const std = @import("std");
-const builtin = @import("builtin");
+
+const os_tag = @import("builtin").target.os.tag;
 
 const os = @import("os.zig");
 const win32 = os.win32;
@@ -14,8 +15,8 @@ const unlink = Os.unlink;
 pub const fd_t = system.fd_t;
 pub const PATH_MAX = system.PATH_MAX;
 
-const system = switch (builtin.os.tag) {
-    else => @compileError("Unsupported os: {s}" ++ @tagName(builtin.os.tag)),
+const system = switch (os_tag) {
+    else => @compileError("Unsupported os: {s}" ++ @tagName(os_tag)),
     .linux => Os,
     .windows => struct {
         pub const fd_t = win32.HANDLE;

@@ -373,13 +373,13 @@ pub const Reader = struct {
             defer tmp.release();
 
             _ = w.write(
-                std.fmt.allocPrint(tmp.a, "{s}:{}:{}: ", .{
+                tmp.a.print("{s}:{}:{}: ", .{
                     this.location.path,
                     this.location.line,
                     this.location.column,
                 }) catch @panic("AllocPrint failed"),
             ) catch @panic("Write failed");
-            _ = w.write(std.fmt.allocPrint(tmp.a, fmt, args) catch @panic("AllocPrint Failed")) catch @panic("Write failed");
+            _ = w.write(tmp.a.print(fmt, args) catch @panic("AllocPrint Failed")) catch @panic("Write failed");
             w.flush() catch @panic("Flush failed");
         }
     }

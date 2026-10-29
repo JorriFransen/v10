@@ -2,7 +2,7 @@ const std = @import("std");
 const log_scope = .asset_compiler;
 const Allocator = std.mem.Allocator;
 
-const builtin = @import("builtin");
+const os_tag = @import("builtin").target.os.tag;
 
 const core = @import("core");
 const Timestamp = core.time.TimeStamp;
@@ -891,7 +891,7 @@ const AsepriteArgv = struct {
     inline fn args(a: anytype) AsepriteArgv {
         var result: [a.len + 1][]const u8 = undefined;
         const _a: []const []const u8 = a;
-        result[0] = compile_options.aseprite_exe_path;
+        result[0] = if (os_tag == .windows) "aseprite.exe" else "aseprite";
         @memcpy(result[1..], _a);
 
         return .{ .values = &result };

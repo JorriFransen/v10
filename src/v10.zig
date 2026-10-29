@@ -40,8 +40,6 @@ const OffscreenBuffer = common.OffscreenBuffer;
 const ThreadContext = common.ThreadContext;
 const RenderGroup = @import("render_group.zig");
 
-const os = @import("builtin").os.tag;
-
 pub const std_options: std.Options = blk: {
     var o = core.default_std_options;
 

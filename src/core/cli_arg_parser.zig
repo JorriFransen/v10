@@ -130,7 +130,7 @@ pub fn Parser(comptime option_defs: []const OptionDefinition, config: ParserConf
             return struct {
                 names: [meta_field_count][]const u8 = undefined,
                 types: [meta_field_count]type = undefined,
-                attrs: [meta_field_count]std.builtin.Type.Struct.FieldAttributes = undefined,
+                attrs: [meta_field_count]std.lang.Type.Struct.FieldAttributes = undefined,
             };
         }
     };

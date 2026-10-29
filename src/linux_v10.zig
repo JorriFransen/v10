@@ -52,11 +52,9 @@ pub const std_options: std.Options = blk: {
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
 
 const use_debug_allocator = switch (builtin.mode) {
-    .debug => true,
-    .safe => !builtin.link_libc, // Not ideal, but the best we have for now.
-    .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+    .debug, .safe => true,
+    .fast, .small => !builtin.link_libc and builtin.single_threaded,
 };
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 var stderr_buf: [2048]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
@@ -69,11 +67,11 @@ const global_back_buffer_width: i32 = 960;
 const global_back_buffer_height: i32 = 540;
 
 pub const bytes_per_pixel = 4;
-
-pub fn main(init: std.process.Init.Minimal) !u8 {
-    const gpa = if (use_debug_allocator)
-        debug_allocator.allocator()
-    else if (builtin.link_libc)
+pub fn main(init: std.process.Init.Minimal) u8 {
+    const gpa = if (use_debug_allocator) blk: {
+        var implementation = std.heap.SafeAllocator.init(std.heap.page_allocator, .{});
+        break :blk implementation.allocator();
+    } else if (builtin.link_libc)
         std.heap.c_allocator
     else if (!builtin.single_threaded)
         std.heap.smp_allocator
@@ -97,13 +95,18 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         stdout.flush() catch {};
     }
 
-    defer {
-        if (use_debug_allocator) {
-            _ = debug_allocator.detectLeaks();
-            _ = debug_allocator.deinit();
-        }
+    const ret_code = linuxEntry(io, gpa, &init.environ) catch 1;
+
+    if (use_debug_allocator) {
+        const debug_allocator: *std.heap.SafeAllocator = @ptrCast(@alignCast(gpa.ptr));
+        const num_leaks = debug_allocator.deinit();
+        if (num_leaks > 0) return 1;
     }
 
+    return ret_code;
+}
+
+pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.process.Environ) !u8 {
     var thread_context: ThreadContext = .{
         .io = io,
     };
@@ -160,7 +163,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     var window: Window = undefined;
     try Window.init(
         &window,
-        &init.environ,
+        environ,
         &shared_state,
         // The backbuffer is currently being drawn with a 10 pixel gutter
         global_back_buffer_width + 20,

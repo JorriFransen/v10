@@ -1,9 +1,7 @@
-// Inomplete pulse bindings
+// Incomplete pulse bindings
 
 const std = @import("std");
 pub const log = std.log.scoped(.pulse);
-
-const builtin = @import("builtin");
 
 const math = @import("../../math.zig");
 
@@ -38,7 +36,7 @@ pub const ContextState = enum(c_int) {
     terminated,
 
     pub fn int(this: @This()) c_int {
-        return @intFromEnum(this);
+        return @backingInt(this);
     }
 };
 
@@ -186,7 +184,7 @@ pub const StreamState = enum(c_int) {
     terminated,
 
     pub fn int(this: @This()) c_int {
-        return @intFromEnum(this);
+        return @backingInt(this);
     }
 };
 
@@ -234,7 +232,7 @@ pub const ErrorCode = enum(c_int) {
     max,
 
     pub fn int(this: @This()) c_int {
-        return @intFromEnum(this);
+        return @backingInt(this);
     }
 };
 

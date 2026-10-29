@@ -107,7 +107,7 @@ pub inline fn arenaAllocPrint(allocator: Allocator, comptime fmt: []const u8, ar
     var tmp = getScratch(allocator);
     defer tmp.release();
 
-    const tmp_res = try std.fmt.allocPrint(tmp.a, fmt, args);
+    const tmp_res = try tmp.a.print(fmt, args);
     const result = allocator.dupe(u8, tmp_res);
 
     return result;

@@ -63,7 +63,7 @@ pub const StringBuilder = struct {
         var tmp = mem.getScratch(this.tmp.a);
         defer tmp.release();
 
-        const str = try std.fmt.allocPrint(tmp.a, fmt, args);
+        const str = try tmp.a.print(fmt, args);
 
         try this.write(str);
     }

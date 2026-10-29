@@ -81,7 +81,7 @@ pub const Joystick = struct {
     };
 
     pub const button_count = @typeInfo(Button).@"enum".field_names.len;
-    pub const Buttons = std.StaticBitSet(button_count);
+    pub const Buttons = std.bit_set.Static(button_count);
     pub const Button = enum {
         north,
         east,

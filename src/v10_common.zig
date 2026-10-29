@@ -2,7 +2,8 @@ const std = @import("std");
 const log = std.log.scoped(.v10_platform);
 const Allocator = std.mem.Allocator;
 
-const builtin = @import("builtin");
+const os_tag = @import("builtin").target.os.tag;
+
 const options = @import("options");
 
 const core = @import("core");
@@ -257,7 +258,7 @@ pub const GameCode = struct {
 pub fn getLastWriteTime(absolute_file_name: [:0]const u8) i96 {
     var result: i96 = 0;
 
-    switch (builtin.os.tag) {
+    switch (os_tag) {
         .windows => {
             var data: win32.FILE_ATTRIBUTE_DATA = undefined;
             if (win32.GetFileAttributesExA(@ptrCast(absolute_file_name), .standard, &data).toBool()) {

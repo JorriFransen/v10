@@ -711,7 +711,7 @@ const Parser = struct {
         var tmp = mem.getScratch(this.context.arena);
         defer tmp.release();
 
-        const msg = std.fmt.allocPrint(tmp.a, fmt, args) catch @panic("OOM");
+        const msg = tmp.a.print(fmt, args) catch @panic("OOM");
 
         const loc = this.xml_reader.location;
         this.printErr("{s}:{}:{}: error: {s}\n", .{ this.xml_file_path, loc.line, loc.column, msg });

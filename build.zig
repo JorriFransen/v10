@@ -4,13 +4,13 @@ const assert = @import("src/core/assert.zig").assert;
 
 const Build = std.Build;
 const Module = Build.Module;
-const OptimizeMode = std.builtin.OptimizeMode;
+const Optimize = std.lang.Optimize;
 const ResolvedTarget = Build.ResolvedTarget;
 const Step = Build.Step;
 
 var enable_tests: bool = true;
 var use_llvm: bool = false;
-var tools_optimize: OptimizeMode = .safe;
+var tools_optimize: Optimize = .safe;
 var internal_build: bool = true;
 var verbose_wayland: bool = false;
 var verbose_asset_compiler: bool = true;
@@ -19,9 +19,7 @@ var asset_compiler_perf_timers: bool = false;
 // TODO: pulsePull requires locking during gamecode reload
 var linux_audio_impl: LinuxAudioImplementation = .pulseEmulateDSound;
 var cross_compile = false;
-
 const src_path = "src";
-
 var cwd_path: []const u8 = undefined;
 var zig_lib_dir: Build.Cache.Directory = undefined;
 
@@ -30,7 +28,6 @@ pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const native_target = b.graph.host;
     cross_compile = !target.query.eql(native_target.query);
-
     cwd_path = try std.zig.getResolvedCwd(b.graph.io, b.allocator);
 
     zig_lib_dir = try std.zig.findZigLibDirFromSelfExe(b.allocator, b.graph.io, cwd_path, b.graph.zig_exe);
@@ -40,7 +37,7 @@ pub fn build(b: *Build) !void {
     if (target.result.os.tag == .windows) use_llvm = true;
 
     internal_build = b.option(bool, "internal_build", "Internal build") orelse internal_build;
-    tools_optimize = b.option(OptimizeMode, "tools_optimize", "Optimization mode for tools") orelse tools_optimize;
+    tools_optimize = b.option(Optimize, "tools_optimize", "Optimization mode for tools") orelse tools_optimize;
 
     verbose_wayland = b.option(bool, "verbose_wayland", "Verbose wayland logging") orelse verbose_wayland;
 
@@ -51,7 +48,7 @@ pub fn build(b: *Build) !void {
     var options = b.addOptions();
     options.addOption(bool, "internal_build", internal_build);
     options.addOption(bool, "debug", optimize == .debug);
-    options.addOption(OptimizeMode, "tools_optimize", tools_optimize);
+    options.addOption(Optimize, "tools_optimize", tools_optimize);
 
     const options_module = options.createModule();
 
@@ -144,7 +141,7 @@ const Engine = struct {
     tools: *const Tools,
 };
 
-fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !Engine {
+fn buildEngine(b: *Build, optimize: Optimize, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !Engine {
     const os = target.result.os.tag;
 
     const exe = switch (os) {
@@ -162,15 +159,21 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     const run_exe = b.addRunArtifact(exe);
     run_exe.step.dependOn(b.getInstallStep()); // To ensure we run the installed exe, not the one in cache
 
-    b.root.createDirPath(b.graph.io, "data") catch |e| switch (e) {
-        error.PathAlreadyExists => {},
-        else => return e,
-    };
-
     const run_step = b.step("run", "Run the engine");
     run_step.dependOn(&run_exe.step);
     run_exe.setCwd(b.path("data/"));
     run_exe.addPassthruArgs();
+
+    const mkdir_argv: []const []const u8 = switch (b.graph.host.result.os.tag) {
+        else => return error.PlatformNotSupported,
+        .linux => &.{ "mkdir", "-p", "data" },
+        .windows => &.{ "cmd.exe", "/C", "if not exists data mkdir data" },
+    };
+
+    var mkdir_step = b.addSystemCommand(mkdir_argv);
+    mkdir_step.has_side_effects = true;
+    mkdir_step.setName("mkdir data");
+    run_exe.step.dependOn(&mkdir_step.step);
 
     return .{
         .build = exe,
@@ -181,7 +184,7 @@ fn buildEngine(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, module
     };
 }
 
-fn buildEngineWindows(b: *Build, optimize: OptimizeMode, target: ResolvedTarget) !*Step.Compile {
+fn buildEngineWindows(b: *Build, optimize: Optimize, target: ResolvedTarget) !*Step.Compile {
     const root_module = b.addModule("main", .{
         .optimize = optimize,
         .target = target,
@@ -208,7 +211,7 @@ const LinuxAudioImplementation = enum {
     pulsePull,
 };
 
-fn buildEngineLinux(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
+fn buildEngineLinux(b: *Build, optimize: Optimize, target: ResolvedTarget, modules: *const Modules, tools: *const Tools) !*Step.Compile {
     linux_audio_impl = b.option(LinuxAudioImplementation, "linux_audio_impl", "Linux audio implementation") orelse linux_audio_impl;
 
     var linux_options = b.addOptions();
@@ -251,12 +254,12 @@ const Game = struct {
     install: *Step.InstallArtifact,
 };
 
-fn buildGameLib(b: *Build, optimize: OptimizeMode, target: ResolvedTarget, engine: *const Engine) !Game {
+fn buildGameLib(b: *Build, optimize: Optimize, target: ResolvedTarget, engine: *const Engine) !Game {
     const game_root_module = b.addModule("gamelib", .{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path(src_path ++ "/v10.zig"),
-        .link_libc = true,
+        .link_libc = false,
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
             .{ .module = engine.modules.core, .name = "core" },
@@ -332,14 +335,14 @@ const Tools = struct {
             return .{ .gen_exe = wayland_gen_exe, .options_module = options_module };
         }
 
-        pub fn module(this: *const WaylandGen, b: *Build, optimize: OptimizeMode, modules: *const Modules, core_xml_path: []const u8, protocol_xml_paths: []const []const u8) *Module {
+        pub fn module(this: *const WaylandGen, b: *Build, optimize: Optimize, modules: *const Modules, core_xml_path: []const u8, protocol_xml_paths: []const []const u8) *Module {
             const run_wayland_gen_exe = b.addRunArtifact(this.gen_exe);
 
-            _ = run_wayland_gen_exe.addPrefixedFileArg("--wayland=", b.path(core_xml_path));
-            const wayland_source_dir = run_wayland_gen_exe.addPrefixedOutputDirectoryArg("--out=", "wayland");
+            _ = run_wayland_gen_exe.addFileArg2(b.path(core_xml_path), .{ .prefix = "--wayland=" });
+            const wayland_source_dir = run_wayland_gen_exe.addOutputDirectoryArg2("wayland", .{ .prefix = "--out=" });
 
             for (protocol_xml_paths) |protocol_xml_path| {
-                _ = run_wayland_gen_exe.addFileArg(b.path(protocol_xml_path));
+                _ = run_wayland_gen_exe.addFileArg2(b.path(protocol_xml_path), .{});
             }
 
             const result = b.createModule(.{
@@ -360,19 +363,8 @@ const Tools = struct {
         module: *Module,
 
         fn build(b: *Build, tools_target: ResolvedTarget, modules: *Modules) ?AssetCompiler {
-            const aseprite_names: []const []const u8 = if (tools_target.result.os.tag == .windows)
-                &.{"aseprite.exe"}
-            else
-                &.{"aseprite"};
-
-            const aseprite_exe = b.findProgram(.{ .names = aseprite_names }) orelse {
-                std.log.warn("Unable to find aseprite executable", .{});
-                return null;
-            };
-
             const options = b.addOptions();
             options.addOption(bool, "perf_timers", asset_compiler_perf_timers);
-            options.addOption([]const u8, "aseprite_exe_path", aseprite_exe);
             options.addOption([]const u8, "aseprite_script_path", b.pathJoin(&.{ cwd_path, "tools/aseprite/" }));
 
             const option_module = options.createModule();
@@ -425,8 +417,8 @@ pub fn buildAssets(b: *Build, engine: *const Engine, tools: *const Tools, mode: 
 
     asset_compiler_run.addArg("--clean");
 
-    asset_compiler_run.addPrefixedDirectoryArg("-i", b.path(scan_dir));
-    asset_compiler_run.addPrefixedDirectoryArg("-o", b.path(output_dir));
+    asset_compiler_run.addDirectoryArg2(b.path(scan_dir), .{ .prefix = "-i" });
+    asset_compiler_run.addDirectoryArg2(b.path(output_dir), .{ .prefix = "-o" });
 
     asset_compiler_run.addPassthruArgs();
 
@@ -448,7 +440,7 @@ pub const Tests = struct {
     install: *Step.InstallArtifact,
 };
 
-pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: OptimizeMode) !Tests {
+pub fn buildTests(b: *Build, target: ResolvedTarget, optimize: Optimize) !Tests {
     const test_step = b.step("test", "run all tests");
     const test_install_step = b.step("test_install", "install tests");
 

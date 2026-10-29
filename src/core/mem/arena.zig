@@ -4,6 +4,7 @@ const Alignment = std.mem.Alignment;
 const log = std.log.scoped(.arena);
 
 const builtin = @import("builtin");
+const os_tag = builtin.target.os.tag;
 
 const assert = @import("../core.zig").assert;
 const mem = @import("mem.zig");
@@ -73,7 +74,7 @@ pub const Arena = struct {
 
         assert(options.reserved_capacity >= options.initial_commit);
 
-        switch (builtin.os.tag) {
+        switch (os_tag) {
             else => @compileError("missing implementation for platform for 'Arena.init_virtual'"),
 
             .linux => {
@@ -135,7 +136,7 @@ pub const Arena = struct {
 
     pub fn deinit(this: *Arena) Error!void {
         if (this.data.len != 0 and this.flags.rvas) {
-            switch (builtin.os.tag) {
+            switch (os_tag) {
                 else => @compileError("missing implementation for platforn for 'Arena.deinit'"),
                 .linux => linux.munmap(@alignCast(this.data)) catch |e| return switch (e) {
                     error.NOMEM => error.OutOfMemory,
@@ -179,7 +180,7 @@ pub const Arena = struct {
 
         const new_slice: []align(page_size_min) u8 = @alignCast(@constCast(base_ptr[this.data.len .. this.data.len + (new_cap - old_cap)]));
 
-        switch (builtin.os.tag) {
+        switch (os_tag) {
             else => @compileError("missing implementation for platform for 'Arena.grow'"),
 
             .linux => {
