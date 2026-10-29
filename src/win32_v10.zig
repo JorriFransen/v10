@@ -444,7 +444,10 @@ pub fn windowsEntry(
     instance: win32.HINSTANCE,
 ) !c_int {
     var shared_state: common.SharedState = .{};
-    var thread_context: ThreadContext = .{ .io = io };
+    var thread_context: ThreadContext = .{
+        .io = io,
+        .fatal_fn = core.debug.fatal_fn,
+    };
 
     common.runAssetCompiler(io, gpa, stderr, stdout) catch |e| {
         log.err("Asset compiler error: '{s}'", .{@errorName(e)});

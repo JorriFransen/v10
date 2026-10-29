@@ -1,7 +1,7 @@
 const std = @import("std");
 const zig_win32 = std.os.windows;
 
-const assert = @import("../../assert.zig").assert;
+const assert = @import("../../debug.zig").assert;
 const bits = @import("../../bits.zig");
 const math = @import("../../math.zig");
 const time = @import("../../time.zig");

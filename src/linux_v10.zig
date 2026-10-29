@@ -108,6 +108,7 @@ pub fn main(init: std.process.Init.Minimal) u8 {
 pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.process.Environ) !u8 {
     var thread_context: ThreadContext = .{
         .io = io,
+        .fatal_fn = core.debug.fatal_fn,
     };
 
     common.runAssetCompiler(io, gpa, stderr, stdout) catch |e| {

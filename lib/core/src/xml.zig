@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.xml);
 
-const assert = @import("assert.zig").assert;
+const assert = @import("debug.zig").assert;
 const mem = @import("mem/mem.zig");
 
 pub const Reader = struct {
