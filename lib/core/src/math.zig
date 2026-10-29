@@ -81,6 +81,7 @@ pub inline fn safeRatio1(numerator: f32, divisor: f32) f32 {
     const result = safeRatioN(numerator, divisor, 1);
     return result;
 }
+
 pub const V2 = extern struct {
     x: f32 = 0,
     y: f32 = 0,
