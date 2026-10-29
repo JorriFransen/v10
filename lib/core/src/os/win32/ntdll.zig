@@ -1,5 +1,5 @@
 const win32 = @import("win32.zig");
-const assert = @import("../../assert.zig").assert;
+const assert = @import("../../debug.zig").assert;
 
 const HANDLE = win32.HANDLE;
 const BYTE = win32.BYTE;

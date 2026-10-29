@@ -6,9 +6,9 @@ pub const DynLib = @import("dynlib.zig");
 pub const TimeParts = @import("timeparts.zig").TimeParts;
 
 pub const arch = @import("arch/arch.zig").arch;
-pub const assert = @import("assert.zig").assert;
 pub const bits = @import("bits.zig");
 pub const cli_arg_parser = @import("cli_arg_parser.zig");
+pub const debug = @import("debug.zig");
 pub const fs = @import("fs.zig");
 pub const intrinsics = @import("intrinsics.zig");
 pub const lib = @import("lib/lib.zig");
@@ -19,6 +19,8 @@ pub const os = @import("os/os.zig");
 pub const perf = @import("perf.zig");
 pub const time = @import("time.zig");
 pub const xml = @import("xml.zig");
+
+pub const assert = debug.assert;
 
 pub const default_log_level: std.log.Level = std.log.default_level;
 

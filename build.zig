@@ -1,6 +1,5 @@
 const std = @import("std");
 
-// const assert = @import("lib/core/src/assert.zig").assert;
 const assert = std.debug.assert;
 
 const Build = std.Build;
@@ -250,7 +249,7 @@ fn buildGameLib(b: *Build, optimize: Optimize, target: ResolvedTarget, engine: *
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path("src/v10.zig"),
-        .link_libc = true,
+        .link_libc = false,
         .imports = &.{
             .{ .module = engine.modules.options, .name = "options" },
             .{ .module = engine.modules.core, .name = "core" },

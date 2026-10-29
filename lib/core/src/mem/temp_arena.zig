@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const assert = @import("../assert.zig").assert;
+const assert = @import("../debug.zig").assert;
 const mem = @import("mem.zig");
 const Arena = @import("arena.zig").Arena;
 

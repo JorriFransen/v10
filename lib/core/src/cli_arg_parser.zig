@@ -2,7 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.cli_arg_parse);
 const Allocator = std.mem.Allocator;
 
-const assert = @import("assert.zig").assert;
+const assert = @import("debug.zig").assert;
 const meta = @import("meta.zig");
 
 const String = struct {

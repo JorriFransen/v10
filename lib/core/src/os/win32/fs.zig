@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const assert = @import("../../assert.zig").assert;
+const assert = @import("../../debug.zig").assert;
 const bits = @import("../../bits.zig");
 const fs = @import("../../fs.zig");
 const meta = @import("../../meta.zig");

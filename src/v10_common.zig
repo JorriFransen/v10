@@ -18,6 +18,7 @@ const linux = core.os.linux;
 
 pub const ThreadContext = struct {
     io: std.Io,
+    fatal_fn: core.debug.FatalFn,
 };
 
 pub const FN_updateAndRender = *const fn (thread_context: *const ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void;

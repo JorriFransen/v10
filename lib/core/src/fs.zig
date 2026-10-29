@@ -2,7 +2,7 @@ const std = @import("std");
 
 const os_tag = @import("builtin").target.os.tag;
 
-const assert = @import("assert.zig").assert;
+const assert = @import("debug.zig").assert;
 const mem = @import("mem/mem.zig");
 const os = @import("os/os.zig").current.fs;
 
