@@ -1,7 +1,7 @@
 const std = @import("std");
-const log = std.log.scoped(.v10);
 
 const core = @import("core");
+const log = core.log.scoped(.v10);
 const assert = core.assert;
 const intrinsics = core.intrinsics;
 const mem = core.mem;
@@ -40,18 +40,11 @@ const OffscreenBuffer = common.OffscreenBuffer;
 const ThreadContext = common.ThreadContext;
 const RenderGroup = @import("render_group.zig");
 
-pub const std_options: std.Options = blk: {
-    var o = core.default_std_options;
-
-    o.log_scope_levels = o.log_scope_levels ++
-        [_]std.log.ScopeLevel{
-            .{ .scope = .v10, .level = .info },
-        };
-
-    break :blk o;
-};
-
 pub const panic = core.debug.default_panic;
+
+pub const log_scope_levels = [_]core.log.ScopeLevel{
+    .{ .scope = .v10, .level = .debug },
+};
 
 pub const LowEntity = struct {
     sim: Entity = .{},
@@ -445,18 +438,18 @@ pub fn chunkPositionFromTilePosition(world: *const World, abs_tile_x: i32, abs_t
     return result;
 }
 
-pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void {
-    if (input.executable_reloaded or !game_memory.initialized) {
-        core.debug.fatal_fn = thread_context.fatal_fn;
-    }
+pub export fn initLib(thread_context: *ThreadContext) callconv(.c) void {
+    core.debug.fatal_fn = thread_context.fatal_fn;
+    core.log.lock_fn = thread_context.log_lock_fn;
+    core.log.header_fn = thread_context.log_header_fn;
+}
 
+pub export fn updateAndRender(thread_context: *ThreadContext, game_memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void {
     const game_state: *GameState = @ptrCast(@alignCast(game_memory.permanent));
     assert(@sizeOf(GameState) <= game_memory.permanent.len);
 
     const ground_buffer_width = 256;
     const ground_buffer_height = 256;
-
-    assert(false);
 
     if (!game_memory.initialized) {
         game_state.* = .{};

@@ -1,7 +1,7 @@
 const std = @import("std");
-const log = std.log.scoped(.lib_loader);
 
 const core = @import("core");
+const log = core.log.scoped(.lib_loader);
 const DynLib = core.DynLib;
 const meta = core.meta;
 

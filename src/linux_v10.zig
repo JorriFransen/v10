@@ -1,5 +1,4 @@
 const std = @import("std");
-const log = std.log.scoped(.linux_v10);
 
 const builtin = @import("builtin");
 
@@ -12,6 +11,9 @@ const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
 const pa = core.lib.pulse;
+
+const log = core.log.scoped(.linux_v10);
+const pulse_log = core.log.scoped(.pulse);
 
 const lib_loader = @import("lib_loader.zig");
 
@@ -34,21 +36,12 @@ const Memory = common.Memory;
 const OffscreenBuffer = common.OffscreenBuffer;
 const ThreadContext = common.ThreadContext;
 
-pub const std_options: std.Options = blk: {
-    var o = core.default_std_options;
-
-    o.log_scope_levels =
-        o.log_scope_levels ++
-        [_]std.log.ScopeLevel{
-            .{ .scope = .linux_v10, .level = .debug },
-            .{ .scope = .linux_joystick, .level = .info },
-            .{ .scope = .pulse, .level = .info },
-        };
-
-    break :blk o;
-};
-
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
+
+pub const log_scope_levels = [_]core.log.ScopeLevel{
+    .{ .scope = .linux_joystick, .level = .info },
+    .{ .scope = .pulse, .level = .info },
+};
 
 const use_debug_allocator = switch (builtin.mode) {
     .debug, .safe => true,
@@ -108,7 +101,9 @@ pub fn main(init: std.process.Init.Minimal) u8 {
 pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.process.Environ) !u8 {
     var thread_context: ThreadContext = .{
         .io = io,
-        .fatal_fn = core.debug.fatal_fn,
+        .fatal_fn = core.debug.defaultFatalFn,
+        .log_lock_fn = core.log.defaultLock,
+        .log_header_fn = core.log.defaultHeader,
     };
 
     common.runAssetCompiler(io, gpa, stderr, stdout) catch |e| {
@@ -254,6 +249,7 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
     defer if (joystick_context_opt) |jc| jc.deinit();
 
     var game_code = GameCode.load(game_lib_name);
+    if (game_code.initLib) |initLib| initLib(&thread_context);
 
     const audio_fps = 48000;
     const audio_buffer_byte_size = audio_fps * @sizeOf(AudioBuffer.Frame);
@@ -326,9 +322,14 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
         const new_lib_write_time = common.getLastWriteTime(game_lib_name);
 
         if (new_lib_write_time > game_code.last_write_time) {
-            game_code.unload();
-            game_code = GameCode.load(game_lib_name);
+            const new_game_code = GameCode.load(game_lib_name);
+            if (new_game_code.initLib) |initLib| initLib(&thread_context);
+
+            var old_game_code = game_code;
+            game_code = new_game_code;
             input.new.executable_reloaded = true;
+
+            old_game_code.unload();
         }
 
         const keyboard_controller = &input.new.controllers[0];
@@ -1036,7 +1037,7 @@ const PulseContext = struct {
             const pulse_context: *PulseContext = @ptrCast(@alignCast(userdata));
 
             pulse_context.context_state = pa.context_get_state(context);
-            pa.log.debug("context state: {}", .{pulse_context.context_state});
+            pulse_log.debug("context state: {}", .{pulse_context.context_state});
             pa.threaded_mainloop_signal(pulse_context.main_loop, 0);
         }
 
@@ -1044,7 +1045,7 @@ const PulseContext = struct {
             const pulse_context: *PulseContext = @ptrCast(@alignCast(userdata));
 
             pulse_context.stream_state = pa.stream_get_state(stream);
-            pa.log.debug("stream state: {}", .{pulse_context.stream_state});
+            pulse_log.debug("stream state: {}", .{pulse_context.stream_state});
             pa.threaded_mainloop_signal(pulse_context.main_loop, 0);
         }
     };
@@ -1063,40 +1064,40 @@ const PulseContext = struct {
         };
 
         this.main_loop = pa.threaded_mainloop_new() orelse {
-            pa.log.err("pa_threaded_mainloop_new failed", .{});
+            pulse_log.err("pa_threaded_mainloop_new failed", .{});
             return error.PulseInitFailed;
         };
         errdefer pa.threaded_mainloop_free(this.main_loop);
-        pa.log.debug("threaded mainloop created", .{});
+        pulse_log.debug("threaded mainloop created", .{});
 
         const api = pa.threaded_mainloop_get_api(this.main_loop) orelse {
-            pa.log.err("pa_threaded_mainloop_get_api failed", .{});
+            pulse_log.err("pa_threaded_mainloop_get_api failed", .{});
             return error.PulseInitFailed;
         };
-        pa.log.debug("threaded mainloop api retrieved", .{});
+        pulse_log.debug("threaded mainloop api retrieved", .{});
 
         this.context = pa.context_new(api, application_name) orelse {
-            pa.log.err("pa_context_new failed", .{});
+            pulse_log.err("pa_context_new failed", .{});
             return error.PulseInitFailed;
         };
         errdefer pa.context_unref(this.context);
-        pa.log.debug("context created", .{});
+        pulse_log.debug("context created", .{});
 
         if (pa.threaded_mainloop_start(this.main_loop) < 0) {
-            pa.log.err("pa_threaded_mainloop_start failed", .{});
+            pulse_log.err("pa_threaded_mainloop_start failed", .{});
             return error.PulseInitFailed;
         }
-        pa.log.debug("starting threaded mainloop", .{});
+        pulse_log.debug("starting threaded mainloop", .{});
 
         pa.threaded_mainloop_lock(this.main_loop);
         defer pa.threaded_mainloop_unlock(this.main_loop);
 
         if (pa.context_connect(this.context, null, .{}, null) < 0) {
-            pa.log.err("pa_context_connect failed", .{});
+            pulse_log.err("pa_context_connect failed", .{});
             return error.PulseInitFailed;
         }
         errdefer pa.context_disconnect(this.context);
-        pa.log.debug("start context connection", .{});
+        pulse_log.debug("start context connection", .{});
 
         pa.context_set_state_callback(this.context, InitCallbacks.contextStateCallback, this);
         while (this.context_state != .ready) {
@@ -1104,20 +1105,20 @@ const PulseContext = struct {
                 else => {},
                 .ready, .connecting, .authorizing, .setting_name => {},
                 .failed, .terminated => {
-                    pa.log.err("invalid context state: {}", .{this.context_state});
+                    pulse_log.err("invalid context state: {}", .{this.context_state});
                     return error.PulseInitFailed;
                 },
             }
             pa.threaded_mainloop_wait(this.main_loop);
         }
-        pa.log.debug("context ready", .{});
+        pulse_log.debug("context ready", .{});
 
         this.stream = pa.stream_new(this.context, application_name, &sample_spec, null) orelse {
-            pa.log.err("failed to create stream", .{});
+            pulse_log.err("failed to create stream", .{});
             return error.PulseInitFailed;
         };
         errdefer pa.stream_unref(this.stream);
-        pa.log.debug("stream created", .{});
+        pulse_log.debug("stream created", .{});
 
         const min_req_frames = 8;
         const min_req_bytes = min_req_frames * @sizeOf(AudioOutput.Frame);
@@ -1128,7 +1129,7 @@ const PulseContext = struct {
             .min_req = min_req_bytes,
             .frag_size = math.maxInt(u32),
         };
-        pa.log.debug("initial buffer attributes: {}", .{aggressive_buffer_attr});
+        pulse_log.debug("initial buffer attributes: {}", .{aggressive_buffer_attr});
 
         if (pa.stream_connect_playback(this.stream, null, &aggressive_buffer_attr, .{
             .adjust_latency = true,
@@ -1136,18 +1137,18 @@ const PulseContext = struct {
             .auto_timing_update = true,
             .start_corked = true,
         }, null, null) < 0) {
-            pa.log.err("pa_stream_connect_playback failed", .{});
+            pulse_log.err("pa_stream_connect_playback failed", .{});
             return error.PulseInitFailed;
         }
         pa.stream_set_state_callback(this.stream, InitCallbacks.streamStateCallback, this);
-        pa.log.debug("stream connected", .{});
+        pulse_log.debug("stream connected", .{});
 
         while (this.stream_state != .ready) {
             switch (this.stream_state) {
                 else => {},
                 .ready, .creating => {},
                 .failed, .terminated => {
-                    pa.log.err("Invalid stream state: {}", .{this.stream_state});
+                    pulse_log.err("Invalid stream state: {}", .{this.stream_state});
                     return error.PulseInitFailed;
                 },
             }
@@ -1155,7 +1156,7 @@ const PulseContext = struct {
         }
 
         const suggested_buffer_attr = pa.stream_get_buffer_attr(this.stream).?;
-        pa.log.debug("suggested buffer attributes: {}", .{suggested_buffer_attr});
+        pulse_log.debug("suggested buffer attributes: {}", .{suggested_buffer_attr});
 
         const t_length = (suggested_buffer_attr.min_req * 2) + 4;
         const modified_buffer_attr = pa.BufferAttr{
@@ -1166,7 +1167,7 @@ const PulseContext = struct {
             .frag_size = suggested_buffer_attr.frag_size,
         };
 
-        pa.log.debug("modified buffer attributes: {}", .{modified_buffer_attr});
+        pulse_log.debug("modified buffer attributes: {}", .{modified_buffer_attr});
 
         const op = pa.stream_set_buffer_attr(this.stream, &modified_buffer_attr, &PulseContext.successCallback, this).?;
         defer pa.operation_unref(op);
@@ -1176,20 +1177,20 @@ const PulseContext = struct {
         }
 
         if (pa.operation_get_state(op) == .cancelled) {
-            pa.log.err("pa_stream_set_buffer_attr cancelled", .{});
+            pulse_log.err("pa_stream_set_buffer_attr cancelled", .{});
             return error.PulseInitFailed;
         }
 
         const final_buffer_attr = pa.stream_get_buffer_attr(this.stream).?;
         if (!std.mem.eql(u8, std.mem.asBytes(&modified_buffer_attr), std.mem.asBytes(final_buffer_attr))) {
-            pa.log.warn("modified buffer attributes not accepted", .{});
+            pulse_log.warn("modified buffer attributes not accepted", .{});
         }
-        pa.log.debug("final buffer attributes applied: {}", .{final_buffer_attr});
+        pulse_log.debug("final buffer attributes applied: {}", .{final_buffer_attr});
 
         pa.context_set_state_callback(this.context, null, null); // TODO: Set to runtime version
         pa.stream_set_state_callback(this.stream, null, null); // TODO: Set to runtime version
 
-        pa.log.info("stream started", .{});
+        pulse_log.info("stream started", .{});
     }
 
     /// Blocks until the first write callback is fired
@@ -1211,7 +1212,7 @@ const PulseContext = struct {
 
         pa.threaded_mainloop_unlock(this.main_loop);
 
-        pa.log.info("stream callbacks started", .{});
+        pulse_log.info("stream callbacks started", .{});
     }
 
     pub fn firstWriteCallback(stream: ?*pa.Stream, nbytes: usize, userdata: ?*anyopaque) callconv(.c) void {

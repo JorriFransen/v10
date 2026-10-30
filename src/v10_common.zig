@@ -1,5 +1,4 @@
 const std = @import("std");
-const log = std.log.scoped(.v10_platform);
 const Allocator = std.mem.Allocator;
 
 const os_tag = @import("builtin").target.os.tag;
@@ -7,8 +6,8 @@ const os_tag = @import("builtin").target.os.tag;
 const options = @import("options");
 
 const core = @import("core");
+const log = core.log.scoped(.v10_platform);
 const DynLib = core.DynLib;
-const TimeParts = core.TimeParts;
 const assert = core.assert;
 const fs = core.fs;
 const math = core.math;
@@ -18,9 +17,14 @@ const linux = core.os.linux;
 
 pub const ThreadContext = struct {
     io: std.Io,
+
     fatal_fn: core.debug.FatalFn,
+
+    log_lock_fn: core.log.LockFn,
+    log_header_fn: core.log.HeaderFn,
 };
 
+pub const FN_initLib = *const fn (thread_context: *const ThreadContext) callconv(.c) void;
 pub const FN_updateAndRender = *const fn (thread_context: *const ThreadContext, memory: *Memory, input: *const Input, offscreen_buffer: *OffscreenBuffer) callconv(.c) void;
 pub const FN_getAudioFrames = *const fn (thread_context: *const ThreadContext, memory: *Memory, sound_buffer: *const AudioBuffer) callconv(.c) void;
 
@@ -216,6 +220,7 @@ pub const GameCode = struct {
     dll: ?DynLib = null,
     last_write_time: i128 = 0,
 
+    initLib: ?FN_initLib = null,
     updateAndRender: ?FN_updateAndRender = null,
     getAudioFrames: ?FN_getAudioFrames = null,
 
@@ -227,10 +232,12 @@ pub const GameCode = struct {
             return .{};
         };
 
+        const init_lib = lib.lookup(FN_initLib, "initLib");
         const update_and_render = lib.lookup(FN_updateAndRender, "updateAndRender");
         const get_audio_frames = lib.lookup(FN_getAudioFrames, "getAudioFrames");
 
         const valid =
+            init_lib != null and
             update_and_render != null and
             get_audio_frames != null;
 
@@ -240,6 +247,7 @@ pub const GameCode = struct {
                 .valid = true,
                 .dll = lib,
                 .last_write_time = last_write_time,
+                .initLib = init_lib.?,
                 .updateAndRender = update_and_render.?,
                 .getAudioFrames = get_audio_frames.?,
             };

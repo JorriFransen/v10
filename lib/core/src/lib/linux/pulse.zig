@@ -1,7 +1,6 @@
 // Incomplete pulse bindings
 
 const std = @import("std");
-pub const log = std.log.scoped(.pulse);
 
 const math = @import("../../math.zig");
 

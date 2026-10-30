@@ -1,7 +1,8 @@
 const std = @import("std");
-const log = std.log.scoped(.linux);
 
 const builtin = @import("builtin");
+
+const log = @import("../../log.zig").scoped(.linux);
 
 const arch = @import("arch/arch.zig").arch;
 const assert = @import("../../debug.zig").assert;

@@ -1,5 +1,4 @@
 const std = @import("std");
-pub const log = std.log.scoped(.dsound);
 
 const win32 = @import("../../os/os.zig").win32;
 const DynLib = @import("../../dynlib.zig");

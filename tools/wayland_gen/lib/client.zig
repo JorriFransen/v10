@@ -1,9 +1,9 @@
 const std = @import("std");
-const log = std.log.scoped(.@"wayland-client");
 
 const builtin = @import("builtin");
 
 const core = @import("core");
+const log = core.log.scoped(.@"wayland-client");
 const assert = core.assert;
 const linux = core.os.linux;
 const meta = core.meta;
@@ -800,7 +800,7 @@ fn getObject(display: *Display, id: u32) *Object {
     }
 }
 
-const verbose_log = std.log.scoped(.verbose_wayland);
+const verbose_log = core.log.scoped(.verbose_wayland);
 pub inline fn verbose(comptime fmt: []const u8, args: anytype) void {
     if (options.verbose_wayland) verbose_log.debug(fmt, args);
 }
