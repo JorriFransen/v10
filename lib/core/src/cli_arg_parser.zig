@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log.scoped(.cli_arg_parse);
+const log = @import("log.zig").scoped(.cli_arg_parse);
 const Allocator = std.mem.Allocator;
 
 const assert = @import("debug.zig").assert;

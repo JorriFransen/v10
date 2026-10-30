@@ -49,10 +49,7 @@ pub const Context = struct {
 
     options: OptionParser.Options,
 
-    const logFn = if (@hasDecl(@import("root"), "std_options"))
-        @import("root").std_options.logFn
-    else
-        (std.Options{}).logFn;
+    const logFn = core.log.log;
 
     inline fn err(_: *const Context, comptime fmt: []const u8, args: anytype) void {
         logFn(.err, log_scope, fmt, args);

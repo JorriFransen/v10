@@ -1,9 +1,9 @@
 const std = @import("std");
-const log = std.log.scoped(.linux_joystick);
 
 const options = @import("options");
 
 const core = @import("core");
+const log = core.log.scoped(.linux_joystick);
 const TimeStamp = core.time.TimeStamp;
 const assert = core.assert;
 const fs = core.fs;

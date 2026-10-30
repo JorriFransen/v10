@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const log = @import("../../log.zig").scoped(.@"core.fs.win32");
+
 const assert = @import("../../debug.zig").assert;
 const bits = @import("../../bits.zig");
 const fs = @import("../../fs.zig");
@@ -89,7 +91,7 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
         .INVALID_PARAMETER, .INVALID_HANDLE => if (nt_path.is_device) return error.Unexpected else unreachable,
 
         else => |status| {
-            std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+            log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
                 std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
             });
             return error.Unexpected;
@@ -165,7 +167,7 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
         => unreachable,
 
         else => |s| {
-            std.log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+            log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
                 std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
             });
             return error.Unexpected;
@@ -576,7 +578,7 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
                     const retry_err = win32.GetLastError();
                     return switch (retry_err) {
                         else => blk: {
-                            std.log.err("Unexpected error after UNRECOGNIZED_VOLUME retry with VOLUME_NAME_GUID: '{s}' ({})", .{
+                            log.err("Unexpected error after UNRECOGNIZED_VOLUME retry with VOLUME_NAME_GUID: '{s}' ({})", .{
                                 std.enums.tagName(win32.ERROR, retry_err) orelse "",
                                 @backingInt(retry_err),
                             });

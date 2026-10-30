@@ -1,5 +1,4 @@
 const std = @import("std");
-const log = std.log.scoped(.win32_v10);
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
@@ -18,6 +17,9 @@ const mem = core.mem;
 const win32 = core.os.win32;
 const xinput = core.lib.xinput;
 
+const log = core.log.scoped(.win32_v10);
+const dsound_log = core.log.scoped(.dsound);
+
 const lib_loader = @import("lib_loader.zig");
 
 const common = @import("v10_common");
@@ -30,20 +32,6 @@ const ControllerInput = common.ControllerInput;
 const ButtonState = common.ButtonState;
 const ThreadContext = common.ThreadContext;
 const AudioBuffer = common.AudioBuffer;
-
-pub const std_options: std.Options = blk: {
-    var o = core.default_std_options;
-
-    o.log_scope_levels =
-        o.log_scope_levels ++
-        [_]std.log.ScopeLevel{
-            .{ .scope = .win32_v10, .level = .info },
-            .{ .scope = .xinput, .level = .debug },
-            .{ .scope = .dsound, .level = .info },
-        };
-
-    break :blk o;
-};
 
 var stderr_buf: [1024]u8 = undefined;
 var stderr: *std.Io.Writer = undefined;
@@ -195,15 +183,15 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32, dso
             var primary_buffer_opt: ?*dsound.IDirectSoundBuffer = null;
             if (ds.CreateSoundBuffer(&buffer_desc, &primary_buffer_opt, null) == dsound.OK) {
                 if (primary_buffer_opt.?.SetFormat(&waveformat) == dsound.OK) {
-                    dsound.log.debug("primary buffer format set", .{});
+                    dsound_log.debug("primary buffer format set", .{});
                 } else {
-                    dsound.log.warn("primary_buffer.SetFormat failed", .{});
+                    dsound_log.warn("primary_buffer.SetFormat failed", .{});
                 }
             } else {
-                dsound.log.warn("CreateSoundBuffer failed (primary buffer)", .{});
+                dsound_log.warn("CreateSoundBuffer failed (primary buffer)", .{});
             }
         } else {
-            dsound.log.warn("SetCooperativeLevel failed", .{});
+            dsound_log.warn("SetCooperativeLevel failed", .{});
         }
 
         // Create secondary buffer
@@ -213,12 +201,12 @@ fn initDSound(window: win32.HWND, samples_per_second: u32, buffer_size: u32, dso
         };
 
         if (ds.CreateSoundBuffer(&buffer_desc, &sound_buffer_opt, null) == dsound.OK and sound_buffer_opt != null) {
-            dsound.log.debug("secondary buffer created", .{});
+            dsound_log.debug("secondary buffer created", .{});
         } else {
-            dsound.log.warn("CreateSoundBuffer failed (secondary buffer)", .{});
+            dsound_log.warn("CreateSoundBuffer failed (secondary buffer)", .{});
         }
     } else {
-        dsound.log.warn("DirectSoundCreate failed", .{});
+        dsound_log.warn("DirectSoundCreate failed", .{});
     }
 
     return sound_buffer_opt;
@@ -446,7 +434,9 @@ pub fn windowsEntry(
     var shared_state: common.SharedState = .{};
     var thread_context: ThreadContext = .{
         .io = io,
-        .fatal_fn = core.debug.fatal_fn,
+        .fatal_fn = core.debug.defaultFatalFn,
+        .log_lock_fn = core.log.defaultLock,
+        .log_header_fn = core.log.defaultHeader,
     };
 
     common.runAssetCompiler(io, gpa, stderr, stdout) catch |e| {
@@ -658,6 +648,7 @@ pub fn windowsEntry(
 
                 _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
                 var game_code = GameCode.load(temp_dll_name);
+                if (game_code.initLib) |initLib| initLib(&thread_context);
 
                 var last_cycle_count = arch.rdtsc();
 
@@ -668,11 +659,15 @@ pub fn windowsEntry(
                     const new_dll_write_time = common.getLastWriteTime(source_dll_name);
 
                     if (new_dll_write_time > game_code.last_write_time) {
-                        game_code.unload();
-
                         _ = win32.CopyFileA(source_dll_name, temp_dll_name, .FALSE);
-                        game_code = GameCode.load(temp_dll_name);
+                        const new_game_code = GameCode.load(temp_dll_name);
+                        if (new_game_code.initLib) |initLib| initLib(&thread_context);
+
+                        var old_game_code = game_code;
+                        game_code = new_game_code;
                         new_input.executable_reloaded = true;
+
+                        old_game_code.unload();
                     }
 
                     const keyboard_controller = &new_input.controllers[0];
