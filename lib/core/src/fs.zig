@@ -17,6 +17,18 @@ pub const max_name_bytes = os.max_name_bytes;
 
 pub const Error = OpenDirAtError || ExistsAtError || DirIteratorError || CreateDirAtError;
 
+pub const FileType = enum {
+    unknown,
+    pipe,
+    char,
+    dir,
+    block,
+    file,
+    link,
+    socket,
+    whiteout,
+};
+
 pub const File = struct {
     handle: Handle,
 };
@@ -33,13 +45,17 @@ pub const Dir = struct {
     }
 
     pub inline fn createDirParents(this: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
-        return CreateDirParentsAt(this, dir_path, options);
+        return createDirParentsAt(this, dir_path, options);
     }
 
     /// Follows links.
     /// TODO: Add symLinkExists
     pub inline fn exists(this: Dir, path: [:0]const u8) ExistsAtError!bool {
         return existsAt(this, path);
+    }
+
+    pub inline fn fileType(this: Dir, path: [:0]const u8, options: FileTypeAtOptions) FileTypeAtError!FileType {
+        return fileTypeAt(this, path, options);
     }
 
     pub inline fn close(this: Dir) void {
@@ -72,13 +88,27 @@ pub const ExistsAtError = error{
 };
 pub const existsAt = os.existsAt;
 
+pub const FileTypeAtError = error{
+    AccessDenied,
+    FileNotFound,
+    NameTooLong,
+    NotDir,
+    OutOfMemory,
+    SymLinkNotResolved,
+
+    Unexpected,
+};
+pub const FileTypeAtOptions = struct {
+    follow_symlinks: bool = true,
+};
+pub const fileTypeAt = os.fileTypeAt;
+
 pub const OpenDirAtError = error{
     AccessDenied,
     AlreadyExists,
     BadPath,
     DeviceBusy,
     FileNotFound,
-    Interrupted,
     NameTooLong,
     NoSpace,
     NotDir,
@@ -118,11 +148,11 @@ pub const CreateDirAtOptions = struct {
 };
 pub const createDirAt = os.createDirAt;
 
-pub fn CreateDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+pub fn createDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
     if (createDirAt(dir, dir_path, options)) {
         return;
     } else |e| switch (e) {
-        error.AlreadyExists => return, // TODO: check if dir
+        error.AlreadyExists => return requireDirAt(dir, dir_path),
         error.FileNotFound => {},
         else => return e,
     }
@@ -133,21 +163,30 @@ pub fn CreateDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAt
     var path_buf: [max_path_bytes]u8 = undefined;
 
     while (it.prev()) |elem| {
-        if (createDirAt(dir, mem.copySentinel(&path_buf, elem.path, 0), options)) {
+        const sub_path = mem.copySentinel(&path_buf, elem.path, 0);
+        if (createDirAt(dir, sub_path, options)) {
             break;
         } else |e| switch (e) {
-            error.AlreadyExists => break, // TODO: check if dir
+            error.AlreadyExists => {
+                try requireDirAt(dir, sub_path);
+                break;
+            },
             error.FileNotFound => {},
             else => return e,
         }
     }
 
     while (it.next()) |elem| {
-        createDirAt(dir, mem.copySentinel(&path_buf, elem.path, 0), options) catch |e| switch (e) {
-            error.AlreadyExists => {}, // TODO: check if dir
+        const sub_path = mem.copySentinel(&path_buf, elem.path, 0);
+        createDirAt(dir, sub_path, options) catch |e| switch (e) {
+            error.AlreadyExists => return requireDirAt(dir, sub_path),
             else => return e,
         };
     }
+}
+
+inline fn requireDirAt(dir: Dir, sub_path: [:0]const u8) !void {
+    if (try dir.fileType(sub_path, .{ .follow_symlinks = false }) != .dir) return error.NotDir;
 }
 
 pub const DirIteratorInitError = error{ SeekFailed, InvalidHandle };
@@ -158,19 +197,7 @@ pub const DirIteratorOptions = struct {
 };
 pub const DirIteratorEntry = struct {
     name: [:0]const u8,
-    type: Type,
-
-    pub const Type = enum {
-        unknown,
-        pipe,
-        char,
-        dir,
-        block,
-        file,
-        link,
-        socket,
-        whiteout,
-    };
+    type: FileType,
 };
 pub const DirIterator = os.DirIterator;
 

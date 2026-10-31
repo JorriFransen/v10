@@ -73,6 +73,8 @@ pub const Stat = extern struct {
     __glibc_reserved: [3]__syscall_slong_t = std.mem.zeroes([3]__syscall_slong_t),
 };
 
+pub const Statx = generic.Statx;
+
 // =============================================================================
 // time.h
 // =============================================================================
@@ -346,7 +348,7 @@ pub const SYS = enum(usize) {
     mknodat = 259,
     fchownat = 260,
     futimesat = 261,
-    fstatat64 = 262,
+    newfstatat = 262,
     unlinkat = 263,
     renameat = 264,
     linkat = 265,

@@ -70,6 +70,18 @@ inline fn handleErrno(comptime E: type, rc: isize) E!void {
     }
 }
 
+inline fn handleErrnoRetry(comptime E: type, rc: isize) E!bool {
+    inline for (@typeInfo(E).error_set.error_names.?) |err_name| {
+        if (comptime std.mem.eql(u8, err_name, "INTR")) @compileError("INTR in error set passed to handleErrnoRetry");
+    }
+
+    handleErrno(E || error{INTR}, rc) catch |e| switch (e) {
+        error.INTR => return true,
+        else => return @errorCast(e),
+    };
+    return false;
+}
+
 test "handleErrno" {
     try handleErrno(OpenatError, 0);
     try handleErrno(OpenatError, 42);
@@ -503,17 +515,23 @@ pub const ACCMODE = enum(u2) {
 
 pub const AT = struct {
     pub const FDCWD = -100;
-    pub const SYMLINK_NOFOLLOW = 0x100;
-    pub const REMOVEDIR = 0x200;
-    pub const SYMLINK_FOLLOW = 0x400;
-    pub const NO_AUTOMOUNT = 0x800;
-    pub const EMPTY_PATH = 0x1000;
-    pub const STATX_SYNC_TYPE = 0x6000;
-    pub const STATX_SYNC_AS_STAT = 0x0000;
-    pub const STATX_FORCE_SYNC = 0x2000;
-    pub const STATX_DONT_SYNC = 0x4000;
-    pub const RECURSIVE = 0x8000;
-    pub const HANDLE_FID = REMOVEDIR;
+
+    pub const Mask = packed struct(c_int) {
+        __reserved0__: u8 = 0,
+        SYMLINK_NOFOLLOW: bool = false,
+        REMOVEDIR: bool = false,
+        SYMLINK_FOLLOW: bool = false,
+        NO_AUTOMOUNT: bool = false,
+        EMPTY_PATH: bool = false,
+        STATX_FORCE_SYNC: bool = false,
+        STATX_DONT_SYNC: bool = false,
+        RECURSIVE: bool = false,
+        __reserved1__: u16 = 0,
+
+        pub const STATX_SYNC_AS_STAT: Mask = .{};
+        pub const STATX_SYNC_TYPE: Mask = .{ .STATX_FORCE_SYNC = true, .STATX_DONT_SYNC = true };
+        pub const HANDLE_FID: Mask = .{ .REMOVEDIR = true };
+    };
 };
 
 pub const OpenError = error{
@@ -523,7 +541,6 @@ pub const OpenError = error{
     EXIST,
     FAULT,
     FBIG,
-    INTR,
     INVAL,
     ISDIR,
     LOOP,
@@ -546,7 +563,7 @@ pub const OpenError = error{
     UnexpectedErrno,
 };
 
-pub fn open(path: [:0]const u8, flags: O, mode: S) OpenError!fd_t {
+pub fn open(path: [*:0]const u8, flags: O, mode: S) OpenError!fd_t {
     const result = openat(AT.FDCWD, path, flags, mode) catch |e| switch (e) {
         error.BADF => unreachable,
         else => return @errorCast(e),
@@ -562,7 +579,6 @@ pub const OpenatError = error{
     EXIST,
     FAULT,
     FBIG,
-    INTR,
     INVAL,
     ISDIR,
     LOOP,
@@ -585,16 +601,20 @@ pub const OpenatError = error{
     UnexpectedErrno,
 };
 
-pub fn openat(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: O, mode: S) OpenatError!fd_t {
-    const rc = syscall4(
-        .openat,
-        zeroExtendToUsize(dir_fd),
-        @intFromPtr(sub_path.ptr),
-        zeroExtendToUsize(flags),
-        zeroExtendToUsize(mode),
-    );
-    try handleErrno(OpenatError, rc);
-    return safeTrunc(c_int, rc);
+pub fn openat(dir_fd: dirfd_t, sub_path: [*:0]const u8, flags: O, mode: S) OpenatError!fd_t {
+    while (true) {
+        const rc = syscall4(
+            .openat,
+            zeroExtendToUsize(dir_fd),
+            @intFromPtr(sub_path),
+            zeroExtendToUsize(flags),
+            zeroExtendToUsize(mode),
+        );
+
+        if (try handleErrnoRetry(OpenatError, rc)) continue;
+
+        return safeTrunc(c_int, rc);
+    }
 }
 
 pub const FcntlError = error{
@@ -725,15 +745,17 @@ pub const InotifyAddWatchError = error{
     UnexpectedErrno,
 };
 
-pub fn inotify_add_watch(fd: fd_t, path: [:0]const u8, mask: IN) InotifyAddWatchError!c_int {
-    const rc = syscall3(
-        .inotify_add_watch,
-        safeExtendToUsize(fd),
-        @intFromPtr(path.ptr),
-        zeroExtendToUsize(mask),
-    );
-    try handleErrno(InotifyAddWatchError, rc);
-    return safeTrunc(c_int, rc);
+pub fn inotify_add_watch(fd: fd_t, path: [*:0]const u8, mask: IN) InotifyAddWatchError!c_int {
+    while (true) {
+        const rc = syscall3(
+            .inotify_add_watch,
+            safeExtendToUsize(fd),
+            @intFromPtr(path),
+            zeroExtendToUsize(mask),
+        );
+        if (try handleErrnoRetry(InotifyAddWatchError, rc)) continue;
+        return safeTrunc(c_int, rc);
+    }
 }
 
 pub const InotifyRmWatchError = error{
@@ -2272,7 +2294,7 @@ pub const RTSIG_MAX = 32;
 // mman.h
 // =============================================================================
 
-inline fn getShmPath(name: [:0]const u8) error{NoSpaceLeft}![:0]const u8 {
+inline fn getShmPath(name: []const u8) error{NoSpaceLeft}![:0]const u8 {
     var name_buf: [PATH_MAX]u8 = undefined;
     const path_fmt = std.fs.path.fmtJoin(&.{ "/dev/shm/", name });
     return try std.fmt.bufPrintSentinel(&name_buf, "{f}", .{path_fmt}, 0);
@@ -2283,7 +2305,7 @@ pub const ShmopenError = OpenatError || error{
     UnexpectedErrno,
 };
 
-pub fn shm_open(name: [:0]const u8, oflag: O, mode: S) ShmopenError!c_int {
+pub fn shm_open(name: []const u8, oflag: O, mode: S) ShmopenError!c_int {
     const path = try getShmPath(name);
 
     const fd = try openat(AT.FDCWD, path, oflag, mode);
@@ -2295,7 +2317,7 @@ pub const ShmunlinkError = UnlinkError || error{
     UnexpectedErrno,
 };
 
-pub fn shm_unlink(name: [:0]const u8) ShmunlinkError!void {
+pub fn shm_unlink(name: []const u8) ShmunlinkError!void {
     const path = try getShmPath(name);
     try unlink(path);
 }
@@ -2792,7 +2814,6 @@ pub const SendmsgError = error{
     FAULT,
     HOSTUNREACH,
     INPROGRESS,
-    INTR,
     INVAL,
     ISCONN,
     MSGSIZE,
@@ -2811,14 +2832,16 @@ pub const SendmsgError = error{
 };
 
 pub fn sendmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) SendmsgError!usize {
-    const rc = syscall3(
-        .sendmsg,
-        safeExtendToUsize(sock_fd),
-        @intFromPtr(header),
-        flags,
-    );
-    try handleErrno(SendmsgError, rc);
-    return safeTrunc(usize, rc);
+    while (true) {
+        const rc = syscall3(
+            .sendmsg,
+            safeExtendToUsize(sock_fd),
+            @intFromPtr(header),
+            flags,
+        );
+        if (try handleErrnoRetry(SendmsgError, rc)) continue;
+        return safeTrunc(usize, rc);
+    }
 }
 
 pub const RecvmsgError = error{
@@ -2828,7 +2851,6 @@ pub const RecvmsgError = error{
     CONNRESET,
     FAULT,
     HOSTUNREACH,
-    INTR,
     INVAL,
     NETUNREACH,
     NOBUFS,
@@ -2844,14 +2866,16 @@ pub const RecvmsgError = error{
 };
 
 pub fn recvmsg(sock_fd: fd_t, header: *msghdr, flags: c_uint) RecvmsgError!usize {
-    const rc = syscall3(
-        .recvmsg,
-        safeExtendToUsize(sock_fd),
-        @intFromPtr(header),
-        flags,
-    );
-    try handleErrno(RecvmsgError, rc);
-    return safeTrunc(usize, rc);
+    while (true) {
+        const rc = syscall3(
+            .recvmsg,
+            safeExtendToUsize(sock_fd),
+            @intFromPtr(header),
+            flags,
+        );
+        if (try handleErrnoRetry(RecvmsgError, rc)) continue;
+        return safeTrunc(usize, rc);
+    }
 }
 
 pub inline fn CMSG_NXTHDR(msg: *msghdr, cmsg: *cmsghdr) ?*cmsghdr {
@@ -2930,6 +2954,7 @@ pub const S = packed struct(mode_t) {
 };
 
 pub const Stat = abi.Stat;
+pub const Statx = abi.Statx;
 pub const mode_t = u32;
 
 pub const StatError = error{
@@ -2948,10 +2973,43 @@ pub const StatError = error{
     UnexpectedErrno,
 };
 
-pub fn stat(pathname: [:0]const u8, statbuf: *Stat) StatError!void {
-    const rc = syscall2(.stat, @intFromPtr(pathname.ptr), @intFromPtr(statbuf));
-    try handleErrno(StatError, rc);
-    assert(rc == 0);
+pub fn stat(pathname: [*:0]const u8, statbuf: *Stat) StatError!void {
+    while (true) {
+        const rc = syscall2(.stat, @intFromPtr(pathname), @intFromPtr(statbuf));
+        if (try handleErrnoRetry(StatError, rc)) continue;
+        assert(rc == 0);
+        return;
+    }
+}
+
+pub const StatxError = error{
+    ACCES,
+    BADF,
+    FAULT,
+    INVAL,
+    LOOP,
+    NAMETOOLONG,
+    NOENT,
+    NOMEM,
+    NOTDIR,
+
+    UnexpectedErrno,
+};
+
+pub fn statx(dir_fd: dirfd_t, path: ?[*:0]const u8, flags: AT.Mask, mask: Statx.Mask, statx_buf: *Statx) StatxError!void {
+    while (true) {
+        const rc = syscall5(
+            .statx,
+            zeroExtendToUsize(dir_fd),
+            @intFromPtr(path),
+            zeroExtendToUsize(flags),
+            zeroExtendToUsize(mask),
+            @intFromPtr(statx_buf),
+        );
+        if (try handleErrnoRetry(StatxError, rc)) continue;
+        assert(rc == 0);
+        return;
+    }
 }
 
 pub const MkdiratError = error{
@@ -2975,15 +3033,18 @@ pub const MkdiratError = error{
     UnexpectedErrno,
 };
 
-pub fn mkdirat(dir_fd: dirfd_t, path: [:0]const u8, mode: S) MkdiratError!void {
-    const rc = syscall3(
-        .mkdirat,
-        zeroExtendToUsize(dir_fd),
-        @intFromPtr(path.ptr),
-        zeroExtendToUsize(mode),
-    );
-    try handleErrno(MkdiratError, rc);
-    assert(rc == 0);
+pub fn mkdirat(dir_fd: dirfd_t, path: [*:0]const u8, mode: S) MkdiratError!void {
+    while (true) {
+        const rc = syscall3(
+            .mkdirat,
+            zeroExtendToUsize(dir_fd),
+            @intFromPtr(path),
+            zeroExtendToUsize(mode),
+        );
+        if (try handleErrnoRetry(MkdiratError, rc)) continue;
+        assert(rc == 0);
+        return;
+    }
 }
 
 // =============================================================================
@@ -3111,7 +3172,6 @@ pub const ReadError = error{
     BADF,
     CONNRESET,
     FAULT,
-    INTR,
     INVAL,
     IO,
     ISDIR,
@@ -3128,14 +3188,16 @@ pub const ReadError = error{
 };
 
 pub fn read(fd: fd_t, buf: []u8) ReadError![]u8 {
-    const rc = syscall3(
-        .read,
-        safeExtendToUsize(fd),
-        @intFromPtr(buf.ptr),
-        buf.len,
-    );
-    try handleErrno(ReadError, rc);
-    return buf[0..safeTrunc(usize, rc)];
+    while (true) {
+        const rc = syscall3(
+            .read,
+            safeExtendToUsize(fd),
+            @intFromPtr(buf.ptr),
+            buf.len,
+        );
+        if (try handleErrnoRetry(ReadError, rc)) continue;
+        return buf[0..safeTrunc(usize, rc)];
+    }
 }
 
 pub const WriteError = error{
@@ -3149,7 +3211,6 @@ pub const WriteError = error{
     FAULT,
     FBIG,
     HOSTUNREACH,
-    INTR,
     INVAL,
     IO,
     NETUNREACH,
@@ -3168,21 +3229,22 @@ pub const WriteError = error{
 };
 
 pub fn write(fd: fd_t, buf: []const u8) WriteError!usize {
-    const rc = syscall3(
-        .write,
-        safeExtendToUsize(fd),
-        @intFromPtr(buf.ptr),
-        buf.len,
-    );
-    try handleErrno(WriteError, rc);
-    return safeTrunc(usize, rc);
+    while (true) {
+        const rc = syscall3(
+            .write,
+            safeExtendToUsize(fd),
+            @intFromPtr(buf.ptr),
+            buf.len,
+        );
+        if (try handleErrnoRetry(WriteError, rc)) continue;
+        return safeTrunc(usize, rc);
+    }
 }
 
 pub const CloseError = error{
     BADF,
     DQUOT,
     FBIG,
-    INTR,
     IO,
     NOMEM,
     NOSPC,
@@ -3195,7 +3257,7 @@ pub const CloseError = error{
 pub fn close(fd: fd_t) void {
     const rc = syscall1(.close, safeExtendToUsize(fd));
 
-    if (handleErrno(CloseError, rc)) {
+    if (handleErrno(CloseError || error{INTR}, rc)) {
         assert(rc == 0);
     } else |e| switch (e) {
         error.INTR => {},
@@ -3254,7 +3316,6 @@ pub const FtruncateError = error{
     BADF,
     DQUOT,
     FBIG,
-    INTR,
     INVAL,
     IO,
     NOMEM,
@@ -3268,13 +3329,16 @@ pub const FtruncateError = error{
 };
 
 pub fn ftruncate(fd: fd_t, length: usize) FtruncateError!void {
-    const rc = syscall2(
-        .ftruncate,
-        safeExtendToUsize(fd),
-        length,
-    );
-    try handleErrno(FtruncateError, rc);
-    assert(rc == 0);
+    while (true) {
+        const rc = syscall2(
+            .ftruncate,
+            safeExtendToUsize(fd),
+            length,
+        );
+        if (try handleErrnoRetry(FtruncateError, rc)) continue;
+        assert(rc == 0);
+        return;
+    }
 }
 
 pub const UnlinkError = error{
@@ -3295,10 +3359,13 @@ pub const UnlinkError = error{
     UnexpectedErrno,
 };
 
-pub fn unlink(pathname: [:0]const u8) UnlinkError!void {
-    const rc = syscall1(.unlink, @intFromPtr(pathname.ptr));
-    try handleErrno(UnlinkError, rc);
-    assert(rc == 0);
+pub fn unlink(pathname: [*:0]const u8) UnlinkError!void {
+    while (true) {
+        const rc = syscall1(.unlink, @intFromPtr(pathname));
+        if (try handleErrnoRetry(UnlinkError, rc)) continue;
+        assert(rc == 0);
+        return;
+    }
 }
 
 pub const Getdents64Error = error{
@@ -3315,14 +3382,16 @@ pub const Getdents64Error = error{
 pub fn getdents64(dir_fd: dirfd_t, buf: []u8) Getdents64Error!usize {
     assert(buf.len >= @sizeOf(Dirent64) + Dirent64.max_name_len);
 
-    const rc = syscall3(
-        .getdents64,
-        safeExtendToUsize(dir_fd),
-        @intFromPtr(buf.ptr),
-        buf.len,
-    );
-    try handleErrno(Getdents64Error, rc);
-    return safeTrunc(usize, rc);
+    while (true) {
+        const rc = syscall3(
+            .getdents64,
+            safeExtendToUsize(dir_fd),
+            @intFromPtr(buf.ptr),
+            buf.len,
+        );
+        if (try handleErrnoRetry(Getdents64Error, rc)) continue;
+        return safeTrunc(usize, rc);
+    }
 }
 
 pub const ReadlinkatError = error{
@@ -3341,19 +3410,22 @@ pub const ReadlinkatError = error{
     UnexpectedErrno,
 };
 
-pub fn readlinkat(dir_fd: dirfd_t, path: [:0]const u8, buf: []u8) ReadlinkatError!usize {
-    const rc = syscall4(
-        .readlinkat,
-        zeroExtendToUsize(dir_fd),
-        @intFromPtr(path.ptr),
-        @intFromPtr(buf.ptr),
-        buf.len,
-    );
-    try handleErrno(ReadlinkatError, rc);
+pub fn readlinkat(dir_fd: dirfd_t, path: [*:0]const u8, buf: []u8) ReadlinkatError!usize {
+    while (true) {
+        const rc = syscall4(
+            .readlinkat,
+            zeroExtendToUsize(dir_fd),
+            @intFromPtr(path),
+            @intFromPtr(buf.ptr),
+            buf.len,
+        );
 
-    // This case is ambiguous, can be exact fit or buffer too small
-    if (rc == buf.len) return error.NAMETOOLONG;
-    return safeTrunc(usize, rc);
+        if (try handleErrnoRetry(ReadlinkatError, rc)) continue;
+
+        // This case is ambiguous, can be exact fit or buffer too small
+        if (rc == buf.len) return error.NAMETOOLONG;
+        return safeTrunc(usize, rc);
+    }
 }
 
 pub const Pipe2Error = error{
@@ -3392,19 +3464,25 @@ pub const AccessMode = packed struct(c_int) {
     pub const F_OK: AccessMode = .{ .R_OK = false, .W_OK = false, .X_OK = false };
 };
 
-pub fn faccessat(dir_fd: dirfd_t, path: [:0]const u8, mode: AccessMode) FaccessatError!bool {
-    const rc = syscall3(
-        .faccessat,
-        zeroExtendToUsize(dir_fd),
-        @intFromPtr(path.ptr),
-        zeroExtendToUsize(mode),
-    );
-    handleErrno(FaccessatError || error{ NOENT, NOTDIR }, rc) catch |e| switch (e) {
-        error.NOENT, error.NOTDIR => return false,
-        else => return @errorCast(e),
-    };
-    assert(rc == 0);
-    return true;
+pub fn faccessat(dir_fd: dirfd_t, path: [*:0]const u8, mode: AccessMode) FaccessatError!bool {
+    while (true) {
+        const rc = syscall3(
+            .faccessat,
+            zeroExtendToUsize(dir_fd),
+            @intFromPtr(path),
+            zeroExtendToUsize(mode),
+        );
+
+        const retry = handleErrnoRetry(FaccessatError || error{ NOENT, NOTDIR }, rc) catch |e| switch (e) {
+            error.NOENT, error.NOTDIR => return false,
+            else => return @errorCast(e),
+        };
+
+        if (retry) continue;
+
+        assert(rc == 0);
+        return true;
+    }
 }
 
 pub fn pipe2(fds: *[2]fd_t, flags: O) Pipe2Error!void {

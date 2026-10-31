@@ -1,5 +1,7 @@
 const linux = @import("../linux.zig");
 
+const assert = @import("../../../debug.zig").assert;
+
 // =============================================================================
 // fcntl.h
 // =============================================================================
@@ -189,4 +191,99 @@ pub const SO = struct {
     pub const RCVTIMEO_NEW = 66;
     pub const SNDTIMEO_NEW = 67;
     pub const DETACH_REUSEPORT_BPF = 68;
+};
+
+// =============================================================================
+// stat.h
+// =============================================================================
+pub const Statx = extern struct {
+    mask: Mask,
+
+    blksize: u32,
+    attributes: u64,
+    nlink: u32,
+    uid: u32,
+    gid: u32,
+    mode: u16,
+    __spare0: u16,
+    ino: u64,
+    size: u64,
+    blocks: u64,
+    attributes_mask: u64,
+
+    atime: Timestamp,
+    btime: Timestamp,
+    ctime: Timestamp,
+    mtime: Timestamp,
+
+    rdev_major: u32,
+    rdev_minor: u32,
+
+    dev_major: u32,
+    dev_minor: u32,
+
+    mnt_id: u64,
+
+    dio_mem_align: u32,
+    dio_offset_align: u32,
+
+    subvol: u64,
+
+    atomic_write_unit_min: u32,
+    atomic_write_unit_max: u32,
+    atomic_write_segments_max: u32,
+
+    dio_read_offset_align: u32,
+
+    atomic_write_unit_max_opt: u32,
+    __spare2: u32,
+
+    __spare3: [8]u64,
+
+    pub const Mask = packed struct(u32) {
+        TYPE: bool = false,
+        MODE: bool = false,
+        NLINK: bool = false,
+        UID: bool = false,
+        GID: bool = false,
+        ATIME: bool = false,
+        MTIME: bool = false,
+        CTIME: bool = false,
+        INO: bool = false,
+        SIZE: bool = false,
+        BLOCKS: bool = false,
+        BTIME: bool = false,
+        MNT_ID: bool = false,
+        DIOALIGN: bool = false,
+        MNT_ID_UNIQUE: bool = false,
+        SUBVOL: bool = false,
+        WRITE_ATOMIC: bool = false,
+        DIO_READ_ALIGN: bool = false,
+
+        __reserved__: u14 = 0,
+
+        pub const BASIC_STATS: Mask = .{
+            .TYPE = true,
+            .MODE = true,
+            .NLINK = true,
+            .UID = true,
+            .GID = true,
+            .ATIME = true,
+            .MTIME = true,
+            .CTIME = true,
+            .INO = true,
+            .SIZE = true,
+            .BLOCKS = true,
+        };
+    };
+
+    pub const Timestamp = extern struct {
+        sec: i64,
+        nsec: u32,
+        __reserved__: i32,
+    };
+
+    comptime {
+        assert(@sizeOf(@This()) == 0x100);
+    }
 };

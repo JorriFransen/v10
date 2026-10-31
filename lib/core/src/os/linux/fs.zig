@@ -21,7 +21,7 @@ pub const Permissions = enum(linux.mode_t) {
     _,
 
     pub fn toS(this: Permissions) S {
-        return @bitCast(@intFromEnum(this));
+        return @bitCast(@backingInt(this));
     }
 };
 
@@ -57,6 +57,47 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
     return result;
 }
 
+pub fn fileTypeAt(dir: fs.Dir, path: [:0]const u8, options: fs.FileTypeAtOptions) fs.FileTypeAtError!fs.FileType {
+    var stat: linux.Statx = undefined;
+    linux.statx(
+        dir.handle,
+        path,
+        .{ .SYMLINK_NOFOLLOW = !options.follow_symlinks },
+        .{ .TYPE = true },
+        &stat,
+    ) catch |e| return switch (e) {
+        error.BADF,
+        error.FAULT,
+        error.INVAL,
+        => unreachable,
+
+        error.ACCES => error.AccessDenied,
+        error.NOENT => error.FileNotFound,
+        error.NAMETOOLONG => error.NameTooLong,
+        error.NOTDIR => error.NotDir,
+        error.NOMEM => error.OutOfMemory,
+        error.LOOP => error.SymLinkNotResolved,
+
+        else => error.Unexpected,
+    };
+
+    if (!stat.mask.TYPE) return error.Unexpected;
+
+    const mode: linux.S = @fromBackingInt(stat.mode);
+
+    return switch (mode.TYPE) {
+        .FIFO => .pipe,
+        .CHR => .char,
+        .DIR => .dir,
+        .BLK => .block,
+        .REG => .file,
+        .LNK => .link,
+        .SOCK => .socket,
+
+        else => error.Unexpected,
+    };
+}
+
 pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
     const mode: linux.O = .{
         .DIRECTORY = true,
@@ -86,7 +127,6 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
         error.BUSY => return error.DeviceBusy,
         error.DQUOT, error.NOSPC => return error.NoSpace,
         error.EXIST => return error.AlreadyExists,
-        error.INTR => return error.Interrupted,
         error.LOOP => return error.SymLinkNotResolved,
         error.MFILE => return error.ProcessHandleQuotaExceeded,
         error.NAMETOOLONG => return error.NameTooLong,
