@@ -690,6 +690,15 @@ pub const FILE = struct {
         OPEN_FOR_FREE_SPACE_QUERY: bool = false,
         __reserved1__: u8 = 0,
     };
+
+    pub const CREATE_DISPOSITION = enum(ULONG) {
+        SUPERSEDE = 0,
+        OPEN = 1,
+        CREATE = 2,
+        OPEN_IF = 3,
+        OVERWRITE = 4,
+        OVERWRITE_IF = 5,
+    };
 };
 
 pub const KERNEL_USER_TIMES = extern struct {
@@ -908,6 +917,7 @@ pub const FILETIME = extern union {
 pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const OBJECT_ATTRIBUTES, out_file_info: *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: PROCESS.INFOCLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: THREAD.INFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtCreateFile(file_handle_out: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT_ATTRIBUTES, io_status_block_out: *IO_STATUS_BLOCK, allocation_size: ?*LARGE_INTEGER, file_attributes: FILE.ATTRIBUTES, share_access: FILE.SHARE, create_disposition: FILE.CREATE_DISPOSITION, create_options: FILE.MODE, ea_buffer: ?*anyopaque, ea_length: ULONG) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtOpenFile(handle_out: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT_ATTRIBUTES, io_status_block_out: *IO_STATUS_BLOCK, share_access: FILE.SHARE, open_options: FILE.MODE) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtClose(handle: HANDLE) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationFile(handle: HANDLE, io_status_block_out: *IO_STATUS_BLOCK, file_info_out: PVOID, file_info_len: ULONG, file_info_class: FILE.INFOCLASS) callconv(.winapi) NTSTATUS;

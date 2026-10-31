@@ -140,8 +140,10 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
     return .{ .handle = result };
 }
 
-pub fn createDirAt(dir: fs.Dir, dir_name: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {
-    linux.mkdirat(dir.handle, dir_name, options.permissions.toS()) catch |e| switch (e) {
+pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {
+    if (sub_path.len == 0) return error.BadPath;
+
+    linux.mkdirat(dir.handle, sub_path, options.permissions.toS()) catch |e| switch (e) {
         error.BADF => @panic("Invalid dir handle"),
         error.FAULT => @panic("Invalid path pointer"),
 

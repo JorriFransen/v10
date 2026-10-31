@@ -90,6 +90,7 @@ pub const existsAt = os.existsAt;
 
 pub const FileTypeAtError = error{
     AccessDenied,
+    BadPath,
     FileNotFound,
     NameTooLong,
     NotDir,
@@ -131,6 +132,7 @@ pub const CreateDirAtError = error{
     AccessDenied,
     AlreadyExists,
     BadPath,
+    DeviceBusy,
     FileNotFound,
     MissingIdMapping,
     NameTooLong,

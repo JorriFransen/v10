@@ -88,7 +88,12 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
         .ACCESS_DENIED, .USER_MAPPED_FILE => return error.AccessDenied,
         .STOPPED_ON_SYMLINK, .REPARSE_POINT_NOT_RESOLVED => return error.SymLinkNotResolved,
 
-        .INVALID_PARAMETER, .INVALID_HANDLE => if (nt_path.is_device) return error.Unexpected else unreachable,
+        .INVALID_PARAMETER, .INVALID_HANDLE => |status| if (nt_path.is_device) {
+            log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+                std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
+            });
+            return error.Unexpected;
+        } else unreachable,
 
         else => |status| {
             log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
@@ -99,9 +104,91 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
     }
 }
 
-pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
+pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOptions) fs.FileTypeAtError!fs.FileType {
     var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-    const nt_path = try toNtPath(dir, path, &nt_path_buf);
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
+    const object_attributes = nt_path.ntObjectAttributes();
+
+    if (options.follow_symlinks) {
+        var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
+
+        switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
+            .SUCCESS => {
+                if (file_info.file_attributes.DIRECTORY) return .dir;
+                if (file_info.file_attributes.REPARSE_POINT) return .link;
+                return .file;
+            },
+
+            .OBJECT_NAME_INVALID,
+            .OBJECT_PATH_SYNTAX_BAD,
+            .BAD_NETWORK_PATH,
+            => return error.BadPath,
+
+            .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+            .ACCESS_DENIED => return error.AccessDenied,
+
+            else => |status| {
+                log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{
+                    std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
+                });
+                return error.Unexpected;
+            },
+        }
+
+        unreachable;
+    } else {
+        var handle: Handle = undefined;
+        var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+        switch (win32.NT.NtOpenFile(
+            &handle,
+            .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
+            &object_attributes,
+            &io_status_block,
+            .{ .READ = true, .WRITE = true, .DELETE = true },
+            .{ .SYNCHRONOUS_IO_NONALERT = true, .OPEN_FOR_BACKUP_INTENT = true, .OPEN_REPARSE_POINT = true },
+        )) {
+            .SUCCESS => {},
+
+            .OBJECT_NAME_INVALID,
+            .OBJECT_PATH_SYNTAX_BAD,
+            .BAD_NETWORK_PATH,
+            => return error.BadPath,
+
+            .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+            .ACCESS_DENIED => return error.AccessDenied,
+
+            else => |s| {
+                log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
+                });
+                return error.Unexpected;
+            },
+        }
+
+        defer _ = win32.NT.NtClose(handle);
+
+        var tag_info: win32.NT.FILE.ATTRIBUTE_TAG_INFORMATION = undefined;
+        switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &tag_info, @sizeOf(@TypeOf(tag_info)), .AttributeTagInformation)) {
+            .SUCCESS => {
+                if (tag_info.file_attributes.DIRECTORY) return .dir;
+                if (tag_info.file_attributes.REPARSE_POINT) return .link;
+                return .file;
+            },
+
+            else => |s| {
+                log.err("Unexpected NtQueryInformationFile error: '{s}' ({})", .{
+                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
+                });
+                return error.Unexpected;
+            },
+        }
+    }
+}
+
+pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
+    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
 
     if (nt_path.is_device) return error.BadPath;
 
@@ -192,11 +279,61 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
     return .{ .handle = handle };
 }
 
-pub fn createDirAt(dir: fs.Dir, dir_name: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {
-    _ = dir;
-    _ = dir_name;
+pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {
     _ = options;
-    unreachable;
+
+    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
+    const object_attributes = nt_path.ntObjectAttributes();
+
+    var dir_handle: Handle = undefined;
+    var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+    switch (win32.NT.NtCreateFile(
+        &dir_handle,
+        .{},
+        &object_attributes,
+        &io_status_block,
+        null,
+        .default,
+        .{ .READ = true, .WRITE = true, .DELETE = true },
+        .CREATE,
+        .{ .DIRECTORY_FILE = true, .OPEN_FOR_BACKUP_INTENT = true },
+        null,
+        0,
+    )) {
+        .SUCCESS => _ = win32.NT.NtClose(dir_handle),
+
+        .OBJECT_NAME_COLLISION => return error.AlreadyExists,
+        .ACCESS_DENIED => return error.AccessDenied,
+        .NOT_A_DIRECTORY => return error.NotDir,
+        .DISK_FULL => return error.NoSpace,
+
+        .OBJECT_NAME_INVALID,
+        .OBJECT_PATH_SYNTAX_BAD,
+        .BAD_NETWORK_PATH,
+        .BAD_NETWORK_NAME,
+        => return error.BadPath,
+
+        .OBJECT_NAME_NOT_FOUND,
+        .OBJECT_PATH_NOT_FOUND,
+        => return error.FileNotFound,
+
+        .SHARING_VIOLATION,
+        .DELETE_PENDING,
+        => return error.DeviceBusy,
+
+        .INVALID_HANDLE,
+        .INVALID_PARAMETER,
+        => unreachable,
+
+        else => |s| {
+            log.err("Unexpected NtCreateFile error: '{s}' ({})", .{
+                std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
+            });
+            return error.Unexpected;
+        },
+    }
 }
 
 pub const DirIterator = struct {
@@ -565,7 +702,6 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
     if (dir_path_len == 0) {
         const err = win32.GetLastError();
         switch (err) {
-            else => return error.Unexpected,
             .INVALID_PARAMETER => unreachable,
             .PATH_NOT_FOUND => return error.BadPath,
             .NOT_ENOUGH_MEMORY => return error.OutOfMemory,
@@ -590,6 +726,13 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
                         .ACCESS_DENIED => error.AccessDenied,
                     };
                 }
+            },
+
+            else => |e| {
+                log.err("Unexpected GetFinalPathNameByHandleW error: '{s}' ({})", .{
+                    std.enums.tagName(win32.ERROR, e) orelse "", @backingInt(e),
+                });
+                return error.Unexpected;
             },
         }
     }
