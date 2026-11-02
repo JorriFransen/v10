@@ -509,10 +509,10 @@ pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, 
                 const b: f32 = inv_rsa * db + sb;
 
                 pixel[0] =
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24 |
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16 |
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8 |
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0;
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24) |
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16) |
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8) |
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0);
             }
 
             pixel += 1;
@@ -582,10 +582,10 @@ pub fn drawBitmap(buffer: *const LoadedBitmap, bitmap: *const LoadedBitmap, px: 
             const b: f32 = inv_rsa * db + sb;
 
             dest[0] =
-                @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24 |
-                @as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16 |
-                @as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8 |
-                @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0;
+                (@as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24) |
+                (@as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16) |
+                (@as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8) |
+                (@as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0);
 
             source += 1;
             dest += 1;

@@ -177,13 +177,13 @@ pub const Reader = struct {
                 },
 
                 .in_tag => {
-                    if ('<' == this.reader.peekByte() catch |e| switch (e) {
+                    if ('<' == (this.reader.peekByte() catch |e| switch (e) {
                         error.ReadFailed => return e,
                         error.EndOfStream => {
                             this.state = .eof;
                             continue;
                         },
-                    }) {
+                    })) {
                         this.state = .tag;
                         continue;
                     } else {

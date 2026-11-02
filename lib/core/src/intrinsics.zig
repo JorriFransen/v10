@@ -37,7 +37,7 @@ pub inline fn rotateLeft(
     if (VT == u0) return 0;
     if (comptime math.isPowerOfTwo(vt_bits)) {
         const an: math.Log2Int(VT) = @intCast(@mod(n, vt_bits));
-        return v << an | v >> 1 +% ~an;
+        return (v << an) | (v >> (1 +% ~an));
     } else {
         const an = @mod(n, vt_bits);
         return math.shl(VT, v, an) | math.shr(VT, v, (vt_bits - an));

@@ -1226,10 +1226,10 @@ pub const DEBUG = struct {
                 b = b * an;
 
                 pixel.* =
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16 |
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8 |
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0 |
-                    @as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24;
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(r + 0.5)))) << 16) |
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(g + 0.5)))) << 8) |
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(b + 0.5)))) << 0) |
+                    (@as(u32, @bitCast(@as(i32, @intFromFloat(a + 0.5)))) << 24);
             }
 
             log.debug("Loaded bmp: {s} ({},{})", .{ filename, result.width, result.height });

@@ -489,9 +489,9 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
     var output_file_paths: [][:0]const u8 = &.{};
 
     if (!tags.skip) {
-        const rel_dir_path_ = fs.dirname(input_file.path) catch |e| switch (e) {
+        const rel_dir_path_ = (fs.dirname(input_file.path) catch |e| switch (e) {
             error.BadPath => return error.BadInputPath,
-        } orelse "";
+        }) orelse "";
         const rel_dir_path = stackPathZ(rel_dir_path_) catch |e| switch (e) {
             error.PathTooLong => return error.InputPathTooLong,
         };
