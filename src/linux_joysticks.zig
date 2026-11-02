@@ -3,13 +3,14 @@ const std = @import("std");
 const options = @import("options");
 
 const core = @import("core");
-const log = core.log.scoped(.linux_joystick);
-const TimeStamp = core.time.TimeStamp;
 const assert = core.assert;
 const fs = core.fs;
 const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
+const time = core.time;
+
+const log = core.log.scoped(.linux_joystick);
 
 const ABS = linux.ABS;
 const EV = linux.EV;
@@ -41,7 +42,7 @@ pub const Joystick = struct {
     map: Map,
     axis_meta: [axis_count]AxisMeta = @splat(.{ .available = false }),
 
-    open_timestamp: TimeStamp,
+    open_timestamp: time.Timestamp,
     sync_report_count: u8,
 
     const State = enum(u2) {
@@ -141,7 +142,7 @@ pub const Joystick = struct {
 
     pub const InitError = error{ DevSysPathMissing, ReadlinkFailed };
 
-    fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: TimeStamp) InitError!void {
+    fn init(this: *Joystick, sys_class_input_dir_fd: linux.dirfd_t, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: fd_t, fd_open_ts: time.Timestamp) InitError!void {
         assert(event_id >= 0);
 
         var dev_sys_path_rel_buf: [fs.max_path_bytes]u8 = undefined;
@@ -272,7 +273,7 @@ pub const Joystick = struct {
 
     fn updateState(this: *Joystick) void {
         if (this.state == .wait_settle) {
-            if (this.open_timestamp.ns() + (wait_settle_ms_max * std.time.ns_per_ms) < TimeStamp.now(.monotonic).ns()) {
+            if (this.open_timestamp.ns() + (wait_settle_ms_max * time.ns_per_ms) < time.Timestamp.now(.monotonic).ns()) {
                 this.activate();
                 assert(this.state == .active);
             }
@@ -622,7 +623,7 @@ pub fn System(comptime joystick_count: usize) type {
                         if (err == .SUCCESS) {
                             log.debug("uring finished opening: '/dev/input/{s}'", .{event_name});
 
-                            const open_ts = TimeStamp.now(.monotonic);
+                            const open_ts = time.Timestamp.now(.monotonic);
                             const fd: linux.fd_t = cqe.res;
 
                             if (in_flight.flags.close_on_complete or
@@ -1096,7 +1097,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn register(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: TimeStamp) Joystick.InitError!bool {
+        fn register(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: time.Timestamp) Joystick.InitError!bool {
             assert(event_id >= 0);
 
             var result = false;
@@ -1112,7 +1113,7 @@ pub fn System(comptime joystick_count: usize) type {
             return result;
         }
 
-        fn registerInSlot(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: TimeStamp, slot_index: usize) Joystick.InitError!void {
+        fn registerInSlot(this: *Context, event_name: [:0]const u8, event_id: i11, input_id: u31, fd: linux.fd_t, fd_open_ts: time.Timestamp, slot_index: usize) Joystick.InitError!void {
             assert(slot_index < this.joysticks.len);
 
             const js = &this.joysticks[slot_index];
@@ -1251,7 +1252,7 @@ pub fn System(comptime joystick_count: usize) type {
 
 const WaitQueueEntry = struct {
     fd: linux.fd_t,
-    fd_open_ts: TimeStamp,
+    fd_open_ts: time.Timestamp,
     event_id: u10,
     input_id: u31,
 };

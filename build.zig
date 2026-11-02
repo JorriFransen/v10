@@ -378,6 +378,7 @@ const Tools = struct {
             });
 
             const install = b.addInstallArtifact(asset_compiler_exe, .{});
+            b.getInstallStep().dependOn(&install.step);
 
             return .{
                 .exe = asset_compiler_exe,

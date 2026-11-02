@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const os_tag = @import("builtin").target.os.tag;
 
 const core = @import("core");
-const Timestamp = core.time.TimeStamp;
+const Timestamp = core.time.Timestamp;
 const assert = core.assert;
 const fs = core.fs;
 const mem = core.mem;
@@ -556,7 +556,7 @@ pub const TimestampFile = struct {
 
     pub const Input = struct {
         skip: bool = false,
-        outputs: []const []const u8 = &.{},
+        outputs: []const [:0]const u8 = &.{},
     };
 
     pub fn deinit(this: *TimestampFile, ctx: *const Context) void {
@@ -574,10 +574,13 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
 
     const rel_path = timestamp_file_sub_path;
 
-    const timestamp: Timestamp = if (ctx.output_dir.stdDir().statFile(ctx.io, rel_path, .{})) |stat|
-        .fromNs(stat.mtime.toNanoseconds())
-    else |_| {
-        return null;
+    const timestamp = ctx.output_dir.mTime(rel_path, .{}) catch |e| switch (e) {
+        error.FileNotFound => return null,
+        else => {
+            const full_path = try std.fs.path.resolve(tmp.a, &.{ ctx.output_dir_path, rel_path });
+            ctx.err("Unable to open stat timestamp file: '{s}', error: '{s}'", .{ full_path, @errorName(e) });
+            return error.ReadTimestampFile;
+        },
     };
 
     ctx.debug("Reading timestamp file", .{});
@@ -597,7 +600,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     var reader = ts_file.reader(ctx.io, &read_buf);
 
     var current_input: ?[]const u8 = null;
-    var current_outputs: std.ArrayList([]const u8) = .empty;
+    var current_outputs: std.ArrayList([:0]const u8) = .empty;
 
     var line_n: usize = 1;
 
@@ -618,7 +621,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
                 return error.ReadTimestampFile;
             }
 
-            const path = try allocator.dupe(u8, line[2..]);
+            const path = try allocator.dupeSentinel(u8, line[2..], 0);
             if (path.len == 0) {
                 ctx.err("Invalid line in timestamp file: '{s}'", .{line});
                 return error.ReadTimestampFile;
@@ -642,7 +645,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
 
             if (flush_input) |next_input| {
                 if (current_input) |ci| {
-                    const outputs = try allocator.dupe([]const u8, current_outputs.items);
+                    const outputs = try allocator.dupe([:0]const u8, current_outputs.items);
                     try inputs.put(ctx.gpa, ci, .{ .outputs = outputs });
 
                     ctx.debug("  Input: '{s}'", .{ci});
@@ -656,7 +659,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     }
 
     if (current_input) |ci| {
-        const outputs = try allocator.dupe([]const u8, current_outputs.items);
+        const outputs = try allocator.dupe([:0]const u8, current_outputs.items);
         try inputs.put(ctx.gpa, ci, .{ .outputs = outputs });
 
         ctx.debug("  Input: '{s}'", .{ci});
@@ -791,12 +794,13 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena) ![]InputFile {
                 const tmp_input_path = try tmp.a.dupe(u8, entry.path);
                 const abs_path = try std.fs.path.join(allocator, &.{ ctx.scan_dir_path, tmp_input_path });
                 const path = abs_path[abs_path.len - tmp_input_path.len ..];
-                const stat = try ctx.scan_dir.stdDir().statFile(ctx.io, entry.path, .{});
+
+                const mtime = try ctx.scan_dir.mTime(entry.path, .{});
 
                 try input_files.append(tmp.a, .{
                     .path = path,
                     .abs_path = abs_path,
-                    .timestamp = .fromNs(stat.mtime.toNanoseconds()),
+                    .timestamp = mtime,
                 });
                 ctx.debug("  Found input file: '{s}'", .{abs_path});
             }
@@ -829,9 +833,15 @@ fn compareInputFilesAgainstTimestampFile(ctx: *Context, arena: *mem.Arena, ts_fi
         } else if (ts_file.inputs.get(input_file.path)) |old_input| {
             const up_to_date = blk: {
                 for (old_input.outputs) |output_file_path| {
-                    const status = try outputFileStatus(ctx, output_file_path, input_file.timestamp);
+                    const status = outputFileStatus(ctx, output_file_path, input_file.timestamp);
                     ctx.debug("    Output {s}: '{f}'", .{ @tagName(status), std.fs.path.fmtJoin(&.{ ctx.output_dir_path, output_file_path }) });
+
                     switch (status) {
+                        .inaccessible => {
+                            ctx.err("Fatal error: output file exists but is inaccessible: '{f}'", .{std.fs.path.fmtJoin(&.{ ctx.output_dir_path, output_file_path })});
+                            return error.Fatal;
+                        },
+
                         .missing, .outOfDate => break :blk false,
                         .upToDate => {},
                     }
@@ -865,22 +875,20 @@ fn compareInputFilesAgainstTimestampFile(ctx: *Context, arena: *mem.Arena, ts_fi
     return file_indices_to_compile.toOwnedSlice(allocator) catch unreachable;
 }
 
-const OutputFileStatus = enum(u2) {
+const OutputFileStatus = enum {
     missing,
+    inaccessible,
     outOfDate,
     upToDate,
 };
 
-fn outputFileStatus(ctx: *const Context, dir_rel_path: []const u8, input_timestamp: Timestamp) !OutputFileStatus {
-    const result: OutputFileStatus = if (ctx.output_dir.stdDir().statFile(ctx.io, dir_rel_path, .{})) |stat|
-        if (stat.mtime.toNanoseconds() <= input_timestamp.ns())
-            .outOfDate
-        else
-            .upToDate
-    else |_|
-        .missing;
+fn outputFileStatus(ctx: *const Context, dir_rel_path: [:0]const u8, input_timestamp: Timestamp) OutputFileStatus {
+    const mtime = ctx.output_dir.mTime(dir_rel_path, .{}) catch |e| switch (e) {
+        error.FileNotFound => return .missing,
+        else => return .inaccessible,
+    };
 
-    return result;
+    return if (mtime.ns() <= input_timestamp.ns()) .outOfDate else .upToDate;
 }
 
 const RunResult = struct {

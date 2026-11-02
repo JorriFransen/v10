@@ -44,12 +44,12 @@ pub inline fn close(handle: Handle) void {
 }
 
 /// Always follows links
-pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
-    const require_dir = path.len > 1 and isSep(path[path.len - 1]) and path[path.len - 2] != ':';
+pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
+    const require_dir = sub_path.len > 1 and isSep(sub_path[sub_path.len - 1]) and sub_path[sub_path.len - 2] != ':';
 
     var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
 
-    const nt_path = try toNtPath(dir, path, &nt_path_buf);
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
 
     var handle: Handle = undefined;
@@ -109,15 +109,89 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
     const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
 
+    const attributes: win32.NT.FILE.ATTRIBUTES = blk: {
+        if (options.follow_symlinks) {
+            var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
+
+            switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
+                .SUCCESS => break :blk file_info.file_attributes,
+
+                .OBJECT_NAME_INVALID,
+                .OBJECT_PATH_SYNTAX_BAD,
+                .BAD_NETWORK_PATH,
+                => return error.BadPath,
+
+                .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+                .ACCESS_DENIED => return error.AccessDenied,
+
+                else => |status| {
+                    log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{
+                        std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
+                    });
+                    return error.Unexpected;
+                },
+            }
+        } else {
+            var handle: Handle = undefined;
+            var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+            switch (win32.NT.NtOpenFile(
+                &handle,
+                .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
+                &object_attributes,
+                &io_status_block,
+                .{ .READ = true, .WRITE = true, .DELETE = true },
+                .{ .SYNCHRONOUS_IO_NONALERT = true, .OPEN_FOR_BACKUP_INTENT = true, .OPEN_REPARSE_POINT = true },
+            )) {
+                .SUCCESS => {},
+
+                .OBJECT_NAME_INVALID,
+                .OBJECT_PATH_SYNTAX_BAD,
+                .BAD_NETWORK_PATH,
+                => return error.BadPath,
+
+                .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+                .ACCESS_DENIED => return error.AccessDenied,
+
+                else => |s| {
+                    log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+                        std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
+                    });
+                    return error.Unexpected;
+                },
+            }
+
+            defer _ = win32.NT.NtClose(handle);
+
+            var tag_info: win32.NT.FILE.ATTRIBUTE_TAG_INFORMATION = undefined;
+            switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &tag_info, @sizeOf(@TypeOf(tag_info)), .AttributeTagInformation)) {
+                .SUCCESS => break :blk tag_info.file_attributes,
+
+                else => |s| {
+                    log.err("Unexpected NtQueryInformationFile error: '{s}' ({})", .{
+                        std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
+                    });
+                    return error.Unexpected;
+                },
+            }
+        }
+    };
+
+    if (attributes.DIRECTORY) return .dir;
+    if (attributes.REPARSE_POINT) return .link;
+    return .file;
+}
+
+pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) fs.MTimeAtError!fs.Timestamp {
+    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
+    const object_attributes = nt_path.ntObjectAttributes();
+
     if (options.follow_symlinks) {
         var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
 
         switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
-            .SUCCESS => {
-                if (file_info.file_attributes.DIRECTORY) return .dir;
-                if (file_info.file_attributes.REPARSE_POINT) return .link;
-                return .file;
-            },
+            .SUCCESS => {},
 
             .OBJECT_NAME_INVALID,
             .OBJECT_PATH_SYNTAX_BAD,
@@ -135,7 +209,8 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
             },
         }
 
-        unreachable;
+        // 100ns ticks
+        return .fromNs(win32.toUnixEpoch(@as(i96, file_info.last_write_time.quad_part) * 100));
     } else {
         var handle: Handle = undefined;
         var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
@@ -168,13 +243,9 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
 
         defer _ = win32.NT.NtClose(handle);
 
-        var tag_info: win32.NT.FILE.ATTRIBUTE_TAG_INFORMATION = undefined;
-        switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &tag_info, @sizeOf(@TypeOf(tag_info)), .AttributeTagInformation)) {
-            .SUCCESS => {
-                if (tag_info.file_attributes.DIRECTORY) return .dir;
-                if (tag_info.file_attributes.REPARSE_POINT) return .link;
-                return .file;
-            },
+        var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
+        switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &file_info, @sizeOf(@TypeOf(file_info)), .BasicInformation)) {
+            .SUCCESS => {},
 
             else => |s| {
                 log.err("Unexpected NtQueryInformationFile error: '{s}' ({})", .{
@@ -183,6 +254,9 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
                 return error.Unexpected;
             },
         }
+
+        // 100ns ticks
+        return .fromNs(win32.toUnixEpoch(@as(i96, file_info.last_write_time.quad_part) * 100));
     }
 }
 
@@ -512,13 +586,13 @@ const ResolveResult = struct {
     is_dos_device: bool,
 };
 
-fn resolveRelativeNtPath(dir: fs.Dir, path: []const u8, dest: [:0]u16) !ResolveResult {
-    var name_len = try wtf8ToWtf16LeCheckedLen(dest, path);
+fn resolveRelativeNtPath(dir: fs.Dir, sub_path: []const u8, dest: [:0]u16) !ResolveResult {
+    var name_len = try wtf8ToWtf16LeCheckedLen(dest, sub_path);
     dest[name_len] = 0;
 
     const dos_dev_info = win32.NT.RtlIsDosDeviceName_U(dest[0..name_len :0]);
 
-    if (dos_dev_info == 0) return resolveRelativeNtPathInner(dir, path, name_len, dest);
+    if (dos_dev_info == 0) return resolveRelativeNtPathInner(dir, sub_path, name_len, dest);
 
     const dos_dev_len: u16 = @intCast((dos_dev_info & 0xFFFF) / @sizeOf(u16));
     const dos_dev_offset: u16 = @intCast(((dos_dev_info & 0xFFFF0000) >> 16) / @sizeOf(u16));
@@ -528,8 +602,8 @@ fn resolveRelativeNtPath(dir: fs.Dir, path: []const u8, dest: [:0]u16) !ResolveR
     @memcpy(dev_buffer[0..dos_dev_len], dest[dos_dev_offset..][0..dos_dev_len]);
 
     if (dos_dev_offset != 0) {
-        const narrow_dir_prefix = if (std.mem.findLastAny(u8, path, "/\\")) |i|
-            path[0 .. i + 1]
+        const narrow_dir_prefix = if (std.mem.findLastAny(u8, sub_path, "/\\")) |i|
+            sub_path[0 .. i + 1]
         else
             unreachable; // RtlIsDosDeviceName_U only returns a non-zero offset after crossing a separator.
 

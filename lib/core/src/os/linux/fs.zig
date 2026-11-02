@@ -37,10 +37,10 @@ pub inline fn cwd() fs.Dir {
     return .{ .handle = linux.AT.FDCWD };
 }
 
-pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
-    if (path.len == 0) return error.BadPath;
+pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
+    if (sub_path.len == 0) return error.BadPath;
 
-    const result = linux.faccessat(dir.handle, path, .F_OK) catch |e| switch (e) {
+    const result = linux.faccessat(dir.handle, sub_path, .F_OK) catch |e| switch (e) {
         error.BADF => @panic("Invalid dir handle"),
         error.FAULT => @panic("Invalid path pointer"),
         error.INVAL, error.ROFS, error.TXTBSY => unreachable,
@@ -57,11 +57,11 @@ pub fn existsAt(dir: fs.Dir, path: [:0]const u8) fs.ExistsAtError!bool {
     return result;
 }
 
-pub fn fileTypeAt(dir: fs.Dir, path: [:0]const u8, options: fs.FileTypeAtOptions) fs.FileTypeAtError!fs.FileType {
+pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOptions) fs.FileTypeAtError!fs.FileType {
     var stat: linux.Statx = undefined;
     linux.statx(
         dir.handle,
-        path,
+        sub_path,
         .{ .SYMLINK_NOFOLLOW = !options.follow_symlinks },
         .{ .TYPE = true },
         &stat,
@@ -98,7 +98,37 @@ pub fn fileTypeAt(dir: fs.Dir, path: [:0]const u8, options: fs.FileTypeAtOptions
     };
 }
 
-pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
+pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) fs.MTimeAtError!fs.Timestamp {
+    var stat: linux.Statx = undefined;
+    linux.statx(
+        dir.handle,
+        sub_path,
+        .{ .SYMLINK_NOFOLLOW = !options.follow_symlinks },
+        .{ .MTIME = true },
+        &stat,
+    ) catch |e| return switch (e) {
+        error.BADF,
+        error.FAULT,
+        error.INVAL,
+        => unreachable,
+
+        error.ACCES => error.AccessDenied,
+        error.NOENT => error.FileNotFound,
+        error.NAMETOOLONG => error.NameTooLong,
+        error.NOTDIR => error.NotDir,
+        error.NOMEM => error.OutOfMemory,
+        error.LOOP => error.SymLinkNotResolved,
+
+        else => error.Unexpected,
+    };
+
+    if (!stat.mask.MTIME) return error.Unexpected;
+
+    const ns = stat.mtime.ns();
+    return .fromNs(ns);
+}
+
+pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
     const mode: linux.O = .{
         .DIRECTORY = true,
         .CLOEXEC = true,
@@ -106,7 +136,7 @@ pub fn openDirAt(dir: fs.Dir, path: [:0]const u8, options: fs.OpenDirAtOptions) 
         .NOFOLLOW = !options.follow_symlinks,
     };
 
-    const result = linux.openat(dir.handle, path, mode, .{}) catch |e| switch (e) {
+    const result = linux.openat(dir.handle, sub_path, mode, .{}) catch |e| switch (e) {
         error.BADF => @panic("Invalid dir handle"),
         error.FAULT => @panic("Invalid path pointer"),
         error.NODEV,

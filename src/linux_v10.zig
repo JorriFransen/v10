@@ -3,7 +3,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const core = @import("core");
-const TimeStamp = core.time.TimeStamp;
 const arch = core.arch;
 const assert = core.assert;
 const fs = core.fs;
@@ -11,6 +10,7 @@ const linux = core.os.linux;
 const math = core.math;
 const mem = core.mem;
 const pa = core.lib.pulse;
+const time = core.time;
 
 const log = core.log.scoped(.linux_v10);
 const pulse_log = core.log.scoped(.pulse);
@@ -281,7 +281,7 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
             .bytes_per_video_frame = frames_per_video_frame * @sizeOf(AudioOutput.Frame),
 
             .pulse = .{
-                .max_latency_usec = audio_buffer_byte_size / @sizeOf(AudioOutput.Frame) * std.time.us_per_s / audio_fps,
+                .max_latency_usec = audio_buffer_byte_size / @sizeOf(AudioOutput.Frame) * time.us_per_s / audio_fps,
                 .impl = switch (linux_options.linux_audio_impl) {
                     .pulseEmulateDSound => .{
                         .safety_frame_bytes = @max(1024, @as(u32, @intFromFloat((audio_fps / game_update_hz) / 3)) * @sizeOf(AudioOutput.Frame)),
@@ -589,10 +589,10 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
                     pa.threaded_mainloop_unlock(audio_output.pulse.main_loop);
 
                     const latency_usec: u64 = @min(pa_latency_usec, audio_output.pulse.max_latency_usec);
-                    const latency_frames: u32 = @intCast(math.divCeil(latency_usec * audio_output.frames_per_second, std.time.us_per_s));
+                    const latency_frames: u32 = @intCast(math.divCeil(latency_usec * audio_output.frames_per_second, time.us_per_s));
                     const latency_bytes = latency_frames * @sizeOf(AudioOutput.Frame);
 
-                    // log.debug("audio latency: {} - {:.3}s", .{ latency_bytes, @as(f32, @floatFromInt(pa_latency_usec)) / std.time.us_per_s });
+                    // log.debug("audio latency: {} - {:.3}s", .{ latency_bytes, @as(f32, @floatFromInt(pa_latency_usec)) / time.us_per_s });
                     _ = .{latency_bytes};
                 }
             }
@@ -603,10 +603,10 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
             var seconds_elapsed_for_frame = work_seconds_elapsed;
             if (seconds_elapsed_for_frame <= target_seconds_per_frame) {
                 sleep_loop: while (seconds_elapsed_for_frame < target_seconds_per_frame) {
-                    const sleep_ms: u64 = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
+                    const sleep_ms: u64 = @intFromFloat(time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
 
                     if (sleep_ms > 1) {
-                        const s = (sleep_ms * std.time.ns_per_ms) - (std.time.ns_per_ms / 2);
+                        const s = (sleep_ms * time.ns_per_ms) - (time.ns_per_ms / 2);
 
                         if (!window.pollTimeout(s)) {
                             global_running = false;
@@ -619,14 +619,14 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
                     seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                 }
             } else {
-                log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
+                log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * time.ms_per_s});
                 if (!window.poll()) {
                     global_running = false;
                 }
             }
 
             const end_counter = getWallClock();
-            const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
+            const ms_per_frame = time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
             last_counter = end_counter;
 
             const wayland_blit = window.blitBuffer(&back_buffer);
@@ -641,13 +641,13 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
             const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
             last_cycle_count = end_cycle_count;
 
-            const fps = std.time.ms_per_s / ms_per_frame;
+            const fps = time.ms_per_s / ms_per_frame;
             const mcpf = cycles_elapsed / (1000 * 1000);
             // log.info("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms, wl_blit:{}", .{
             //     ms_per_frame,
             //     fps,
             //     mcpf,
-            //     work_seconds_elapsed * std.time.ms_per_s,
+            //     work_seconds_elapsed * time.ms_per_s,
             //     wayland_blit,
             // });
             _ = .{ ms_per_frame, fps, mcpf, wayland_blit, work_seconds_elapsed };
@@ -805,13 +805,13 @@ inline fn processKeyEvent(new_state: *ButtonState, is_down: bool) void {
     new_state.half_transition_count += 1;
 }
 
-pub inline fn getWallClock() TimeStamp {
-    return TimeStamp.now(.monotonic);
+pub inline fn getWallClock() time.Timestamp {
+    return time.Timestamp.now(.monotonic);
 }
 
-inline fn getSecondsElapsed(start: TimeStamp, end: TimeStamp) f32 {
+inline fn getSecondsElapsed(start: time.Timestamp, end: time.Timestamp) f32 {
     const d_ns_f: f32 = @floatFromInt(start.durationTo(end).ns());
-    const d_s_f: f32 = d_ns_f / std.time.ns_per_s;
+    const d_s_f: f32 = d_ns_f / time.ns_per_s;
     return d_s_f;
 }
 
@@ -953,7 +953,7 @@ const PulseContext = struct {
             pa.threaded_mainloop_unlock(ctx.main_loop);
 
             const latency_usec: u64 = @min(pa_latency_usec, ctx.max_latency_usec);
-            const latency_frames: u32 = @intCast(math.divCeil(latency_usec * rate, std.time.us_per_s));
+            const latency_frames: u32 = @intCast(math.divCeil(latency_usec * rate, time.us_per_s));
 
             const latency_bytes: u32 = latency_frames * @sizeOf(AudioOutput.Frame);
             const buf_len: u32 = @intCast(this.buffer.len);

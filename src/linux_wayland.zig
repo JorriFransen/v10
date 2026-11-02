@@ -4,7 +4,7 @@ const options = @import("options");
 
 const core = @import("core");
 const log = core.log.scoped(.linux_wayland);
-const TimeStamp = core.time.TimeStamp;
+const Timestamp = core.time.Timestamp;
 const assert = core.assert;
 const linux = core.os.linux;
 const math = core.math;
@@ -475,7 +475,7 @@ const ShmError = error{
 fn allocShm(this: *Context) ShmError!void {
     assert(this.shm_data.len == 0);
 
-    const prng_seed = TimeStamp.now(.real);
+    const prng_seed = Timestamp.now(.real);
     var prng_impl = std.Random.DefaultPrng.init(@intCast(prng_seed.ns()));
     const prng = prng_impl.random();
 

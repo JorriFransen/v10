@@ -6,7 +6,6 @@ const builtin = @import("builtin");
 const options = @import("options");
 
 const core = @import("core");
-const TimeStamp = core.time.TimeStamp;
 const arch = core.arch;
 const assert = core.assert;
 const bits = core.bits;
@@ -14,6 +13,7 @@ const dsound = core.lib.dsound;
 const fs = core.fs;
 const math = core.math;
 const mem = core.mem;
+const time = core.time;
 const win32 = core.os.win32;
 const xinput = core.lib.xinput;
 
@@ -48,13 +48,13 @@ var global_source_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
 var global_temp_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
 var global_gamecode_lock_file_name_buf: [fs.max_path_bytes]u8 = undefined;
 
-inline fn getWallClock() TimeStamp {
-    return TimeStamp.now(.monotonic);
+inline fn getWallClock() time.Timestamp {
+    return time.Timestamp.now(.monotonic);
 }
 
-inline fn getSecondsElapsed(start: TimeStamp, end: TimeStamp) f32 {
+inline fn getSecondsElapsed(start: time.Timestamp, end: time.Timestamp) f32 {
     const d_ns_f: f32 = @floatFromInt(start.durationTo(end).ns());
-    const d_s_f: f32 = d_ns_f / std.time.ns_per_s;
+    const d_s_f: f32 = d_ns_f / time.ns_per_s;
     return d_s_f;
 }
 
@@ -930,7 +930,7 @@ pub fn windowsEntry(
                         var seconds_elapsed_for_frame = work_seconds_elapsed;
                         if (seconds_elapsed_for_frame < target_seconds_per_frame) {
                             if (sleep_is_granular) {
-                                const sleep_ms: win32.DWORD = @intFromFloat(std.time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
+                                const sleep_ms: win32.DWORD = @intFromFloat(time.ms_per_s * (target_seconds_per_frame - seconds_elapsed_for_frame));
 
                                 if (sleep_ms > 0) {
                                     win32.Sleep(sleep_ms);
@@ -949,11 +949,11 @@ pub fn windowsEntry(
                             }
                             seconds_elapsed_for_frame = getSecondsElapsed(last_counter, getWallClock());
                         } else {
-                            log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * std.time.ms_per_s});
+                            log.warn("Missed frame time! ({})", .{seconds_elapsed_for_frame * time.ms_per_s});
                         }
 
                         const end_counter = getWallClock();
-                        const ms_per_frame = std.time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
+                        const ms_per_frame = time.ms_per_s * getSecondsElapsed(last_counter, end_counter);
                         last_counter = end_counter;
 
                         const dimension = getWindowDimension(window);
@@ -982,9 +982,9 @@ pub fn windowsEntry(
                         const cycles_elapsed: f32 = @floatFromInt(end_cycle_count - last_cycle_count);
                         last_cycle_count = end_cycle_count;
 
-                        const fps = std.time.ms_per_s / ms_per_frame;
+                        const fps = time.ms_per_s / ms_per_frame;
                         const mcps = cycles_elapsed / (1000 * 1000);
-                        // log.debug("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms", .{ ms_per_frame, fps, mcps, work_seconds_elapsed * std.time.ms_per_s });
+                        // log.debug("{d:.2}ms/f,  {d:.2}f/s,  {d:.2}mc/f,  {d:.2}wms", .{ ms_per_frame, fps, mcps, work_seconds_elapsed * time.ms_per_s });
                         _ = .{ fps, mcps };
 
                         if (options.internal_build) {

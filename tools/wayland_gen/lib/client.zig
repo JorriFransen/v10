@@ -7,6 +7,7 @@ const log = core.log.scoped(.@"wayland-client");
 const assert = core.assert;
 const linux = core.os.linux;
 const meta = core.meta;
+const time = core.time;
 
 const options = @import("options");
 
@@ -258,7 +259,7 @@ pub fn displayDispatchTimeout(display: *Display, first_timeout_ns: Timeout) isiz
             null
         else blk: {
             const ns: i64 = @backingInt(cur_timeout);
-            break :blk &.{ .sec = @divTrunc(ns, std.time.ns_per_s), .nsec = @rem(ns, std.time.ns_per_s) };
+            break :blk &.{ .sec = @divTrunc(ns, time.ns_per_s), .nsec = @rem(ns, time.ns_per_s) };
         };
 
         const poll_rc = linux.ppoll(@ptrCast(&pollfd), tsp, null) catch |e| switch (e) {

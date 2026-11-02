@@ -73,7 +73,7 @@ pub fn defaultHeader(level: Level, scope: []const u8, writer: *std.Io.Writer) vo
         .debug => .magenta,
     };
 
-    const tts = time.TimeStamp.now(.real);
+    const tts = time.Timestamp.now(.real);
     const tp = TimeParts.fromMsTimestamp(@intCast(tts.ms()));
 
     print: {

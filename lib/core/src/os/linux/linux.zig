@@ -25,7 +25,7 @@ pub const syscall6 = arch.syscall6;
 
 pub const page_size = std.heap.page_size_min;
 
-pub fn getTime(clock: time.Clock) time.TimeStamp {
+pub fn getTime(clock: time.Clock) time.Timestamp {
     const linux_clock: CLOCK = switch (clock) {
         .real => .REALTIME,
         .monotonic => .MONOTONIC,
@@ -35,7 +35,7 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
 
     var spec: timespec = undefined;
     const nsec: i96 = if (clock_gettime(linux_clock, &spec))
-        @as(i96, @intCast(spec.sec)) * (std.time.ns_per_s) +
+        @as(i96, @intCast(spec.sec)) * (time.ns_per_s) +
             @as(i96, @intCast(spec.nsec))
     else |_|
         0;

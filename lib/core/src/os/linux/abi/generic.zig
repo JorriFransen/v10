@@ -1,6 +1,9 @@
+const std = @import("std");
+
 const linux = @import("../linux.zig");
 
 const assert = @import("../../../debug.zig").assert;
+const time = @import("../../../time.zig");
 
 // =============================================================================
 // fcntl.h
@@ -281,6 +284,11 @@ pub const Statx = extern struct {
         sec: i64,
         nsec: u32,
         __reserved__: i32,
+
+        pub inline fn ns(this: Timestamp) i96 {
+            const result: i96 = this.nsec + (@as(i96, this.sec) * time.ns_per_s);
+            return result;
+        }
     };
 
     comptime {

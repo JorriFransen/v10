@@ -7,6 +7,7 @@ const options = @import("options");
 
 const core = @import("core");
 const log = core.log.scoped(.v10_platform);
+const time = core.time;
 const DynLib = core.DynLib;
 const assert = core.assert;
 const fs = core.fs;
@@ -278,7 +279,7 @@ pub fn getLastWriteTime(absolute_file_name: [:0]const u8) i96 {
         else => {
             var stat: linux.Stat = undefined;
             if (linux.stat(absolute_file_name, &stat)) {
-                result = @as(i96, stat.st_mtim.nsec) + (@as(i96, stat.st_mtim.sec) * std.time.ns_per_s);
+                result = @as(i96, stat.st_mtim.nsec) + (@as(i96, stat.st_mtim.sec) * time.ns_per_s);
             } else |_| {}
         },
     }

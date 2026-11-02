@@ -3,8 +3,8 @@ const std = @import("std");
 const time = @import("time.zig");
 
 pub const Timestamp = struct {
-    wall: time.TimeStamp,
-    cpu: time.TimeStamp,
+    wall: time.Timestamp,
+    cpu: time.Timestamp,
 
     pub inline fn now() Timestamp {
         return .{
@@ -23,8 +23,8 @@ pub const Timestamp = struct {
 };
 
 pub const Duration = struct {
-    wall: time.TimeStamp = .zero,
-    cpu: time.TimeStamp = .zero,
+    wall: time.Timestamp = .zero,
+    cpu: time.Timestamp = .zero,
 
     pub inline fn add(this: *Duration, other: Duration) void {
         this.wall._ns += other.wall._ns;

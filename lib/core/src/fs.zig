@@ -5,8 +5,10 @@ const os_tag = @import("builtin").target.os.tag;
 const assert = @import("debug.zig").assert;
 const mem = @import("mem/mem.zig");
 const os = @import("os/os.zig").current.fs;
+const time = @import("time.zig");
 
 pub const Handle = os.Handle;
+pub const Timestamp = time.Timestamp;
 
 pub const path_sep = os.path_sep;
 pub const path_sep_str = os.path_sep_str;
@@ -36,8 +38,8 @@ pub const File = struct {
 pub const Dir = struct {
     handle: Handle,
 
-    pub inline fn openDir(this: Dir, path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
-        return openDirAt(this, path, options);
+    pub inline fn openDir(this: Dir, sub_path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
+        return openDirAt(this, sub_path, options);
     }
 
     pub inline fn createDir(this: Dir, dir_name: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
@@ -50,12 +52,16 @@ pub const Dir = struct {
 
     /// Follows links.
     /// TODO: Add symLinkExists
-    pub inline fn exists(this: Dir, path: [:0]const u8) ExistsAtError!bool {
-        return existsAt(this, path);
+    pub inline fn exists(this: Dir, sub_path: [:0]const u8) ExistsAtError!bool {
+        return existsAt(this, sub_path);
     }
 
-    pub inline fn fileType(this: Dir, path: [:0]const u8, options: FileTypeAtOptions) FileTypeAtError!FileType {
-        return fileTypeAt(this, path, options);
+    pub inline fn fileType(this: Dir, sub_path: [:0]const u8, options: FileTypeAtOptions) FileTypeAtError!FileType {
+        return fileTypeAt(this, sub_path, options);
+    }
+
+    pub inline fn mTime(this: Dir, sub_path: [:0]const u8, options: MTimeAtOptions) MTimeAtError!Timestamp {
+        return mTimeAt(this, sub_path, options);
     }
 
     pub inline fn close(this: Dir) void {
@@ -104,6 +110,22 @@ pub const FileTypeAtOptions = struct {
 };
 pub const fileTypeAt = os.fileTypeAt;
 
+pub const MTimeAtError = error{
+    AccessDenied,
+    BadPath,
+    FileNotFound,
+    NameTooLong,
+    NotDir,
+    OutOfMemory,
+    SymLinkNotResolved,
+
+    Unexpected,
+};
+pub const MTimeAtOptions = struct {
+    follow_symlinks: bool = true,
+};
+pub const mTimeAt = os.mTimeAt;
+
 pub const OpenDirAtError = error{
     AccessDenied,
     AlreadyExists,
@@ -150,27 +172,27 @@ pub const CreateDirAtOptions = struct {
 };
 pub const createDirAt = os.createDirAt;
 
-pub fn createDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
-    if (createDirAt(dir, dir_path, options)) {
+pub fn createDirParentsAt(dir: Dir, sub_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+    if (createDirAt(dir, sub_path, options)) {
         return;
     } else |e| switch (e) {
-        error.AlreadyExists => return requireDirAt(dir, dir_path),
+        error.AlreadyExists => return requireDirAt(dir, sub_path),
         error.FileNotFound => {},
         else => return e,
     }
 
-    var it = try PathIterator.init(dir_path);
+    var it = try PathIterator.init(sub_path);
     _ = it.last();
 
     var path_buf: [max_path_bytes]u8 = undefined;
 
     while (it.prev()) |elem| {
-        const sub_path = mem.copySentinel(&path_buf, elem.path, 0);
-        if (createDirAt(dir, sub_path, options)) {
+        const cur_sub_path = mem.copySentinel(&path_buf, elem.path, 0);
+        if (createDirAt(dir, cur_sub_path, options)) {
             break;
         } else |e| switch (e) {
             error.AlreadyExists => {
-                try requireDirAt(dir, sub_path);
+                try requireDirAt(dir, cur_sub_path);
                 break;
             },
             error.FileNotFound => {},
@@ -179,9 +201,9 @@ pub fn createDirParentsAt(dir: Dir, dir_path: [:0]const u8, options: CreateDirAt
     }
 
     while (it.next()) |elem| {
-        const sub_path = mem.copySentinel(&path_buf, elem.path, 0);
-        createDirAt(dir, sub_path, options) catch |e| switch (e) {
-            error.AlreadyExists => return requireDirAt(dir, sub_path),
+        const cur_sub_path = mem.copySentinel(&path_buf, elem.path, 0);
+        createDirAt(dir, cur_sub_path, options) catch |e| switch (e) {
+            error.AlreadyExists => return requireDirAt(dir, cur_sub_path),
             else => return e,
         };
     }

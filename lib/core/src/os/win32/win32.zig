@@ -25,7 +25,7 @@ pub fn runningUnderWine() bool {
     return false;
 }
 
-pub fn getTime(clock: time.Clock) time.TimeStamp {
+pub fn getTime(clock: time.Clock) time.Timestamp {
     switch (clock) {
         .monotonic => {
             const expected_qpf = 10_000_000;
@@ -37,7 +37,7 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
                 if (qpf.quad_part == 10_000_000)
                     .{ ._ns = @as(i96, qpc.quad_part) * 100 }
                 else
-                    .{ ._ns = @intCast((@as(u128, qpc.quad_part) * std.time.ns_per_s) / qpf.quad_part) }
+                    .{ ._ns = @intCast((@as(u128, qpc.quad_part) * time.ns_per_s) / qpf.quad_part) }
             else
                 .zero;
         },
@@ -45,7 +45,7 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
         .real => {
             // 100ns ticks
             const ticks = NT.RtlGetSystemTimePrecise();
-            return .{ ._ns = (@as(i96, ticks) * 100) + (std.time.epoch.windows * std.time.ns_per_s) };
+            return .{ ._ns = toUnixEpoch(@as(i96, ticks) * 100) };
         },
 
         .cpu_thread => {
@@ -72,6 +72,11 @@ pub fn getTime(clock: time.Clock) time.TimeStamp {
             }
         },
     }
+}
+
+pub inline fn toUnixEpoch(ns: i96) i96 {
+    const result = ns - (time.windows_epoch_offset_sec * time.ns_per_s);
+    return result;
 }
 
 pub inline fn peb() *zig_win32.PEB {
