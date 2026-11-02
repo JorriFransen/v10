@@ -44,10 +44,12 @@ var _default_log_locked_stderr: ?std.Io.LockedStderr = null;
 pub fn defaultLock(action: LockOrUnlock, buffer: ?[]u8) ?*std.Io.Writer {
     switch (action) {
         .lock => {
-            assert(_default_log_locked_stderr == null);
             assert(buffer != null);
 
             const locked = std.debug.lockStderr(buffer.?);
+
+            assert(_default_log_locked_stderr == null);
+
             _default_log_locked_stderr = locked;
             return &locked.file_writer.interface;
         },
@@ -57,9 +59,9 @@ pub fn defaultLock(action: LockOrUnlock, buffer: ?[]u8) ?*std.Io.Writer {
             assert(buffer == null);
 
             if (_default_log_locked_stderr) |_| {
+                _default_log_locked_stderr = null;
                 std.debug.unlockStderr();
             }
-            _default_log_locked_stderr = null;
             return null;
         },
     }
