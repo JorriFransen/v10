@@ -167,13 +167,13 @@ fn buildEngine(b: *Build, optimize: Optimize, target: ResolvedTarget, modules: *
     const mkdir_argv: []const []const u8 = switch (b.graph.host.result.os.tag) {
         else => return error.PlatformNotSupported,
         .linux => &.{ "mkdir", "-p", "data" },
-        .windows => &.{ "cmd.exe", "/C", "if not exists data mkdir data" },
+        .windows => &.{ "cmd.exe", "/C", "if not exist", "data", "mkdir", "data" },
     };
 
     var mkdir_step = b.addSystemCommand(mkdir_argv);
     mkdir_step.has_side_effects = true;
     mkdir_step.setName("mkdir data");
-    run_exe.step.dependOn(&mkdir_step.step);
+    b.getInstallStep().dependOn(&mkdir_step.step);
 
     return .{
         .build = exe,
