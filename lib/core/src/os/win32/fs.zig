@@ -57,12 +57,11 @@ pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
 
     switch (win32.NT.NtOpenFile(
         &handle,
-        .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
+        .{ .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
         &object_attributes,
         &io_status_block,
         .{ .READ = true },
         .{
-            .SYNCHRONOUS_IO_NONALERT = true,
             .OPEN_FOR_BACKUP_INTENT = true,
             .DIRECTORY_FILE = require_dir,
         },
@@ -365,7 +364,7 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
 
     switch (win32.NT.NtCreateFile(
         &dir_handle,
-        .{},
+        .{ .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
         &object_attributes,
         &io_status_block,
         null,

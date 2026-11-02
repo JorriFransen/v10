@@ -1093,7 +1093,10 @@ fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, in
     assert(pathIsAbsolute(abs_output_path));
 
     if (rel_output_dir_path.len > 0) {
-        ctx.output_dir.createDirParents(rel_output_dir_path, .{}) catch return error.CreateOutputDirFailed;
+        ctx.output_dir.createDirParents(rel_output_dir_path, .{}) catch |e| {
+            ctx.err("createDirParents failed on path: '{f}', error: '{s}'", .{ std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path }), @errorName(e) });
+            return error.CreateOutputDirFailed;
+        };
     }
 
     _ = try aseprite(ctx, tmp.arena, arena, .args(&.{ "-b", input_file.abs_path, "--save-as", abs_output_path }), perf_timers);
@@ -1132,7 +1135,10 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
     };
 
     if (rel_output_dir_path.len > 0) {
-        ctx.output_dir.createDirParents(rel_output_dir_path, .{}) catch return error.CreateOutputDirFailed;
+        ctx.output_dir.createDirParents(rel_output_dir_path, .{}) catch |e| {
+            ctx.err("createDirParents failed on path: '{f}', error: '{s}'", .{ std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path }), @errorName(e) });
+            return error.CreateOutputDirFailed;
+        };
     }
 
     _ = try aseprite(ctx, tmp.arena, arena, .args(&.{
