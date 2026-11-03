@@ -9,7 +9,9 @@ pub const Handle = linux.fd_t;
 pub const path_sep = '/';
 pub const path_sep_str = "/";
 /// including null
-pub const max_path_bytes = linux.PATH_MAX + 1;
+pub const max_input_path_bytes = linux.PATH_MAX;
+/// including null
+pub const max_output_path_bytes = linux.PATH_MAX;
 /// not including null
 pub const max_name_bytes = linux.NAME_MAX;
 

@@ -492,7 +492,7 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
         const rel_dir_path_ = (fs.dirname(input_file.path) catch |e| switch (e) {
             error.BadPath => return error.BadInputPath,
         }) orelse "";
-        const rel_dir_path = stackPathZ(rel_dir_path_) catch |e| switch (e) {
+        const rel_dir_path = stackPathZ(fs.max_output_path_bytes, rel_dir_path_) catch |e| switch (e) {
             error.PathTooLong => return error.InputPathTooLong,
         };
 
@@ -596,7 +596,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
     defer ts_file.close(ctx.io);
 
     // Should be big enough to fit an entire line
-    var read_buf: [fs.max_path_bytes + 16]u8 = undefined;
+    var read_buf: [fs.max_input_path_bytes + 16]u8 = undefined;
     var reader = ts_file.reader(ctx.io, &read_buf);
 
     var current_input: ?[]const u8 = null;
@@ -1079,7 +1079,10 @@ fn asepriteExportBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem.Arena, in
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const abs_output_path = stackPathJoinZ(&.{ ctx.output_dir_path, rel_output_dir_path, output_file_name }) catch |e| switch (e) {
+    const abs_output_path = stackPathJoinZ(
+        fs.max_input_path_bytes,
+        &.{ ctx.output_dir_path, rel_output_dir_path, output_file_name },
+    ) catch |e| switch (e) {
         error.PathTooLong => {
             ctx.err("Output path too long: '{f}', input: '{s}'", .{
                 std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path, output_file_name }),
@@ -1112,7 +1115,10 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
     var tmp = mem.TempArena.init(tmp_arena);
     defer tmp.release();
 
-    const abs_output_dir_path = stackPathJoinZ(&.{ ctx.output_dir_path, rel_output_dir_path }) catch |e| switch (e) {
+    const abs_output_dir_path = stackPathJoinZ(
+        fs.max_input_path_bytes,
+        &.{ ctx.output_dir_path, rel_output_dir_path },
+    ) catch |e| switch (e) {
         error.PathTooLong => {
             ctx.err("Output path too long: '{f}', input: '{s}'", .{
                 std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path }),
@@ -1125,9 +1131,12 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
     assert(pathIsAbsolute(abs_output_dir_path));
 
     const out_dir_param_fmt = "out_dir={s}";
-    var out_dir_param_buf: [fs.max_path_bytes + out_dir_param_fmt.len]u8 = undefined;
+    var out_dir_param_buf: [fs.max_input_path_bytes + out_dir_param_fmt.len]u8 = undefined;
     const out_dir_param = std.fmt.bufPrint(&out_dir_param_buf, "out_dir={s}", .{abs_output_dir_path}) catch unreachable;
-    const script_path = stackPathJoinZ(&.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" }) catch |e| switch (e) {
+    const script_path = stackPathJoinZ(
+        fs.max_input_path_bytes,
+        &.{ compile_options.aseprite_script_path, "extract_layers_recursive.lua" },
+    ) catch |e| switch (e) {
         error.PathTooLong => {
             ctx.err("Script path too long: '{f}'", .{std.fs.path.fmtJoin(&.{ ctx.output_dir_path, rel_output_dir_path })});
             return error.ScriptPathTooLong;
@@ -1151,16 +1160,18 @@ fn asepriteExportSplitLayerBMP(ctx: *Context, arena: *mem.Arena, tmp_arena: *mem
     }), perf_timers);
 }
 
-inline fn stackPathZ(path: []const u8) error{PathTooLong}![:0]const u8 {
-    var path_buf: [fs.max_path_bytes]u8 = undefined;
+/// 'size' includes space for null
+inline fn stackPathZ(comptime size: usize, path: []const u8) error{PathTooLong}![:0]const u8 {
+    var path_buf: [size]u8 = undefined;
 
     return std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path}, 0) catch |e| switch (e) {
         error.NoSpaceLeft => return error.PathTooLong,
     };
 }
 
-inline fn stackPathJoinZ(paths: []const []const u8) error{PathTooLong}![:0]const u8 {
-    var path_buf: [fs.max_path_bytes]u8 = undefined;
+/// 'size' includes space for null
+inline fn stackPathJoinZ(comptime size: usize, paths: []const []const u8) error{PathTooLong}![:0]const u8 {
+    var path_buf: [size]u8 = undefined;
 
     return std.fmt.bufPrintSentinel(&path_buf, "{f}", .{std.fs.path.fmtJoin(paths)}, 0) catch |e| switch (e) {
         error.NoSpaceLeft => return error.PathTooLong,

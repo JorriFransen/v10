@@ -164,8 +164,9 @@ pub fn joinPathsZ(buffer: []u8, base: []const u8, sub: []const u8) ![:0]const u8
 pub const ReplayBuffer = struct {
     file_handle: fs.Handle,
     memory_map: fs.Handle,
-    filname_buf: [fs.max_path_bytes]u8 = @splat(0),
     memory: []u8 = &.{},
+
+    filename_buf: [fs.max_output_path_bytes]u8 = @splat(0),
 };
 
 pub const SharedState = struct {
@@ -178,9 +179,9 @@ pub const SharedState = struct {
     playback_handle: fs.Handle = undefined,
     input_playing_index: usize = 0,
 
-    cwd_buf: [fs.max_path_bytes]u8 = @splat(0),
+    cwd_buf: [fs.max_output_path_bytes]u8 = @splat(0),
     cwd: []const u8 = &.{},
-    exe_dir_path_buf: [fs.max_path_bytes]u8 = @splat(0),
+    exe_dir_path_buf: [fs.max_output_path_bytes]u8 = @splat(0),
     exe_dir_path: []const u8 = &.{},
 
     pub fn buildExePathFilename(shared_state: *const SharedState, buffer: []u8, sub_path: []const u8) ![:0]const u8 {

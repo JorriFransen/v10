@@ -44,9 +44,9 @@ var global_back_buffer: Win32OffscreenBuffer = undefined;
 var global_DEBUG_show_cursor = options.internal_build;
 var global_window_position: win32.WINDOWPLACEMENT = .{};
 
-var global_source_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
-var global_temp_dll_name_buf: [fs.max_path_bytes]u8 = undefined;
-var global_gamecode_lock_file_name_buf: [fs.max_path_bytes]u8 = undefined;
+var global_source_dll_name_buf: [fs.max_output_path_bytes]u8 = undefined;
+var global_temp_dll_name_buf: [fs.max_output_path_bytes]u8 = undefined;
+var global_gamecode_lock_file_name_buf: [fs.max_output_path_bytes]u8 = undefined;
 
 inline fn getWallClock() time.Timestamp {
     return time.Timestamp.now(.monotonic);
@@ -608,7 +608,7 @@ pub fn windowsEntry(
 
             if (options.internal_build) {
                 for (&shared_state.replay_buffers, 1..) |*replay_buffer, i| {
-                    const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
+                    const file_name = shared_state.getInputRecordingPath(&replay_buffer.filename_buf, false, i);
 
                     replay_buffer.file_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true, .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .default, null);
 
@@ -1127,7 +1127,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_recording_index = input_recording_index;
 
-        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_output_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
         shared_state.recording_handle = win32.CreateFileA(file_name, .{ .GENERIC_WRITE = true }, .{}, null, .CREATE_ALWAYS, .default, null);
@@ -1147,7 +1147,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_playing_index = input_playing_index;
 
-        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_output_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
         shared_state.playback_handle = win32.CreateFileA(file_name, .{ .GENERIC_READ = true }, .{}, null, .OPEN_EXISTING, .{}, null);

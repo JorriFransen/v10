@@ -121,7 +121,7 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
     shared_state.exe_dir_path = shared_state.exe_dir_path_buf[0..exe_dir_path_len];
     log.info("exe_dir_path: {s}", .{shared_state.exe_dir_path});
 
-    var game_lib_name_buf: [fs.max_path_bytes]u8 = @splat(0);
+    var game_lib_name_buf: [fs.max_output_path_bytes]u8 = @splat(0);
     const game_lib_name = try shared_state.buildExePathFilename(&game_lib_name_buf, "libv10_game.so");
     log.info("game_lib_name: {s}", .{game_lib_name});
 
@@ -225,7 +225,7 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
 
     if (options.internal_build) {
         for (&shared_state.replay_buffers, 0..) |*replay_buffer, i| {
-            const file_name = shared_state.getInputRecordingPath(&replay_buffer.filname_buf, false, i);
+            const file_name = shared_state.getInputRecordingPath(&replay_buffer.filename_buf, false, i);
 
             const flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true, .CLOEXEC = true };
             if (linux.open(file_name, flags, .default_file)) |fd| {
@@ -1253,7 +1253,7 @@ pub fn beginRecordingInput(shared_state: *common.SharedState, input_recording_in
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_recording_index = input_recording_index;
 
-        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_output_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_recording_index);
 
         const flags = linux.O{ .ACCMODE = .RDWR, .CREAT = true, .TRUNC = true, .CLOEXEC = true };
@@ -1279,7 +1279,7 @@ pub fn beginInputPlayback(shared_state: *common.SharedState, input_playing_index
     if (replay_buffer.memory.len == shared_state.game_memory_block.len) {
         shared_state.input_playing_index = input_playing_index;
 
-        var file_name_buf: [fs.max_path_bytes]u8 = undefined;
+        var file_name_buf: [fs.max_output_path_bytes]u8 = undefined;
         const file_name = shared_state.getInputRecordingPath(&file_name_buf, true, input_playing_index);
 
         shared_state.playback_handle = linux.open(file_name, .{ .CLOEXEC = true }, .{}) catch |e| {

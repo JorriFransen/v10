@@ -13,7 +13,9 @@ pub const Timestamp = time.Timestamp;
 pub const path_sep = os.path_sep;
 pub const path_sep_str = os.path_sep_str;
 /// Including null
-pub const max_path_bytes = os.max_path_bytes;
+pub const max_input_path_bytes = os.max_input_path_bytes;
+/// Including null
+pub const max_output_path_bytes = os.max_output_path_bytes;
 /// Not including null
 pub const max_name_bytes = os.max_name_bytes;
 
@@ -184,7 +186,7 @@ pub fn createDirParentsAt(dir: Dir, sub_path: [:0]const u8, options: CreateDirAt
     var it = try PathIterator.init(sub_path);
     _ = it.last();
 
-    var path_buf: [max_path_bytes]u8 = undefined;
+    var path_buf: [max_input_path_bytes]u8 = undefined;
 
     while (it.prev()) |elem| {
         const cur_sub_path = mem.copySentinel(&path_buf, elem.path, 0);

@@ -420,57 +420,44 @@ test "createDirAt" {
     }
 }
 
-// test "createDirAt symlinks" {
-//     var zig_tmp_dir = t.tmpDir({});
-//     defer zig_tmp_dir.cleanup();
-//
-//     try skipIfNoSymLinkPermission(zig_tmp_dir.dir);
-//
-//     const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
-//
-//     try zig_tmp_dir.dir.createDir(t.io, "target", .default_dir);
-//     try zig_tmp_dir.dir.symLink(t.io, "target", "link", .{ .is_directory = true });
-//
-//     // creating through a symlink to a directory resolves the link
-//     try tmp_dir.createDir("link/nested", .{});
-//     try t.expect(try tmp_dir.exists("target/nested"));
-//     try t.expect(try testAccess(tmp_dir.handle, "target/nested"));
-//
-//     try zig_tmp_dir.dir.deleteDir(t.io, "target/nested");
-//     try zig_tmp_dir.dir.deleteDir(t.io, "target");
-// }
-//
-// test "createDirParentsAt" {
-//     var zig_tmp_dir = t.tmpDir({});
-//     defer zig_tmp_dir.cleanup();
-//
-//     const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
-//
-//     // all missing parents are created
-//     try tmp_dir.createDirParents("a/b/c", .{});
-//     try t.expect(try tmp_dir.exists("a"));
-//     try t.expect(try tmp_dir.exists("a/b"));
-//     try t.expect(try tmp_dir.exists("a/b/c"));
-//     try t.expect(try testAccess(tmp_dir.handle, "a/b/c"));
-//
-//     // creating an existing tree is idempotent
-//     try tmp_dir.createDirParents("a/b/c", .{});
-//
-//     const file = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
-//     file.close(t.io);
-//
-//     // an intermediate component that is a file is an error
-//     try t.expectError(error.NotDir, tmp_dir.createDirParents("file/x", .{}));
-//     // a leaf that is an existing file is an error
-//     try t.expectError(error.NotDir, tmp_dir.createDirParents("file", .{}));
-//
-//     try zig_tmp_dir.dir.deleteFile(t.io, "file");
-//
-//     // an empty path is invalid
-//     try t.expectError(error.BadPath, tmp_dir.createDirParents("", .{}));
-//
-//     try zig_tmp_dir.dir.deleteTree(t.io, "a");
-// }
+test "createDirAt symlinks" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    try skipIfNoSymLinkPermission(zig_tmp_dir.dir);
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try zig_tmp_dir.dir.createDir(t.io, "target", .default_dir);
+    try zig_tmp_dir.dir.symLink(t.io, "target", "link", .{ .is_directory = true });
+
+    try tmp_dir.createDir("link/nested", .{});
+    try t.expect(try testAccess(tmp_dir.handle, "target/nested"));
+}
+
+test "createDirParentsAt" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try tmp_dir.createDirParents("a/b/c", .{});
+    try t.expect(try testAccess(tmp_dir.handle, "a"));
+    try t.expect(try testAccess(tmp_dir.handle, "a/b"));
+    try t.expect(try testAccess(tmp_dir.handle, "a/b/c"));
+
+    try tmp_dir.createDirParents("a/b/c", .{});
+
+    const file = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
+    file.close(t.io);
+
+    try t.expectError(error.NotDir, tmp_dir.createDirParents("file/x", .{}));
+    try t.expectError(error.NotDir, tmp_dir.createDirParents("file", .{}));
+
+    try zig_tmp_dir.dir.deleteFile(t.io, "file");
+
+    try t.expectError(error.BadPath, tmp_dir.createDirParents("", .{}));
+}
 
 fn testAccess(dir_handle: fs.Handle, path: [:0]const u8) !bool {
     const std_dir = std.Io.Dir{ .handle = dir_handle };

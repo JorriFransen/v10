@@ -15,7 +15,9 @@ pub const path_sep = '\\';
 pub const path_sep_str = "\\";
 
 /// Including null
-pub const max_path_bytes = win32.PATH_MAX_WIDE;
+pub const max_input_path_bytes = win32.PATH_MAX_WIDE;
+/// Including null
+pub const max_output_path_bytes = ((win32.PATH_MAX_WIDE - 1) * 3) + 1;
 pub const max_name_bytes = win32.NAME_MAX;
 
 const nt_path_prefix: [4]u16 = .{ '\\', '?', '?', '\\' };
@@ -1266,29 +1268,29 @@ test toNtPath {
     try testToNtPathAgainstRtl("foo\\CON\\", .relative);
 
     // capacity
-    var verbatim_exact_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
+    var verbatim_exact_buf: [max_input_path_bytes]u8 = undefined;
     @memcpy(verbatim_exact_buf[0..7], "\\\\?\\C:\\");
-    @memset(verbatim_exact_buf[7 .. win32.PATH_MAX_WIDE - 1], 'a');
-    verbatim_exact_buf[win32.PATH_MAX_WIDE - 1] = 0;
-    try testToNtPathLength(verbatim_exact_buf[0 .. win32.PATH_MAX_WIDE - 1 :0], null);
+    @memset(verbatim_exact_buf[7 .. max_input_path_bytes - 1], 'a');
+    verbatim_exact_buf[max_input_path_bytes - 1] = 0;
+    try testToNtPathLength(verbatim_exact_buf[0 .. max_input_path_bytes - 1 :0], null);
 
-    var verbatim_long_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
+    var verbatim_long_buf: [max_input_path_bytes + 1]u8 = undefined;
     @memcpy(verbatim_long_buf[0..7], "\\\\?\\C:\\");
-    @memset(verbatim_long_buf[7..win32.PATH_MAX_WIDE], 'a');
-    verbatim_long_buf[win32.PATH_MAX_WIDE] = 0;
-    try testToNtPathLength(verbatim_long_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
+    @memset(verbatim_long_buf[7..max_input_path_bytes], 'a');
+    verbatim_long_buf[max_input_path_bytes] = 0;
+    try testToNtPathLength(verbatim_long_buf[0..max_input_path_bytes :0], error.NameTooLong);
 
-    var absolute_exact_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
+    var absolute_exact_buf: [max_input_path_bytes + 1]u8 = undefined;
     @memcpy(absolute_exact_buf[0..3], "C:\\");
-    @memset(absolute_exact_buf[3..win32.PATH_MAX_WIDE], 'a');
-    absolute_exact_buf[win32.PATH_MAX_WIDE] = 0;
-    try testToNtPathLength(absolute_exact_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
+    @memset(absolute_exact_buf[3..max_input_path_bytes], 'a');
+    absolute_exact_buf[max_input_path_bytes] = 0;
+    try testToNtPathLength(absolute_exact_buf[0..max_input_path_bytes :0], error.NameTooLong);
 
-    var rooted_long_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
+    var rooted_long_buf: [max_input_path_bytes + 1]u8 = undefined;
     rooted_long_buf[0] = '\\';
-    @memset(rooted_long_buf[1..win32.PATH_MAX_WIDE], 'a');
-    rooted_long_buf[win32.PATH_MAX_WIDE] = 0;
-    try testToNtPathLength(rooted_long_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
+    @memset(rooted_long_buf[1..max_input_path_bytes], 'a');
+    rooted_long_buf[max_input_path_bytes] = 0;
+    try testToNtPathLength(rooted_long_buf[0..max_input_path_bytes :0], error.NameTooLong);
 
     {
         var dir_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
@@ -1296,8 +1298,8 @@ test toNtPath {
         if (dir_len == 0 or dir_len >= dir_buf.len) return error.TestUnexpected;
 
         const escape_head = "..\\";
-        var escaping_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
-        const filler_len = win32.PATH_MAX_WIDE - dir_len - escape_head.len - 1;
+        var escaping_buf: [max_input_path_bytes]u8 = undefined;
+        const filler_len = max_input_path_bytes - dir_len - escape_head.len - 1;
         @memcpy(escaping_buf[0..escape_head.len], escape_head);
         @memset(escaping_buf[escape_head.len..][0..filler_len], 'a');
         escaping_buf[escape_head.len + filler_len] = 0;
