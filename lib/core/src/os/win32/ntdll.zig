@@ -1,5 +1,9 @@
+const std = @import("std");
+
 const win32 = @import("win32.zig");
 const assert = @import("../../debug.zig").assert;
+
+const log = @import("../../log.zig").scoped("ntdll");
 
 const HANDLE = win32.HANDLE;
 const BYTE = win32.BYTE;
@@ -914,7 +918,35 @@ pub const FILETIME = extern union {
     ticks: u64 align(@alignOf(DWORD)),
 };
 
-pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const OBJECT_ATTRIBUTES, out_file_info: *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
+// pub extern "ntdll" fn NtQueryAttributesFile(object_attributes: *const OBJECT_ATTRIBUTES, out_file_info: *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS;
+pub const _NtQueryAttributesFile = @extern(*const fn (*const OBJECT_ATTRIBUTES, *FILE.BASIC_INFORMATION) callconv(.winapi) NTSTATUS, .{ .name = "NtQueryAttributesFile", .library_name = "ntdll" });
+pub fn NtQueryAttributesFile(object_attributes: *const OBJECT_ATTRIBUTES, out_file_info: *FILE.BASIC_INFORMATION) NTSTATUS {
+    if (!win32.runningUnderWine() or object_attributes.root_directory == null) {
+        return _NtQueryAttributesFile(object_attributes, out_file_info);
+    }
+
+    var handle: win32.HANDLE = undefined;
+    var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+    switch (win32.NT.NtOpenFile(
+        &handle,
+        .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
+        object_attributes,
+        &io_status_block,
+        .{ .READ = true, .WRITE = true, .DELETE = true },
+        .{ .SYNCHRONOUS_IO_NONALERT = true, .OPEN_FOR_BACKUP_INTENT = true },
+    )) {
+        .SUCCESS => {},
+        .NOT_A_DIRECTORY => return .OBJECT_PATH_NOT_FOUND,
+        .SHARING_VIOLATION => return .ACCESS_DENIED,
+        else => |s| return s,
+    }
+
+    defer _ = win32.NT.NtClose(handle);
+
+    return NtQueryInformationFile(handle, &io_status_block, out_file_info, @sizeOf(FILE.BASIC_INFORMATION), .BasicInformation);
+}
+
 pub extern "ntdll" fn NtQueryInformationProcess(process_handle: HANDLE, process_info_class: PROCESS.INFOCLASS, process_info: *anyopaque, process_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationThread(thread_handle: HANDLE, thread_info_class: THREAD.INFOCLASS, thread_info: *anyopaque, thread_info_len: ULONG, return_len: *ULONG) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtCreateFile(file_handle_out: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT_ATTRIBUTES, io_status_block_out: *IO_STATUS_BLOCK, allocation_size: ?*LARGE_INTEGER, file_attributes: FILE.ATTRIBUTES, share_access: FILE.SHARE, create_disposition: FILE.CREATE_DISPOSITION, create_options: FILE.MODE, ea_buffer: ?*anyopaque, ea_length: ULONG) callconv(.winapi) NTSTATUS;

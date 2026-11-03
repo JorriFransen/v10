@@ -396,8 +396,6 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
                 var test_path_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
                 const test_path = mem.copySentinel(&test_path_buf, path_elem.path, 0);
 
-                log.warn("testing: '{s}'", .{test_path});
-
                 if (try fileTypeAt(dir, test_path, .{ .follow_symlinks = true }) != .dir) {
                     log.warn("not dir", .{});
                     return error.NotDir;
@@ -718,7 +716,7 @@ fn ntPathIsDirOrVolumeRoot(dir: ?win32.HANDLE, path: [:0]u16) error{AccessDenied
     };
 
     var info: win32.NT.FILE.BASIC_INFORMATION = undefined;
-    const query_res = win32.NT.NtQueryAttributesFile(&object_attributes, &info);
+    const query_res = win32.NT._NtQueryAttributesFile(&object_attributes, &info);
 
     switch (query_res) {
         .SUCCESS => return info.file_attributes.DIRECTORY,
