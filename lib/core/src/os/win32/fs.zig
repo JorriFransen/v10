@@ -5,6 +5,7 @@ const log = @import("../../log.zig").scoped(.@"core.fs.win32");
 const assert = @import("../../debug.zig").assert;
 const bits = @import("../../bits.zig");
 const fs = @import("../../fs.zig");
+const mem = @import("../../mem/mem.zig");
 const meta = @import("../../meta.zig");
 const win32 = @import("win32.zig");
 
@@ -388,9 +389,22 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
         .BAD_NETWORK_NAME,
         => return error.BadPath,
 
-        .OBJECT_NAME_NOT_FOUND,
-        .OBJECT_PATH_NOT_FOUND,
-        => return error.FileNotFound,
+        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+
+        .OBJECT_PATH_NOT_FOUND => {
+            var path_it = try fs.PathIterator.init(sub_path);
+            while (path_it.next()) |path_elem| {
+                var test_path_buf: [max_path_bytes]u8 = undefined;
+                const test_path = mem.copySentinel(&test_path_buf, path_elem.path, 0);
+
+                if (try fileTypeAt(dir, test_path, .{ .follow_symlinks = true }) != .dir) {
+                    log.warn("not dir", .{});
+                    return error.NotDir;
+                }
+            }
+
+            return error.FileNotFound;
+        },
 
         .SHARING_VIOLATION,
         .DELETE_PENDING,
