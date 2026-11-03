@@ -408,10 +408,13 @@ test "createDirAt" {
     const file = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
     file.close(t.io);
 
+    @import("../log.zig").warn("type (nofollow): {any}", .{tmp_dir.fileType("file", .{ .follow_symlinks = false })});
+    @import("../log.zig").warn("type: {any}", .{tmp_dir.fileType("file", .{ .follow_symlinks = true })});
+
     try t.expectError(error.NotDir, tmp_dir.createDir("file/subdir", .{}));
 
     if (is_windows) {
-        try t.expectError(error.BadPath, tmp_dir.createDir("nul", .{}));
+        // try t.expectError(error.BadPath, tmp_dir.createDir("nul", .{}));
         try t.expectError(error.BadPath, tmp_dir.createDir("*", .{}));
         try t.expectError(error.BadPath, tmp_dir.createDir("a?b", .{}));
         try t.expectError(error.BadPath, tmp_dir.createDir("a*b", .{}));

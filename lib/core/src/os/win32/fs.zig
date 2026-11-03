@@ -15,9 +15,8 @@ pub const path_sep = '\\';
 pub const path_sep_str = "\\";
 
 /// Including null
-pub const max_path_bytes = win32.PATH_MAX_WIDE * 3 + 1;
-/// Not including null
-pub const max_name_bytes = win32.NAME_MAX * 3;
+pub const max_path_bytes = win32.PATH_MAX_WIDE;
+pub const max_name_bytes = win32.NAME_MAX;
 
 const nt_path_prefix: [4]u16 = .{ '\\', '?', '?', '\\' };
 const local_device_prefix: [4]u16 = .{ '\\', '\\', '.', '\\' };
@@ -48,7 +47,7 @@ pub inline fn close(handle: Handle) void {
 pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
     const require_dir = sub_path.len > 1 and isSep(sub_path[sub_path.len - 1]) and sub_path[sub_path.len - 2] != ':';
 
-    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
 
     const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
@@ -105,7 +104,7 @@ pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
 }
 
 pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOptions) fs.FileTypeAtError!fs.FileType {
-    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
     const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
 
@@ -183,7 +182,7 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
 }
 
 pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) fs.MTimeAtError!fs.Timestamp {
-    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
     const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
 
@@ -261,7 +260,7 @@ pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) 
 }
 
 pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
-    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
     const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
 
     if (nt_path.is_device) return error.BadPath;
@@ -356,7 +355,7 @@ pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptio
 pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtOptions) fs.CreateDirAtError!void {
     _ = options;
 
-    var nt_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
     const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
     const object_attributes = nt_path.ntObjectAttributes();
 
@@ -394,8 +393,10 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
         .OBJECT_PATH_NOT_FOUND => {
             var path_it = try fs.PathIterator.init(sub_path);
             while (path_it.next()) |path_elem| {
-                var test_path_buf: [max_path_bytes]u8 = undefined;
+                var test_path_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
                 const test_path = mem.copySentinel(&test_path_buf, path_elem.path, 0);
+
+                log.warn("testing: '{s}'", .{test_path});
 
                 if (try fileTypeAt(dir, test_path, .{ .follow_symlinks = true }) != .dir) {
                     log.warn("not dir", .{});
@@ -523,7 +524,7 @@ const NtPath = struct {
     }
 };
 
-fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: [:0]u16) !NtPath {
+fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: []u16) !NtPath {
     const parsed_path = try parsePath(unstripped_path);
 
     var path: []const u8 = unstripped_path;
@@ -538,7 +539,7 @@ fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: [:0]u16) !NtPath {
 
     const name: [:0]u16, const handle: ?Handle, const need_device_check = values: switch (parsed_path.type) {
         .verbatim => {
-            const name_len = try wtf8ToWtf16LeCheckedLen(buf, path);
+            const name_len = try wtf8ToWtf16LeCheckedLen(buf[0 .. buf.len - 1], path);
             buf[name_len] = 0;
             buf[0..nt_path_prefix.len].* = nt_path_prefix;
             break :values .{ buf[0..name_len :0], null, true };
@@ -581,12 +582,13 @@ fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: [:0]u16) !NtPath {
             eqlIgnoreCaseWtf16LiteralWtf8(head, "DosDevices");
     };
 
+    assert(name[name.len] == 0);
+
     return .{
         .unicode_string = .{
             .buffer = name.ptr,
             .length = @intCast(name.len * @sizeOf(u16)),
-            // Do not include null to avoid overflow when len == PATH_MAX_WIDE
-            .maximum_length = @intCast(name.len * @sizeOf(u16)),
+            .maximum_length = @intCast((name.len + 1) * @sizeOf(u16)),
         },
         .root_handle = handle,
         .is_device = is_device,
@@ -599,8 +601,8 @@ const ResolveResult = struct {
     is_dos_device: bool,
 };
 
-fn resolveRelativeNtPath(dir: fs.Dir, sub_path: []const u8, dest: [:0]u16) !ResolveResult {
-    var name_len = try wtf8ToWtf16LeCheckedLen(dest, sub_path);
+fn resolveRelativeNtPath(dir: fs.Dir, sub_path: []const u8, dest: []u16) !ResolveResult {
+    var name_len = try wtf8ToWtf16LeCheckedLen(dest[0 .. dest.len - 1], sub_path);
     dest[name_len] = 0;
 
     const dos_dev_info = win32.NT.RtlIsDosDeviceName_U(dest[0..name_len :0]);
@@ -633,7 +635,7 @@ fn resolveRelativeNtPath(dir: fs.Dir, sub_path: []const u8, dest: [:0]u16) !Reso
     return .{ .name = dest[0..name_len :0], .handle = null, .is_dos_device = true };
 }
 
-fn resolveRelativeNtPathInner(dir: fs.Dir, narrow_path: []const u8, wide_len: usize, dest: [:0]u16) !ResolveResult {
+fn resolveRelativeNtPathInner(dir: fs.Dir, narrow_path: []const u8, wide_len: usize, dest: []u16) !ResolveResult {
     if (std.os.windows.normalizePath(u16, dest[0..wide_len])) |normalized_len| {
         dest[normalized_len] = 0;
 
@@ -684,7 +686,7 @@ fn trimTrailingDotsAndSpacesPerElement(path: [:0]u16) usize {
     return write;
 }
 
-fn resolveNonVerbatimNonRelativeNtPath(path: []const u8, path_type: ParsedPath.Type, dest: [:0]u16) !usize {
+fn resolveNonVerbatimNonRelativeNtPath(path: []const u8, path_type: ParsedPath.Type, dest: []u16) !usize {
     const r = try resolveAndPrefixNonVerbatimNonRelative(path, path_type, dest);
     if (!r.device_synthesized) return r.len;
 
@@ -732,7 +734,7 @@ const ResolveAndPrefixResult = struct {
     device_synthesized: bool,
 };
 
-fn resolveAndPrefixNonVerbatimNonRelative(path: []const u8, path_type: ParsedPath.Type, dest: [:0]u16) !ResolveAndPrefixResult {
+fn resolveAndPrefixNonVerbatimNonRelative(path: []const u8, path_type: ParsedPath.Type, dest: []u16) !ResolveAndPrefixResult {
     const resolve_offset: usize = switch (path_type) {
         .verbatim, .relative => unreachable,
         .local_device => 0,
@@ -740,12 +742,12 @@ fn resolveAndPrefixNonVerbatimNonRelative(path: []const u8, path_type: ParsedPat
         .unc => 6,
     };
 
-    var wide_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-    const name_len = try wtf8ToWtf16LeCheckedLen(&wide_buf, path);
+    var wide_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+    const name_len = try wtf8ToWtf16LeCheckedLen(wide_buf[0 .. wide_buf.len - 1], path);
     wide_buf[name_len] = 0;
 
     const cap: u32 = @intCast((1 + dest.len - resolve_offset) * @sizeOf(u16));
-    const result_len_bytes = win32.NT.RtlGetFullPathName_U(&wide_buf, cap, dest[resolve_offset..], null);
+    const result_len_bytes = win32.NT.RtlGetFullPathName_U(@ptrCast(&wide_buf), cap, @ptrCast(dest[resolve_offset..]), null);
     // Assume the only way RtlGetFullPathName_U can fail is NameTooLong,
     // malformed paths should have been rejected already.
     if (result_len_bytes == 0) return error.NameTooLong;
@@ -781,11 +783,11 @@ fn resolveAndPrefixNonVerbatimNonRelative(path: []const u8, path_type: ParsedPat
     return .{ .len = total_len, .device_synthesized = device_synthesized };
 }
 
-fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [:0]u16) !usize {
-    var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: []u16) !usize {
+    var buf: [win32.PATH_MAX_WIDE]u16 = undefined;
 
-    var dir_path_len = win32.GetFinalPathNameByHandleW(dir.handle, &buf, buf.len + 1, .{ .VOLUME_NAME = .DOS });
-    if (dir_path_len > buf.len) return error.NameTooLong;
+    var dir_path_len = win32.GetFinalPathNameByHandleW(dir.handle, @ptrCast(&buf), buf.len, .{ .VOLUME_NAME = .DOS });
+    if (dir_path_len > buf.len - 1) return error.NameTooLong;
     if (dir_path_len == 0) {
         const err = win32.GetLastError();
         switch (err) {
@@ -795,8 +797,8 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
             .ACCESS_DENIED => return error.AccessDenied,
 
             .UNRECOGNIZED_VOLUME => {
-                dir_path_len = win32.GetFinalPathNameByHandleW(dir.handle, &buf, buf.len + 1, .{ .VOLUME_NAME = .GUID });
-                if (dir_path_len > buf.len) return error.NameTooLong;
+                dir_path_len = win32.GetFinalPathNameByHandleW(dir.handle, @ptrCast(&buf), buf.len, .{ .VOLUME_NAME = .GUID });
+                if (dir_path_len > buf.len - 1) return error.NameTooLong;
                 if (dir_path_len == 0) {
                     const retry_err = win32.GetLastError();
                     return switch (retry_err) {
@@ -827,7 +829,7 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
     if (dir_path_len + 1 > buf.len) return error.NameTooLong;
     buf[dir_path_len] = path_sep;
 
-    const path_len = try wtf8ToWtf16LeCheckedLen(buf[dir_path_len + 1 ..], path);
+    const path_len = try wtf8ToWtf16LeCheckedLen(buf[dir_path_len + 1 .. buf.len - 1], path);
     const unresolved_len = dir_path_len + path_len + 1;
     buf[unresolved_len] = 0;
     var unresolved_name = buf[0..unresolved_len :0];
@@ -836,8 +838,8 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
     unresolved_name = unresolved_name[strip_count.. :0];
     const resolve_offset: usize = if (strip_count == 8) 6 else 4;
 
-    const dest_len_bytes = (dest.len + 1 - resolve_offset) * @sizeOf(u16);
-    const result_len_bytes = win32.NT.RtlGetFullPathName_U(unresolved_name, @intCast(dest_len_bytes), dest[resolve_offset..].ptr, null);
+    const dest_len_bytes = (dest.len - resolve_offset) * @sizeOf(u16);
+    const result_len_bytes = win32.NT.RtlGetFullPathName_U(unresolved_name, @intCast(dest_len_bytes), @ptrCast(dest[resolve_offset..].ptr), null);
     // Assume the only way RtlGetFullPathName_U can fail is NameTooLong,
     // malformed paths should have been rejected already.
     assert(result_len_bytes != 0);
@@ -895,11 +897,11 @@ test toNtPath {
                 }
             }
 
-            var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            var buf: [win32.PATH_MAX_WIDE]u16 = undefined;
             const result_or_err = toNtPath(cwd(), unstripped_path, &buf);
 
-            var expected_name_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-            const expected_name_len = try std.unicode.wtf8ToWtf16Le(&expected_name_buf, path);
+            var expected_name_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+            const expected_name_len = try std.unicode.wtf8ToWtf16Le(expected_name_buf[0 .. expected_name_buf.len - 1], path);
             expected_name_buf[expected_name_len] = 0;
             const expected_name = expected_name_buf[0..expected_name_len :0];
 
@@ -920,10 +922,10 @@ test toNtPath {
                         try t.expectEqual(fs.cwd().handle, handle);
                         try t.expect(!result.is_device);
 
-                        var handle_path_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-                        const handle_path_len = win32.GetFinalPathNameByHandleW(handle, &handle_path_buf, handle_path_buf.len + 1, .{ .VOLUME_NAME = .DOS });
+                        var handle_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+                        const handle_path_len = win32.GetFinalPathNameByHandleW(handle, @ptrCast(&handle_path_buf), handle_path_buf.len, .{ .VOLUME_NAME = .DOS });
                         try t.expect(handle_path_len != 0);
-                        try t.expect(handle_path_len != handle_path_buf.len + 1);
+                        try t.expect(handle_path_len < handle_path_buf.len);
 
                         var handle_path = handle_path_buf[0..handle_path_len :0];
                         try t.expectEqualSlices(u16, &test_verbatim_prefix, handle_path[0..test_verbatim_prefix.len]);
@@ -974,7 +976,7 @@ test toNtPath {
 
             const expected_wide = std.unicode.wtf8ToWtf16LeStringLiteral(expected_path);
 
-            var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            var buf: [win32.PATH_MAX_WIDE]u16 = undefined;
             const result = try toNtPath(cwd(), unstripped_path, &buf);
             const result_wide = result.unicode_string.slice();
 
@@ -985,7 +987,7 @@ test toNtPath {
         }
 
         pub fn testToNtPathRelativeNoEscape(path: [:0]const u8, comptime expected_narrow_result: []const u8) !void {
-            var result_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            var result_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
             const result = try toNtPath(cwd(), path, &result_buf);
 
             const parsed = try parsePath(path);
@@ -1002,15 +1004,15 @@ test toNtPath {
         }
 
         pub fn testToNtPathRelativeEscaping(path: [:0]const u8, drop_count: usize, tail: []const u8) !void {
-            var result_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            var result_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
             const result = try toNtPath(cwd(), path, &result_buf);
 
             const parsed = try parsePath(path);
             try t.expectEqual(.relative, parsed.type);
 
-            var expected_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-            const dir_len = win32.GetFinalPathNameByHandleW(cwd().handle, &expected_buf, expected_buf.len + 1, .{ .VOLUME_NAME = .DOS });
-            if (dir_len == 0 or dir_len > expected_buf.len) return error.TestUnexpected;
+            var expected_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+            const dir_len = win32.GetFinalPathNameByHandleW(cwd().handle, @ptrCast(&expected_buf), expected_buf.len, .{ .VOLUME_NAME = .DOS });
+            if (dir_len == 0 or dir_len > expected_buf.len - 1) return error.TestUnexpected;
 
             var expected_len: usize = dir_len;
 
@@ -1048,12 +1050,12 @@ test toNtPath {
         }
 
         pub fn testToNtPathLength(path: [:0]const u8, expected_error: ?anyerror) !void {
-            var buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
+            var buf: [win32.PATH_MAX_WIDE]u16 = undefined;
             if (expected_error) |err| {
                 try t.expectError(err, toNtPath(cwd(), path, &buf));
             } else {
                 const result = try toNtPath(cwd(), path, &buf);
-                try t.expectEqual(@as(usize, win32.PATH_MAX_WIDE), result.unicode_string.slice().len);
+                try t.expectEqual(@as(usize, win32.PATH_MAX_WIDE - 1), result.unicode_string.slice().len);
                 try t.expect(result.root_handle == null);
             }
         }
@@ -1233,17 +1235,17 @@ test toNtPath {
     try testToNtPathAgainstRtl("foo\\CON\\", .relative);
 
     // capacity
-    var verbatim_exact_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
+    var verbatim_exact_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
     @memcpy(verbatim_exact_buf[0..7], "\\\\?\\C:\\");
-    @memset(verbatim_exact_buf[7..win32.PATH_MAX_WIDE], 'a');
-    verbatim_exact_buf[win32.PATH_MAX_WIDE] = 0;
-    try testToNtPathLength(verbatim_exact_buf[0..win32.PATH_MAX_WIDE :0], null);
+    @memset(verbatim_exact_buf[7 .. win32.PATH_MAX_WIDE - 1], 'a');
+    verbatim_exact_buf[win32.PATH_MAX_WIDE - 1] = 0;
+    try testToNtPathLength(verbatim_exact_buf[0 .. win32.PATH_MAX_WIDE - 1 :0], null);
 
-    var verbatim_long_buf: [win32.PATH_MAX_WIDE + 2]u8 = undefined;
+    var verbatim_long_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
     @memcpy(verbatim_long_buf[0..7], "\\\\?\\C:\\");
-    @memset(verbatim_long_buf[7 .. win32.PATH_MAX_WIDE + 1], 'a');
-    verbatim_long_buf[win32.PATH_MAX_WIDE + 1] = 0;
-    try testToNtPathLength(verbatim_long_buf[0 .. win32.PATH_MAX_WIDE + 1 :0], error.NameTooLong);
+    @memset(verbatim_long_buf[7..win32.PATH_MAX_WIDE], 'a');
+    verbatim_long_buf[win32.PATH_MAX_WIDE] = 0;
+    try testToNtPathLength(verbatim_long_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
 
     var absolute_exact_buf: [win32.PATH_MAX_WIDE + 1]u8 = undefined;
     @memcpy(absolute_exact_buf[0..3], "C:\\");
@@ -1258,13 +1260,13 @@ test toNtPath {
     try testToNtPathLength(rooted_long_buf[0..win32.PATH_MAX_WIDE :0], error.NameTooLong);
 
     {
-        var dir_buf: [win32.PATH_MAX_WIDE:0]u16 = undefined;
-        const dir_len = win32.GetFinalPathNameByHandleW(cwd().handle, &dir_buf, dir_buf.len, .{ .VOLUME_NAME = .DOS });
+        var dir_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+        const dir_len = win32.GetFinalPathNameByHandleW(cwd().handle, @ptrCast(&dir_buf), dir_buf.len, .{ .VOLUME_NAME = .DOS });
         if (dir_len == 0 or dir_len >= dir_buf.len) return error.TestUnexpected;
 
         const escape_head = "..\\";
         var escaping_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
-        const filler_len = win32.PATH_MAX_WIDE - dir_len - escape_head.len;
+        const filler_len = win32.PATH_MAX_WIDE - dir_len - escape_head.len - 1;
         @memcpy(escaping_buf[0..escape_head.len], escape_head);
         @memset(escaping_buf[escape_head.len..][0..filler_len], 'a');
         escaping_buf[escape_head.len + filler_len] = 0;
