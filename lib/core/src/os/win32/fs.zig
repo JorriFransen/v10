@@ -47,259 +47,38 @@ pub inline fn close(handle: Handle) void {
 
 /// Always follows links
 pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
+    if (sub_path.len == 0) return false;
+
     const expect_dir = sub_path.len > 1 and isSep(sub_path[sub_path.len - 1]) and sub_path[sub_path.len - 2] != ':';
 
-    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+    const file_info = queryAttributesFile(dir, sub_path, true) catch |e| switch (e) {
+        error.BadPath,
+        error.FileNotFound,
+        error.NotDir,
+        => return false,
 
-    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
-    const object_attributes = nt_path.ntObjectAttributes();
-
-    if (nt_path.is_device) {
-        assert(!expect_dir);
-
-        var handle: Handle = undefined;
-        var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
-
-        switch (win32.NT.NtOpenFile(
-            &handle,
-            .{ .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
-            &object_attributes,
-            &io_status_block,
-            .{ .READ = true },
-            .{
-                .OPEN_FOR_BACKUP_INTENT = true,
-                .DIRECTORY_FILE = expect_dir,
-            },
-        )) {
-            .SUCCESS => {
-                _ = win32.NT.NtClose(handle);
-                return true;
-            },
-
-            .DELETE_PENDING => return true,
-
-            .NOT_A_DIRECTORY,
-            .OBJECT_NAME_NOT_FOUND,
-            .OBJECT_PATH_NOT_FOUND,
-            .BAD_NETWORK_NAME,
-            .BAD_NETWORK_PATH,
-            .OBJECT_NAME_INVALID,
-            .OBJECT_PATH_INVALID,
-            .OBJECT_PATH_SYNTAX_BAD,
-            => return false,
-
-            .INSUFFICIENT_RESOURCES, .NO_MEMORY => return error.OutOfMemory,
-            .ACCESS_DENIED, .USER_MAPPED_FILE => return error.AccessDenied,
-            .STOPPED_ON_SYMLINK, .REPARSE_POINT_NOT_RESOLVED => return error.SymLinkNotResolved,
-
-            .INVALID_PARAMETER, .INVALID_HANDLE => unreachable,
-
-            else => |status| {
-                log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
-                });
-                return error.Unexpected;
-            },
-        }
-    } else {
-        var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
-        switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
-            .SUCCESS => {},
-
-            .OBJECT_NAME_NOT_FOUND,
-            .OBJECT_PATH_NOT_FOUND,
-            .OBJECT_NAME_INVALID,
-            .OBJECT_PATH_INVALID,
-            .OBJECT_PATH_SYNTAX_BAD,
-            .BAD_NETWORK_NAME,
-            .BAD_NETWORK_PATH,
-            => return false,
-
-            .STOPPED_ON_SYMLINK,
-            .REPARSE_POINT_NOT_RESOLVED,
-            => return error.SymLinkNotResolved,
-
-            .ACCESS_DENIED => return error.AccessDenied,
-
-            else => |status| {
-                log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
-                });
-                return error.Unexpected;
-            },
-        }
-
-        if (expect_dir) return file_info.file_attributes.DIRECTORY;
-
-        return true;
-    }
+        else => return @errorCast(e),
+    };
+    if (expect_dir) return file_info.file_attributes.DIRECTORY;
+    return true;
 }
 
 pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOptions) fs.FileTypeAtError!fs.FileType {
-    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
-    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
-    const object_attributes = nt_path.ntObjectAttributes();
+    const info = try queryAttributesFile(dir, sub_path, options.follow_symlinks);
 
-    const attributes: win32.NT.FILE.ATTRIBUTES = blk: {
-        if (options.follow_symlinks) {
-            var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
-
-            switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
-                .SUCCESS => break :blk file_info.file_attributes,
-
-                .OBJECT_NAME_INVALID,
-                .OBJECT_PATH_SYNTAX_BAD,
-                .BAD_NETWORK_PATH,
-                => return error.BadPath,
-
-                .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-                .ACCESS_DENIED => return error.AccessDenied,
-
-                .INVALID_PARAMETER,
-                .INVALID_HANDLE,
-                => unreachable,
-
-                else => |status| {
-                    log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{
-                        std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
-                    });
-                    return error.Unexpected;
-                },
-            }
-        } else {
-            var handle: Handle = undefined;
-            var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
-
-            switch (win32.NT.NtOpenFile(
-                &handle,
-                .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
-                &object_attributes,
-                &io_status_block,
-                .{ .READ = true, .WRITE = true, .DELETE = true },
-                .{ .SYNCHRONOUS_IO_NONALERT = true, .OPEN_FOR_BACKUP_INTENT = true, .OPEN_REPARSE_POINT = true },
-            )) {
-                .SUCCESS => {},
-
-                .OBJECT_NAME_INVALID,
-                .OBJECT_PATH_SYNTAX_BAD,
-                .BAD_NETWORK_PATH,
-                => return error.BadPath,
-
-                .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-                .ACCESS_DENIED => return error.AccessDenied,
-
-                else => |s| {
-                    log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
-                        std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-                    });
-                    return error.Unexpected;
-                },
-            }
-
-            defer _ = win32.NT.NtClose(handle);
-
-            var tag_info: win32.NT.FILE.ATTRIBUTE_TAG_INFORMATION = undefined;
-            switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &tag_info, @sizeOf(@TypeOf(tag_info)), .AttributeTagInformation)) {
-                .SUCCESS => break :blk tag_info.file_attributes,
-
-                else => |s| {
-                    log.err("Unexpected NtQueryInformationFile error: '{s}' ({})", .{
-                        std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-                    });
-                    return error.Unexpected;
-                },
-            }
-        }
-    };
-
-    if (attributes.DIRECTORY) return .dir;
-    if (attributes.REPARSE_POINT) return .link;
+    if (info.file_attributes.REPARSE_POINT) return .link;
+    if (info.file_attributes.DIRECTORY) return .dir;
     return .file;
 }
 
 pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) fs.MTimeAtError!fs.Timestamp {
-    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
-    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
-    const object_attributes = nt_path.ntObjectAttributes();
-
-    if (options.follow_symlinks) {
-        var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
-
-        switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
-            .SUCCESS => {},
-
-            .OBJECT_NAME_INVALID,
-            .OBJECT_PATH_SYNTAX_BAD,
-            .BAD_NETWORK_PATH,
-            => return error.BadPath,
-
-            .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-            .ACCESS_DENIED => return error.AccessDenied,
-
-            else => |status| {
-                log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
-                });
-                return error.Unexpected;
-            },
-        }
-
-        // 100ns ticks
-        return .fromNs(win32.toUnixEpoch(@as(i96, file_info.last_write_time.quad_part) * 100));
-    } else {
-        var handle: Handle = undefined;
-        var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
-
-        switch (win32.NT.NtOpenFile(
-            &handle,
-            .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
-            &object_attributes,
-            &io_status_block,
-            .{ .READ = true, .WRITE = true, .DELETE = true },
-            .{ .SYNCHRONOUS_IO_NONALERT = true, .OPEN_FOR_BACKUP_INTENT = true, .OPEN_REPARSE_POINT = true },
-        )) {
-            .SUCCESS => {},
-
-            .OBJECT_NAME_INVALID,
-            .OBJECT_PATH_SYNTAX_BAD,
-            .BAD_NETWORK_PATH,
-            => return error.BadPath,
-
-            .OBJECT_NAME_NOT_FOUND, .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-            .ACCESS_DENIED => return error.AccessDenied,
-
-            else => |s| {
-                log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-                });
-                return error.Unexpected;
-            },
-        }
-
-        defer _ = win32.NT.NtClose(handle);
-
-        var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
-        switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &file_info, @sizeOf(@TypeOf(file_info)), .BasicInformation)) {
-            .SUCCESS => {},
-
-            else => |s| {
-                log.err("Unexpected NtQueryInformationFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-                });
-                return error.Unexpected;
-            },
-        }
-
-        // 100ns ticks
-        return .fromNs(win32.toUnixEpoch(@as(i96, file_info.last_write_time.quad_part) * 100));
-    }
+    const info = try queryAttributesFile(dir, sub_path, options.follow_symlinks);
+    return .fromNs(win32.toUnixEpoch(@as(i96, info.last_write_time.quad_part) * 100));
 }
 
 pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
     var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
     const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
-
-    if (nt_path.is_device) return error.BadPath;
 
     var handle: Handle = undefined;
     var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
@@ -427,17 +206,7 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
         .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
 
         .OBJECT_PATH_NOT_FOUND => {
-            var path_it = try fs.PathIterator.init(sub_path);
-            while (path_it.next()) |path_elem| {
-                var test_path_buf: [win32.PATH_MAX_WIDE]u8 = undefined;
-                const test_path = mem.copySentinel(&test_path_buf, path_elem.path, 0);
-
-                if (try fileTypeAt(dir, test_path, .{ .follow_symlinks = true }) != .dir) {
-                    return error.NotDir;
-                }
-            }
-
-            return error.FileNotFound;
+            return checkForNotDirOnFileNotFound(dir, sub_path);
         },
 
         .SHARING_VIOLATION,
@@ -455,6 +224,137 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
             return error.Unexpected;
         },
     }
+}
+
+const QueryAttributesFileError = error{
+    AccessDenied,
+    BadPath,
+    FileNotFound,
+    NameTooLong,
+    NotDir,
+    OutOfMemory,
+    SymLinkNotResolved,
+
+    Unexpected,
+};
+fn queryAttributesFile(dir: fs.Dir, sub_path: [:0]const u8, follow_symlinks: bool) QueryAttributesFileError!win32.NT.FILE.BASIC_INFORMATION {
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
+    const object_attributes = nt_path.ntObjectAttributes();
+
+    var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
+
+    if (follow_symlinks) {
+        switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
+            .SUCCESS => {},
+
+            .OBJECT_NAME_INVALID,
+            .OBJECT_PATH_SYNTAX_BAD,
+            .BAD_NETWORK_PATH,
+            => return error.BadPath,
+
+            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+
+            .OBJECT_PATH_NOT_FOUND => {
+                return checkForNotDirOnFileNotFound(dir, sub_path);
+            },
+
+            .STOPPED_ON_SYMLINK,
+            .REPARSE_POINT_NOT_RESOLVED,
+            => return error.SymLinkNotResolved,
+
+            .ACCESS_DENIED => return error.AccessDenied,
+
+            .INVALID_PARAMETER,
+            .INVALID_HANDLE,
+            => unreachable,
+
+            else => |status| {
+                log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{
+                    std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
+                });
+                return error.Unexpected;
+            },
+        }
+    } else {
+        var handle: Handle = undefined;
+        var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+        switch (win32.NT.NtOpenFile(
+            &handle,
+            .{ .SYNCHRONIZE = true, .specific = .{ .FILE = .{ .READ_ATTRIBUTES = true } } },
+            &object_attributes,
+            &io_status_block,
+            .{ .READ = true, .WRITE = true, .DELETE = true },
+            .{ .SYNCHRONOUS_IO_NONALERT = true, .OPEN_FOR_BACKUP_INTENT = true, .OPEN_REPARSE_POINT = true },
+        )) {
+            .SUCCESS => {},
+
+            .OBJECT_NAME_INVALID,
+            .OBJECT_PATH_SYNTAX_BAD,
+            .BAD_NETWORK_PATH,
+            => return error.BadPath,
+
+            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+
+            .OBJECT_PATH_NOT_FOUND => {
+                return checkForNotDirOnFileNotFound(dir, sub_path);
+            },
+
+            .STOPPED_ON_SYMLINK,
+            .REPARSE_POINT_NOT_RESOLVED,
+            => return error.SymLinkNotResolved,
+
+            .ACCESS_DENIED => return error.AccessDenied,
+
+            else => |s| {
+                log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
+                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
+                });
+                return error.Unexpected;
+            },
+        }
+
+        defer _ = win32.NT.NtClose(handle);
+
+        switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &file_info, @sizeOf(@TypeOf(file_info)), .BasicInformation)) {
+            .SUCCESS => {},
+
+            else => |s| {
+                log.err("Unexpected NtQueryInformationFile error: '{s}' ({})", .{
+                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
+                });
+                return error.Unexpected;
+            },
+        }
+    }
+
+    return file_info;
+}
+
+inline fn checkForNotDirOnFileNotFound(dir: fs.Dir, path: []const u8) error{ FileNotFound, NotDir } {
+    var path_it = fs.PathIterator.init(path) catch return error.FileNotFound;
+
+    while (path_it.next()) |path_elem| {
+        if (path_elem.path.len == path.len) {
+            // last element
+            return error.FileNotFound;
+        }
+
+        var test_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+
+        const nt_path = toNtPath(dir, path_elem.path, &test_path_buf) catch return error.FileNotFound;
+        const object_attributes = nt_path.ntObjectAttributes();
+
+        var file_info: win32.NT.FILE.BASIC_INFORMATION = undefined;
+
+        switch (win32.NT.NtQueryAttributesFile(&object_attributes, &file_info)) {
+            .SUCCESS => if (!file_info.file_attributes.DIRECTORY) return error.NotDir,
+            else => return error.FileNotFound,
+        }
+    }
+
+    return error.FileNotFound;
 }
 
 pub const DirIterator = struct {
@@ -544,7 +444,6 @@ pub fn parsePath(path: []const u8) error{BadPath}!ParsedPath {
 const NtPath = struct {
     unicode_string: win32.NT.UNICODE_STRING,
     root_handle: ?win32.HANDLE,
-    is_device: bool,
 
     inline fn ntObjectAttributes(this: *const NtPath) win32.NT.OBJECT_ATTRIBUTES {
         return .{
@@ -557,7 +456,16 @@ const NtPath = struct {
     }
 };
 
-fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: []u16) !NtPath {
+const ToNtPathError = error{
+    AccessDenied,
+    BadPath,
+    OutOfMemory,
+    NameTooLong,
+
+    Unexpected,
+};
+
+fn toNtPath(dir: fs.Dir, unstripped_path: []const u8, buf: []u16) ToNtPathError!NtPath {
     const parsed_path = try parsePath(unstripped_path);
 
     var path: []const u8 = unstripped_path;
@@ -615,6 +523,8 @@ fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: []u16) !NtPath {
             eqlIgnoreCaseWtf16LiteralWtf8(head, "DosDevices");
     };
 
+    if (is_device) return error.BadPath;
+
     assert(name[name.len] == 0);
 
     return .{
@@ -624,7 +534,6 @@ fn toNtPath(dir: fs.Dir, unstripped_path: [:0]const u8, buf: []u16) !NtPath {
             .maximum_length = @intCast((name.len + 1) * @sizeOf(u16)),
         },
         .root_handle = handle,
-        .is_device = is_device,
     };
 }
 
@@ -634,7 +543,7 @@ const ResolveResult = struct {
     is_dos_device: bool,
 };
 
-fn resolveRelativeNtPath(dir: fs.Dir, sub_path: []const u8, dest: []u16) !ResolveResult {
+fn resolveRelativeNtPath(dir: fs.Dir, sub_path: []const u8, dest: []u16) ToNtPathError!ResolveResult {
     var name_len = try wtf8ToWtf16LeCheckedLen(dest[0 .. dest.len - 1], sub_path);
     dest[name_len] = 0;
 
@@ -668,7 +577,7 @@ fn resolveRelativeNtPath(dir: fs.Dir, sub_path: []const u8, dest: []u16) !Resolv
     return .{ .name = dest[0..name_len :0], .handle = null, .is_dos_device = true };
 }
 
-fn resolveRelativeNtPathInner(dir: fs.Dir, narrow_path: []const u8, wide_len: usize, dest: []u16) !ResolveResult {
+fn resolveRelativeNtPathInner(dir: fs.Dir, narrow_path: []const u8, wide_len: usize, dest: []u16) ToNtPathError!ResolveResult {
     if (std.os.windows.normalizePath(u16, dest[0..wide_len])) |normalized_len| {
         dest[normalized_len] = 0;
 
@@ -719,7 +628,7 @@ fn trimTrailingDotsAndSpacesPerElement(path: [:0]u16) usize {
     return write;
 }
 
-fn resolveNonVerbatimNonRelativeNtPath(path: []const u8, path_type: ParsedPath.Type, dest: []u16) !usize {
+fn resolveNonVerbatimNonRelativeNtPath(path: []const u8, path_type: ParsedPath.Type, dest: []u16) ToNtPathError!usize {
     const r = try resolveAndPrefixNonVerbatimNonRelative(path, path_type, dest);
     if (!r.device_synthesized) return r.len;
 
@@ -918,6 +827,11 @@ test toNtPath {
     const test_verbatim_prefix: [4]u16 = .{ '\\', '\\', '?', '\\' };
 
     const F = struct {
+        pub fn testToNtPathError(expected_err: anyerror, path: [:0]const u8) !void {
+            var path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+            try t.expectError(expected_err, toNtPath(cwd(), path, &path_buf));
+        }
+
         pub fn testToNtPathAgainstRtl(unstripped_path: [:0]const u8, expected_path_type: ParsedPath.Type) !void {
             const parsed = try parsePath(unstripped_path);
             try t.expectEqual(expected_path_type, parsed.type);
@@ -953,7 +867,6 @@ test toNtPath {
 
                     if (result.root_handle) |handle| {
                         try t.expectEqual(fs.cwd().handle, handle);
-                        try t.expect(!result.is_device);
 
                         var handle_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
                         const handle_path_len = win32.GetFinalPathNameByHandleW(handle, @ptrCast(&handle_path_buf), handle_path_buf.len, .{ .VOLUME_NAME = .DOS });
@@ -1094,6 +1007,7 @@ test toNtPath {
         }
     };
 
+    const testToNtPathError = F.testToNtPathError;
     const testToNtPathAgainstRtl = F.testToNtPathAgainstRtl;
     const testToNtPathExpected = F.testToNtPathExpected;
     const testToNtPathRelativeNoEscape = F.testToNtPathRelativeNoEscape;
@@ -1128,7 +1042,7 @@ test toNtPath {
     try testToNtPathAgainstRtl("\\\\?\\UNC\\", .verbatim);
     try testToNtPathAgainstRtl("\\\\?\\C:/foo", .verbatim);
     try testToNtPathAgainstRtl("\\\\?\\Volume{GUID}\\", .verbatim);
-    try testToNtPathAgainstRtl("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\", .verbatim);
+    try testToNtPathError(error.BadPath, "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\");
     try testToNtPathAgainstRtl("\\\\?\\C:", .verbatim);
     try testToNtPathAgainstRtl("\\\\?\\C:\\abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", .verbatim);
 
@@ -1150,8 +1064,8 @@ test toNtPath {
     try testToNtPathAgainstRtl("C:\\foo:bar", .drive_absolute);
     try testToNtPathAgainstRtl("C:\\foo:", .drive_absolute);
     try testToNtPathAgainstRtl("C:\\foo::$DATA", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\CON", .drive_absolute);
-    try testToNtPathAgainstRtl("c:\\CON ", .drive_absolute);
+    try testToNtPathError(error.BadPath, "C:\\CON");
+    try testToNtPathError(error.BadPath, "c:\\CON ");
     try testToNtPathAgainstRtl("C:\\foo*.txt", .drive_absolute);
     try testToNtPathAgainstRtl("c:\\foo", .drive_absolute);
     try testToNtPathAgainstRtl("C:\\Foo\\BAR", .drive_absolute);
@@ -1166,9 +1080,9 @@ test toNtPath {
     try testToNtPathAgainstRtl("\\\\.\\C:", .local_device);
     try testToNtPathAgainstRtl("\\\\.\\Volume{GUID}\\", .local_device);
     try testToNtPathAgainstRtl("\\\\.\\UNC\\server\\share\\foo", .local_device);
-    try testToNtPathAgainstRtl("\\\\.\\PIPE\\name", .local_device);
-    try testToNtPathAgainstRtl("\\\\.\\GLOBALROOT\\Device\\HarddiskVolume1\\", .local_device);
-    try testToNtPathAgainstRtl("\\\\.\\COM1", .local_device);
+    try testToNtPathError(error.BadPath, "\\\\.\\PIPE\\name");
+    try testToNtPathError(error.BadPath, "\\\\.\\GLOBALROOT\\Device\\HarddiskVolume1\\");
+    try testToNtPathError(error.BadPath, "\\\\.\\COM1");
     try testToNtPathAgainstRtl("\\\\.\\C:\\foo\\..\\bar", .local_device);
     try testToNtPathAgainstRtl("\\\\.\\unix\\path", .local_device);
     try testToNtPathAgainstRtl("//?/C:\\foo", .local_device);
@@ -1221,9 +1135,9 @@ test toNtPath {
     try testToNtPathRelativeNoEscape("a ", "a");
     try testToNtPathRelativeNoEscape("...", "");
     try testToNtPathRelativeNoEscape("..a", "..a");
-    try testToNtPathAgainstRtl("con.", .relative);
-    try testToNtPathAgainstRtl("con ", .relative);
-    try testToNtPathAgainstRtl("src\\con ", .relative); // Assumes .\\src is a dir
+    try testToNtPathError(error.BadPath, "con.");
+    try testToNtPathError(error.BadPath, "con ");
+    try testToNtPathError(error.BadPath, "src\\con "); // Assumes .\\src is a dir
 
     // relative (escaping root handle)
     try testToNtPathRelativeEscaping("..", 1, "");
@@ -1234,37 +1148,37 @@ test toNtPath {
     try testToNtPathRelativeEscaping("..\\..\\a\\b", 2, "\\a\\b");
     try testToNtPathRelativeEscaping("a\\..\\..\\..\\b", 2, "\\b");
 
-    try testToNtPathAgainstRtl("C:CON", .drive_relative);
-    try testToNtPathAgainstRtl("C:\\COM1", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\AUX", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\NUL", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\LPT1", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\PRN", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\CONIN$", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\CONOUT$", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\COM1.abc", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\COM1:abc", .drive_absolute);
-    try testToNtPathAgainstRtl("C:\\COM1    .abc", .drive_absolute);
-    try testToNtPathAgainstRtl("\\CON", .rooted);
+    try testToNtPathError(error.BadPath, "C:CON");
+    try testToNtPathError(error.BadPath, "C:\\COM1");
+    try testToNtPathError(error.BadPath, "C:\\AUX");
+    try testToNtPathError(error.BadPath, "C:\\NUL");
+    try testToNtPathError(error.BadPath, "C:\\LPT1");
+    try testToNtPathError(error.BadPath, "C:\\PRN");
+    try testToNtPathError(error.BadPath, "C:\\CONIN$");
+    try testToNtPathError(error.BadPath, "C:\\CONOUT$");
+    try testToNtPathError(error.BadPath, "C:\\COM1.abc");
+    try testToNtPathError(error.BadPath, "C:\\COM1:abc");
+    try testToNtPathError(error.BadPath, "C:\\COM1    .abc");
+    try testToNtPathError(error.BadPath, "\\CON");
     try testToNtPathAgainstRtl("\\\\?\\C:\\COM1", .verbatim);
     try testToNtPathAgainstRtl("\\\\server\\share\\COM1", .unc);
 
     try testToNtPathAgainstRtl("foo\\CON", .relative);
-    try testToNtPathAgainstRtl("src\\CON", .relative);
-    try testToNtPathAgainstRtl("C:\\Windows\\CON", .drive_absolute);
+    try testToNtPathError(error.BadPath, "src\\CON");
+    try testToNtPathError(error.BadPath, "C:\\Windows\\CON");
     try testToNtPathAgainstRtl("C:\\notvalid\\COM1", .drive_absolute);
-    try testToNtPathAgainstRtl("CON", .relative);
-    try testToNtPathAgainstRtl("..\\..\\CON", .relative);
+    try testToNtPathError(error.BadPath, "CON");
+    try testToNtPathError(error.BadPath, "..\\..\\CON");
     try testToNtPathAgainstRtl("\\.CON", .rooted);
-    try testToNtPathAgainstRtl("\\\\.\\CON", .local_device);
-    try testToNtPathAgainstRtl("\\.\\CON", .rooted);
+    try testToNtPathError(error.BadPath, "\\\\.\\CON");
+    try testToNtPathError(error.BadPath, "\\.\\CON");
     try testToNtPathAgainstRtl("..\\notvalid\\CON", .relative);
     try testToNtPathAgainstRtl("..\\..\\notvalid\\CON", .relative);
     try testToNtPathAgainstRtl("C:\\NUL\\CON", .drive_absolute);
 
-    try testToNtPathAgainstRtl("C:\\CON\\", .drive_absolute);
-    try testToNtPathAgainstRtl("CON\\", .relative);
-    try testToNtPathAgainstRtl("src\\CON\\", .relative);
+    try testToNtPathError(error.BadPath, "C:\\CON\\");
+    try testToNtPathError(error.BadPath, "CON\\");
+    try testToNtPathError(error.BadPath, "src\\CON\\");
     try testToNtPathAgainstRtl("foo\\CON\\", .relative);
 
     // capacity

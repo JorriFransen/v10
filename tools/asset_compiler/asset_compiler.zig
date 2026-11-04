@@ -574,6 +574,7 @@ fn readTimestampFile(ctx: *Context, arena: *mem.Arena) !?TimestampFile {
 
     const rel_path = timestamp_file_sub_path;
 
+    // TODO: Open handle first, query mtime on handle.
     const timestamp = ctx.output_dir.mTime(rel_path, .{}) catch |e| switch (e) {
         error.FileNotFound => return null,
         else => {

@@ -47,7 +47,7 @@ test "existsAt" {
     try t.expect(try tmp_dir.exists("."));
     try t.expect(try tmp_dir.exists(".."));
     try t.expect(!try tmp_dir.exists("x"));
-    try t.expectError(error.BadPath, tmp_dir.exists(""));
+    try t.expect(!try tmp_dir.exists(""));
 
     const abs_file_path = try std.fs.path.joinZ(a, &.{ abs_tmp_path, "file" });
 
@@ -78,7 +78,7 @@ test "existsAt" {
     if (is_windows) {
         try t.expect(try tmp_dir.exists("C:\\"));
         try t.expect(try tmp_dir.exists("\\")); // unc
-        try t.expectError(error.BadPath, tmp_dir.exists("//"));
+        try t.expect(!try tmp_dir.exists("//"));
         try t.expect(try tmp_dir.exists("FILE"));
         try t.expect(try tmp_dir.exists("FILE."));
         try t.expect(try tmp_dir.exists("FILE "));
@@ -129,8 +129,8 @@ test "existsAt" {
     try t.expect(!try tmp_dir.exists("x:y"));
 
     if (is_windows) {
-        try t.expectError(error.BadPath, tmp_dir.exists("//"));
-        try t.expect(try tmp_dir.exists("nul"));
+        try t.expect(!try tmp_dir.exists("//"));
+        try t.expect(!try tmp_dir.exists("nul"));
     } else {
         try t.expect(try tmp_dir.exists("//"));
         try t.expect(!try tmp_dir.exists("aux"));
@@ -457,6 +457,128 @@ test "createDirParentsAt" {
     try zig_tmp_dir.dir.deleteFile(t.io, "file");
 
     try t.expectError(error.BadPath, tmp_dir.createDirParents("", .{}));
+}
+
+test "fileTypeAt" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try t.expectError(error.FileNotFound, tmp_dir.fileType("nonexistent", .{}));
+    try t.expectError(error.FileNotFound, tmp_dir.fileType("nonexistent/", .{}));
+    try t.expectError(error.FileNotFound, tmp_dir.fileType("subdir/nonexistent", .{}));
+
+    try t.expectError(error.BadPath, tmp_dir.fileType("", .{}));
+
+    try zig_tmp_dir.dir.createDir(t.io, "subdir", .default_dir);
+    try t.expectEqual(.dir, tmp_dir.fileType("subdir", .{}));
+    try t.expectEqual(.dir, tmp_dir.fileType("subdir/", .{}));
+    try t.expectEqual(.dir, tmp_dir.fileType("subdir/.", .{}));
+    try t.expectEqual(.dir, tmp_dir.fileType("subdir/..", .{}));
+
+    const file = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
+    file.close(t.io);
+    try t.expectEqual(.file, tmp_dir.fileType("file", .{}));
+    try t.expectEqual(.file, tmp_dir.fileType("file", .{ .follow_symlinks = false }));
+
+    try t.expectError(error.NotDir, tmp_dir.fileType("file/subdir", .{}));
+
+    var long_path_buf: [300:0]u8 = @splat('a');
+    long_path_buf[long_path_buf.len] = 0;
+    try t.expectError(error.NameTooLong, tmp_dir.fileType(&long_path_buf, .{}));
+
+    if (is_windows) {
+        try t.expectError(error.FileNotFound, tmp_dir.fileType("nonexistent_device_xyz", .{}));
+    } else {
+        try t.expectError(error.FileNotFound, tmp_dir.fileType("aux", .{}));
+        try t.expectError(error.FileNotFound, tmp_dir.fileType("com1", .{}));
+        try t.expectError(error.FileNotFound, tmp_dir.fileType("con", .{}));
+        try t.expectError(error.FileNotFound, tmp_dir.fileType("nul", .{}));
+    }
+}
+
+test "fileTypeAt symlinks" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    try skipIfNoSymLinkPermission(zig_tmp_dir.dir);
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    const file = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
+    file.close(t.io);
+    try zig_tmp_dir.dir.symLink(t.io, "file", "file_link", .{});
+
+    try t.expectEqual(.link, tmp_dir.fileType("file_link", .{ .follow_symlinks = false }));
+    try t.expectEqual(.file, tmp_dir.fileType("file_link", .{ .follow_symlinks = true }));
+
+    try zig_tmp_dir.dir.createDir(t.io, "subdir", .default_dir);
+    try zig_tmp_dir.dir.symLink(t.io, "subdir", "subdir_link", .{ .is_directory = true });
+    try t.expectEqual(.link, tmp_dir.fileType("subdir_link", .{ .follow_symlinks = false }));
+    try t.expectEqual(.dir, tmp_dir.fileType("subdir_link", .{ .follow_symlinks = true }));
+
+    try zig_tmp_dir.dir.symLink(t.io, "nonexistent_target", "broken_link", .{});
+    try t.expectEqual(.link, tmp_dir.fileType("broken_link", .{ .follow_symlinks = false }));
+    try t.expectError(error.FileNotFound, tmp_dir.fileType("broken_link", .{ .follow_symlinks = true }));
+
+    try zig_tmp_dir.dir.symLink(t.io, "loop_a", "loop_b", .{});
+    try zig_tmp_dir.dir.symLink(t.io, "loop_b", "loop_a", .{});
+    try t.expectError(error.SymLinkNotResolved, tmp_dir.fileType("loop_a", .{}));
+    try t.expectError(error.SymLinkNotResolved, tmp_dir.fileType("loop_b", .{}));
+}
+
+test "mTimeAt" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try t.expectError(error.FileNotFound, tmp_dir.mTime("nonexistent", .{}));
+    try t.expectError(error.BadPath, tmp_dir.mTime("", .{}));
+
+    try zig_tmp_dir.dir.createDir(t.io, "subdir", .default_dir);
+    const dir_mtime = try tmp_dir.mTime("subdir", .{});
+    _ = dir_mtime;
+
+    const file = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
+    file.close(t.io);
+    const file_mtime = try tmp_dir.mTime("file", .{});
+    _ = file_mtime;
+}
+
+test "mTimeAt symlinks" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    try skipIfNoSymLinkPermission(zig_tmp_dir.dir);
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    const file = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
+    file.close(t.io);
+    try zig_tmp_dir.dir.symLink(t.io, "file", "file_link", .{});
+
+    const file_mtime = try tmp_dir.mTime("file", .{});
+    const link_mtime = try tmp_dir.mTime("file_link", .{ .follow_symlinks = true });
+    try t.expectEqual(file_mtime, link_mtime);
+
+    const link_mtime_nofollow = try tmp_dir.mTime("file_link", .{ .follow_symlinks = false });
+    _ = link_mtime_nofollow;
+
+    try zig_tmp_dir.dir.createDir(t.io, "subdir", .default_dir);
+    try zig_tmp_dir.dir.symLink(t.io, "subdir", "subdir_link", .{ .is_directory = true });
+    const subdir_mtime = try tmp_dir.mTime("subdir", .{});
+    const subdir_link_mtime = try tmp_dir.mTime("subdir_link", .{ .follow_symlinks = true });
+    try t.expectEqual(subdir_mtime, subdir_link_mtime);
+
+    try zig_tmp_dir.dir.symLink(t.io, "nonexistent_target", "broken_link", .{});
+    try t.expectError(error.FileNotFound, tmp_dir.mTime("broken_link", .{ .follow_symlinks = true }));
+
+    try zig_tmp_dir.dir.symLink(t.io, "loop_a", "loop_b", .{});
+    try zig_tmp_dir.dir.symLink(t.io, "loop_b", "loop_a", .{});
+    try t.expectError(error.SymLinkNotResolved, tmp_dir.mTime("loop_a", .{}));
+    try t.expectError(error.SymLinkNotResolved, tmp_dir.mTime("loop_b", .{}));
 }
 
 fn testAccess(dir_handle: fs.Handle, path: [:0]const u8) !bool {

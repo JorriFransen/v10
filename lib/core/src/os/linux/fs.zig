@@ -40,7 +40,7 @@ pub inline fn cwd() fs.Dir {
 }
 
 pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
-    if (sub_path.len == 0) return error.BadPath;
+    if (sub_path.len == 0) return false;
 
     const result = linux.faccessat(dir.handle, sub_path, .F_OK) catch |e| switch (e) {
         error.BADF => @panic("Invalid dir handle"),
@@ -60,6 +60,8 @@ pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
 }
 
 pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOptions) fs.FileTypeAtError!fs.FileType {
+    if (sub_path.len == 0) return error.BadPath;
+
     var stat: linux.Statx = undefined;
     linux.statx(
         dir.handle,
@@ -101,6 +103,8 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
 }
 
 pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) fs.MTimeAtError!fs.Timestamp {
+    if (sub_path.len == 0) return error.BadPath;
+
     var stat: linux.Statx = undefined;
     linux.statx(
         dir.handle,
