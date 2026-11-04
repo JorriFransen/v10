@@ -2,7 +2,9 @@ const std = @import("std");
 
 const log = @import("../../log.zig").scoped(.@"core.fs.win32");
 
-const assert = @import("../../debug.zig").assert;
+const debug = @import("../../debug.zig");
+const assert = debug.assert;
+
 const bits = @import("../../bits.zig");
 const fs = @import("../../fs.zig");
 const mem = @import("../../mem/mem.zig");
@@ -59,7 +61,9 @@ pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
 
         else => return @errorCast(e),
     };
+
     if (expect_dir) return file_info.file_attributes.DIRECTORY;
+
     return true;
 }
 
@@ -137,16 +141,7 @@ pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptio
 
         .NOT_A_DIRECTORY => return error.NotDir,
 
-        .INVALID_HANDLE,
-        .INVALID_PARAMETER,
-        => unreachable,
-
-        else => |s| {
-            log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
-                std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-            });
-            return error.Unexpected;
-        },
+        else => |s| return unexpectedStatus(s),
     }
 
     errdefer _ = win32.NT.NtClose(handle);
@@ -155,7 +150,7 @@ pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptio
         var tag_info: win32.NT.FILE.ATTRIBUTE_TAG_INFORMATION = undefined;
         const status = win32.NT.NtQueryInformationFile(handle, &io_status_block, &tag_info, @sizeOf(@TypeOf(tag_info)), .AttributeTagInformation);
         assert(status == .SUCCESS);
-        if (status != .SUCCESS) return error.Unexpected;
+        if (status != .SUCCESS) return unexpectedStatus(status);
 
         if (tag_info.file_attributes.REPARSE_POINT and
             tag_info.reparse_tag & win32.NT.FILE.IO_REPARSE_TAG.IS_NAME_SURROGATE != 0)
@@ -213,16 +208,7 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
         .DELETE_PENDING,
         => return error.DeviceBusy,
 
-        .INVALID_HANDLE,
-        .INVALID_PARAMETER,
-        => unreachable,
-
-        else => |s| {
-            log.err("Unexpected NtCreateFile error: '{s}' ({})", .{
-                std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-            });
-            return error.Unexpected;
-        },
+        else => |s| return unexpectedStatus(s),
     }
 }
 
@@ -265,16 +251,7 @@ fn queryAttributesFile(dir: fs.Dir, sub_path: [:0]const u8, follow_symlinks: boo
 
             .ACCESS_DENIED => return error.AccessDenied,
 
-            .INVALID_PARAMETER,
-            .INVALID_HANDLE,
-            => unreachable,
-
-            else => |status| {
-                log.err("Unexpected NtQueryAttributesFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, status) orelse "", @backingInt(status),
-                });
-                return error.Unexpected;
-            },
+            else => |status| return unexpectedStatus(status),
         }
     } else {
         var handle: Handle = undefined;
@@ -307,25 +284,14 @@ fn queryAttributesFile(dir: fs.Dir, sub_path: [:0]const u8, follow_symlinks: boo
 
             .ACCESS_DENIED => return error.AccessDenied,
 
-            else => |s| {
-                log.err("Unexpected NtOpenFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-                });
-                return error.Unexpected;
-            },
+            else => |s| return unexpectedStatus(s),
         }
 
         defer _ = win32.NT.NtClose(handle);
 
         switch (win32.NT.NtQueryInformationFile(handle, &io_status_block, &file_info, @sizeOf(@TypeOf(file_info)), .BasicInformation)) {
             .SUCCESS => {},
-
-            else => |s| {
-                log.err("Unexpected NtQueryInformationFile error: '{s}' ({})", .{
-                    std.enums.tagName(win32.NTSTATUS, s) orelse "", @backingInt(s),
-                });
-                return error.Unexpected;
-            },
+            else => |s| return unexpectedStatus(s),
         }
     }
 
@@ -733,7 +699,6 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
     if (dir_path_len == 0) {
         const err = win32.GetLastError();
         switch (err) {
-            .INVALID_PARAMETER => unreachable,
             .PATH_NOT_FOUND => return error.BadPath,
             .NOT_ENOUGH_MEMORY => return error.OutOfMemory,
             .ACCESS_DENIED => return error.AccessDenied,
@@ -744,14 +709,8 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
                 if (dir_path_len == 0) {
                     const retry_err = win32.GetLastError();
                     return switch (retry_err) {
-                        else => blk: {
-                            log.err("Unexpected error after UNRECOGNIZED_VOLUME retry with VOLUME_NAME_GUID: '{s}' ({})", .{
-                                std.enums.tagName(win32.ERROR, retry_err) orelse "",
-                                @backingInt(retry_err),
-                            });
-                            break :blk error.Unexpected;
-                        },
-                        .INVALID_PARAMETER => unreachable,
+                        else => return unexpectedWin32Error(retry_err),
+
                         .PATH_NOT_FOUND => error.BadPath,
                         .NOT_ENOUGH_MEMORY => error.OutOfMemory,
                         .ACCESS_DENIED => error.AccessDenied,
@@ -759,12 +718,7 @@ fn resolveRelativeEscapingDirHandleNtPath(dir: fs.Dir, path: []const u8, dest: [
                 }
             },
 
-            else => |e| {
-                log.err("Unexpected GetFinalPathNameByHandleW error: '{s}' ({})", .{
-                    std.enums.tagName(win32.ERROR, e) orelse "", @backingInt(e),
-                });
-                return error.Unexpected;
-            },
+            else => |e| return unexpectedWin32Error(e),
         }
     }
 
@@ -818,6 +772,20 @@ inline fn wtf8ToWtf16LeCheckedLen(dest: []u16, src: []const u8) error{ NameTooLo
 
 inline fn eqlIgnoreCaseWtf16LiteralWtf8(head: []const u16, comptime name: []const u8) bool {
     return std.os.windows.eqlIgnoreCaseWtf16(head, std.unicode.utf8ToUtf16LeStringLiteral(name));
+}
+
+fn unexpectedStatus(status: win32.NT.NTSTATUS) error{Unexpected} {
+    debug.programmerError("win32 fs programmer error, unexpected status: '{s}' ({})", .{
+        std.enums.tagName(win32.NT.NTSTATUS, status) orelse "...",
+        @backingInt(status),
+    }, @returnAddress()) catch return error.Unexpected;
+}
+
+fn unexpectedWin32Error(e: win32.ERROR) error{Unexpected} {
+    debug.programmerError("win32 fs programmer error, unexpected error: '{s}' ({})", .{
+        std.enums.tagName(win32.ERROR, e) orelse "...",
+        @backingInt(e),
+    }, @returnAddress()) catch return error.Unexpected;
 }
 
 test toNtPath {

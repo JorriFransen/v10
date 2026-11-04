@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const debug = @import("../../debug.zig");
 const fs = @import("../../fs.zig");
 const linux = @import("linux.zig");
 const mem = @import("../../mem/mem.zig");
@@ -31,7 +32,7 @@ pub inline fn isSep(char: u8) bool {
     return char == path_sep;
 }
 
-pub fn close(handle: Handle) void {
+pub inline fn close(handle: Handle) void {
     linux.close(handle);
 }
 
@@ -43,10 +44,6 @@ pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
     if (sub_path.len == 0) return false;
 
     const result = linux.faccessat(dir.handle, sub_path, .F_OK) catch |e| switch (e) {
-        error.BADF => @panic("Invalid dir handle"),
-        error.FAULT => @panic("Invalid path pointer"),
-        error.INVAL, error.ROFS, error.TXTBSY => unreachable,
-
         error.ACCES => return error.AccessDenied,
         error.PERM => return error.PermissionDenied,
         error.IO => return error.IO,
@@ -54,7 +51,7 @@ pub fn existsAt(dir: fs.Dir, sub_path: [:0]const u8) fs.ExistsAtError!bool {
         error.NAMETOOLONG => return error.NameTooLong,
         error.NOMEM => return error.OutOfMemory,
 
-        error.UnexpectedErrno => return error.Unexpected,
+        else => return linux.unexpectedError(e),
     };
     return result;
 }
@@ -70,11 +67,6 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
         .{ .TYPE = true },
         &stat,
     ) catch |e| return switch (e) {
-        error.BADF,
-        error.FAULT,
-        error.INVAL,
-        => unreachable,
-
         error.ACCES => error.AccessDenied,
         error.NOENT => error.FileNotFound,
         error.NAMETOOLONG => error.NameTooLong,
@@ -82,10 +74,10 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
         error.NOMEM => error.OutOfMemory,
         error.LOOP => error.SymLinkNotResolved,
 
-        else => error.Unexpected,
+        else => return linux.unexpectedError(e),
     };
 
-    if (!stat.mask.TYPE) return error.Unexpected;
+    if (!stat.mask.TYPE) return debug.programmerError("statx type failed", .{}, null);
 
     const mode: linux.S = @fromBackingInt(stat.mode);
 
@@ -98,7 +90,7 @@ pub fn fileTypeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.FileTypeAtOpt
         .LNK => .link,
         .SOCK => .socket,
 
-        else => error.Unexpected,
+        else => return debug.programmerError("Invalid file type (int: {})", .{@backingInt(mode.TYPE)}, null),
     };
 }
 
@@ -113,11 +105,6 @@ pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) 
         .{ .MTIME = true },
         &stat,
     ) catch |e| return switch (e) {
-        error.BADF,
-        error.FAULT,
-        error.INVAL,
-        => unreachable,
-
         error.ACCES => error.AccessDenied,
         error.NOENT => error.FileNotFound,
         error.NAMETOOLONG => error.NameTooLong,
@@ -125,10 +112,10 @@ pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) 
         error.NOMEM => error.OutOfMemory,
         error.LOOP => error.SymLinkNotResolved,
 
-        else => error.Unexpected,
+        else => return linux.unexpectedError(e),
     };
 
-    if (!stat.mask.MTIME) return error.Unexpected;
+    if (!stat.mask.MTIME) return debug.programmerError("statx mtime failed", .{}, null);
 
     const ns = stat.mtime.ns();
     return .fromNs(ns);
@@ -143,19 +130,6 @@ pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptio
     };
 
     const result = linux.openat(dir.handle, sub_path, mode, .{}) catch |e| switch (e) {
-        error.BADF => @panic("Invalid dir handle"),
-        error.FAULT => @panic("Invalid path pointer"),
-        error.NODEV,
-        error.FBIG,
-        error.OVERFLOW,
-        error.ISDIR,
-        error.NXIO,
-        error.OPNOTSUPP,
-        error.ROFS,
-        error.TXTBSY,
-        error.WOULDBLOCK,
-        => unreachable,
-
         error.INVAL => return error.BadPath,
         error.ACCES => return error.AccessDenied,
         error.PERM => return error.PermissionDenied,
@@ -170,7 +144,7 @@ pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptio
         error.NOMEM => return error.OutOfMemory,
         error.NOTDIR => return error.NotDir,
 
-        else => return error.Unexpected,
+        else => return linux.unexpectedError(e),
     };
 
     return .{ .handle = result };
@@ -180,9 +154,6 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
     if (sub_path.len == 0) return error.BadPath;
 
     linux.mkdirat(dir.handle, sub_path, options.permissions.toS()) catch |e| switch (e) {
-        error.BADF => @panic("Invalid dir handle"),
-        error.FAULT => @panic("Invalid path pointer"),
-
         error.ACCES => return error.AccessDenied,
         error.PERM => return error.PermissionDenied,
         error.DQUOT, error.NOSPC => return error.NoSpace,
@@ -196,8 +167,7 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
         error.ROFS => return error.ReadOnlyFileSystem,
         error.OVERFLOW => return error.MissingIdMapping,
 
-        error.MLINK => return error.Unexpected,
-        else => return error.Unexpected,
+        else => return linux.unexpectedError(e),
     };
 }
 
@@ -238,11 +208,7 @@ pub const DirIterator = struct {
                 error.IO,
                 => return error.InvalidHandle,
 
-                error.FAULT,
-                error.INVAL,
-                => unreachable,
-
-                error.UnexpectedErrno => return error.Unexpected,
+                else => return linux.unexpectedError(e),
             };
 
             this.dents = this.buffer[0..new_len];

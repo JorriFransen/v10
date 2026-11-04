@@ -66,7 +66,7 @@ pub const Dir = struct {
         return mTimeAt(this, sub_path, options);
     }
 
-    pub inline fn close(this: Dir) void {
+    pub fn close(this: Dir) void {
         os.close(this.handle);
     }
 

@@ -4,8 +4,10 @@ const builtin = @import("builtin");
 
 const log = @import("../../log.zig").scoped(.linux);
 
+const debug = @import("../../debug.zig");
+const assert = debug.assert;
+
 const arch = @import("arch/arch.zig").arch;
-const assert = @import("../../debug.zig").assert;
 const core_fs = @import("../../fs.zig");
 const math = @import("../../math.zig");
 const mem = @import("../../mem/mem.zig");
@@ -45,8 +47,13 @@ pub fn getTime(clock: time.Clock) time.Timestamp {
 
 inline fn handleErrno(comptime E: type, rc: isize) E!void {
     if (rc < 0) {
-        if (std.math.cast(@typeInfo(Errno).@"enum".tag_type, -%rc)) |nrc| {
-            const e: Errno = @fromBackingInt(@intCast(nrc));
+        if (rc == math.minInt(isize)) {
+            if (!builtin.is_test) {
+                debug.programmerError("Invalid errno (syscall rc: {})", .{rc}, @returnAddress()) catch return error.UnexpectedErrno;
+            }
+            return error.UnexpectedErrno;
+        } else {
+            const e: Errno = @fromBackingInt(@intCast(-rc));
             inline for (@typeInfo(E).error_set.error_names.?) |name| {
                 if (@hasField(Errno, name) or @hasDecl(Errno, name)) {
                     if (e == @field(Errno, name)) {
@@ -55,17 +62,7 @@ inline fn handleErrno(comptime E: type, rc: isize) E!void {
                 } else if (comptime !std.mem.eql(u8, name, "UnexpectedErrno")) {
                     @compileError(std.fmt.comptimePrint("Error code not in 'Errno': '{s}'", .{name}));
                 }
-            } else {
-                if (!builtin.is_test) {
-                    log.warn("Unexpected errno for {s}: {s} ({})", .{ @typeName(E), std.enums.tagName(Errno, e) orelse "", @backingInt(e) });
-                }
-                return error.UnexpectedErrno;
-            }
-        } else {
-            if (!builtin.is_test) {
-                log.warn("Unexpected errno for {s}: {}", .{ @typeName(E), -%rc });
-            }
-            return error.UnexpectedErrno;
+            } else return unexpectedErrno(@typeName(E), e);
         }
     }
 }
@@ -82,16 +79,41 @@ inline fn handleErrnoRetry(comptime E: type, rc: isize) E!bool {
     return false;
 }
 
+fn unexpectedErrno(expected_err_set_name: []const u8, errno: Errno) error{UnexpectedErrno} {
+    if (!builtin.is_test) {
+        debug.programmerError("Unexpected errno for {s}: '{s}' ({})", .{
+            expected_err_set_name,
+            std.enums.tagName(Errno, errno) orelse "...",
+            @backingInt(errno),
+        }, @returnAddress()) catch return error.UnexpectedErrno;
+    }
+
+    return error.UnexpectedErrno;
+}
+
+fn unexpectedErrnoError(err: anyerror) error{UnexpectedErrno} {
+    debug.programmerError("Unexpected error: '{s}'", .{@errorName(err)}, @returnAddress()) catch return error.UnexpectedErrno;
+}
+
+pub fn unexpectedError(err: anyerror) error{Unexpected} {
+    debug.programmerError("Unexpected error: '{s}'", .{@errorName(err)}, @returnAddress()) catch return error.Unexpected;
+}
+
 test "handleErrno" {
+    const t = std.testing;
+
     try handleErrno(OpenatError, 0);
     try handleErrno(OpenatError, 42);
 
-    try std.testing.expectError(error.ACCES, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.ACCES))));
-    try std.testing.expectError(error.NOENT, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.NOENT))));
-    try std.testing.expectError(error.TXTBSY, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.TXTBSY))));
+    try t.expectError(error.ACCES, handleErrno(OpenatError, -@as(isize, @backingInt(Errno.ACCES))));
+    try t.expectError(error.NOENT, handleErrno(OpenatError, -@as(isize, @backingInt(Errno.NOENT))));
+    try t.expectError(error.TXTBSY, handleErrno(OpenatError, -@as(isize, @backingInt(Errno.TXTBSY))));
 
-    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.ADDRINUSE))));
-    try std.testing.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(i64, @backingInt(Errno.SRCH))));
+    try t.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(isize, @backingInt(Errno.ADDRINUSE))));
+    try t.expectError(error.UnexpectedErrno, handleErrno(OpenatError, -@as(isize, @backingInt(Errno.SRCH))));
+
+    try t.expectError(error.UnexpectedErrno, handleErrno(OpenatError, std.math.minInt(isize)));
+    try t.expectError(error.UnexpectedErrno, handleErrno(OpenatError, std.math.minInt(isize) + 1));
 }
 
 // =============================================================================
@@ -126,7 +148,7 @@ pub const Dirent64 = extern struct {
 // errno.h (+ errno-base.h)
 // =============================================================================
 
-pub const Errno = enum(u12) {
+pub const Errno = enum(usize) {
     /// No error occurred.
     /// Same code used for `NSROK`.
     SUCCESS = 0,
@@ -565,7 +587,7 @@ pub const OpenError = error{
 
 pub fn open(path: [*:0]const u8, flags: O, mode: S) OpenError!fd_t {
     const result = openat(AT.FDCWD, path, flags, mode) catch |e| switch (e) {
-        error.BADF => unreachable,
+        error.BADF => return unexpectedErrnoError(e),
         else => return @errorCast(e),
     };
     return result;
@@ -3262,15 +3284,11 @@ pub fn close(fd: fd_t) void {
     } else |e| switch (e) {
         error.INTR => {},
 
-        error.BADF => if (builtin.mode == .debug) { // Double close of use after close
-            @breakpoint();
-            unreachable;
+        error.BADF => { // double close
+            unexpectedErrnoError(e) catch {};
         },
 
-        else => if (builtin.mode == .debug) {
-            @breakpoint();
-            unreachable;
-        },
+        else => _ = unexpectedErrnoError(e) catch {},
     }
 }
 
@@ -3306,7 +3324,7 @@ pub const PipeError = error{
 
 pub fn pipe(fds: *[2]fd_t) PipeError!void {
     pipe2(fds, .{}) catch |e| switch (e) {
-        .INVAL, .NOPKG => unreachable,
+        error.INVAL, error.NOPKG => return unexpectedErrnoError(e),
         else => return e,
     };
 }

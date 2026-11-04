@@ -196,3 +196,18 @@ pub fn assert(cond: bool) void {
         }
     }
 }
+
+pub fn programmerError(comptime fmt: []const u8, args: anytype, ra: ?usize) error{Unexpected} {
+    const stderr = std.debug.lockStderr(&.{}).terminal();
+    defer std.debug.unlockStderr();
+    const writer = stderr.writer;
+
+    writer.print(fmt, args) catch {};
+    writer.writeByte('\n') catch {};
+
+    if (builtin.mode == .debug or builtin.mode == .safe) {
+        fatal("Programming error:", ra orelse @returnAddress());
+    } else {
+        return error.Unexpected;
+    }
+}
