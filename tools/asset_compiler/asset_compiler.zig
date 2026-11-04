@@ -7,6 +7,7 @@ const os_tag = @import("builtin").target.os.tag;
 const core = @import("core");
 const Timestamp = core.time.Timestamp;
 const assert = core.assert;
+const debug = core.debug;
 const fs = core.fs;
 const mem = core.mem;
 
@@ -412,7 +413,7 @@ fn aggregate(ctx: *Context, input_files: []const InputFile, ts_file: TimestampFi
 
 fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !void {
     const Entry = struct {
-        it: std.Io.Dir.Iterator,
+        it: fs.DirIterator,
         path: []const u8,
         entry_count: u32 = 0,
     };
@@ -421,28 +422,28 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
     defer stack.deinit(ctx.gpa);
 
     try stack.append(ctx.gpa, .{
-        .it = ctx.output_dir.stdDir().iterate(),
+        .it = try ctx.output_dir.iterate(.{}),
         .path = "", // To skip close at the end
     });
 
     while (stack.items.len > 0) {
         var top = &stack.items[stack.items.len - 1];
 
-        if (try top.it.next(ctx.io)) |entry| {
+        if (try top.it.next()) |entry| {
             top.entry_count += 1;
 
             const full_name = try std.fs.path.join(ctx.gpa, &.{ top.path, entry.name });
 
-            if (entry.kind == .directory) {
+            if (entry.type == .dir) {
                 ctx.debug("enter dir: {s}", .{entry.name});
-                const dir = try top.it.reader.dir.openDir(ctx.io, entry.name, .{ .iterate = true });
-                try stack.append(ctx.gpa, .{ .it = dir.iterateAssumeFirstIteration(), .path = full_name });
+                const dir = try top.it.dir.openDir(entry.name, .{ .iterate = true });
+                try stack.append(ctx.gpa, .{ .it = try dir.iterate(.{ .reset_handle_pos = false }), .path = full_name });
             } else {
                 ctx.debug("Check output for stale: {s}", .{full_name});
                 if (!all_output_files.contains(full_name)) {
                     ctx.debug("Removing stale output: '{s}'", .{entry.name});
 
-                    try top.it.reader.dir.deleteFile(ctx.io, entry.name);
+                    try top.it.dir.stdDir().deleteFile(ctx.io, entry.name);
                     top.entry_count -= 1;
                 }
 
@@ -454,12 +455,17 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
             if (old_top.path.len > 0) {
                 const new_top = &stack.items[stack.items.len - 1];
 
-                old_top.it.reader.dir.close(ctx.io);
+                old_top.it.dir.close();
 
                 if (old_top.entry_count == 0) {
                     ctx.debug("Removing empty dir: '{s}'", .{old_top.path});
                     const sub_path = std.fs.path.basename(old_top.path);
-                    try new_top.it.reader.dir.deleteDir(ctx.io, sub_path);
+
+                    new_top.it.dir.stdDir().deleteDir(ctx.io, sub_path) catch |e| switch (e) {
+                        error.DirNotEmpty => debug.programmerError("Expected empty dir", .{}, null) catch return e,
+                        else => return e,
+                    };
+
                     assert(new_top.entry_count > 0);
                     new_top.entry_count -= 1;
                 }

@@ -171,20 +171,17 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
     };
 }
 
-pub const DirIterator = struct {
-    fd: linux.dirfd_t,
+pub const DirIteratorImpl = struct {
+    pub const max_entry_size = std.mem.alignForward(usize, @sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len, @alignOf(linux.Dirent64));
 
-    dents: []u8,
-    buffer: [16 * (@sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len)]u8 align(@alignOf(linux.Dirent64)),
+    const Options = fs.DirIterator.Options;
+    const Entry = fs.DirIterator.Entry;
 
-    pub const Options = fs.DirIteratorOptions;
-    pub const Entry = fs.DirIteratorEntry;
+    const Error = fs.DirIterator.Error;
+    const InitError = fs.DirIterator.InitError;
+    const NextError = fs.DirIterator.NextError;
 
-    pub const Error = fs.DirIteratorError;
-    pub const InitError = fs.DirIteratorInitError;
-    pub const NextError = fs.DirIteratorNextError;
-
-    pub fn init(dir: fs.Dir, options: Options) InitError!DirIterator {
+    pub fn init(dir: fs.Dir, options: Options) InitError!fs.DirIterator {
         if (options.reset_handle_pos) {
             _ = linux.lseek(dir.handle, 0, .SET) catch |e| switch (e) {
                 error.BADF => return error.InvalidHandle,
@@ -193,15 +190,16 @@ pub const DirIterator = struct {
         }
 
         return .{
-            .fd = dir.handle,
-            .dents = &.{},
+            .dir = dir,
+            .entries = &.{},
             .buffer = undefined,
+            .impl = .{},
         };
     }
 
-    pub fn next(this: *DirIterator) NextError!?Entry {
-        if (this.dents.len == 0) {
-            const new_len = linux.getdents64(this.fd, &this.buffer) catch |e| switch (e) {
+    pub fn next(it: *fs.DirIterator) NextError!?Entry {
+        if (it.entries.len == 0) {
+            const new_len = linux.getdents64(it.dir.handle, &it.buffer) catch |e| switch (e) {
                 error.BADF,
                 error.NOENT,
                 error.NOTDIR,
@@ -211,35 +209,42 @@ pub const DirIterator = struct {
                 else => return linux.unexpectedError(e),
             };
 
-            this.dents = this.buffer[0..new_len];
+            it.entries = it.buffer[0..new_len];
         }
 
-        if (this.dents.len >= @sizeOf(linux.Dirent64)) {
-            const dent: *linux.Dirent64 = @ptrCast(@alignCast(this.dents.ptr));
+        while (it.entries.len >= @sizeOf(linux.Dirent64)) {
+            const entry: *linux.Dirent64 = @ptrCast(@alignCast(it.entries.ptr));
 
-            if (dent.d_reclen == 0) return error.MalformedDirEntry;
+            if (entry.d_reclen == 0) return error.MalformedDirEntry;
 
-            this.dents = this.dents[dent.d_reclen..];
+            it.entries = it.entries[entry.d_reclen..];
 
-            const name_len = dent.d_reclen - @offsetOf(linux.Dirent64, "d_name");
-            const name_slice = @as([*]const u8, @ptrCast(&dent.d_name))[0..name_len];
+            const name_len = entry.d_reclen - @offsetOf(linux.Dirent64, "d_name");
+            const name_slice = @as([*]const u8, @ptrCast(&entry.d_name))[0..name_len];
             const name = mem.sliceToSentinel(name_slice, 0);
 
-            return .{
-                .name = name,
-                .type = switch (dent.d_type) {
-                    .UNKNOWN => .unknown,
-                    .FIFO => .pipe,
-                    .CHR => .char,
-                    .DIR => .dir,
-                    .BLK => .block,
-                    .REG => .file,
-                    .LNK => .link,
-                    .SOCK => .socket,
-                    .WHT => .whiteout,
+            switch (name.len) {
+                0 => return error.MalformedDirEntry,
+
+                1 => if (name[0] == '.') continue,
+                2 => if (name[0] == '.' and name[1] == '.') continue,
+
+                else => return .{
+                    .name = name,
+                    .type = switch (entry.d_type) {
+                        .UNKNOWN => .unknown,
+                        .FIFO => .pipe,
+                        .CHR => .char,
+                        .DIR => .dir,
+                        .BLK => .block,
+                        .REG => .file,
+                        .LNK => .link,
+                        .SOCK => .socket,
+                        .WHT => .whiteout,
+                    },
                 },
-            };
-        } else if (this.dents.len != 0) {
+            }
+        } else if (it.entries.len != 0) {
             return error.MalformedDirEntry;
         }
 

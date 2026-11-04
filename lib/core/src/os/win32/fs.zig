@@ -323,23 +323,24 @@ inline fn checkForNotDirOnFileNotFound(dir: fs.Dir, path: []const u8) error{ Fil
     return error.FileNotFound;
 }
 
-pub const DirIterator = struct {
-    pub const Options = fs.DirIteratorOptions;
+pub const DirIteratorImpl = struct {
+    pub const max_entry_size = unreachable;
 
-    pub const Entry = fs.DirIteratorEntry;
+    const Options = fs.DirIterator.Options;
+    const Entry = fs.DirIterator.Entry;
 
-    pub const Error = fs.DirIteratorError;
-    pub const InitError = fs.DirIteratorInitError;
-    pub const NextError = fs.DirIteratorNextError;
+    const Error = fs.DirIterator.Error;
+    const InitError = fs.DirIterator.InitError;
+    const NextError = fs.DirIterator.NextError;
 
-    pub fn init(dir: fs.Dir, options: Options) InitError!DirIterator {
+    pub fn init(dir: fs.Dir, options: Options) InitError!fs.DirIterator {
         _ = dir;
         _ = options;
         unreachable;
     }
 
-    pub fn next(this: *DirIterator) NextError!?Entry {
-        _ = this;
+    pub fn next(it: *fs.DirIterator) NextError!?Entry {
+        _ = it;
         unreachable;
     }
 };

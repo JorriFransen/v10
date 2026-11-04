@@ -19,7 +19,7 @@ pub const max_output_path_bytes = os.max_output_path_bytes;
 /// Not including null
 pub const max_name_bytes = os.max_name_bytes;
 
-pub const Error = OpenDirAtError || ExistsAtError || DirIteratorError || CreateDirAtError;
+pub const Error = OpenDirAtError || ExistsAtError || DirIterator.Error || CreateDirAtError;
 
 pub const FileType = enum {
     unknown,
@@ -40,40 +40,44 @@ pub const File = struct {
 pub const Dir = struct {
     handle: Handle,
 
-    pub inline fn openDir(this: Dir, sub_path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
-        return openDirAt(this, sub_path, options);
+    pub inline fn openDir(dir: Dir, sub_path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
+        return openDirAt(dir, sub_path, options);
     }
 
-    pub inline fn createDir(this: Dir, dir_name: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
-        return createDirAt(this, dir_name, options);
+    pub inline fn createDir(dir: Dir, dir_name: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+        return createDirAt(dir, dir_name, options);
     }
 
-    pub inline fn createDirParents(this: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
-        return createDirParentsAt(this, dir_path, options);
+    pub inline fn createDirParents(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+        return createDirParentsAt(dir, dir_path, options);
     }
 
     /// Follows links.
     /// TODO: Add symLinkExists
-    pub inline fn exists(this: Dir, sub_path: [:0]const u8) ExistsAtError!bool {
-        return existsAt(this, sub_path);
+    pub inline fn exists(dir: Dir, sub_path: [:0]const u8) ExistsAtError!bool {
+        return existsAt(dir, sub_path);
     }
 
-    pub inline fn fileType(this: Dir, sub_path: [:0]const u8, options: FileTypeAtOptions) FileTypeAtError!FileType {
-        return fileTypeAt(this, sub_path, options);
+    pub inline fn fileType(dir: Dir, sub_path: [:0]const u8, options: FileTypeAtOptions) FileTypeAtError!FileType {
+        return fileTypeAt(dir, sub_path, options);
     }
 
-    pub inline fn mTime(this: Dir, sub_path: [:0]const u8, options: MTimeAtOptions) MTimeAtError!Timestamp {
-        return mTimeAt(this, sub_path, options);
+    pub inline fn mTime(dir: Dir, sub_path: [:0]const u8, options: MTimeAtOptions) MTimeAtError!Timestamp {
+        return mTimeAt(dir, sub_path, options);
     }
 
-    pub fn close(this: Dir) void {
-        os.close(this.handle);
+    pub inline fn iterate(dir: Dir, options: DirIterator.Options) DirIterator.InitError!DirIterator {
+        return DirIterator.init(dir, options);
+    }
+
+    pub fn close(dir: Dir) void {
+        os.close(dir.handle);
     }
 
     // TODO: Remove
     /// Temporary!
-    pub inline fn stdDir(this: Dir) std.Io.Dir {
-        return .{ .handle = this.handle };
+    pub inline fn stdDir(dir: Dir) std.Io.Dir {
+        return .{ .handle = dir.handle };
     }
 };
 
@@ -215,17 +219,34 @@ inline fn requireDirAt(dir: Dir, sub_path: [:0]const u8) !void {
     if (try dir.fileType(sub_path, .{ .follow_symlinks = false }) != .dir) return error.NotDir;
 }
 
-pub const DirIteratorInitError = error{ SeekFailed, InvalidHandle };
-pub const DirIteratorNextError = error{ InvalidHandle, MalformedDirEntry, Unexpected };
-pub const DirIteratorError = DirIteratorInitError || DirIteratorNextError;
-pub const DirIteratorOptions = struct {
-    reset_handle_pos: bool = true,
+pub const DirIterator = struct {
+    pub const InitError = error{ SeekFailed, InvalidHandle };
+    pub const NextError = error{ InvalidHandle, MalformedDirEntry, Unexpected };
+    pub const Error = InitError || NextError;
+    pub const Options = struct {
+        reset_handle_pos: bool = true,
+    };
+
+    pub const Entry = struct {
+        name: [:0]const u8,
+        type: FileType,
+    };
+
+    const Impl = os.DirIteratorImpl;
+
+    dir: Dir,
+    entries: []u8,
+    impl: Impl,
+    buffer: [8 * Impl.max_entry_size]u8 align(@alignOf(usize)),
+
+    pub inline fn init(dir: Dir, options: Options) InitError!DirIterator {
+        return Impl.init(dir, options);
+    }
+
+    pub inline fn next(it: *DirIterator) NextError!?Entry {
+        return Impl.next(it);
+    }
 };
-pub const DirIteratorEntry = struct {
-    name: [:0]const u8,
-    type: FileType,
-};
-pub const DirIterator = os.DirIterator;
 
 pub const PathIterator = struct {
     path: []const u8,
