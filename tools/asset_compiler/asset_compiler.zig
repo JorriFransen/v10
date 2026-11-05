@@ -113,8 +113,19 @@ pub fn main(init: std.process.Init) !u8 {
         .options = args,
     };
 
-    run(&ctx, &main_arena) catch {
-        try parser.usage(&stderr_writer.interface);
+    run(&ctx, &main_arena) catch |e| {
+        switch (e) {
+            // error.SomeInputsFailed => {},
+
+            else => {
+                if (@errorReturnTrace()) |t| if (t.index > 0) {
+                    const stderr = std.debug.lockStderr(&.{}).terminal();
+                    defer std.debug.unlockStderr();
+                    std.debug.writeErrorReturnTrace(t, stderr) catch {};
+                };
+            },
+        }
+
         return 1;
     };
 
@@ -357,7 +368,14 @@ fn compile(ctx: *Context, allocator: Allocator, input_files: []const InputFile, 
                 }
 
                 var perf_timers = PerfTimers{};
-                const output_or_err = asepriteCompile(a.ctx, a.input_file, &mp[pool_index], &perf_timers);
+                const output_or_err = asepriteCompile(a.ctx, a.input_file, &mp[pool_index], &perf_timers) catch |e| blk: {
+                    if (@errorReturnTrace()) |t| if (t.index > 0) {
+                        const stderr = std.debug.lockStderr(&.{}).terminal();
+                        defer std.debug.unlockStderr();
+                        std.debug.writeErrorReturnTrace(t, stderr) catch {};
+                    };
+                    break :blk e;
+                };
 
                 a.result.* = CompileResult{
                     .perf_timers = perf_timers,
@@ -418,7 +436,7 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
         entry_count: u32 = 0,
     };
 
-    var stack: std.ArrayList(Entry) = try .initCapacity(ctx.gpa, 8);
+    var stack: std.ArrayList(Entry) = try .initCapacity(ctx.gpa, 4);
     defer stack.deinit(ctx.gpa);
 
     try stack.append(ctx.gpa, .{
@@ -434,20 +452,26 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
 
             const full_name = try std.fs.path.join(ctx.gpa, &.{ top.path, entry.name });
 
-            if (entry.type == .dir) {
-                ctx.debug("enter dir: {s}", .{entry.name});
-                const dir = try top.it.dir.openDir(entry.name, .{ .iterate = true });
-                try stack.append(ctx.gpa, .{ .it = try dir.iterate(.{ .reset_handle_pos = false }), .path = full_name });
-            } else {
-                ctx.debug("Check output for stale: {s}", .{full_name});
-                if (!all_output_files.contains(full_name)) {
-                    ctx.debug("Removing stale output: '{s}'", .{entry.name});
+            switch (entry.type) {
+                .dir => {
+                    ctx.debug("enter dir: {s}", .{entry.name});
+                    const dir = try top.it.dir.openDir(entry.name, .{ .iterate = true });
+                    try stack.append(ctx.gpa, .{ .it = try dir.iterate(.{ .reset_handle_pos = false }), .path = full_name });
+                },
 
-                    try top.it.dir.stdDir().deleteFile(ctx.io, entry.name);
-                    top.entry_count -= 1;
-                }
+                .link => ctx.warn("Encounted symlink while cleaning, did not remove: '{s}'", .{full_name}),
 
-                ctx.gpa.free(full_name);
+                else => {
+                    ctx.debug("Check output for stale: {s}", .{full_name});
+                    if (!all_output_files.contains(full_name)) {
+                        ctx.debug("Removing stale output: '{s}'", .{entry.name});
+
+                        try top.it.dir.stdDir().deleteFile(ctx.io, entry.name);
+                        top.entry_count -= 1;
+                    }
+
+                    ctx.gpa.free(full_name);
+                },
             }
         } else {
             const old_top = stack.pop().?;
@@ -793,14 +817,14 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena) ![]InputFile {
 
     var input_files: std.ArrayList(InputFile) = .empty;
 
-    var walker = try ctx.scan_dir.stdDir().walk(tmp.a);
+    var walker = try ctx.scan_dir.walk(tmp.a);
+    defer walker.deinit();
 
-    while (try walker.next(ctx.io)) |entry| {
-        if (entry.kind == .file) {
-            if (std.mem.eql(u8, ".aseprite", extension(entry.basename))) {
-                const tmp_input_path = try tmp.a.dupe(u8, entry.path);
-                const abs_path = try std.fs.path.join(allocator, &.{ ctx.scan_dir_path, tmp_input_path });
-                const path = abs_path[abs_path.len - tmp_input_path.len ..];
+    while (try walker.next()) |entry| {
+        if (entry.type == .file) {
+            if (std.mem.eql(u8, ".aseprite", extension(entry.name))) {
+                const abs_path = try std.fs.path.join(allocator, &.{ ctx.scan_dir_path, entry.path });
+                const path = abs_path[abs_path.len - entry.path.len ..];
 
                 const mtime = try ctx.scan_dir.mTime(entry.path, .{});
 

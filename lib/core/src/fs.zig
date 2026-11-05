@@ -1,11 +1,15 @@
 const std = @import("std");
 
+const Allocator = std.mem.Allocator;
+
 const os_tag = @import("builtin").target.os.tag;
 
 const assert = @import("debug.zig").assert;
 const mem = @import("mem/mem.zig");
 const os = @import("os/os.zig").current.fs;
 const time = @import("time.zig");
+
+const log = @import("log.zig").scoped(.@"core.fs");
 
 pub const Handle = os.Handle;
 pub const Timestamp = time.Timestamp;
@@ -67,7 +71,15 @@ pub const Dir = struct {
     }
 
     pub inline fn iterate(dir: Dir, options: DirIterator.Options) DirIterator.InitError!DirIterator {
-        return DirIterator.init(dir, options);
+        var it: DirIterator = undefined;
+        try it.init(dir, options);
+        return it;
+    }
+
+    pub inline fn walk(dir: Dir, gpa: Allocator) DirWalker.InitError!DirWalker {
+        var walker: DirWalker = undefined;
+        try walker.init(dir, gpa);
+        return walker;
     }
 
     pub fn close(dir: Dir) void {
@@ -239,12 +251,135 @@ pub const DirIterator = struct {
     impl: Impl,
     buffer: [8 * Impl.max_entry_size]u8 align(@alignOf(usize)),
 
-    pub inline fn init(dir: Dir, options: Options) InitError!DirIterator {
-        return Impl.init(dir, options);
+    pub inline fn init(it: *DirIterator, dir: Dir, options: Options) InitError!void {
+        return Impl.init(it, dir, options);
     }
 
     pub inline fn next(it: *DirIterator) NextError!?Entry {
         return Impl.next(it);
+    }
+};
+
+pub const DirWalker = struct {
+    pub const InitError = DirIterator.InitError;
+    pub const NextError = DirIterator.NextError || DirIterator.InitError || OpenDirAtError;
+
+    pub const Entry = struct {
+        type: FileType,
+        dir: Dir,
+        name: [:0]const u8,
+        path: [:0]const u8,
+    };
+
+    const StackEntry = struct {
+        path_len: usize,
+        it: DirIterator,
+
+        next: ?*StackEntry,
+    };
+
+    gpa: Allocator,
+    dir_it: DirIterator,
+    stack_top: ?*StackEntry,
+    stack_freelist: ?*StackEntry,
+    path_buf: [max_output_path_bytes]u8,
+
+    pub fn init(walker: *DirWalker, dir: Dir, gpa: Allocator) InitError!void {
+        walker.* = .{
+            .gpa = gpa,
+            .dir_it = undefined,
+            .stack_top = null,
+            .stack_freelist = null,
+            .path_buf = @splat(0),
+        };
+
+        try walker.dir_it.init(dir, .{ .reset_handle_pos = false });
+    }
+
+    pub fn deinit(walker: *DirWalker) void {
+        var sp = walker.stack_top;
+        while (sp) |stack_entry| {
+            sp = stack_entry.next;
+            stack_entry.dir.close();
+            walker.gpa.destroy(stack_entry);
+        }
+
+        var fp = walker.stack_freelist;
+        while (fp) |stack_entry| {
+            fp = stack_entry.next;
+            walker.gpa.destroy(stack_entry);
+        }
+    }
+
+    pub fn next(walker: *DirWalker) NextError!?Entry {
+        const dir_entry_opt: ?DirIterator.Entry, const parent_dir: Dir, const parent_path_len: usize = blk: {
+            while (walker.stack_top) |top| {
+                const entry_opt = try top.it.next();
+
+                if (entry_opt) |entry| {
+                    break :blk .{ entry, top.it.dir, top.path_len };
+                }
+
+                top.it.dir.close();
+                walker.pop();
+            } else {
+                break :blk .{ try walker.dir_it.next(), walker.dir_it.dir, 0 };
+            }
+        };
+
+        if (dir_entry_opt) |dir_entry| {
+            const sep_len: usize = if (parent_path_len > 0) 1 else 0;
+            const new_path_len = parent_path_len + dir_entry.name.len + sep_len;
+            if (new_path_len > walker.path_buf.len - 1) // -1 for null
+                return error.NameTooLong;
+
+            if (sep_len > 0) {
+                walker.path_buf[parent_path_len] = path_sep;
+            }
+            @memcpy(walker.path_buf[parent_path_len + sep_len ..][0..dir_entry.name.len], dir_entry.name);
+            walker.path_buf[new_path_len] = 0;
+
+            if (dir_entry.type == .dir) {
+                const dir = try parent_dir.openDir(dir_entry.name, .{ .iterate = true, .follow_symlinks = false });
+                errdefer dir.close();
+
+                try walker.push(dir, new_path_len);
+            }
+
+            return .{
+                .type = dir_entry.type,
+                .dir = parent_dir,
+                .name = dir_entry.name,
+                .path = walker.path_buf[0..new_path_len :0],
+            };
+        }
+
+        return null;
+    }
+
+    fn push(walker: *DirWalker, dir: Dir, path_len: usize) !void {
+        const entry = if (walker.stack_freelist) |free_entry| blk: {
+            walker.stack_freelist = free_entry.next;
+            break :blk free_entry;
+        } else try walker.gpa.create(StackEntry);
+
+        entry.* = .{
+            .it = undefined,
+            .path_len = path_len,
+            .next = walker.stack_top,
+        };
+
+        try entry.it.init(dir, .{ .reset_handle_pos = false });
+
+        walker.stack_top = entry;
+    }
+
+    fn pop(walker: *DirWalker) void {
+        const top = walker.stack_top.?;
+
+        walker.stack_top = top.next;
+        top.next = walker.stack_freelist;
+        walker.stack_freelist = top;
     }
 };
 

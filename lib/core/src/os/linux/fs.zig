@@ -181,7 +181,7 @@ pub const DirIteratorImpl = struct {
     const InitError = fs.DirIterator.InitError;
     const NextError = fs.DirIterator.NextError;
 
-    pub fn init(dir: fs.Dir, options: Options) InitError!fs.DirIterator {
+    pub fn init(it: *fs.DirIterator, dir: fs.Dir, options: Options) InitError!void {
         if (options.reset_handle_pos) {
             _ = linux.lseek(dir.handle, 0, .SET) catch |e| switch (e) {
                 error.BADF => return error.InvalidHandle,
@@ -189,7 +189,7 @@ pub const DirIteratorImpl = struct {
             };
         }
 
-        return .{
+        it.* = .{
             .dir = dir,
             .entries = &.{},
             .buffer = undefined,
