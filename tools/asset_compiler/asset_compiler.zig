@@ -442,7 +442,7 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
     defer stack.deinit(ctx.gpa);
 
     try stack.append(ctx.gpa, .{
-        .it = try ctx.output_dir.iterate(.{}),
+        .it = try ctx.output_dir.iterate(.{ .reset_handle_pos = false }),
         .path = "", // To skip close at the end
     });
 

@@ -581,6 +581,294 @@ test "mTimeAt symlinks" {
     try t.expectError(error.SymLinkNotResolved, tmp_dir.mTime("loop_b", .{}));
 }
 
+fn collectDirIteratorResults(allocator: std.mem.Allocator, it: *fs.DirIterator) ![]fs.DirIterator.Entry {
+    var results: std.ArrayList(fs.DirIterator.Entry) = .empty;
+
+    while (try it.next()) |entry| {
+        try results.append(allocator, .{
+            .type = entry.type,
+            .name = try allocator.dupeSentinel(u8, entry.name, 0),
+        });
+    }
+
+    return results.items;
+}
+
+fn expectDirIteratorEntry(expected_type: fs.FileType, expected_name: [:0]const u8, results: []const fs.DirIterator.Entry) !void {
+    var found = false;
+
+    for (results) |actual_entry| {
+        if (std.mem.eql(u8, expected_name, actual_entry.name)) {
+            if (found) {
+                t.failPrint("Duplicate match in actual, entry: .{{ .name = '{s}', .type = {} }}\n", .{ expected_name, expected_type });
+                return error.TestUnexpectedResult;
+            }
+
+            const expected_entry: fs.DirIterator.Entry = .{ .type = expected_type, .name = expected_name };
+            t.expectEqualDeep(expected_entry, actual_entry) catch {
+                t.failPrint("Expected vs actual mismatch, entry name: '{s}'\n", .{expected_name});
+                return error.TestUnexpectedResult;
+            };
+
+            found = true;
+        }
+    }
+
+    if (!found) {
+        t.failPrint("Did not find expected entry: .{{ .name = '{s}', .type = {} }}\n", .{ expected_name, expected_type });
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "DirIterator" {
+    var _a = std.heap.ArenaAllocator.init(t.allocator);
+    defer _a.deinit();
+    const a = _a.allocator();
+
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try zig_tmp_dir.dir.createDir(t.io, "it_dir", .default_dir);
+    const it_dir = try tmp_dir.openDir("it_dir", .{ .iterate = true });
+    const zig_it_dir = it_dir.stdDir();
+
+    const non_it_dir = try tmp_dir.openDir("it_dir", .{});
+    defer non_it_dir.close();
+
+    {
+        var non_it_dir_it: fs.DirIterator = undefined;
+        try t.expectError(error.InvalidHandle, non_it_dir_it.init(non_it_dir, .{ .reset_handle_pos = true }));
+    }
+
+    try it_dir.createDir("subdir", .{});
+
+    for ([_][]const u8{ "file", ".hidden", "with space", "журнал" }) |name| {
+        const file_handle = try zig_it_dir.createFile(t.io, name, .{});
+        file_handle.close(t.io);
+    }
+    {
+        const file_handle = try zig_it_dir.createFile(t.io, "subdir/nested_file", .{});
+        file_handle.close(t.io);
+    }
+
+    {
+        var it = try it_dir.iterate(.{});
+        const result_entries = try collectDirIteratorResults(a, &it);
+
+        try t.expectEqual(5, result_entries.len);
+
+        try expectDirIteratorEntry(.file, "file", result_entries);
+        try expectDirIteratorEntry(.file, ".hidden", result_entries);
+        try expectDirIteratorEntry(.file, "with space", result_entries);
+        try expectDirIteratorEntry(.file, "журнал", result_entries);
+        try expectDirIteratorEntry(.dir, "subdir", result_entries);
+    }
+
+    var it = try it_dir.iterate(.{});
+    while (try it.next()) |_| {}
+    try t.expectEqual(null, try it.next());
+    try t.expectEqual(null, try it.next());
+
+    it_dir.close();
+    try t.expectError(error.InvalidHandle, it.next());
+}
+
+test "DirIterator symlinks" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    try skipIfNoSymLinkPermission(zig_tmp_dir.dir);
+
+    var _a = std.heap.ArenaAllocator.init(t.allocator);
+    defer _a.deinit();
+    const a = _a.allocator();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try zig_tmp_dir.dir.createDir(t.io, "it_dir", .default_dir);
+    const it_dir = try tmp_dir.openDir("it_dir", .{ .iterate = true });
+    const zig_it_dir = it_dir.stdDir();
+
+    const non_it_dir = try tmp_dir.openDir("it_dir", .{});
+    defer non_it_dir.close();
+
+    {
+        var non_it_dir_it: fs.DirIterator = undefined;
+        try t.expectError(error.InvalidHandle, non_it_dir_it.init(non_it_dir, .{ .reset_handle_pos = true }));
+    }
+
+    try it_dir.createDir("subdir", .{});
+    const file_handle = try zig_it_dir.createFile(t.io, "file", .{});
+    file_handle.close(t.io);
+
+    try zig_it_dir.symLink(t.io, "file", "file_link", .{ .is_directory = false });
+    try zig_it_dir.symLink(t.io, "subdir", "subdir_link", .{ .is_directory = true });
+
+    {
+        var it = try it_dir.iterate(.{});
+        const result_entries = try collectDirIteratorResults(a, &it);
+
+        try t.expectEqual(4, result_entries.len);
+
+        try expectDirIteratorEntry(.file, "file", result_entries);
+        try expectDirIteratorEntry(.dir, "subdir", result_entries);
+        try expectDirIteratorEntry(.link, "file_link", result_entries);
+        try expectDirIteratorEntry(.link, "subdir_link", result_entries);
+    }
+
+    var it = try it_dir.iterate(.{});
+    while (try it.next()) |_| {}
+    try t.expectEqual(null, try it.next());
+    try t.expectEqual(null, try it.next());
+
+    it_dir.close();
+    try t.expectError(error.InvalidHandle, it.next());
+}
+
+const WalkerResult = struct {
+    type: fs.FileType,
+    name: []const u8,
+    path: []const u8,
+};
+
+fn collectWalkerResults(allocator: std.mem.Allocator, walker: *fs.DirWalker) ![]WalkerResult {
+    var results: std.ArrayList(WalkerResult) = .empty;
+
+    while (try walker.next()) |entry| {
+        try results.append(allocator, .{
+            .type = entry.type,
+            .name = try allocator.dupe(u8, entry.name),
+            .path = try allocator.dupe(u8, entry.path),
+        });
+    }
+
+    return results.items;
+}
+
+fn expectDirWalkerEntry(expected_type: fs.FileType, expected_path_components: []const []const u8, results: []const WalkerResult) !void {
+    var found = false;
+
+    try t.expect(expected_path_components.len >= 1);
+
+    const expected_name = expected_path_components[expected_path_components.len - 1];
+    const expected_path = try std.fs.path.join(t.allocator, expected_path_components);
+    defer t.allocator.free(expected_path);
+
+    for (results) |actual_entry| {
+        if (std.mem.eql(u8, expected_path, actual_entry.path)) {
+            if (found) {
+                t.failPrint("Duplicate match in actual, entry: .{{ .type = {}, .name = '{s}', .path = '{s}' }}\n", .{ expected_type, expected_name, expected_path });
+                return error.TestUnexpectedResult;
+            }
+
+            const expected_entry: WalkerResult = .{ .type = expected_type, .name = expected_name, .path = expected_path };
+
+            try t.expectEqualDeep(expected_entry, actual_entry);
+
+            found = true;
+        }
+    }
+
+    if (!found) {
+        t.failPrint("Did not find expected entry: .{{ .type = {}, .name = '{s}', .path = '{s}' }}\n", .{ expected_type, expected_name, expected_path });
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "DirWalker" {
+    var _a = std.heap.ArenaAllocator.init(t.allocator);
+    defer _a.deinit();
+    const a = _a.allocator();
+
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try zig_tmp_dir.dir.createDir(t.io, "walk_dir", .default_dir);
+    const walk_dir = try tmp_dir.openDir("walk_dir", .{ .iterate = true });
+    defer walk_dir.close();
+    const zig_walk_dir: std.Io.Dir = .{ .handle = walk_dir.handle };
+
+    try zig_walk_dir.createDirPath(t.io, "sub_a/sub_b");
+    try zig_walk_dir.createDirPath(t.io, "sub_c/deep/sub_d");
+
+    for ([_][]const u8{ "file_a", "dup", "sub_a/file_b", "sub_a/sub_b/file_c", "sub_c/dup", "sub_c/deep/sub_d/leaf" }) |p| {
+        const file_handle = try zig_walk_dir.createFile(t.io, p, .{});
+        file_handle.close(t.io);
+    }
+
+    var walker = try walk_dir.walk(t.allocator);
+    defer walker.deinit();
+
+    const results = try collectWalkerResults(a, &walker);
+
+    try t.expectEqual(11, results.len);
+
+    try expectDirWalkerEntry(.file, &.{"file_a"}, results);
+    try expectDirWalkerEntry(.file, &.{"dup"}, results);
+    try expectDirWalkerEntry(.dir, &.{"sub_a"}, results);
+    try expectDirWalkerEntry(.file, &.{ "sub_a", "file_b" }, results);
+    try expectDirWalkerEntry(.dir, &.{ "sub_a", "sub_b" }, results);
+    try expectDirWalkerEntry(.file, &.{ "sub_a", "sub_b", "file_c" }, results);
+    try expectDirWalkerEntry(.dir, &.{"sub_c"}, results);
+    try expectDirWalkerEntry(.file, &.{ "sub_c", "dup" }, results);
+    try expectDirWalkerEntry(.dir, &.{ "sub_c", "deep" }, results);
+    try expectDirWalkerEntry(.dir, &.{ "sub_c", "deep", "sub_d" }, results);
+    try expectDirWalkerEntry(.file, &.{ "sub_c", "deep", "sub_d", "leaf" }, results);
+
+    try t.expectEqual(null, try walker.next());
+}
+
+test "DirWalker symlinks" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    try skipIfNoSymLinkPermission(zig_tmp_dir.dir);
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try zig_tmp_dir.dir.createDir(t.io, "walk_dir", .default_dir);
+    const walk_dir = try tmp_dir.openDir("walk_dir", .{ .iterate = true });
+    defer walk_dir.close();
+    const zig_walk_dir: std.Io.Dir = .{ .handle = walk_dir.handle };
+
+    const file_handle = try zig_walk_dir.createFile(t.io, "file", .{});
+    file_handle.close(t.io);
+    try zig_walk_dir.createDir(t.io, "subdir", .default_dir);
+    {
+        const f = try zig_walk_dir.createFile(t.io, "subdir/sub_file", .{});
+        f.close(t.io);
+    }
+    try zig_walk_dir.symLink(t.io, "file", "file_link", .{});
+    try zig_walk_dir.symLink(t.io, "subdir", "subdir_link", .{ .is_directory = true });
+    try zig_walk_dir.symLink(t.io, "nonexistent_target", "broken_link", .{});
+    try zig_walk_dir.symLink(t.io, "loop_a", "loop_b", .{});
+    try zig_walk_dir.symLink(t.io, "loop_b", "loop_a", .{});
+
+    var walker = try walk_dir.walk(t.allocator);
+    defer walker.deinit();
+
+    var _a = std.heap.ArenaAllocator.init(t.allocator);
+    defer _a.deinit();
+    const a = _a.allocator();
+
+    const results = try collectWalkerResults(a, &walker);
+
+    try t.expectEqual(8, results.len);
+
+    try expectDirWalkerEntry(.file, &.{"file"}, results);
+    try expectDirWalkerEntry(.dir, &.{"subdir"}, results);
+    try expectDirWalkerEntry(.file, &.{ "subdir", "sub_file" }, results);
+    try expectDirWalkerEntry(.link, &.{"file_link"}, results);
+    try expectDirWalkerEntry(.link, &.{"subdir_link"}, results);
+    try expectDirWalkerEntry(.link, &.{"broken_link"}, results);
+    try expectDirWalkerEntry(.link, &.{"loop_a"}, results);
+    try expectDirWalkerEntry(.link, &.{"loop_b"}, results);
+}
+
 fn testAccess(dir_handle: fs.Handle, path: [:0]const u8) !bool {
     const std_dir = std.Io.Dir{ .handle = dir_handle };
 
@@ -596,15 +884,15 @@ fn testAccess(dir_handle: fs.Handle, path: [:0]const u8) !bool {
 }
 
 fn skipIfNoSymLinkPermission(zig_tmp_dir: std.Io.Dir) !void {
-    if (!is_windows) return;
+    if (is_windows) {
+        var was_enabled: win32.NT.BOOLEAN = undefined;
+        _ = win32.NT.RtlAdjustPrivilege(.CREATE_SYMBOLIC_LINK_PRIVILEGE, .TRUE, .FALSE, &was_enabled);
 
-    var was_enabled: win32.NT.BOOLEAN = undefined;
-    _ = win32.NT.RtlAdjustPrivilege(.CREATE_SYMBOLIC_LINK_PRIVILEGE, .TRUE, .FALSE, &was_enabled);
+        zig_tmp_dir.symLink(t.io, "probe_target", "probe_link", .{}) catch |e| switch (e) {
+            error.PermissionDenied => return error.SkipZigTest,
+            else => return e,
+        };
 
-    zig_tmp_dir.symLink(t.io, "probe_target", "probe_link", .{}) catch |e| switch (e) {
-        error.PermissionDenied => return error.SkipZigTest,
-        else => return e,
-    };
-
-    try zig_tmp_dir.deleteFile(t.io, "probe_link");
+        try zig_tmp_dir.deleteFile(t.io, "probe_link");
+    }
 }

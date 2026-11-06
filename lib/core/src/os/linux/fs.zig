@@ -229,10 +229,9 @@ pub const DirIteratorImpl = struct {
                 1 => if (name[0] == '.') continue,
                 2 => if (name[0] == '.' and name[1] == '.') continue,
 
-                else => return .{
-                    .name = name,
-                    .type = switch (entry.d_type) {
-                        .UNKNOWN => .unknown,
+                else => {
+                    const file_type = switch (entry.d_type) {
+                        .UNKNOWN => fileTypeAt(it.dir, name, .{ .follow_symlinks = false }) catch .unknown,
                         .FIFO => .pipe,
                         .CHR => .char,
                         .DIR => .dir,
@@ -241,7 +240,9 @@ pub const DirIteratorImpl = struct {
                         .LNK => .link,
                         .SOCK => .socket,
                         .WHT => .whiteout,
-                    },
+                    };
+
+                    return .{ .name = name, .type = file_type };
                 },
             }
         } else if (it.entries.len != 0) {

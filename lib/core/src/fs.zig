@@ -44,39 +44,39 @@ pub const File = struct {
 pub const Dir = struct {
     handle: Handle,
 
-    pub inline fn openDir(dir: Dir, sub_path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
+    pub fn openDir(dir: Dir, sub_path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
         return openDirAt(dir, sub_path, options);
     }
 
-    pub inline fn createDir(dir: Dir, dir_name: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+    pub fn createDir(dir: Dir, dir_name: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
         return createDirAt(dir, dir_name, options);
     }
 
-    pub inline fn createDirParents(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+    pub fn createDirParents(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
         return createDirParentsAt(dir, dir_path, options);
     }
 
     /// Follows links.
     /// TODO: Add symLinkExists
-    pub inline fn exists(dir: Dir, sub_path: [:0]const u8) ExistsAtError!bool {
+    pub fn exists(dir: Dir, sub_path: [:0]const u8) ExistsAtError!bool {
         return existsAt(dir, sub_path);
     }
 
-    pub inline fn fileType(dir: Dir, sub_path: [:0]const u8, options: FileTypeAtOptions) FileTypeAtError!FileType {
+    pub fn fileType(dir: Dir, sub_path: [:0]const u8, options: FileTypeAtOptions) FileTypeAtError!FileType {
         return fileTypeAt(dir, sub_path, options);
     }
 
-    pub inline fn mTime(dir: Dir, sub_path: [:0]const u8, options: MTimeAtOptions) MTimeAtError!Timestamp {
+    pub fn mTime(dir: Dir, sub_path: [:0]const u8, options: MTimeAtOptions) MTimeAtError!Timestamp {
         return mTimeAt(dir, sub_path, options);
     }
 
-    pub inline fn iterate(dir: Dir, options: DirIterator.Options) DirIterator.InitError!DirIterator {
+    pub fn iterate(dir: Dir, options: DirIterator.Options) DirIterator.InitError!DirIterator {
         var it: DirIterator = undefined;
         try it.init(dir, options);
         return it;
     }
 
-    pub inline fn walk(dir: Dir, gpa: Allocator) DirWalker.InitError!DirWalker {
+    pub fn walk(dir: Dir, gpa: Allocator) DirWalker.InitError!DirWalker {
         var walker: DirWalker = undefined;
         try walker.init(dir, gpa);
         return walker;
@@ -293,14 +293,14 @@ pub const DirWalker = struct {
             .path_buf = @splat(0),
         };
 
-        try walker.dir_it.init(dir, .{ .reset_handle_pos = false });
+        try walker.dir_it.init(dir, .{ .reset_handle_pos = true });
     }
 
     pub fn deinit(walker: *DirWalker) void {
         var sp = walker.stack_top;
         while (sp) |stack_entry| {
             sp = stack_entry.next;
-            stack_entry.dir.close();
+            stack_entry.it.dir.close();
             walker.gpa.destroy(stack_entry);
         }
 
@@ -362,6 +362,11 @@ pub const DirWalker = struct {
             walker.stack_freelist = free_entry.next;
             break :blk free_entry;
         } else try walker.gpa.create(StackEntry);
+
+        errdefer {
+            entry.next = walker.stack_freelist;
+            walker.stack_freelist = entry;
+        }
 
         entry.* = .{
             .it = undefined,

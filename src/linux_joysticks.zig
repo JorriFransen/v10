@@ -862,7 +862,8 @@ pub fn System(comptime joystick_count: usize) type {
             var present: [io_uring_entry_count]PresentDevice = undefined;
             var present_len: usize = 0;
 
-            var it = try fs.DirIterator.init(.{ .handle = this.dev_input_dir_fd }, .{});
+            var it: fs.DirIterator = undefined;
+            try it.init(.{ .handle = this.dev_input_dir_fd }, .{ .reset_handle_pos = true });
 
             while (try it.next()) |entry| {
                 if (entry.type != .char) continue;
