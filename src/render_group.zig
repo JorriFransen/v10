@@ -437,8 +437,10 @@ pub fn drawRectangleSlowly(buffer: *const LoadedBitmap, origin: V2, x_axis: V2, 
                 const u = inv_x_axis_length_sq * d.inner(x_axis);
                 const v = inv_y_axis_length_sq * d.inner(y_axis);
 
-                assert(u >= 0 and u <= 1);
-                assert(v >= 0 and v <= 1);
+                assert(u >= 0);
+                assert(u <= 1);
+                assert(v >= 0);
+                assert(v <= 1);
 
                 const tx: f32 = u * @as(f32, @floatFromInt(texture.width - 2));
                 const ty: f32 = v * @as(f32, @floatFromInt(texture.height - 2));

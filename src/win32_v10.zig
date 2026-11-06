@@ -48,6 +48,8 @@ var global_source_dll_name_buf: [fs.max_output_path_bytes]u8 = undefined;
 var global_temp_dll_name_buf: [fs.max_output_path_bytes]u8 = undefined;
 var global_gamecode_lock_file_name_buf: [fs.max_output_path_bytes]u8 = undefined;
 
+pub const panic = core.debug.default_panic;
+
 inline fn getWallClock() time.Timestamp {
     return time.Timestamp.now(.monotonic);
 }
@@ -435,6 +437,7 @@ pub fn windowsEntry(
     var thread_context: ThreadContext = .{
         .io = io,
         .fatal_fn = core.debug.defaultFatalFn,
+        .assert_fail_fn = core.debug.defaultAssertFailFn,
         .log_lock_fn = core.log.defaultLock,
         .log_header_fn = core.log.defaultHeader,
     };

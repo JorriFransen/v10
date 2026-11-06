@@ -22,6 +22,8 @@ const fmtAlt = std.fmt.alt;
 const PerfTs = if (compile_options.perf_timers) core.perf.Timestamp else core.perf.VoidTimestamp;
 const PerfDuration = if (compile_options.perf_timers) core.perf.Duration else core.perf.VoidDuration;
 
+pub const panic = debug.default_panic;
+
 const OptionParser = core.cli_arg_parser.Parser(&.{
     .string("", "input_scan_dir", 'i', "Directory to scan for input files"),
     .string("", "output_dir", 'o', "Output directory"),

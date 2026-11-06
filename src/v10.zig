@@ -440,6 +440,7 @@ pub fn chunkPositionFromTilePosition(world: *const World, abs_tile_x: i32, abs_t
 
 pub export fn initLib(thread_context: *ThreadContext) callconv(.c) void {
     core.debug.fatal_fn = thread_context.fatal_fn;
+    core.debug.assert_fail_fn = thread_context.assert_fail_fn;
     core.log.lock_fn = thread_context.log_lock_fn;
     core.log.header_fn = thread_context.log_header_fn;
 }

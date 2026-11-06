@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub const FatalFn = *const fn (msg: []const u8, ra: ?usize) noreturn;
+pub const AssertFailFn = *const fn (msg: []const u8, ra: ?usize) void;
 
 pub fn defaultFatalFn(msg: []const u8, ra: ?usize) noreturn {
     print: {
@@ -30,7 +31,7 @@ pub fn defaultFatalFn(msg: []const u8, ra: ?usize) noreturn {
     }
 
     @breakpoint();
-    @trap();
+    std.process.abort();
 }
 
 pub var fatal_fn: ?FatalFn = null;
@@ -38,6 +39,42 @@ pub var fatal_fn: ?FatalFn = null;
 pub fn fatal(msg: []const u8, ra: ?usize) noreturn {
     const f = fatal_fn orelse defaultFatalFn;
     f(msg, ra);
+}
+
+pub fn defaultAssertFailFn(msg: []const u8, ra: ?usize) void {
+    print: {
+        const stderr = std.debug.lockStderr(&.{}).terminal();
+        defer std.debug.unlockStderr();
+        const writer = stderr.writer;
+
+        writer.print("{s}\n", .{msg}) catch break :print;
+
+        if (@errorReturnTrace()) |t| if (t.index > 0) {
+            writer.writeAll("error return context:\n") catch break :print;
+            std.debug.writeErrorReturnTrace(t, stderr) catch break :print;
+            writer.writeAll("\nstack trace:\n") catch break :print;
+        };
+
+        std.debug.writeCurrentStackTrace(.{
+            .first_address = ra orelse @returnAddress(),
+            .allow_unsafe_unwind = true,
+        }, stderr) catch break :print;
+    }
+
+    // TODO: Wait for other threads to finish panicking?
+
+    if (@inComptime()) {
+        @trap();
+    }
+
+    @breakpoint();
+}
+
+pub var assert_fail_fn: ?AssertFailFn = null;
+
+pub fn assertFail(msg: []const u8, ra: ?usize) void {
+    const af = assert_fail_fn orelse defaultAssertFailFn;
+    af(msg, ra);
 }
 
 pub const default_panic = struct {
@@ -186,14 +223,14 @@ pub const default_panic = struct {
 };
 
 pub fn assert(cond: bool) void {
-    if (builtin.mode == .debug or builtin.mode == .safe) {
-        if (!cond) {
-            @branchHint(.cold);
-            // @disableInstrumentation();
+    @disableInstrumentation();
 
-            fatal("Assertion failed!", @returnAddress());
-            unreachable;
-        }
+    if (!cond) {
+        @branchHint(.cold);
+
+        if (builtin.mode == .debug or builtin.mode == .safe) {
+            assertFail("Assertion failed!", @returnAddress());
+        } else unreachable;
     }
 }
 

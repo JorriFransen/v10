@@ -10,6 +10,8 @@ const AST = @import("ast.zig");
 const emit = @import("emit.zig");
 const resolve = @import("resolver.zig");
 
+const panic = core.debug.default_panic;
+
 const OptionParser = core.cli_arg_parser.Parser(&.{
     .string("", "wayland", 'w', "Wayland xml path"),
     .string("", "out", 'o', "Output directory path"),

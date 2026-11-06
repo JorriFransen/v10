@@ -20,6 +20,7 @@ pub const ThreadContext = struct {
     io: std.Io,
 
     fatal_fn: core.debug.FatalFn,
+    assert_fail_fn: core.debug.AssertFailFn,
 
     log_lock_fn: core.log.LockFn,
     log_header_fn: core.log.HeaderFn,

@@ -38,6 +38,8 @@ const ThreadContext = common.ThreadContext;
 
 // TODO: Check if (wayland) preferred_buffer_scale is relevant
 
+pub const panic = core.debug.default_panic;
+
 pub const log_scope_levels = [_]core.log.ScopeLevel{
     .{ .scope = .linux_joystick, .level = .info },
     .{ .scope = .pulse, .level = .info },
@@ -102,6 +104,7 @@ pub fn linuxEntry(io: std.Io, gpa: std.mem.Allocator, environ: *const std.proces
     var thread_context: ThreadContext = .{
         .io = io,
         .fatal_fn = core.debug.defaultFatalFn,
+        .assert_fail_fn = core.debug.defaultAssertFailFn,
         .log_lock_fn = core.log.defaultLock,
         .log_header_fn = core.log.defaultHeader,
     };
