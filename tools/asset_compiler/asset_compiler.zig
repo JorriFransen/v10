@@ -442,7 +442,7 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
     defer stack.deinit(ctx.gpa);
 
     try stack.append(ctx.gpa, .{
-        .it = try ctx.output_dir.iterate(.{ .reset_handle_pos = false }),
+        .it = ctx.output_dir.iterate(.{ .reset = false }),
         .path = "", // To skip close at the end
     });
 
@@ -458,7 +458,7 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
                 .dir => {
                     ctx.debug("enter dir: {s}", .{entry.name});
                     const dir = try top.it.dir.openDir(entry.name, .{ .iterate = true });
-                    try stack.append(ctx.gpa, .{ .it = try dir.iterate(.{ .reset_handle_pos = false }), .path = full_name });
+                    try stack.append(ctx.gpa, .{ .it = dir.iterate(.{ .reset = false }), .path = full_name });
                 },
 
                 .link => ctx.warn("Encounted symlink while cleaning, did not remove: '{s}'", .{full_name}),
@@ -528,7 +528,7 @@ fn asepriteCompile(ctx: *Context, input_file: *const InputFile, task_mem: []u8, 
             error.PathTooLong => return error.InputPathTooLong,
         };
 
-        var name_buf: [fs.max_name_bytes]u8 = undefined;
+        var name_buf: [fs.max_input_name_bytes]u8 = undefined;
 
         output_file_paths = if (tags.split_layers) blk: {
             const layers = try asepriteLayers(ctx, tmp.arena, &result_arena, input_file, perf_timers);
@@ -819,7 +819,7 @@ fn collectInputFiles(ctx: *const Context, arena: *mem.Arena) ![]InputFile {
 
     var input_files: std.ArrayList(InputFile) = .empty;
 
-    var walker = try ctx.scan_dir.walk(tmp.a);
+    var walker = ctx.scan_dir.walk(tmp.a);
     defer walker.deinit();
 
     while (try walker.next()) |entry| {

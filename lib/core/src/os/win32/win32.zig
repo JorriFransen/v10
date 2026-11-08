@@ -154,8 +154,9 @@ pub const FARPROC = *anyopaque;
 pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(math.maxInt(usize));
 pub const ATTACH_PARENT_PROCESS: DWORD = @bitCast(@as(i32, -1));
 
-pub const MAX_PATH = 260;
+/// Including null
 pub const PATH_MAX_WIDE = 32767;
+/// Not including null
 pub const NAME_MAX = 255;
 
 pub const PROCESS = struct {

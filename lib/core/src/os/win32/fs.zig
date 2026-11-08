@@ -20,7 +20,10 @@ pub const path_sep_str = "\\";
 pub const max_input_path_bytes = win32.PATH_MAX_WIDE;
 /// Including null
 pub const max_output_path_bytes = ((win32.PATH_MAX_WIDE - 1) * 3) + 1;
-pub const max_name_bytes = win32.NAME_MAX;
+/// Not including null
+pub const max_input_name_bytes = win32.NAME_MAX;
+/// Not including null
+pub const max_output_name_bytes = win32.NAME_MAX * 3;
 
 const nt_path_prefix: [4]u16 = .{ '\\', '?', '?', '\\' };
 const local_device_prefix: [4]u16 = .{ '\\', '\\', '.', '\\' };
@@ -324,24 +327,125 @@ inline fn checkForNotDirOnFileNotFound(dir: fs.Dir, path: []const u8) error{ Fil
 }
 
 pub const DirIteratorImpl = struct {
-    pub const max_entry_size = unreachable;
+    pub const max_entry_size = std.mem.alignForward(usize, @sizeOf(win32.NT.FILE.DIRECTORY_INFORMATION) + (@sizeOf(win32.WCHAR) * (win32.NAME_MAX - 1)), @alignOf(win32.NT.FILE.DIRECTORY_INFORMATION));
 
     const Options = fs.DirIterator.Options;
     const Entry = fs.DirIterator.Entry;
 
     const Error = fs.DirIterator.Error;
-    const InitError = fs.DirIterator.InitError;
-    const NextError = fs.DirIterator.NextError;
 
-    pub fn init(dir: fs.Dir, options: Options) InitError!fs.DirIterator {
+    conversion_buffer: [max_output_name_bytes + 1]u8,
+
+    pub fn init(it: *fs.DirIterator, dir: fs.Dir, options: Options) void {
         _ = dir;
         _ = options;
-        unreachable;
+        it.impl = .{
+            .conversion_buffer = undefined,
+        };
     }
 
-    pub fn next(it: *fs.DirIterator) NextError!?Entry {
-        _ = it;
-        unreachable;
+    pub fn next(it: *fs.DirIterator) Error!?Entry {
+        var reset_next_query = false;
+
+        state: switch (it.state) {
+            .done => return null,
+
+            .reset => {
+                reset_next_query = true;
+                it.buffer_used = 0;
+                it.buffer_offset = 0;
+                it.state = .iterating;
+                continue :state .iterating;
+            },
+
+            .iterating => {
+                while (true) {
+                    assert(@hasField(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name"));
+                    const header_size = @offsetOf(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name");
+
+                    while ((it.buffer_used - it.buffer_offset) >= header_size) {
+                        const buf_ptr: [*]align(8) u8 = @ptrCast(&it.buffer);
+                        const entry: *win32.NT.FILE.DIRECTORY_INFORMATION = @ptrCast(@alignCast(buf_ptr + it.buffer_offset));
+
+                        if (entry.next_entry_offset == 0) {
+                            it.buffer_used = 0;
+                            it.buffer_offset = 0;
+                        } else {
+                            it.buffer_offset += entry.next_entry_offset;
+                        }
+
+                        const attributes = entry.file_attributes;
+
+                        const name_ptr: [*]u16 = &entry.file_name;
+                        const wide_name = name_ptr[0 .. entry.file_name_length / @sizeOf(win32.WCHAR)];
+
+                        if (wide_name.len == 1 and wide_name[0] == '.') continue;
+                        if (wide_name.len == 2 and wide_name[0] == '.' and wide_name[1] == '.') continue;
+
+                        const name_len = std.unicode.wtf16LeToWtf8(&it.impl.conversion_buffer, wide_name);
+                        assert(it.impl.conversion_buffer.len > name_len);
+                        it.impl.conversion_buffer[name_len] = 0;
+
+                        const file_type: fs.FileType = if (attributes.REPARSE_POINT)
+                            .link
+                        else if (attributes.DIRECTORY)
+                            .dir
+                        else
+                            .file;
+
+                        return .{ .type = file_type, .name = it.impl.conversion_buffer[0..name_len :0] };
+                    } else {
+                        if (it.buffer_offset != it.buffer_used) {
+                            return error.MalformedDirEntry;
+                        }
+
+                        it.buffer_used = 0;
+                        it.buffer_offset = 0;
+                    }
+
+                    var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+                    const reset = reset_next_query;
+                    reset_next_query = false;
+
+                    switch (win32.NT.NtQueryDirectoryFile(
+                        it.dir.handle,
+                        null,
+                        null,
+                        null,
+                        &io_status_block,
+                        &it.buffer,
+                        it.buffer.len,
+                        .DirectoryInformation,
+                        .FALSE,
+                        null,
+                        .fromBool(reset),
+                    )) {
+                        .SUCCESS => {
+                            it.buffer_used = io_status_block.information;
+                        },
+
+                        .DELETE_PENDING,
+                        .NO_MORE_FILES,
+                        .NO_MORE_ENTRIES,
+                        => {},
+
+                        .ACCESS_DENIED,
+                        .INVALID_HANDLE,
+                        .FILE_CLOSED,
+                        .NOT_A_DIRECTORY,
+                        => return error.InvalidHandle,
+
+                        else => |s| return unexpectedStatus(s),
+                    }
+
+                    if (it.buffer_used == 0) {
+                        it.state = .done;
+                        return null;
+                    }
+                }
+            },
+        }
     }
 };
 

@@ -14,7 +14,9 @@ pub const max_input_path_bytes = linux.PATH_MAX;
 /// including null
 pub const max_output_path_bytes = linux.PATH_MAX;
 /// not including null
-pub const max_name_bytes = linux.NAME_MAX;
+pub const max_input_name_bytes = linux.NAME_MAX;
+/// not including null
+pub const max_output_name_bytes = linux.NAME_MAX;
 
 const S = linux.S;
 
@@ -178,77 +180,87 @@ pub const DirIteratorImpl = struct {
     const Entry = fs.DirIterator.Entry;
 
     const Error = fs.DirIterator.Error;
-    const InitError = fs.DirIterator.InitError;
-    const NextError = fs.DirIterator.NextError;
 
-    pub fn init(it: *fs.DirIterator, dir: fs.Dir, options: Options) InitError!void {
-        if (options.reset_handle_pos) {
-            _ = linux.lseek(dir.handle, 0, .SET) catch |e| switch (e) {
-                error.BADF => return error.InvalidHandle,
-                else => return error.SeekFailed,
-            };
-        }
-
-        it.* = .{
-            .dir = dir,
-            .entries = &.{},
-            .buffer = undefined,
-            .impl = .{},
-        };
+    pub fn init(it: *fs.DirIterator, dir: fs.Dir, options: Options) void {
+        _ = it;
+        _ = dir;
+        _ = options;
     }
 
-    pub fn next(it: *fs.DirIterator) NextError!?Entry {
-        if (it.entries.len == 0) {
-            const new_len = linux.getdents64(it.dir.handle, &it.buffer) catch |e| switch (e) {
-                error.BADF,
-                error.NOENT,
-                error.NOTDIR,
-                error.IO,
-                => return error.InvalidHandle,
+    pub fn next(it: *fs.DirIterator) Error!?Entry {
+        state: switch (it.state) {
+            .done => return null,
 
-                else => return linux.unexpectedError(e),
-            };
+            .reset => {
+                _ = linux.lseek(it.dir.handle, 0, .SET) catch return error.InvalidHandle;
+                it.buffer_used = 0;
+                it.buffer_offset = 0;
+                it.state = .iterating;
+                continue :state .iterating;
+            },
 
-            it.entries = it.buffer[0..new_len];
-        }
+            .iterating => {
+                while (true) {
+                    while ((it.buffer_used - it.buffer_offset) >= @sizeOf(linux.Dirent64)) {
+                        const buf_ptr: [*]align(8) u8 = @ptrCast(&it.buffer);
+                        const entry: *linux.Dirent64 = @ptrCast(@alignCast(buf_ptr + it.buffer_offset));
 
-        while (it.entries.len >= @sizeOf(linux.Dirent64)) {
-            const entry: *linux.Dirent64 = @ptrCast(@alignCast(it.entries.ptr));
+                        if (entry.d_reclen == 0) return error.MalformedDirEntry;
+                        if (entry.d_reclen > it.buffer_used - it.buffer_offset) return error.MalformedDirEntry;
 
-            if (entry.d_reclen == 0) return error.MalformedDirEntry;
+                        it.buffer_offset += entry.d_reclen;
 
-            it.entries = it.entries[entry.d_reclen..];
+                        const name_len = entry.d_reclen - @offsetOf(linux.Dirent64, "d_name");
+                        const name_slice = @as([*]const u8, @ptrCast(&entry.d_name))[0..name_len];
+                        const name = mem.sliceToSentinel(name_slice, 0);
 
-            const name_len = entry.d_reclen - @offsetOf(linux.Dirent64, "d_name");
-            const name_slice = @as([*]const u8, @ptrCast(&entry.d_name))[0..name_len];
-            const name = mem.sliceToSentinel(name_slice, 0);
+                        switch (name.len) {
+                            0 => return error.MalformedDirEntry,
 
-            switch (name.len) {
-                0 => return error.MalformedDirEntry,
+                            1 => if (name[0] == '.') continue,
+                            2 => if (name[0] == '.' and name[1] == '.') continue,
 
-                1 => if (name[0] == '.') continue,
-                2 => if (name[0] == '.' and name[1] == '.') continue,
+                            else => {
+                                const file_type = switch (entry.d_type) {
+                                    .UNKNOWN => fileTypeAt(it.dir, name, .{ .follow_symlinks = false }) catch .unknown,
+                                    .FIFO => .pipe,
+                                    .CHR => .char,
+                                    .DIR => .dir,
+                                    .BLK => .block,
+                                    .REG => .file,
+                                    .LNK => .link,
+                                    .SOCK => .socket,
+                                    .WHT => .whiteout,
+                                };
 
-                else => {
-                    const file_type = switch (entry.d_type) {
-                        .UNKNOWN => fileTypeAt(it.dir, name, .{ .follow_symlinks = false }) catch .unknown,
-                        .FIFO => .pipe,
-                        .CHR => .char,
-                        .DIR => .dir,
-                        .BLK => .block,
-                        .REG => .file,
-                        .LNK => .link,
-                        .SOCK => .socket,
-                        .WHT => .whiteout,
+                                return .{ .name = name, .type = file_type };
+                            },
+                        }
+                    } else {
+                        if (it.buffer_offset != it.buffer_used) return error.MalformedDirEntry;
+
+                        it.buffer_used = 0;
+                        it.buffer_offset = 0;
+                    }
+
+                    it.buffer_used = linux.getdents64(it.dir.handle, &it.buffer) catch |e| switch (e) {
+                        error.BADF,
+                        error.NOENT,
+                        error.NOTDIR,
+                        error.IO,
+                        => return error.InvalidHandle,
+
+                        error.FAULT => return debug.programmerError("Invalid pointer", .{}, null),
+                        error.INVAL => return debug.programmerError("Result buffer too small", .{}, null),
+                        error.UnexpectedErrno => return linux.unexpectedError(e),
                     };
 
-                    return .{ .name = name, .type = file_type };
-                },
-            }
-        } else if (it.entries.len != 0) {
-            return error.MalformedDirEntry;
+                    if (it.buffer_used == 0) {
+                        it.state = .done;
+                        return null;
+                    }
+                }
+            },
         }
-
-        return null;
     }
 };

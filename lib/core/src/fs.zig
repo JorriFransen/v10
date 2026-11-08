@@ -21,7 +21,9 @@ pub const max_input_path_bytes = os.max_input_path_bytes;
 /// Including null
 pub const max_output_path_bytes = os.max_output_path_bytes;
 /// Not including null
-pub const max_name_bytes = os.max_name_bytes;
+pub const max_input_name_bytes = os.max_input_name_bytes;
+/// Not including null
+pub const max_output_name_bytes = os.max_output_name_bytes;
 
 pub const Error = OpenDirAtError || ExistsAtError || DirIterator.Error || CreateDirAtError;
 
@@ -70,15 +72,15 @@ pub const Dir = struct {
         return mTimeAt(dir, sub_path, options);
     }
 
-    pub fn iterate(dir: Dir, options: DirIterator.Options) DirIterator.InitError!DirIterator {
+    pub fn iterate(dir: Dir, options: DirIterator.Options) DirIterator {
         var it: DirIterator = undefined;
-        try it.init(dir, options);
+        it.init(dir, options);
         return it;
     }
 
-    pub fn walk(dir: Dir, gpa: Allocator) DirWalker.InitError!DirWalker {
+    pub fn walk(dir: Dir, gpa: Allocator) DirWalker {
         var walker: DirWalker = undefined;
-        try walker.init(dir, gpa);
+        walker.init(dir, gpa);
         return walker;
     }
 
@@ -232,11 +234,15 @@ inline fn requireDirAt(dir: Dir, sub_path: [:0]const u8) !void {
 }
 
 pub const DirIterator = struct {
-    pub const InitError = error{ SeekFailed, InvalidHandle };
-    pub const NextError = error{ InvalidHandle, MalformedDirEntry, Unexpected };
-    pub const Error = InitError || NextError;
+    pub const Error = error{
+        AccessDenied,
+        InvalidHandle,
+        MalformedDirEntry,
+        Unexpected,
+    };
+
     pub const Options = struct {
-        reset_handle_pos: bool = true,
+        reset: bool = true,
     };
 
     pub const Entry = struct {
@@ -244,25 +250,40 @@ pub const DirIterator = struct {
         type: FileType,
     };
 
+    pub const State = enum {
+        reset,
+        iterating,
+        done,
+    };
+
     const Impl = os.DirIteratorImpl;
 
     dir: Dir,
-    entries: []u8,
+    buffer_offset: usize,
+    buffer_used: usize,
+    state: State,
     impl: Impl,
     buffer: [8 * Impl.max_entry_size]u8 align(@alignOf(usize)),
 
-    pub inline fn init(it: *DirIterator, dir: Dir, options: Options) InitError!void {
+    pub inline fn init(it: *DirIterator, dir: Dir, options: Options) void {
+        it.* = .{
+            .dir = dir,
+            .buffer_offset = 0,
+            .buffer_used = 0,
+            .state = if (options.reset) .reset else .iterating,
+            .buffer = undefined,
+            .impl = undefined,
+        };
         return Impl.init(it, dir, options);
     }
 
-    pub inline fn next(it: *DirIterator) NextError!?Entry {
+    pub inline fn next(it: *DirIterator) @This().Error!?Entry {
         return Impl.next(it);
     }
 };
 
 pub const DirWalker = struct {
-    pub const InitError = DirIterator.InitError;
-    pub const NextError = DirIterator.NextError || DirIterator.InitError || OpenDirAtError;
+    pub const NextError = DirIterator.Error || OpenDirAtError;
 
     pub const Entry = struct {
         type: FileType,
@@ -284,7 +305,7 @@ pub const DirWalker = struct {
     stack_freelist: ?*StackEntry,
     path_buf: [max_output_path_bytes]u8,
 
-    pub fn init(walker: *DirWalker, dir: Dir, gpa: Allocator) InitError!void {
+    pub fn init(walker: *DirWalker, dir: Dir, gpa: Allocator) void {
         walker.* = .{
             .gpa = gpa,
             .dir_it = undefined,
@@ -293,7 +314,7 @@ pub const DirWalker = struct {
             .path_buf = @splat(0),
         };
 
-        try walker.dir_it.init(dir, .{ .reset_handle_pos = true });
+        walker.dir_it.init(dir, .{ .reset = true });
     }
 
     pub fn deinit(walker: *DirWalker) void {
@@ -374,7 +395,7 @@ pub const DirWalker = struct {
             .next = walker.stack_top,
         };
 
-        try entry.it.init(dir, .{ .reset_handle_pos = false });
+        entry.it.init(dir, .{ .reset = false });
 
         walker.stack_top = entry;
     }

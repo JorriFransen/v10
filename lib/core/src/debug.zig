@@ -73,8 +73,12 @@ pub fn defaultAssertFailFn(msg: []const u8, ra: ?usize) void {
 pub var assert_fail_fn: ?AssertFailFn = null;
 
 pub fn assertFail(msg: []const u8, ra: ?usize) void {
-    const af = assert_fail_fn orelse defaultAssertFailFn;
-    af(msg, ra);
+    if (@inComptime()) {
+        @compileError(msg);
+    } else {
+        const af = assert_fail_fn orelse defaultAssertFailFn;
+        af(msg, ra);
+    }
 }
 
 pub const default_panic = struct {

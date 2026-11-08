@@ -8,6 +8,7 @@ const log = @import("../../log.zig").scoped("ntdll");
 const HANDLE = win32.HANDLE;
 const BYTE = win32.BYTE;
 const CHAR = win32.CHAR;
+const WCHAR = win32.WCHAR;
 const USHORT = win32.USHORT;
 const LONG = win32.LONG;
 const ULONG = win32.ULONG;
@@ -34,6 +35,10 @@ pub const BOOLEAN = enum(BYTE) {
     FALSE = 0,
     TRUE = 1,
     _,
+
+    pub inline fn fromBool(b: bool) BOOLEAN {
+        return @fromBackingInt(@intFromBool(b));
+    }
 
     pub inline fn toBool(this: BOOLEAN) bool {
         return @backingInt(this) != 0;
@@ -703,6 +708,20 @@ pub const FILE = struct {
         OVERWRITE = 4,
         OVERWRITE_IF = 5,
     };
+
+    pub const DIRECTORY_INFORMATION = extern struct {
+        next_entry_offset: ULONG,
+        file_index: ULONG,
+        creation_time: LARGE_INTEGER,
+        last_access_time: LARGE_INTEGER,
+        last_write_time: LARGE_INTEGER,
+        change_time: LARGE_INTEGER,
+        end_of_file: LARGE_INTEGER,
+        allocation_size: LARGE_INTEGER,
+        file_attributes: ATTRIBUTES,
+        file_name_length: ULONG,
+        file_name: [1]WCHAR,
+    };
 };
 
 pub const KERNEL_USER_TIMES = extern struct {
@@ -818,6 +837,8 @@ pub const SECURITY_ATTRIBUTES = extern struct {
     security_descriptor: LPVOID,
     inherit_handle: BOOL,
 };
+
+pub const IO_APC_ROUTINE = *const fn (apc_context: *anyopaque, io_status_block: *IO_STATUS_BLOCK, reserved: ULONG) callconv(.winapi) void;
 
 pub const ACCESS_MASK = packed struct(DWORD) {
     specific: packed union(u16) {
@@ -953,6 +974,7 @@ pub extern "ntdll" fn NtCreateFile(file_handle_out: *HANDLE, desired_access: ACC
 pub extern "ntdll" fn NtOpenFile(handle_out: *HANDLE, desired_access: ACCESS_MASK, object_attributes: *const OBJECT_ATTRIBUTES, io_status_block_out: *IO_STATUS_BLOCK, share_access: FILE.SHARE, open_options: FILE.MODE) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtClose(handle: HANDLE) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationFile(handle: HANDLE, io_status_block_out: *IO_STATUS_BLOCK, file_info_out: PVOID, file_info_len: ULONG, file_info_class: FILE.INFOCLASS) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtQueryDirectoryFile(handle: HANDLE, event: ?HANDLE, apc_routine: ?IO_APC_ROUTINE, apc_context: ?*anyopaque, io_status_block_out: *IO_STATUS_BLOCK, file_info_out: *anyopaque, file_info_size: ULONG, file_information_class: FILE.INFOCLASS, return_single_entry: BOOLEAN, file_name: ?*const CUNICODE_STRING, restart_scan: BOOLEAN) callconv(.winapi) NTSTATUS;
 
 pub extern "ntdll" fn RtlDosPathNameToNtPathName_U_WithStatus(dos_file_name: PCWSTR, nt_file_name_out: *UNICODE_STRING, file_part: ?PWSTR, relative_name: ?*RTL_RELATIVE_NAME_U) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn RtlFreeUnicodeString(unicode_string: *UNICODE_STRING) callconv(.winapi) void;

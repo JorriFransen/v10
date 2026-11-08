@@ -1,7 +1,7 @@
 .{
     .name = .v10,
     .version = "0.0.1",
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.17.1",
     .paths = .{
         "build.zig",
         "LICENSE.md",
@@ -18,5 +18,4 @@
         .core = .{ .path = "lib/core" },
     },
     .fingerprint = 0x4fb9faee3e8a9632,
-
 }

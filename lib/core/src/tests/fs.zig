@@ -639,7 +639,8 @@ test "DirIterator" {
 
     {
         var non_it_dir_it: fs.DirIterator = undefined;
-        try t.expectError(error.InvalidHandle, non_it_dir_it.init(non_it_dir, .{ .reset_handle_pos = true }));
+        non_it_dir_it.init(non_it_dir, .{});
+        try t.expectError(error.InvalidHandle, non_it_dir_it.next());
     }
 
     try it_dir.createDir("subdir", .{});
@@ -654,7 +655,7 @@ test "DirIterator" {
     }
 
     {
-        var it = try it_dir.iterate(.{});
+        var it = it_dir.iterate(.{});
         const result_entries = try collectDirIteratorResults(a, &it);
 
         try t.expectEqual(5, result_entries.len);
@@ -666,13 +667,16 @@ test "DirIterator" {
         try expectDirIteratorEntry(.dir, "subdir", result_entries);
     }
 
-    var it = try it_dir.iterate(.{});
+    var it = it_dir.iterate(.{});
     while (try it.next()) |_| {}
     try t.expectEqual(null, try it.next());
     try t.expectEqual(null, try it.next());
 
     it_dir.close();
-    try t.expectError(error.InvalidHandle, it.next());
+    try t.expectEqual(null, try it.next());
+
+    var it2 = it_dir.iterate(.{});
+    try t.expectError(error.InvalidHandle, it2.next());
 }
 
 test "DirIterator symlinks" {
@@ -689,15 +693,8 @@ test "DirIterator symlinks" {
 
     try zig_tmp_dir.dir.createDir(t.io, "it_dir", .default_dir);
     const it_dir = try tmp_dir.openDir("it_dir", .{ .iterate = true });
+    defer it_dir.close();
     const zig_it_dir = it_dir.stdDir();
-
-    const non_it_dir = try tmp_dir.openDir("it_dir", .{});
-    defer non_it_dir.close();
-
-    {
-        var non_it_dir_it: fs.DirIterator = undefined;
-        try t.expectError(error.InvalidHandle, non_it_dir_it.init(non_it_dir, .{ .reset_handle_pos = true }));
-    }
 
     try it_dir.createDir("subdir", .{});
     const file_handle = try zig_it_dir.createFile(t.io, "file", .{});
@@ -707,7 +704,7 @@ test "DirIterator symlinks" {
     try zig_it_dir.symLink(t.io, "subdir", "subdir_link", .{ .is_directory = true });
 
     {
-        var it = try it_dir.iterate(.{});
+        var it = it_dir.iterate(.{});
         const result_entries = try collectDirIteratorResults(a, &it);
 
         try t.expectEqual(4, result_entries.len);
@@ -717,14 +714,6 @@ test "DirIterator symlinks" {
         try expectDirIteratorEntry(.link, "file_link", result_entries);
         try expectDirIteratorEntry(.link, "subdir_link", result_entries);
     }
-
-    var it = try it_dir.iterate(.{});
-    while (try it.next()) |_| {}
-    try t.expectEqual(null, try it.next());
-    try t.expectEqual(null, try it.next());
-
-    it_dir.close();
-    try t.expectError(error.InvalidHandle, it.next());
 }
 
 const WalkerResult = struct {
@@ -800,7 +789,7 @@ test "DirWalker" {
         file_handle.close(t.io);
     }
 
-    var walker = try walk_dir.walk(t.allocator);
+    var walker = walk_dir.walk(t.allocator);
     defer walker.deinit();
 
     const results = try collectWalkerResults(a, &walker);
@@ -848,7 +837,7 @@ test "DirWalker symlinks" {
     try zig_walk_dir.symLink(t.io, "loop_a", "loop_b", .{});
     try zig_walk_dir.symLink(t.io, "loop_b", "loop_a", .{});
 
-    var walker = try walk_dir.walk(t.allocator);
+    var walker = walk_dir.walk(t.allocator);
     defer walker.deinit();
 
     var _a = std.heap.ArenaAllocator.init(t.allocator);
