@@ -1,9 +1,11 @@
 const std = @import("std");
 
-const debug = @import("../../debug.zig");
 const fs = @import("../../fs.zig");
 const linux = @import("linux.zig");
 const mem = @import("../../mem/mem.zig");
+
+const debug = @import("../../debug.zig");
+const assert = debug.assert;
 
 pub const Handle = linux.fd_t;
 
@@ -174,18 +176,13 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
 }
 
 pub const DirIteratorImpl = struct {
-    pub const max_entry_size = std.mem.alignForward(usize, @sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len, @alignOf(linux.Dirent64));
+    pub const min_buffer_size = std.mem.alignForward(usize, @sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len, @alignOf(linux.Dirent64));
+    pub const default_buffer_size = 8 * min_buffer_size;
 
     const Options = fs.DirIterator.Options;
     const Entry = fs.DirIterator.Entry;
 
     const Error = fs.DirIterator.Error;
-
-    pub fn init(it: *fs.DirIterator, dir: fs.Dir, options: Options) void {
-        _ = it;
-        _ = dir;
-        _ = options;
-    }
 
     pub fn next(it: *fs.DirIterator) Error!?Entry {
         state: switch (it.state) {
@@ -210,6 +207,7 @@ pub const DirIteratorImpl = struct {
 
                         it.buffer_offset += entry.d_reclen;
 
+                        comptime assert(@hasField(linux.Dirent64, "d_name"));
                         const name_len = entry.d_reclen - @offsetOf(linux.Dirent64, "d_name");
                         const name_slice = @as([*]const u8, @ptrCast(&entry.d_name))[0..name_len];
                         const name = mem.sliceToSentinel(name_slice, 0);

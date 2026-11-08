@@ -327,22 +327,23 @@ inline fn checkForNotDirOnFileNotFound(dir: fs.Dir, path: []const u8) error{ Fil
 }
 
 pub const DirIteratorImpl = struct {
-    pub const max_entry_size = std.mem.alignForward(usize, @sizeOf(win32.NT.FILE.DIRECTORY_INFORMATION) + (@sizeOf(win32.WCHAR) * (win32.NAME_MAX - 1)), @alignOf(win32.NT.FILE.DIRECTORY_INFORMATION));
+    const OsEntry = win32.NT.FILE.DIRECTORY_INFORMATION;
+
+    comptime {
+        assert(@hasField(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name"));
+    }
+
+    const entry_header_size = @offsetOf(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name");
+    const max_entry_size = std.mem.alignForward(usize, entry_header_size + (@sizeOf(win32.WCHAR) * win32.NAME_MAX), @alignOf(OsEntry));
+    const conversion_aligned_len = std.mem.alignForward(usize, max_output_name_bytes + 1, @alignOf(OsEntry));
+    const entry_buffer_offset = std.mem.alignForward(usize, conversion_aligned_len - max_entry_size, @alignOf(OsEntry));
+    pub const min_buffer_size = entry_buffer_offset + max_entry_size;
+    pub const default_buffer_size = entry_buffer_offset + (8 * max_entry_size);
 
     const Options = fs.DirIterator.Options;
     const Entry = fs.DirIterator.Entry;
 
     const Error = fs.DirIterator.Error;
-
-    conversion_buffer: [max_output_name_bytes + 1]u8,
-
-    pub fn init(it: *fs.DirIterator, dir: fs.Dir, options: Options) void {
-        _ = dir;
-        _ = options;
-        it.impl = .{
-            .conversion_buffer = undefined,
-        };
-    }
 
     pub fn next(it: *fs.DirIterator) Error!?Entry {
         var reset_next_query = false;
@@ -360,19 +361,21 @@ pub const DirIteratorImpl = struct {
 
             .iterating => {
                 while (true) {
-                    assert(@hasField(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name"));
-                    const header_size = @offsetOf(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name");
+                    while ((it.buffer_used - it.buffer_offset) >= entry_header_size) {
+                        const entry: *OsEntry = @ptrCast(@alignCast(it.buffer[entry_buffer_offset + it.buffer_offset ..].ptr));
 
-                    while ((it.buffer_used - it.buffer_offset) >= header_size) {
-                        const buf_ptr: [*]align(8) u8 = @ptrCast(&it.buffer);
-                        const entry: *win32.NT.FILE.DIRECTORY_INFORMATION = @ptrCast(@alignCast(buf_ptr + it.buffer_offset));
+                        var entry_bytes: usize = entry.next_entry_offset;
 
                         if (entry.next_entry_offset == 0) {
+                            entry_bytes = it.buffer_used - it.buffer_offset;
                             it.buffer_used = 0;
                             it.buffer_offset = 0;
                         } else {
                             it.buffer_offset += entry.next_entry_offset;
+                            if (it.buffer_offset > it.buffer_used) return error.MalformedDirEntry;
                         }
+
+                        if (entry_header_size + entry.file_name_length > entry_bytes) return error.MalformedDirEntry;
 
                         const attributes = entry.file_attributes;
 
@@ -382,9 +385,10 @@ pub const DirIteratorImpl = struct {
                         if (wide_name.len == 1 and wide_name[0] == '.') continue;
                         if (wide_name.len == 2 and wide_name[0] == '.' and wide_name[1] == '.') continue;
 
-                        const name_len = std.unicode.wtf16LeToWtf8(&it.impl.conversion_buffer, wide_name);
-                        assert(it.impl.conversion_buffer.len > name_len);
-                        it.impl.conversion_buffer[name_len] = 0;
+                        // WARNING: After conversion, the current entry in the buffer 'might' be overwritten by the converted string!
+                        const name_len = std.unicode.wtf16LeToWtf8(it.buffer[0..max_output_name_bytes], wide_name);
+                        assert(max_output_name_bytes + 1 > name_len);
+                        it.buffer[name_len] = 0;
 
                         const file_type: fs.FileType = if (attributes.REPARSE_POINT)
                             .link
@@ -393,7 +397,7 @@ pub const DirIteratorImpl = struct {
                         else
                             .file;
 
-                        return .{ .type = file_type, .name = it.impl.conversion_buffer[0..name_len :0] };
+                        return .{ .type = file_type, .name = it.buffer[0..name_len :0] };
                     } else {
                         if (it.buffer_offset != it.buffer_used) {
                             return error.MalformedDirEntry;
@@ -408,14 +412,16 @@ pub const DirIteratorImpl = struct {
                     const reset = reset_next_query;
                     reset_next_query = false;
 
+                    const entry_buffer = it.buffer[entry_buffer_offset..];
+
                     switch (win32.NT.NtQueryDirectoryFile(
                         it.dir.handle,
                         null,
                         null,
                         null,
                         &io_status_block,
-                        &it.buffer,
-                        it.buffer.len,
+                        entry_buffer.ptr,
+                        entry_buffer.len,
                         .DirectoryInformation,
                         .FALSE,
                         null,

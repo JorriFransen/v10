@@ -262,8 +262,7 @@ pub const DirIterator = struct {
     buffer_offset: usize,
     buffer_used: usize,
     state: State,
-    impl: Impl,
-    buffer: [8 * Impl.max_entry_size]u8 align(@alignOf(usize)),
+    buffer: [Impl.default_buffer_size]u8 align(@alignOf(usize)),
 
     pub inline fn init(it: *DirIterator, dir: Dir, options: Options) void {
         it.* = .{
@@ -272,9 +271,7 @@ pub const DirIterator = struct {
             .buffer_used = 0,
             .state = if (options.reset) .reset else .iterating,
             .buffer = undefined,
-            .impl = undefined,
         };
-        return Impl.init(it, dir, options);
     }
 
     pub inline fn next(it: *DirIterator) @This().Error!?Entry {

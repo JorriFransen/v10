@@ -63,22 +63,14 @@ pub fn defaultAssertFailFn(msg: []const u8, ra: ?usize) void {
 
     // TODO: Wait for other threads to finish panicking?
 
-    if (@inComptime()) {
-        @trap();
-    }
-
     @breakpoint();
 }
 
 pub var assert_fail_fn: ?AssertFailFn = null;
 
 pub fn assertFail(msg: []const u8, ra: ?usize) void {
-    if (@inComptime()) {
-        @compileError(msg);
-    } else {
-        const af = assert_fail_fn orelse defaultAssertFailFn;
-        af(msg, ra);
-    }
+    const af = assert_fail_fn orelse defaultAssertFailFn;
+    af(msg, ra);
 }
 
 pub const default_panic = struct {
@@ -231,6 +223,10 @@ pub fn assert(cond: bool) void {
 
     if (!cond) {
         @branchHint(.cold);
+
+        if (@inComptime()) {
+            @compileError("Assertion failed!");
+        }
 
         if (builtin.mode == .debug or builtin.mode == .safe) {
             assertFail("Assertion failed!", @returnAddress());
