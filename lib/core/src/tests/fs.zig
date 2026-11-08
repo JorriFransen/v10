@@ -645,7 +645,7 @@ test "DirIterator" {
 
     try it_dir.createDir("subdir", .{});
 
-    for ([_][]const u8{ "file", ".hidden", "with space", "журнал" }) |name| {
+    for ([_][]const u8{ "file", ".hidden", "with space", "журнал", "x" }) |name| {
         const file_handle = try zig_it_dir.createFile(t.io, name, .{});
         file_handle.close(t.io);
     }
@@ -658,13 +658,14 @@ test "DirIterator" {
         var it = it_dir.iterate(.{});
         const result_entries = try collectDirIteratorResults(a, &it);
 
-        try t.expectEqual(5, result_entries.len);
+        try t.expectEqual(6, result_entries.len);
 
         try expectDirIteratorEntry(.file, "file", result_entries);
         try expectDirIteratorEntry(.file, ".hidden", result_entries);
         try expectDirIteratorEntry(.file, "with space", result_entries);
         try expectDirIteratorEntry(.file, "журнал", result_entries);
         try expectDirIteratorEntry(.dir, "subdir", result_entries);
+        try expectDirIteratorEntry(.file, "x", result_entries);
     }
 
     var it = it_dir.iterate(.{});

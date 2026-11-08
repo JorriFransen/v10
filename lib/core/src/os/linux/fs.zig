@@ -4,6 +4,8 @@ const fs = @import("../../fs.zig");
 const linux = @import("linux.zig");
 const mem = @import("../../mem/mem.zig");
 
+const log = @import("../../log.zig").scoped(.@"core.fs.linux");
+
 const debug = @import("../../debug.zig");
 const assert = debug.assert;
 
@@ -176,7 +178,11 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
 }
 
 pub const DirIteratorImpl = struct {
-    pub const min_buffer_size = std.mem.alignForward(usize, @sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len, @alignOf(linux.Dirent64));
+    comptime {
+        assert(@hasField(linux.Dirent64, "d_name"));
+    }
+    pub const entry_header_size = @offsetOf(linux.Dirent64, "d_name");
+    pub const min_buffer_size = std.mem.alignForward(usize, entry_header_size + linux.Dirent64.max_name_len, @alignOf(linux.Dirent64));
     pub const default_buffer_size = 8 * min_buffer_size;
 
     const Options = fs.DirIteratorUnmanaged.Options;
@@ -206,33 +212,30 @@ pub const DirIteratorImpl = struct {
 
                         it.buffer_offset += entry.d_reclen;
 
-                        comptime assert(@hasField(linux.Dirent64, "d_name"));
-                        const name_len = entry.d_reclen - @offsetOf(linux.Dirent64, "d_name");
+                        const name_len = entry.d_reclen - entry_header_size;
                         const name_slice = @as([*]const u8, @ptrCast(&entry.d_name))[0..name_len];
                         const name = mem.sliceToSentinel(name_slice, 0);
 
                         switch (name.len) {
                             0 => return error.MalformedDirEntry,
-
                             1 => if (name[0] == '.') continue,
                             2 => if (name[0] == '.' and name[1] == '.') continue,
-
-                            else => {
-                                const file_type = switch (entry.d_type) {
-                                    .UNKNOWN => fileTypeAt(it.dir, name, .{ .follow_symlinks = false }) catch .unknown,
-                                    .FIFO => .pipe,
-                                    .CHR => .char,
-                                    .DIR => .dir,
-                                    .BLK => .block,
-                                    .REG => .file,
-                                    .LNK => .link,
-                                    .SOCK => .socket,
-                                    .WHT => .whiteout,
-                                };
-
-                                return .{ .name = name, .type = file_type };
-                            },
+                            else => {},
                         }
+
+                        const file_type = switch (entry.d_type) {
+                            .UNKNOWN => fileTypeAt(it.dir, name, .{ .follow_symlinks = false }) catch .unknown,
+                            .FIFO => .pipe,
+                            .CHR => .char,
+                            .DIR => .dir,
+                            .BLK => .block,
+                            .REG => .file,
+                            .LNK => .link,
+                            .SOCK => .socket,
+                            .WHT => .whiteout,
+                        };
+
+                        return .{ .name = name, .type = file_type };
                     } else {
                         if (it.buffer_offset != it.buffer_used) return error.MalformedDirEntry;
 

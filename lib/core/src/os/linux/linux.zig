@@ -142,6 +142,11 @@ pub const Dirent64 = extern struct {
 
     /// Including null
     pub const max_name_len = 256;
+
+    comptime {
+        assert(@offsetOf(@This(), "d_name") == 19);
+        assert(@sizeOf(@This()) == 24);
+    }
 };
 
 // =============================================================================
