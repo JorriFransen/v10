@@ -327,25 +327,25 @@ inline fn checkForNotDirOnFileNotFound(dir: fs.Dir, path: []const u8) error{ Fil
 }
 
 pub const DirIteratorImpl = struct {
-    const OsEntry = win32.NT.FILE.DIRECTORY_INFORMATION;
+    const NtEntry = win32.NT.FILE.DIRECTORY_INFORMATION;
 
     comptime {
-        assert(@hasField(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name"));
+        assert(@hasField(NtEntry, "file_name"));
     }
 
-    const entry_header_size = @offsetOf(win32.NT.FILE.DIRECTORY_INFORMATION, "file_name");
-    const max_entry_size = std.mem.alignForward(usize, entry_header_size + (@sizeOf(win32.WCHAR) * win32.NAME_MAX), @alignOf(OsEntry));
-    const conversion_aligned_len = std.mem.alignForward(usize, max_output_name_bytes + 1, @alignOf(OsEntry));
-    const entry_buffer_offset = std.mem.alignForward(usize, conversion_aligned_len - max_entry_size, @alignOf(OsEntry));
+    const entry_header_size = @offsetOf(NtEntry, "file_name");
+    const max_entry_size = std.mem.alignForward(usize, entry_header_size + (@sizeOf(win32.WCHAR) * win32.NAME_MAX), @alignOf(NtEntry));
+    const conversion_aligned_len = std.mem.alignForward(usize, max_output_name_bytes + 1, @alignOf(NtEntry));
+    const entry_buffer_offset = std.mem.alignForward(usize, conversion_aligned_len - max_entry_size, @alignOf(NtEntry));
     pub const min_buffer_size = entry_buffer_offset + max_entry_size;
     pub const default_buffer_size = entry_buffer_offset + (8 * max_entry_size);
 
-    const Options = fs.DirIterator.Options;
-    const Entry = fs.DirIterator.Entry;
+    const Options = fs.DirIteratorUnmanaged.Options;
+    const Entry = fs.DirIteratorUnmanaged.Entry;
 
-    const Error = fs.DirIterator.Error;
+    const Error = fs.DirIteratorUnmanaged.Error;
 
-    pub fn next(it: *fs.DirIterator) Error!?Entry {
+    pub fn next(it: *fs.DirIteratorUnmanaged, buffer: []align(@alignOf(usize)) u8) Error!?Entry {
         var reset_next_query = false;
 
         state: switch (it.state) {
@@ -362,7 +362,7 @@ pub const DirIteratorImpl = struct {
             .iterating => {
                 while (true) {
                     while ((it.buffer_used - it.buffer_offset) >= entry_header_size) {
-                        const entry: *OsEntry = @ptrCast(@alignCast(it.buffer[entry_buffer_offset + it.buffer_offset ..].ptr));
+                        const entry: *NtEntry = @ptrCast(@alignCast(buffer[entry_buffer_offset + it.buffer_offset ..].ptr));
 
                         var entry_bytes: usize = entry.next_entry_offset;
 
@@ -386,9 +386,9 @@ pub const DirIteratorImpl = struct {
                         if (wide_name.len == 2 and wide_name[0] == '.' and wide_name[1] == '.') continue;
 
                         // WARNING: After conversion, the current entry in the buffer 'might' be overwritten by the converted string!
-                        const name_len = std.unicode.wtf16LeToWtf8(it.buffer[0..max_output_name_bytes], wide_name);
+                        const name_len = std.unicode.wtf16LeToWtf8(buffer[0..max_output_name_bytes], wide_name);
                         assert(max_output_name_bytes + 1 > name_len);
-                        it.buffer[name_len] = 0;
+                        buffer[name_len] = 0;
 
                         const file_type: fs.FileType = if (attributes.REPARSE_POINT)
                             .link
@@ -397,7 +397,7 @@ pub const DirIteratorImpl = struct {
                         else
                             .file;
 
-                        return .{ .type = file_type, .name = it.buffer[0..name_len :0] };
+                        return .{ .type = file_type, .name = buffer[0..name_len :0] };
                     } else {
                         if (it.buffer_offset != it.buffer_used) {
                             return error.MalformedDirEntry;
@@ -412,7 +412,7 @@ pub const DirIteratorImpl = struct {
                     const reset = reset_next_query;
                     reset_next_query = false;
 
-                    const entry_buffer = it.buffer[entry_buffer_offset..];
+                    const entry_buffer = buffer[entry_buffer_offset..];
 
                     switch (win32.NT.NtQueryDirectoryFile(
                         it.dir.handle,
@@ -421,7 +421,7 @@ pub const DirIteratorImpl = struct {
                         null,
                         &io_status_block,
                         entry_buffer.ptr,
-                        entry_buffer.len,
+                        @intCast(entry_buffer.len),
                         .DirectoryInformation,
                         .FALSE,
                         null,

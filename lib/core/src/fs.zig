@@ -25,7 +25,13 @@ pub const max_input_name_bytes = os.max_input_name_bytes;
 /// Not including null
 pub const max_output_name_bytes = os.max_output_name_bytes;
 
-pub const Error = OpenDirAtError || ExistsAtError || DirIterator.Error || CreateDirAtError;
+pub const Error =
+    OpenDirAtError ||
+    ExistsAtError ||
+    CreateDirAtError ||
+    DirIteratorUnmanaged.Error ||
+    DirIterator.Error ||
+    DirWalker.Error;
 
 pub const FileType = enum {
     unknown,
@@ -233,13 +239,8 @@ inline fn requireDirAt(dir: Dir, sub_path: [:0]const u8) !void {
     if (try dir.fileType(sub_path, .{ .follow_symlinks = false }) != .dir) return error.NotDir;
 }
 
-pub const DirIterator = struct {
-    pub const Error = error{
-        AccessDenied,
-        InvalidHandle,
-        MalformedDirEntry,
-        Unexpected,
-    };
+pub const DirIteratorUnmanaged = struct {
+    pub const Error = DirIterator.Error || error{BufferTooSmall};
 
     pub const Options = struct {
         reset: bool = true,
@@ -262,147 +263,223 @@ pub const DirIterator = struct {
     buffer_offset: usize,
     buffer_used: usize,
     state: State,
-    buffer: [Impl.default_buffer_size]u8 align(@alignOf(usize)),
 
-    pub inline fn init(it: *DirIterator, dir: Dir, options: Options) void {
+    pub inline fn init(it: *DirIteratorUnmanaged, dir: Dir, options: Options) void {
         it.* = .{
             .dir = dir,
             .buffer_offset = 0,
             .buffer_used = 0,
             .state = if (options.reset) .reset else .iterating,
-            .buffer = undefined,
         };
     }
 
-    pub inline fn next(it: *DirIterator) @This().Error!?Entry {
-        return Impl.next(it);
+    pub fn next(it: *DirIteratorUnmanaged, buffer: []align(@alignOf(usize)) u8) @This().Error!?Entry {
+        if (buffer.len < Impl.min_buffer_size) return error.BufferTooSmall;
+        return Impl.next(it, buffer);
     }
 };
 
-pub const DirWalker = struct {
-    pub const NextError = DirIterator.Error || OpenDirAtError;
-
-    pub const Entry = struct {
-        type: FileType,
-        dir: Dir,
-        name: [:0]const u8,
-        path: [:0]const u8,
+pub const DirIterator = struct {
+    pub const Error = error{
+        InvalidHandle,
+        MalformedDirEntry,
+        Unexpected,
     };
 
-    const StackEntry = struct {
-        path_len: usize,
-        it: DirIterator,
+    pub const Options = DirIteratorUnmanaged.Options;
+    pub const Entry = DirIteratorUnmanaged.Entry;
 
-        next: ?*StackEntry,
-    };
+    unmanaged: DirIteratorUnmanaged,
+    buffer: [DirIteratorUnmanaged.Impl.default_buffer_size]u8 align(@alignOf(usize)),
 
-    gpa: Allocator,
-    dir_it: DirIterator,
-    stack_top: ?*StackEntry,
-    stack_freelist: ?*StackEntry,
-    path_buf: [max_output_path_bytes]u8,
-
-    pub fn init(walker: *DirWalker, dir: Dir, gpa: Allocator) void {
-        walker.* = .{
-            .gpa = gpa,
-            .dir_it = undefined,
-            .stack_top = null,
-            .stack_freelist = null,
-            .path_buf = @splat(0),
+    pub inline fn init(it: *DirIterator, iterate_dir: Dir, options: Options) void {
+        it.* = .{
+            .unmanaged = undefined,
+            .buffer = undefined,
         };
 
-        walker.dir_it.init(dir, .{ .reset = true });
+        it.unmanaged.init(iterate_dir, options);
     }
 
-    pub fn deinit(walker: *DirWalker) void {
-        var sp = walker.stack_top;
-        while (sp) |stack_entry| {
-            sp = stack_entry.next;
-            stack_entry.it.dir.close();
-            walker.gpa.destroy(stack_entry);
-        }
-
-        var fp = walker.stack_freelist;
-        while (fp) |stack_entry| {
-            fp = stack_entry.next;
-            walker.gpa.destroy(stack_entry);
-        }
+    pub inline fn next(it: *DirIterator) @This().Error!?Entry {
+        return it.unmanaged.next(&it.buffer) catch |e| switch (e) {
+            error.BufferTooSmall => unreachable,
+            else => return @errorCast(e),
+        };
     }
 
-    pub fn next(walker: *DirWalker) NextError!?Entry {
-        const dir_entry_opt: ?DirIterator.Entry, const parent_dir: Dir, const parent_path_len: usize = blk: {
-            while (walker.stack_top) |top| {
-                const entry_opt = try top.it.next();
+    pub inline fn dir(it: *const DirIterator) Dir {
+        return it.unmanaged.dir;
+    }
+};
 
-                if (entry_opt) |entry| {
-                    break :blk .{ entry, top.it.dir, top.path_len };
+pub fn DirWalkerUnmanaged(comptime dir_it_buffer_size: usize) type {
+    if (dir_it_buffer_size < DirIteratorUnmanaged.Impl.min_buffer_size) {
+        @compileError("Invalid buffer size");
+    }
+
+    return struct {
+        pub const Error = DirIterator.Error || OpenDirAtError || error{ OutOfMemory, NameTooLong };
+
+        pub const Entry = struct {
+            type: FileType,
+            dir: Dir,
+            name: [:0]const u8,
+            path: [:0]const u8,
+        };
+
+        const StackEntry = struct {
+            path_len: usize,
+            it: DirIteratorUnmanaged,
+            next: ?*StackEntry,
+
+            buffer: [dir_it_buffer_size]u8 align(@alignOf(usize)),
+        };
+
+        dir_it: DirIteratorUnmanaged,
+        stack_top: ?*StackEntry,
+        stack_freelist: ?*StackEntry,
+        path_buf: [max_output_path_bytes]u8,
+        dir_it_buf: [dir_it_buffer_size]u8 align(@alignOf(usize)),
+
+        pub fn init(walker: *@This(), dir: Dir) void {
+            walker.* = .{
+                .dir_it = undefined,
+                .stack_top = null,
+                .stack_freelist = null,
+                .path_buf = undefined,
+                .dir_it_buf = undefined,
+            };
+
+            walker.dir_it.init(dir, .{ .reset = true });
+        }
+
+        pub fn deinit(walker: *@This(), gpa: Allocator) void {
+            var sp = walker.stack_top;
+            while (sp) |stack_entry| {
+                sp = stack_entry.next;
+                stack_entry.it.dir.close();
+                gpa.destroy(stack_entry);
+            }
+
+            var fp = walker.stack_freelist;
+            while (fp) |stack_entry| {
+                fp = stack_entry.next;
+                gpa.destroy(stack_entry);
+            }
+        }
+
+        pub fn next(walker: *@This(), gpa: Allocator) @This().Error!?Entry {
+            const dir_entry_opt: ?DirIteratorUnmanaged.Entry, const parent_dir: Dir, const parent_path_len: usize = blk: {
+                while (walker.stack_top) |top| {
+                    const entry_opt = top.it.next(&top.buffer) catch |e| switch (e) {
+                        error.BufferTooSmall => unreachable,
+                        else => return @errorCast(e),
+                    };
+
+                    if (entry_opt) |entry| {
+                        break :blk .{ entry, top.it.dir, top.path_len };
+                    }
+
+                    top.it.dir.close();
+                    walker.pop();
+                } else {
+                    break :blk .{
+                        walker.dir_it.next(&walker.dir_it_buf) catch |e| switch (e) {
+                            error.BufferTooSmall => unreachable,
+                            else => return @errorCast(e),
+                        },
+                        walker.dir_it.dir,
+                        0,
+                    };
+                }
+            };
+
+            if (dir_entry_opt) |dir_entry| {
+                const sep_len: usize = if (parent_path_len > 0) 1 else 0;
+                const new_path_len = parent_path_len + dir_entry.name.len + sep_len;
+                if (new_path_len > walker.path_buf.len - 1) // -1 for null
+                    return error.NameTooLong;
+
+                if (sep_len > 0) {
+                    walker.path_buf[parent_path_len] = path_sep;
+                }
+                @memcpy(walker.path_buf[parent_path_len + sep_len ..][0..dir_entry.name.len], dir_entry.name);
+                walker.path_buf[new_path_len] = 0;
+
+                if (dir_entry.type == .dir) {
+                    const dir = try parent_dir.openDir(dir_entry.name, .{ .iterate = true, .follow_symlinks = false });
+                    errdefer dir.close();
+
+                    try walker.push(gpa, dir, new_path_len);
                 }
 
-                top.it.dir.close();
-                walker.pop();
-            } else {
-                break :blk .{ try walker.dir_it.next(), walker.dir_it.dir, 0 };
-            }
-        };
-
-        if (dir_entry_opt) |dir_entry| {
-            const sep_len: usize = if (parent_path_len > 0) 1 else 0;
-            const new_path_len = parent_path_len + dir_entry.name.len + sep_len;
-            if (new_path_len > walker.path_buf.len - 1) // -1 for null
-                return error.NameTooLong;
-
-            if (sep_len > 0) {
-                walker.path_buf[parent_path_len] = path_sep;
-            }
-            @memcpy(walker.path_buf[parent_path_len + sep_len ..][0..dir_entry.name.len], dir_entry.name);
-            walker.path_buf[new_path_len] = 0;
-
-            if (dir_entry.type == .dir) {
-                const dir = try parent_dir.openDir(dir_entry.name, .{ .iterate = true, .follow_symlinks = false });
-                errdefer dir.close();
-
-                try walker.push(dir, new_path_len);
+                return .{
+                    .type = dir_entry.type,
+                    .dir = parent_dir,
+                    .name = dir_entry.name,
+                    .path = walker.path_buf[0..new_path_len :0],
+                };
             }
 
-            return .{
-                .type = dir_entry.type,
-                .dir = parent_dir,
-                .name = dir_entry.name,
-                .path = walker.path_buf[0..new_path_len :0],
+            return null;
+        }
+
+        fn push(walker: *@This(), gpa: Allocator, dir: Dir, path_len: usize) error{OutOfMemory}!void {
+            const entry = if (walker.stack_freelist) |free_entry| blk: {
+                walker.stack_freelist = free_entry.next;
+                break :blk free_entry;
+            } else try gpa.create(StackEntry);
+
+            errdefer {
+                entry.next = walker.stack_freelist;
+                walker.stack_freelist = entry;
+            }
+
+            entry.* = .{
+                .it = undefined,
+                .path_len = path_len,
+                .next = walker.stack_top,
+                .buffer = undefined,
             };
+
+            entry.it.init(dir, .{ .reset = false });
+
+            walker.stack_top = entry;
         }
 
-        return null;
-    }
+        fn pop(walker: *@This()) void {
+            const top = walker.stack_top.?;
 
-    fn push(walker: *DirWalker, dir: Dir, path_len: usize) !void {
-        const entry = if (walker.stack_freelist) |free_entry| blk: {
-            walker.stack_freelist = free_entry.next;
-            break :blk free_entry;
-        } else try walker.gpa.create(StackEntry);
-
-        errdefer {
-            entry.next = walker.stack_freelist;
-            walker.stack_freelist = entry;
+            walker.stack_top = top.next;
+            top.next = walker.stack_freelist;
+            walker.stack_freelist = top;
         }
+    };
+}
 
-        entry.* = .{
-            .it = undefined,
-            .path_len = path_len,
-            .next = walker.stack_top,
+pub const DirWalker = struct {
+    const Unmanaged = DirWalkerUnmanaged(DirIteratorUnmanaged.Impl.default_buffer_size);
+    const Error = Unmanaged.Error;
+
+    gpa: Allocator,
+    unmanaged: Unmanaged,
+
+    pub inline fn init(walker: *DirWalker, dir: Dir, gpa: Allocator) void {
+        walker.* = .{
+            .gpa = gpa,
+            .unmanaged = undefined,
         };
 
-        entry.it.init(dir, .{ .reset = false });
-
-        walker.stack_top = entry;
+        walker.unmanaged.init(dir);
     }
 
-    fn pop(walker: *DirWalker) void {
-        const top = walker.stack_top.?;
+    pub inline fn deinit(walker: *DirWalker) void {
+        walker.unmanaged.deinit(walker.gpa);
+    }
 
-        walker.stack_top = top.next;
-        top.next = walker.stack_freelist;
-        walker.stack_freelist = top;
+    pub inline fn next(walker: *DirWalker) @This().Error!?Unmanaged.Entry {
+        return walker.unmanaged.next(walker.gpa);
     }
 };
 

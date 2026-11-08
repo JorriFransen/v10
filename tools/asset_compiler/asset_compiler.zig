@@ -250,7 +250,7 @@ pub fn run(ctx: *Context, arena: *mem.Arena) !void {
     var all_output_files: std.StringHashMapUnmanaged(void) = .empty;
     defer all_output_files.deinit(ctx.gpa);
 
-    try all_output_files.putNoClobber(ctx.gpa, timestamp_file_sub_path, undefined);
+    try all_output_files.putNoClobber(ctx.gpa, timestamp_file_sub_path, undefined); // Avoid remove on clean
 
     if (file_indices_to_compile.len > 0) {
         const err_opt = try aggregate(ctx, input_files, ts_file, results, &total_durations, &all_output_files);
@@ -457,7 +457,7 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
             switch (entry.type) {
                 .dir => {
                     ctx.debug("enter dir: {s}", .{entry.name});
-                    const dir = try top.it.dir.openDir(entry.name, .{ .iterate = true });
+                    const dir = try top.it.dir().openDir(entry.name, .{ .iterate = true });
                     try stack.append(ctx.gpa, .{ .it = dir.iterate(.{ .reset = false }), .path = full_name });
                 },
 
@@ -468,7 +468,7 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
                     if (!all_output_files.contains(full_name)) {
                         ctx.debug("Removing stale output: '{s}'", .{entry.name});
 
-                        try top.it.dir.stdDir().deleteFile(ctx.io, entry.name);
+                        try top.it.dir().stdDir().deleteFile(ctx.io, entry.name);
                         top.entry_count -= 1;
                     }
 
@@ -481,13 +481,13 @@ fn clean(ctx: *Context, all_output_files: *std.StringHashMapUnmanaged(void)) !vo
             if (old_top.path.len > 0) {
                 const new_top = &stack.items[stack.items.len - 1];
 
-                old_top.it.dir.close();
+                old_top.it.dir().close();
 
                 if (old_top.entry_count == 0) {
                     ctx.debug("Removing empty dir: '{s}'", .{old_top.path});
                     const sub_path = std.fs.path.basename(old_top.path);
 
-                    new_top.it.dir.stdDir().deleteDir(ctx.io, sub_path) catch |e| switch (e) {
+                    new_top.it.dir().stdDir().deleteDir(ctx.io, sub_path) catch |e| switch (e) {
                         error.DirNotEmpty => debug.programmerError("Expected empty dir", .{}, null) catch return e,
                         else => return e,
                     };

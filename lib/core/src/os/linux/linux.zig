@@ -3397,7 +3397,7 @@ pub const Getdents64Error = error{
     UnexpectedErrno,
 };
 
-pub fn getdents64(dir_fd: dirfd_t, buf: []u8) Getdents64Error!usize {
+pub fn getdents64(dir_fd: dirfd_t, buf: []align(@alignOf(Dirent64)) u8) Getdents64Error!usize {
     assert(buf.len >= @sizeOf(Dirent64) + Dirent64.max_name_len);
 
     while (true) {

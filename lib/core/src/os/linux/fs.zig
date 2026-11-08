@@ -179,12 +179,12 @@ pub const DirIteratorImpl = struct {
     pub const min_buffer_size = std.mem.alignForward(usize, @sizeOf(linux.Dirent64) + linux.Dirent64.max_name_len, @alignOf(linux.Dirent64));
     pub const default_buffer_size = 8 * min_buffer_size;
 
-    const Options = fs.DirIterator.Options;
-    const Entry = fs.DirIterator.Entry;
+    const Options = fs.DirIteratorUnmanaged.Options;
+    const Entry = fs.DirIteratorUnmanaged.Entry;
 
-    const Error = fs.DirIterator.Error;
+    const Error = fs.DirIteratorUnmanaged.Error;
 
-    pub fn next(it: *fs.DirIterator) Error!?Entry {
+    pub fn next(it: *fs.DirIteratorUnmanaged, buffer: []align(@alignOf(usize)) u8) Error!?Entry {
         state: switch (it.state) {
             .done => return null,
 
@@ -199,8 +199,7 @@ pub const DirIteratorImpl = struct {
             .iterating => {
                 while (true) {
                     while ((it.buffer_used - it.buffer_offset) >= @sizeOf(linux.Dirent64)) {
-                        const buf_ptr: [*]align(8) u8 = @ptrCast(&it.buffer);
-                        const entry: *linux.Dirent64 = @ptrCast(@alignCast(buf_ptr + it.buffer_offset));
+                        const entry: *linux.Dirent64 = @ptrCast(@alignCast(buffer.ptr + it.buffer_offset));
 
                         if (entry.d_reclen == 0) return error.MalformedDirEntry;
                         if (entry.d_reclen > it.buffer_used - it.buffer_offset) return error.MalformedDirEntry;
@@ -241,7 +240,7 @@ pub const DirIteratorImpl = struct {
                         it.buffer_offset = 0;
                     }
 
-                    it.buffer_used = linux.getdents64(it.dir.handle, &it.buffer) catch |e| switch (e) {
+                    it.buffer_used = linux.getdents64(it.dir.handle, buffer) catch |e| switch (e) {
                         error.BADF,
                         error.NOENT,
                         error.NOTDIR,
