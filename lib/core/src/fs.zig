@@ -52,18 +52,6 @@ pub const File = struct {
 pub const Dir = struct {
     handle: Handle,
 
-    pub fn openDir(dir: Dir, sub_path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
-        return openDirAt(dir, sub_path, options);
-    }
-
-    pub fn createDir(dir: Dir, dir_name: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
-        return createDirAt(dir, dir_name, options);
-    }
-
-    pub fn createDirParents(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
-        return createDirParentsAt(dir, dir_path, options);
-    }
-
     /// Follows links.
     /// TODO: Add symLinkExists
     pub fn exists(dir: Dir, sub_path: [:0]const u8) ExistsAtError!bool {
@@ -76,6 +64,22 @@ pub const Dir = struct {
 
     pub fn mTime(dir: Dir, sub_path: [:0]const u8, options: MTimeAtOptions) MTimeAtError!Timestamp {
         return mTimeAt(dir, sub_path, options);
+    }
+
+    pub fn openDir(dir: Dir, sub_path: [:0]const u8, options: OpenDirAtOptions) OpenDirAtError!Dir {
+        return openDirAt(dir, sub_path, options);
+    }
+
+    pub fn createDir(dir: Dir, dir_name: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+        return createDirAt(dir, dir_name, options);
+    }
+
+    pub fn createDirParents(dir: Dir, dir_path: [:0]const u8, options: CreateDirAtOptions) CreateDirAtError!void {
+        return createDirParentsAt(dir, dir_path, options);
+    }
+
+    }
+
     }
 
     pub fn iterate(dir: Dir, options: DirIterator.Options) DirIterator {

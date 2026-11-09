@@ -593,9 +593,7 @@ pub fn System(comptime joystick_count: usize) type {
             this.flushIoUring();
             this.io_uring.deinit();
 
-            _ = linux.inotify_rm_watch(this.inotify_fd, this.inotify_wd) catch |e| {
-                log.err("Failed to remove inotify watch '/dev/input', error: '{}'", .{e});
-            };
+            linux.inotify_rm_watch(this.inotify_fd, this.inotify_wd);
             this.inotify_wd = -1;
 
             linux.close(this.inotify_fd);

@@ -382,8 +382,12 @@ pub const DirIteratorImpl = struct {
                         const name_ptr: [*]u16 = &entry.file_name;
                         const wide_name = name_ptr[0 .. entry.file_name_length / @sizeOf(win32.WCHAR)];
 
-                        if (wide_name.len == 1 and wide_name[0] == '.') continue;
-                        if (wide_name.len == 2 and wide_name[0] == '.' and wide_name[1] == '.') continue;
+                        switch (wide_name.len) {
+                            0 => return error.MalformedDirEntry,
+                            1 => if (wide_name[0] == '.') continue,
+                            2 => if (wide_name[0] == '.' and wide_name[1] == '.') continue,
+                            else => {},
+                        }
 
                         // WARNING: After conversion, the current entry in the buffer 'might' be overwritten by the converted string!
                         const name_len = std.unicode.wtf16LeToWtf8(buffer[0..max_output_name_bytes], wide_name);

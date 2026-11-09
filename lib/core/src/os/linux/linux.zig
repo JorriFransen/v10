@@ -91,7 +91,11 @@ fn unexpectedErrno(expected_err_set_name: []const u8, errno: Errno) error{Unexpe
     return error.UnexpectedErrno;
 }
 
-fn unexpectedErrnoError(err: anyerror) error{UnexpectedErrno} {
+fn errnoProgrammerError(comptime fmt: []const u8, args: anytype) error{UnexpectedErrno} {
+    debug.programmerError(fmt, args, @returnAddress()) catch return error.UnexpectedErrno;
+}
+
+fn _unexpectedErrnoError(err: anyerror) error{UnexpectedErrno} {
     debug.programmerError("Unexpected error: '{s}'", .{@errorName(err)}, @returnAddress()) catch return error.UnexpectedErrno;
 }
 
@@ -561,50 +565,16 @@ pub const AT = struct {
     };
 };
 
-pub const OpenError = error{
-    ACCES,
-    BUSY,
-    DQUOT,
-    EXIST,
-    FAULT,
-    FBIG,
-    INVAL,
-    ISDIR,
-    LOOP,
-    MFILE,
-    NAMETOOLONG,
-    NFILE,
-    NODEV,
-    NOENT,
-    NOMEM,
-    NOSPC,
-    NOTDIR,
-    NXIO,
-    OPNOTSUPP,
-    OVERFLOW,
-    PERM,
-    ROFS,
-    TXTBSY,
-    WOULDBLOCK,
-
-    UnexpectedErrno,
-};
-
-pub fn open(path: [*:0]const u8, flags: O, mode: S) OpenError!fd_t {
-    const result = openat(AT.FDCWD, path, flags, mode) catch |e| switch (e) {
-        error.BADF => return unexpectedErrnoError(e),
-        else => return @errorCast(e),
-    };
+pub fn open(path: [*:0]const u8, flags: O, mode: S) OpenatError!fd_t {
+    const result = openat(AT.FDCWD, path, flags, mode);
     return result;
 }
 
 pub const OpenatError = error{
     ACCES,
-    BADF,
     BUSY,
     DQUOT,
     EXIST,
-    FAULT,
     FBIG,
     INVAL,
     ISDIR,
@@ -638,7 +608,11 @@ pub fn openat(dir_fd: dirfd_t, sub_path: [*:0]const u8, flags: O, mode: S) Opena
             zeroExtendToUsize(mode),
         );
 
-        if (try handleErrnoRetry(OpenatError, rc)) continue;
+        if (handleErrnoRetry(OpenatError || error{ BADF, FAULT }, rc) catch |e| switch (e) {
+            error.BADF => return errnoProgrammerError("Invalid fd", .{}),
+            error.FAULT => return errnoProgrammerError("Invalid pointer", .{}),
+            else => return @errorCast(e),
+        }) continue;
 
         return safeTrunc(c_int, rc);
     }
@@ -647,12 +621,9 @@ pub fn openat(dir_fd: dirfd_t, sub_path: [*:0]const u8, flags: O, mode: S) Opena
 pub const FcntlError = error{
     ACCES,
     AGAIN,
-    BADF,
     BUSY,
     DEADLK,
-    FAULT,
     INTR,
-    INVAL,
     MFILE,
     NOLCK,
     PERM,
@@ -667,7 +638,18 @@ pub fn fcntl(fd: fd_t, op: c_int, arg: c_ulong) FcntlError!c_long {
         safeExtendToUsize(op),
         arg,
     );
-    try handleErrno(FcntlError, rc);
+
+    handleErrno(FcntlError || error{
+        BADF,
+        FAULT,
+        INVAL,
+    }, rc) catch |e| switch (e) {
+        error.BADF => return errnoProgrammerError("Invalid fd", .{}),
+        error.FAULT => return errnoProgrammerError("Invalid pointer", .{}),
+        error.INVAL => return errnoProgrammerError("Invalid op", .{}),
+        else => return @errorCast(e),
+    };
+
     return safeTrunc(c_long, rc);
 }
 
@@ -740,7 +722,6 @@ pub const IN = packed struct(u32) {
 };
 
 pub const InotifyInit1Error = error{
-    INVAL,
     MFILE,
     NFILE,
     NOMEM,
@@ -753,21 +734,20 @@ pub fn inotify_init1(flags: O) InotifyInit1Error!fd_t {
         .inotify_init1,
         zeroExtendToUsize(flags),
     );
-    try handleErrno(InotifyInit1Error, rc);
+    handleErrno(InotifyInit1Error || error{INVAL}, rc) catch |e| switch (e) {
+        error.INVAL => return errnoProgrammerError("Invalid flags", .{}),
+        else => return @errorCast(e),
+    };
     return safeTrunc(fd_t, rc);
 }
 
 pub const InotifyAddWatchError = error{
     ACCES,
-    BADF,
     EXIST,
-    FAULT,
-    INVAL,
     NAMETOOLONG,
     NOENT,
     NOMEM,
     NOSPC,
-    NOTDIR,
 
     UnexpectedErrno,
 };
@@ -780,25 +760,30 @@ pub fn inotify_add_watch(fd: fd_t, path: [*:0]const u8, mask: IN) InotifyAddWatc
             @intFromPtr(path),
             zeroExtendToUsize(mask),
         );
-        if (try handleErrnoRetry(InotifyAddWatchError, rc)) continue;
+        if (handleErrnoRetry(InotifyAddWatchError || error{ BADF, INVAL, FAULT, NOTDIR }, rc) catch |e| switch (e) {
+            error.BADF => return errnoProgrammerError("Invalid fd", .{}),
+            error.INVAL => return errnoProgrammerError("Invalid mask or fd is not an inotify fd (mask: {})", .{mask}),
+            error.FAULT => return errnoProgrammerError("Invalid pointer", .{}),
+            error.NOTDIR => return errnoProgrammerError("mask contains IN_ONLYDIR and path is not a directory", .{}),
+            else => return @errorCast(e),
+        }) continue;
         return safeTrunc(c_int, rc);
     }
 }
 
-pub const InotifyRmWatchError = error{
-    BADF,
-    INVAL,
-
-    UnexpectedErrno,
-};
-
-pub fn inotify_rm_watch(fd: fd_t, wd: c_int) InotifyRmWatchError!void {
+pub fn inotify_rm_watch(fd: fd_t, wd: c_int) void {
     const rc = syscall2(
         .inotify_rm_watch,
         safeExtendToUsize(fd),
         safeExtendToUsize(wd),
     );
-    try handleErrno(InotifyRmWatchError, rc);
+
+    handleErrno(error{ BADF, INVAL, UnexpectedErrno }, rc) catch |e| switch (e) {
+        error.BADF => errnoProgrammerError("Invalid fd", .{}) catch {},
+        error.INVAL => errnoProgrammerError("invalid wd or fd is not an inotify fd", .{}) catch {},
+        error.UnexpectedErrno => _unexpectedErrnoError(e) catch {},
+    };
+
     assert(rc == 0);
 }
 
@@ -2249,11 +2234,8 @@ pub inline fn _IOWR(@"type": u8, nr: u8, comptime T: type) _IOC {
 pub const IoctlError = error{
     ACCES,
     AGAIN,
-    BADF,
     BUSY,
-    FAULT,
     INTR,
-    INVAL,
     IO,
     NODEV,
     NOENT,
@@ -2269,14 +2251,21 @@ pub const IoctlError = error{
     UnexpectedErrno,
 };
 
-pub fn ioctl(fd: fd_t, request: _IOC, arg: usize) IoctlError!usize {
+pub fn ioctl(fd: fd_t, op: _IOC, arg: usize) IoctlError!usize {
     const rc = syscall3(
         .ioctl,
         safeExtendToUsize(fd),
-        zeroExtendToUsize(request),
+        zeroExtendToUsize(op),
         arg,
     );
-    try handleErrno(IoctlError, rc);
+
+    handleErrno(IoctlError || error{ BADF, FAULT, INVAL }, rc) catch |e| switch (e) {
+        error.BADF => return errnoProgrammerError("Invalid fd", .{}),
+        error.FAULT => return errnoProgrammerError("Invalid pointer", .{}),
+        error.INVAL => return errnoProgrammerError("Invalid op or arg", .{}),
+        else => return @errorCast(e),
+    };
+
     return safeTrunc(usize, rc);
 }
 
@@ -2366,9 +2355,7 @@ pub const MAP_TYPE = enum(u4) {
 pub const MmapError = error{
     ACCES,
     AGAIN,
-    BADF,
     EXIST,
-    INVAL,
     NFILE,
     NODEV,
     NOMEM,
@@ -2389,31 +2376,40 @@ pub fn mmap(addr: ?[*]align(page_size) u8, length: usize, prot: PROT, flags: MAP
         zeroExtendToUsize(fd),
         signExtendToUsize(offset),
     );
-    try handleErrno(MmapError, rc);
+
+    handleErrno(MmapError || error{ BADF, INVAL }, rc) catch |e| switch (e) {
+        error.BADF => return errnoProgrammerError("Invalid fd", .{}),
+        error.INVAL => return errnoProgrammerError("Invalid address range or invalid offset or invalid flags", .{}),
+        else => return @errorCast(e),
+    };
+
     return @as([*]align(page_size) u8, @ptrFromInt(@as(usize, @bitCast(rc))))[0..length];
 }
 
 pub const MprotectError = error{
     ACCES,
-    INVAL,
     NOMEM,
 
     UnexpectedErrno,
 };
 
-pub fn mprotect(slice: []align(page_size) const u8, prot: PROT) MprotectError!void {
+pub fn mprotect(memory: []align(page_size) const u8, prot: PROT) MprotectError!void {
     const rc = syscall3(
         .mprotect,
-        @intFromPtr(slice.ptr),
-        slice.len,
+        @intFromPtr(memory.ptr),
+        memory.len,
         zeroExtendToUsize(prot),
     );
-    try handleErrno(MprotectError, rc);
+
+    handleErrno(MprotectError || error{INVAL}, rc) catch |e| switch (e) {
+        error.INVAL => return errnoProgrammerError("Invalid address range or invalid prot", .{}),
+        else => return @errorCast(e),
+    };
+
     assert(rc == 0);
 }
 
 pub const MunmapError = error{
-    INVAL,
     NOMEM,
 
     UnexpectedErrno,
@@ -2421,7 +2417,12 @@ pub const MunmapError = error{
 
 pub fn munmap(memory: []align(page_size) const u8) MunmapError!void {
     const rc = syscall2(.munmap, @intFromPtr(memory.ptr), memory.len);
-    try handleErrno(MunmapError, rc);
+
+    handleErrno(MunmapError || error{INVAL}, rc) catch |e| switch (e) {
+        error.INVAL => return errnoProgrammerError("Invalid address range or addr not a multiple of page size", .{}),
+        else => return @errorCast(e),
+    };
+
     assert(rc == 0);
 }
 
@@ -2454,9 +2455,7 @@ pub const pollfd = extern struct {
 };
 
 pub const PollError = error{
-    FAULT,
     INTR,
-    INVAL,
     NOMEM,
 
     UnexpectedErrno,
@@ -2469,7 +2468,13 @@ pub fn poll(fds: []pollfd, timeout: c_int) PollError!c_int {
         fds.len,
         zeroExtendToUsize(timeout),
     );
-    try handleErrno(PollError, rc);
+
+    handleErrno(PollError || error{ FAULT, INVAL }, rc) catch |e| switch (e) {
+        error.FAULT => return errnoProgrammerError("Invalid pointer", .{}),
+        error.INVAL => return errnoProgrammerError("Invalid nfds value (exceeds RLIMITNOFILE) or invalid timeout (negative)", .{}),
+        else => return @errorCast(e),
+    };
+
     return safeTrunc(c_int, rc);
 }
 
@@ -2481,7 +2486,13 @@ pub fn ppoll(fds: []pollfd, timeout: ?*const timespec, sigmask: ?*sigset_t) Poll
         @intFromPtr(timeout),
         @intFromPtr(sigmask),
     );
-    try handleErrno(PollError, rc);
+
+    handleErrno(PollError || error{ FAULT, INVAL }, rc) catch |e| switch (e) {
+        error.FAULT => return errnoProgrammerError("Invalid pointer", .{}),
+        error.INVAL => return errnoProgrammerError("Invalid nfds value (exceeds RLIMITNOFILE) or invalid timeout (negative)", .{}),
+        else => return @errorCast(e),
+    };
+
     return safeTrunc(c_int, rc);
 }
 
@@ -3290,10 +3301,18 @@ pub fn close(fd: fd_t) void {
         error.INTR => {},
 
         error.BADF => { // double close
-            unexpectedErrnoError(e) catch {};
+            errnoProgrammerError("double close", .{}) catch {};
         },
 
-        else => _ = unexpectedErrnoError(e) catch {},
+        error.IO,
+        error.NOMEM,
+        error.FBIG,
+        error.NOSPC,
+        error.ROFS,
+        error.STALE,
+        error.DQUOT,
+        error.UnexpectedErrno,
+        => _ = _unexpectedErrnoError(e) catch {},
     }
 }
 
@@ -3316,22 +3335,6 @@ pub fn lseek(fd: fd_t, offset: off_t, whence: SEEK) LseekError!off_t {
     );
     try handleErrno(LseekError, rc);
     return safeTrunc(off_t, rc);
-}
-
-pub const PipeError = error{
-    FAULT,
-    MFILE,
-    NFILE,
-    NOMEM,
-
-    UnexpectedErrno,
-};
-
-pub fn pipe(fds: *[2]fd_t) PipeError!void {
-    pipe2(fds, .{}) catch |e| switch (e) {
-        error.INVAL, error.NOPKG => return unexpectedErrnoError(e),
-        else => return e,
-    };
 }
 
 pub const FtruncateError = error{
@@ -3382,9 +3385,9 @@ pub const UnlinkError = error{
     UnexpectedErrno,
 };
 
-pub fn unlink(pathname: [*:0]const u8) UnlinkError!void {
+pub fn unlink(pathname: [:0]const u8) UnlinkError!void {
     while (true) {
-        const rc = syscall1(.unlink, @intFromPtr(pathname));
+        const rc = syscall1(.unlink, @intFromPtr(pathname.ptr));
         if (try handleErrnoRetry(UnlinkError, rc)) continue;
         assert(rc == 0);
         return;
@@ -3451,17 +3454,6 @@ pub fn readlinkat(dir_fd: dirfd_t, path: [*:0]const u8, buf: []u8) ReadlinkatErr
     }
 }
 
-pub const Pipe2Error = error{
-    FAULT,
-    INVAL,
-    MFILE,
-    NFILE,
-    NOMEM,
-    NOPKG,
-
-    UnexpectedErrno,
-};
-
 pub const FaccessatError = error{
     ACCES,
     BADF,
@@ -3506,12 +3498,6 @@ pub fn faccessat(dir_fd: dirfd_t, path: [*:0]const u8, mode: AccessMode) Faccess
         assert(rc == 0);
         return true;
     }
-}
-
-pub fn pipe2(fds: *[2]fd_t, flags: O) Pipe2Error!void {
-    const rc = syscall2(.pipe2, @intFromPtr(fds), zeroExtendToUsize(flags));
-    try handleErrno(Pipe2Error, rc);
-    assert(rc == 0);
 }
 
 // =============================================================================
