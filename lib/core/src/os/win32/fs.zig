@@ -216,15 +216,153 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
 }
 
 pub fn deleteDirAt(dir: fs.Dir, sub_path: [:0]const u8) fs.DeleteDirAtError!void {
-    _ = dir;
-    _ = sub_path;
-    unreachable;
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
+    const object_attributes = nt_path.ntObjectAttributes();
+
+    var handle: Handle = undefined;
+    var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+    switch (win32.NT.NtOpenFile(
+        &handle,
+        .{
+            .SYNCHRONIZE = true,
+            .DELETE = true,
+        },
+        &object_attributes,
+        &io_status_block,
+        .{ .READ = true, .WRITE = true, .DELETE = true },
+        .{
+            .DIRECTORY_FILE = true,
+            .SYNCHRONOUS_IO_NONALERT = true,
+            .OPEN_FOR_BACKUP_INTENT = true,
+            .OPEN_REPARSE_POINT = true,
+        },
+    )) {
+        .SUCCESS => {},
+
+        .OBJECT_NAME_INVALID,
+        .OBJECT_PATH_INVALID,
+        .OBJECT_PATH_SYNTAX_BAD,
+        .BAD_NETWORK_PATH,
+        => return error.BadPath,
+
+        .OBJECT_NAME_NOT_FOUND,
+        .OBJECT_PATH_NOT_FOUND,
+        .BAD_NETWORK_NAME,
+        => return error.FileNotFound,
+
+        .INSUFFICIENT_RESOURCES,
+        .NO_MEMORY,
+        => return error.OutOfMemory,
+
+        .ACCESS_DENIED,
+        .USER_MAPPED_FILE,
+        => return error.AccessDenied,
+
+        .SHARING_VIOLATION,
+        .DELETE_PENDING,
+        => return error.DeviceBusy,
+
+        .STOPPED_ON_SYMLINK,
+        .REPARSE_POINT_NOT_RESOLVED,
+        => return error.SymLinkNotResolved,
+
+        .NOT_A_DIRECTORY => return error.NotDir,
+
+        else => |s| return unexpectedStatus(s),
+    }
+
+    defer _ = win32.NT.NtClose(handle);
+
+    var disposition: win32.NT.FILE.DISPOSITION_INFORMATION_EX = .{ .DELETE = true, .POSIX_SEMANTICS = true };
+    switch (win32.NT.NtSetInformationFile(handle, &io_status_block, &disposition, @sizeOf(@TypeOf(disposition)), .DispositionInformationEx)) {
+        .SUCCESS => {},
+
+        .ACCESS_DENIED,
+        .CANNOT_DELETE,
+        => return error.AccessDenied,
+
+        .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
+
+        .SHARING_VIOLATION => return error.DeviceBusy,
+
+        else => |s| return unexpectedStatus(s),
+    }
 }
 
 pub fn deleteFileAt(dir: fs.Dir, sub_path: [:0]const u8) fs.DeleteFileAtError!void {
-    _ = dir;
-    _ = sub_path;
-    unreachable;
+    var nt_path_buf: [win32.PATH_MAX_WIDE]u16 = undefined;
+    const nt_path = try toNtPath(dir, sub_path, &nt_path_buf);
+    const object_attributes = nt_path.ntObjectAttributes();
+
+    var handle: Handle = undefined;
+    var io_status_block: win32.NT.IO_STATUS_BLOCK = undefined;
+
+    switch (win32.NT.NtOpenFile(
+        &handle,
+        .{
+            .SYNCHRONIZE = true,
+            .DELETE = true,
+        },
+        &object_attributes,
+        &io_status_block,
+        .{ .READ = true, .WRITE = true, .DELETE = true },
+        .{
+            .NON_DIRECTORY_FILE = true,
+            .SYNCHRONOUS_IO_NONALERT = true,
+            .OPEN_FOR_BACKUP_INTENT = true,
+            .OPEN_REPARSE_POINT = true,
+        },
+    )) {
+        .SUCCESS => {},
+
+        .OBJECT_NAME_INVALID,
+        .OBJECT_PATH_INVALID,
+        .OBJECT_PATH_SYNTAX_BAD,
+        .BAD_NETWORK_PATH,
+        => return error.BadPath,
+
+        .OBJECT_NAME_NOT_FOUND,
+        .OBJECT_PATH_NOT_FOUND,
+        .BAD_NETWORK_NAME,
+        => return error.FileNotFound,
+
+        .INSUFFICIENT_RESOURCES,
+        .NO_MEMORY,
+        => return error.OutOfMemory,
+
+        .ACCESS_DENIED,
+        .USER_MAPPED_FILE,
+        => return error.AccessDenied,
+
+        .SHARING_VIOLATION,
+        .DELETE_PENDING,
+        => return error.DeviceBusy,
+
+        .STOPPED_ON_SYMLINK,
+        .REPARSE_POINT_NOT_RESOLVED,
+        => return error.SymLinkNotResolved,
+
+        .FILE_IS_A_DIRECTORY => return error.IsDir,
+
+        else => |s| return unexpectedStatus(s),
+    }
+
+    defer _ = win32.NT.NtClose(handle);
+
+    var disposition: win32.NT.FILE.DISPOSITION_INFORMATION_EX = .{ .DELETE = true, .POSIX_SEMANTICS = true };
+    switch (win32.NT.NtSetInformationFile(handle, &io_status_block, &disposition, @sizeOf(@TypeOf(disposition)), .DispositionInformationEx)) {
+        .SUCCESS => {},
+
+        .ACCESS_DENIED,
+        .CANNOT_DELETE,
+        => return error.AccessDenied,
+
+        .SHARING_VIOLATION => return error.DeviceBusy,
+
+        else => |s| return unexpectedStatus(s),
+    }
 }
 
 const QueryAttributesFileError = error{

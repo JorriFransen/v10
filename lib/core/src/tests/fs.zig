@@ -858,6 +858,52 @@ test "DirWalker symlinks" {
     try expectDirWalkerEntry(.link, &.{"loop_b"}, results);
 }
 
+test "deleteDirAt" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try zig_tmp_dir.dir.createDir(t.io, "empty_sub_dir", .default_dir);
+    try zig_tmp_dir.dir.createDir(t.io, "nonempty_sub_dir", .default_dir);
+    const file_handle = try zig_tmp_dir.dir.createFile(t.io, "nonempty_sub_dir/file", .{});
+    file_handle.close(t.io);
+
+    try t.expect(try testAccess(tmp_dir.handle, "empty_sub_dir"));
+    try t.expect(try testAccess(tmp_dir.handle, "nonempty_sub_dir"));
+    try t.expect(try testAccess(tmp_dir.handle, "nonempty_sub_dir/file"));
+
+    try tmp_dir.deleteDir("empty_sub_dir");
+    try t.expectError(error.FileNotFound, testAccess(tmp_dir.handle, "empty_sub_dir"));
+    try t.expectError(error.FileNotFound, tmp_dir.deleteDir("empty_sub_dir"));
+    try t.expectError(error.NotDir, tmp_dir.deleteDir("nonempty_sub_dir/file"));
+    try t.expectError(error.DirNotEmpty, tmp_dir.deleteDir("nonempty_sub_dir"));
+
+    try t.expect(try testAccess(tmp_dir.handle, "nonempty_sub_dir"));
+    try t.expect(try testAccess(tmp_dir.handle, "nonempty_sub_dir/file"));
+}
+
+test "deleteFileAt" {
+    var zig_tmp_dir = t.tmpDir(.{});
+    defer zig_tmp_dir.cleanup();
+
+    const tmp_dir = fs.Dir{ .handle = zig_tmp_dir.dir.handle };
+
+    try zig_tmp_dir.dir.createDir(t.io, "sub_dir", .default_dir);
+    const file_handle = try zig_tmp_dir.dir.createFile(t.io, "file", .{});
+    file_handle.close(t.io);
+
+    try t.expect(try testAccess(tmp_dir.handle, "sub_dir"));
+    try t.expect(try testAccess(tmp_dir.handle, "file"));
+
+    try tmp_dir.deleteFile("file");
+    try t.expectError(error.FileNotFound, tmp_dir.deleteFile("file"));
+    try t.expectError(error.FileNotFound, testAccess(tmp_dir.handle, "file"));
+
+    try t.expectError(error.IsDir, tmp_dir.deleteFile("sub_dir"));
+    try t.expect(try testAccess(tmp_dir.handle, "sub_dir"));
+}
+
 fn testAccess(dir_handle: fs.Handle, path: [:0]const u8) !bool {
     const std_dir = std.Io.Dir{ .handle = dir_handle };
 

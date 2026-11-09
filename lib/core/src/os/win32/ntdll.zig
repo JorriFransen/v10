@@ -722,6 +722,21 @@ pub const FILE = struct {
         file_name_length: ULONG,
         file_name: [1]WCHAR,
     };
+
+    pub const DISPOSITION_INFORMATION = extern struct {
+        delete_file: BOOLEAN,
+    };
+
+    pub const DISPOSITION_INFORMATION_EX = packed struct(ULONG) {
+        DELETE: bool = false,
+        POSIX_SEMANTICS: bool = false,
+        FORCE_IMAGE_SECTION_CHECK: bool = false,
+        ON_CLOSE: bool = false,
+        IGNORE_READONLY_ATTRIBUTE: bool = false,
+        __reserved__: u27 = 0,
+
+        pub const DO_NOT_DELETE: @This() = .{};
+    };
 };
 
 pub const KERNEL_USER_TIMES = extern struct {
@@ -975,6 +990,7 @@ pub extern "ntdll" fn NtOpenFile(handle_out: *HANDLE, desired_access: ACCESS_MAS
 pub extern "ntdll" fn NtClose(handle: HANDLE) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryInformationFile(handle: HANDLE, io_status_block_out: *IO_STATUS_BLOCK, file_info_out: PVOID, file_info_len: ULONG, file_info_class: FILE.INFOCLASS) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn NtQueryDirectoryFile(handle: HANDLE, event: ?HANDLE, apc_routine: ?IO_APC_ROUTINE, apc_context: ?*anyopaque, io_status_block_out: *IO_STATUS_BLOCK, file_info_out: *anyopaque, file_info_size: ULONG, file_information_class: FILE.INFOCLASS, return_single_entry: BOOLEAN, file_name: ?*const CUNICODE_STRING, restart_scan: BOOLEAN) callconv(.winapi) NTSTATUS;
+pub extern "ntdll" fn NtSetInformationFile(handle: HANDLE, io_status_block_out: *IO_STATUS_BLOCK, file_info: *anyopaque, file_info_len: ULONG, info_class: FILE.INFOCLASS) callconv(.winapi) NTSTATUS;
 
 pub extern "ntdll" fn RtlDosPathNameToNtPathName_U_WithStatus(dos_file_name: PCWSTR, nt_file_name_out: *UNICODE_STRING, file_part: ?PWSTR, relative_name: ?*RTL_RELATIVE_NAME_U) callconv(.winapi) NTSTATUS;
 pub extern "ntdll" fn RtlFreeUnicodeString(unicode_string: *UNICODE_STRING) callconv(.winapi) void;
