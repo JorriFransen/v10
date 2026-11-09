@@ -128,6 +128,8 @@ pub fn mTimeAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.MTimeAtOptions) 
 }
 
 pub fn openDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.OpenDirAtOptions) fs.OpenDirAtError!fs.Dir {
+    if (sub_path.len == 0) return error.BadPath;
+
     const mode: linux.O = .{
         .DIRECTORY = true,
         .CLOEXEC = true,
@@ -177,6 +179,52 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
     };
 }
 
+pub fn deleteDirAt(dir: fs.Dir, sub_path: [:0]const u8) fs.DeleteDirAtError!void {
+    if (sub_path.len == 0) return error.BadPath;
+
+    linux.unlinkAt(dir.handle, sub_path, .{ .REMOVEDIR = true }) catch |e| switch (e) {
+        error.IO => return error.IO,
+        error.PERM => return error.PermissionDenied,
+        error.NOENT => return error.FileNotFound,
+        error.NOMEM => return error.OutOfMemory,
+        error.ACCES => return error.AccessDenied,
+        error.BUSY => return error.DeviceBusy,
+        error.NOTDIR => return error.NotDir,
+        error.ROFS => return error.ReadOnlyFileSystem,
+        error.NAMETOOLONG => return error.NameTooLong,
+        error.LOOP => return error.SymLinkNotResolved,
+        error.NOTEMPTY => return error.DirNotEmpty,
+
+        error.ISDIR,
+        error.STALE,
+        error.UnexpectedErrno,
+        => return linux.unexpectedError(e),
+    };
+}
+
+pub fn deleteFileAt(dir: fs.Dir, sub_path: [:0]const u8) fs.DeleteFileAtError!void {
+    if (sub_path.len == 0) return error.BadPath;
+
+    linux.unlinkAt(dir.handle, sub_path, .{}) catch |e| switch (e) {
+        error.IO => return error.IO,
+        error.PERM => return error.PermissionDenied,
+        error.NOENT => return error.FileNotFound,
+        error.NOMEM => return error.OutOfMemory,
+        error.ACCES => return error.AccessDenied,
+        error.BUSY => return error.DeviceBusy,
+        error.NOTDIR => return error.NotDir,
+        error.ROFS => return error.ReadOnlyFileSystem,
+        error.NAMETOOLONG => return error.NameTooLong,
+        error.LOOP => return error.SymLinkNotResolved,
+        error.NOTEMPTY => return error.DirNotEmpty,
+        error.ISDIR => return error.IsDir,
+
+        error.STALE,
+        error.UnexpectedErrno,
+        => return linux.unexpectedError(e),
+    };
+}
+
 pub const DirIteratorImpl = struct {
     comptime {
         assert(@hasField(linux.Dirent64, "d_name"));
@@ -214,7 +262,8 @@ pub const DirIteratorImpl = struct {
 
                         const name_len = entry.d_reclen - entry_header_size;
                         const name_slice = @as([*]const u8, @ptrCast(&entry.d_name))[0..name_len];
-                        const name = mem.sliceToSentinel(name_slice, 0);
+                        const name_sentinel_offset = std.mem.findScalar(u8, name_slice, 0) orelse return error.MalformedDirEntry;
+                        const name = name_slice[0..name_sentinel_offset :0];
 
                         switch (name.len) {
                             0 => return error.MalformedDirEntry,

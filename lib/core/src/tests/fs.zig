@@ -259,9 +259,9 @@ test "openDirAt" {
 
         try t.expectError(error.FileNotFound, tmp_dir.openDir("::", .{}));
         try t.expectError(error.FileNotFound, tmp_dir.openDir("x:y", .{}));
+        try t.expectError(error.BadPath, tmp_dir.openDir("", .{}));
 
         if (is_windows) {
-            try t.expectError(error.BadPath, tmp_dir.openDir("", .{}));
             try t.expectError(error.FileNotFound, tmp_dir.openDir("file/x", .{}));
             try t.expectError(error.BadPath, tmp_dir.openDir("nul", .{}));
             try t.expectError(error.BadPath, tmp_dir.openDir("*", .{}));
@@ -276,7 +276,6 @@ test "openDirAt" {
                 try t.expectError(error.BadPath, tmp_dir.openDir(":", .{}));
             }
         } else {
-            try t.expectError(error.FileNotFound, tmp_dir.openDir("", .{}));
             try t.expectError(error.NotDir, tmp_dir.openDir("file/x", .{}));
             try t.expectError(error.FileNotFound, tmp_dir.openDir("nul", .{}));
             try t.expectError(error.FileNotFound, tmp_dir.openDir("*", .{}));

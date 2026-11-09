@@ -29,6 +29,8 @@ pub const Error =
     OpenDirAtError ||
     ExistsAtError ||
     CreateDirAtError ||
+    DeleteDirAtError ||
+    DeleteFileAtError ||
     DirIteratorUnmanaged.Error ||
     DirIterator.Error ||
     DirWalker.Error;
@@ -78,8 +80,12 @@ pub const Dir = struct {
         return createDirParentsAt(dir, dir_path, options);
     }
 
+    pub fn deleteDir(dir: Dir, sub_path: [:0]const u8) DeleteDirAtError!void {
+        return deleteDirAt(dir, sub_path);
     }
 
+    pub fn deleteFile(dir: Dir, sub_path: [:0]const u8) DeleteFileAtError!void {
+        return deleteFileAt(dir, sub_path);
     }
 
     pub fn iterate(dir: Dir, options: DirIterator.Options) DirIterator {
@@ -242,6 +248,43 @@ pub fn createDirParentsAt(dir: Dir, sub_path: [:0]const u8, options: CreateDirAt
 inline fn requireDirAt(dir: Dir, sub_path: [:0]const u8) !void {
     if (try dir.fileType(sub_path, .{ .follow_symlinks = false }) != .dir) return error.NotDir;
 }
+
+pub const DeleteDirAtError = error{
+    AccessDenied,
+    BadPath,
+    DeviceBusy,
+    DirNotEmpty,
+    FileNotFound,
+    IO,
+    NameTooLong,
+    NotDir,
+    OutOfMemory,
+    PermissionDenied,
+    ReadOnlyFileSystem,
+    SymLinkNotResolved,
+
+    Unexpected,
+};
+pub const deleteDirAt = os.deleteDirAt;
+
+pub const DeleteFileAtError = error{
+    AccessDenied,
+    BadPath,
+    DeviceBusy,
+    DirNotEmpty,
+    FileNotFound,
+    IO,
+    IsDir,
+    NameTooLong,
+    NotDir,
+    OutOfMemory,
+    PermissionDenied,
+    ReadOnlyFileSystem,
+    SymLinkNotResolved,
+
+    Unexpected,
+};
+pub const deleteFileAt = os.deleteFileAt;
 
 pub const DirIteratorUnmanaged = struct {
     pub const Error = DirIterator.Error || error{BufferTooSmall};

@@ -215,6 +215,18 @@ pub fn createDirAt(dir: fs.Dir, sub_path: [:0]const u8, options: fs.CreateDirAtO
     }
 }
 
+pub fn deleteDirAt(dir: fs.Dir, sub_path: [:0]const u8) fs.DeleteDirAtError!void {
+    _ = dir;
+    _ = sub_path;
+    unreachable;
+}
+
+pub fn deleteFileAt(dir: fs.Dir, sub_path: [:0]const u8) fs.DeleteFileAtError!void {
+    _ = dir;
+    _ = sub_path;
+    unreachable;
+}
+
 const QueryAttributesFileError = error{
     AccessDenied,
     BadPath,

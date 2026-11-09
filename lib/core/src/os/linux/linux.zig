@@ -3394,6 +3394,43 @@ pub fn unlink(pathname: [:0]const u8) UnlinkError!void {
     }
 }
 
+pub const UnlinkAtError = error{
+    ACCES,
+    BUSY,
+    IO,
+    ISDIR,
+    LOOP,
+    NAMETOOLONG,
+    NOENT,
+    NOMEM,
+    NOTDIR,
+    NOTEMPTY,
+    PERM,
+    ROFS,
+    STALE,
+
+    UnexpectedErrno,
+};
+
+pub fn unlinkAt(dir_fd: dirfd_t, sub_path: [:0]const u8, flags: AT.Mask) UnlinkAtError!void {
+    while (true) {
+        const rc = syscall3(
+            .unlinkat,
+            zeroExtendToUsize(dir_fd),
+            @intFromPtr(sub_path.ptr),
+            zeroExtendToUsize(flags),
+        );
+        if (handleErrnoRetry(UnlinkAtError || error{ BADF, FAULT, INVAL }, rc) catch |e| switch (e) {
+            error.BADF => return errnoProgrammerError("Invalid fd", .{}),
+            error.FAULT => return errnoProgrammerError("Invalid pointer", .{}),
+            error.INVAL => return errnoProgrammerError("Invalid flags (flags: {})", .{flags}),
+            else => return @errorCast(e),
+        }) continue;
+        assert(rc == 0);
+        return;
+    }
+}
+
 pub const Getdents64Error = error{
     BADF,
     FAULT,
